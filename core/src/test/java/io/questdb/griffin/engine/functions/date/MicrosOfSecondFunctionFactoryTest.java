@@ -29,11 +29,11 @@ import org.junit.Test;
 
 public class MicrosOfSecondFunctionFactoryTest extends AbstractGriffinTest {
     @Test
-    public void testVanilla() throws Exception {
+    public void testNull() throws Exception {
         assertQuery(
                 "micros\n" +
-                        "555\n",
-                "select micros('1997-04-11T22:00:30.555555Z'::timestamp)",
+                        "NaN\n",
+                "select micros(null)",
                 null,
                 null,
                 true,
@@ -57,11 +57,11 @@ public class MicrosOfSecondFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNull() throws Exception {
+    public void testVanilla() throws Exception {
         assertQuery(
                 "micros\n" +
-                        "NaN\n",
-                "select micros(null)",
+                        "555\n",
+                "select micros('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,

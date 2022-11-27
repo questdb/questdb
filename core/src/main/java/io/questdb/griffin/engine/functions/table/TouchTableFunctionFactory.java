@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -42,17 +43,19 @@ import io.questdb.std.str.StringSink;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class TouchTableFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "touch(C)";
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function function = args.get(0);
         final int pos = argPositions.get(0);
@@ -72,11 +75,10 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private SqlExecutionContext sqlExecutionContext;
-        private long garbage = 0;
         private long dataPages = 0;
         private long indexKeyPages = 0;
         private long indexValuePages = 0;
+        private SqlExecutionContext sqlExecutionContext;
 
         public TouchTableFunc(Function arg) {
             this.arg = arg;
@@ -95,13 +97,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            sinkB.clear();
-            getStr(rec, sinkB);
-            return sinkB;
-        }
-
-        @Override
         public void getStr(Record rec, CharSink sink) {
             touchTable();
             sink.put("{\"data_pages\": ")
@@ -113,13 +108,19 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            getStr(rec, sinkB);
+            return sinkB;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             this.sqlExecutionContext = executionContext;
         }
 
         private void clearCounters() {
-            garbage = 0;
             dataPages = 0;
             indexKeyPages = 0;
             indexValuePages = 0;
@@ -130,7 +131,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
             for (long i = 0; i < pageCount; i++) {
                 final byte v = Unsafe.getUnsafe().getByte(baseAddress + i * pageSize);
-                garbage += v;
+                // Use the same blackhole as in async offload's column pre-touch.
+                AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.add(v);
             }
 
             return pageCount;

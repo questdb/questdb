@@ -38,14 +38,14 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class AvgLongVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
-    private final DoubleAdder sum = new DoubleAdder();
-    private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final DoubleAdder sum = new DoubleAdder();
     private final int workerCount;
-    private int valueOffset;
     private long counts;
+    private int valueOffset;
 
     public AvgLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -84,8 +84,32 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
+    public void clear() {
+        sum.reset();
+        count.reset();
+    }
+
+    @Override
+    public void close() {
+        if (counts != 0) {
+            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+            counts = 0;
+        }
+        super.close();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        final long count = this.count.sum();
+        if (count > 0) {
+            return sum.sum() / count;
+        }
+        return Double.NaN;
     }
 
     @Override
@@ -104,6 +128,11 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumLongLongMerge(pRostiA, pRostiB, valueOffset);
     }
@@ -117,41 +146,12 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
-    public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
-    }
-
-    @Override
-    public void clear() {
-        sum.reset();
-        count.reset();
-    }
-
-    @Override
-    public void close() {
-        if (counts != 0) {
-            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
-            counts = 0;
-        }
-        super.close();
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        final long count = this.count.sum();
-        if (count > 0) {
-            return sum.sum() / count;
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put("AvgLongVector(").put(columnIndex).put(')');
+    }
+
+    @Override
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 }

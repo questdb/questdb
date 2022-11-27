@@ -22,89 +22,22 @@ import java.nio.charset.StandardCharsets;
  */
 final class FastFloatByteArray {
 
-    /**
-     * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
-     * white space.
-     * <blockquote>
-     * <dl>
-     * <dt><i>FloatingPointLiteralWithWhiteSpace:</i></dt>
-     * <dd><i>[WhiteSpace] FloatingPointLiteral [WhiteSpace]</i></dd>
-     * </dl>
-     * </blockquote>
-     * See {@link io.questdb.std.fastdouble} for the grammar of
-     * {@code FloatingPointLiteral}.
-     *
-     * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
-     * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param rejectOverflow reject parsed values that overflow double type
-     * @return the bit pattern of the parsed value, if the input is legal;
-     * otherwise, {@code -1L}.
-     */
-    static float parseFloatingPointLiteral(byte[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
-        final int endIndex = offset + length;
-        if (offset < 0 || endIndex > str.length) {
+    private static float fallbackToJavaParser(byte[] str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+        float f;
+        f = Float.parseFloat(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1));
+        if (rejectOverflow && (
+                f == Float.POSITIVE_INFINITY
+                        || f == Float.NEGATIVE_INFINITY
+                        || f == 0.0f
+        )
+        ) {
             throw NumericException.INSTANCE;
         }
-
-        // Skip leading whitespace
-        // -------------------
-        int index = skipWhitespace(str, offset, endIndex);
-        if (index == endIndex) {
-            throw NumericException.INSTANCE;
-        }
-        byte ch = str[index];
-
-        // Parse optional sign
-        // -------------------
-        final boolean isNegative = ch == '-';
-        if (isNegative || ch == '+') {
-            ch = ++index < endIndex ? str[index] : 0;
-            if (ch == 0) {
-                throw NumericException.INSTANCE;
-            }
-        }
-
-        // Parse NaN or Infinity
-        // ---------------------
-        if (ch >= 'I') {
-            return ch == 'N'
-                    ? parseNaN(str, index, endIndex)
-                    : parseInfinity(str, index, endIndex, isNegative);
-        }
-
-        // Parse optional leading zero
-        // ---------------------------
-        final boolean hasLeadingZero = ch == '0';
-        if (hasLeadingZero) {
-            ch = ++index < endIndex ? str[index] : 0;
-            if (ch == 'x' || ch == 'X') {
-                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
-            }
-        }
-
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
+        return f;
     }
 
     private static boolean isDigit(byte c) {
         return '0' <= c && c <= '9';
-    }
-
-    /**
-     * Skips optional white space in the provided string
-     *
-     * @param str      a string
-     * @param index    start index (inclusive) of the optional white space
-     * @param endIndex end index (exclusive) of the optional white space
-     * @return index after the optional white space
-     */
-    private static int skipWhitespace(byte[] str, int index, int endIndex) {
-        for (; index < endIndex; index++) {
-            if ((str[index] & 0xff) > ' ') {
-                break;
-            }
-        }
-        return index;
     }
 
     /**
@@ -255,62 +188,6 @@ final class FastFloatByteArray {
         );
     }
 
-    private static int tryToParseEightDigits(byte[] str, int offset) {
-        return FastDoubleSwar.tryToParseEightDigitsUtf8(str, offset);
-    }
-
-    static float valueOfFloatLiteral(
-            byte[] str,
-            int startIndex,
-            int endIndex,
-            boolean isNegative,
-            long significand,
-            int exponent,
-            boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand,
-            boolean rejectOverflow
-    ) throws NumericException {
-        float f = FastFloatMath.decFloatLiteralToFloat(
-                isNegative,
-                significand,
-                exponent,
-                isSignificandTruncated,
-                exponentOfTruncatedSignificand
-        );
-
-        if (Float.isNaN(f)) {
-            f = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
-        }
-        return f;
-    }
-
-    private static float fallbackToJavaParser(byte[] str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
-        float f;
-        f = Float.parseFloat(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1));
-        if (rejectOverflow && (
-                f == Float.POSITIVE_INFINITY
-                || f == Float.NEGATIVE_INFINITY
-                || f == 0.0f
-                )
-        ) {
-            throw NumericException.INSTANCE;
-        }
-        return f;
-    }
-
-    static float nan() {
-        return Float.NaN;
-    }
-
-    static float negativeInfinity() {
-        return Float.NEGATIVE_INFINITY;
-    }
-
-    /*
-    private static long tryToParseEightHexDigits(byte[] str, int offset) {
-        return FastDoubleVector.tryToParseEightHexDigitsUtf8(str, offset);
-    }*/
-
     /**
      * Parses the following rules
      * (more rules are defined in {@link FastDoubleUtils}):
@@ -326,11 +203,11 @@ final class FastFloatByteArray {
      * <dd><i>[HexDigits]</i> {@code .} <i>HexDigits</i>
      * </dl>
      *
-     * @param str        the input string
-     * @param index      index to the first character of RestOfHexFloatingPointLiteral
-     * @param startIndex the start index of the string
-     * @param endIndex   the end index of the string
-     * @param isNegative if the resulting number is negative
+     * @param str            the input string
+     * @param index          index to the first character of RestOfHexFloatingPointLiteral
+     * @param startIndex     the start index of the string
+     * @param endIndex       the end index of the string
+     * @param isNegative     if the resulting number is negative
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
@@ -531,8 +408,126 @@ final class FastFloatByteArray {
         throw NumericException.INSTANCE;
     }
 
+    /**
+     * Skips optional white space in the provided string
+     *
+     * @param str      a string
+     * @param index    start index (inclusive) of the optional white space
+     * @param endIndex end index (exclusive) of the optional white space
+     * @return index after the optional white space
+     */
+    private static int skipWhitespace(byte[] str, int index, int endIndex) {
+        for (; index < endIndex; index++) {
+            if ((str[index] & 0xff) > ' ') {
+                break;
+            }
+        }
+        return index;
+    }
+
+    private static int tryToParseEightDigits(byte[] str, int offset) {
+        return FastDoubleSwar.tryToParseEightDigitsUtf8(str, offset);
+    }
+
+    static float nan() {
+        return Float.NaN;
+    }
+
+    static float negativeInfinity() {
+        return Float.NEGATIVE_INFINITY;
+    }
+
+    /**
+     * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
+     * white space.
+     * <blockquote>
+     * <dl>
+     * <dt><i>FloatingPointLiteralWithWhiteSpace:</i></dt>
+     * <dd><i>[WhiteSpace] FloatingPointLiteral [WhiteSpace]</i></dd>
+     * </dl>
+     * </blockquote>
+     * See {@link io.questdb.std.fastdouble} for the grammar of
+     * {@code FloatingPointLiteral}.
+     *
+     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
+     * @return the bit pattern of the parsed value, if the input is legal;
+     * otherwise, {@code -1L}.
+     */
+    static float parseFloatingPointLiteral(byte[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
+        final int endIndex = offset + length;
+        if (offset < 0 || endIndex > str.length) {
+            throw NumericException.INSTANCE;
+        }
+
+        // Skip leading whitespace
+        // -------------------
+        int index = skipWhitespace(str, offset, endIndex);
+        if (index == endIndex) {
+            throw NumericException.INSTANCE;
+        }
+        byte ch = str[index];
+
+        // Parse optional sign
+        // -------------------
+        final boolean isNegative = ch == '-';
+        if (isNegative || ch == '+') {
+            ch = ++index < endIndex ? str[index] : 0;
+            if (ch == 0) {
+                throw NumericException.INSTANCE;
+            }
+        }
+
+        // Parse NaN or Infinity
+        // ---------------------
+        if (ch >= 'I') {
+            return ch == 'N'
+                    ? parseNaN(str, index, endIndex)
+                    : parseInfinity(str, index, endIndex, isNegative);
+        }
+
+        // Parse optional leading zero
+        // ---------------------------
+        final boolean hasLeadingZero = ch == '0';
+        if (hasLeadingZero) {
+            ch = ++index < endIndex ? str[index] : 0;
+            if (ch == 'x' || ch == 'X') {
+                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
+            }
+        }
+
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
+    }
+
     static float positiveInfinity() {
         return Float.POSITIVE_INFINITY;
+    }
+
+    static float valueOfFloatLiteral(
+            byte[] str,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            long significand,
+            int exponent,
+            boolean isSignificandTruncated,
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
+        float f = FastFloatMath.decFloatLiteralToFloat(
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                exponentOfTruncatedSignificand
+        );
+
+        if (Float.isNaN(f)) {
+            f = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return f;
     }
 
     static float valueOfHexLiteral(

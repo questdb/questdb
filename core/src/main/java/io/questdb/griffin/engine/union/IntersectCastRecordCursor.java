@@ -36,12 +36,12 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 class IntersectCastRecordCursor extends AbstractSetRecordCursor {
+    private final UnionCastRecord castRecord;
     private final Map map;
     private final RecordSink recordSink;
-    private final UnionCastRecord castRecord;
+    private boolean isOpen;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
-    private boolean isOpen;
 
     public IntersectCastRecordCursor(
             Map map,
@@ -64,25 +64,20 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
         }
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
-        this.cursorA = cursorA;
-        this.cursorB = cursorB;
-        this.circuitBreaker = circuitBreaker;
-
-        if (!isOpen) {
-            this.isOpen = true;
-            map.reopen();
-        }
-        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
-        castRecord.setAb(false);
-        hashCursorB();
-        castRecord.setAb(true);
-        toTop();
-    }
-
     @Override
     public Record getRecord() {
         return castRecord;
+    }
+
+    @Override
+    public Record getRecordB() {
+        if (recordB == null) {
+            recordB = new UnionCastRecord(castRecord.getCastFunctionsA(), castRecord.getCastFunctionsB());
+            recordB.setAb(true);
+            // we do not need cursorB here, it is likely to be closed anyway
+            recordB.of(cursorA.getRecordB(), null);
+        }
+        return recordB;
     }
 
     @Override
@@ -99,29 +94,18 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        if (recordB == null) {
-            recordB = new UnionCastRecord(castRecord.getCastFunctionsA(), castRecord.getCastFunctionsB());
-            recordB.setAb(true);
-            // we do not need cursorB here, it is likely to be closed anyway
-            recordB.of(cursorA.getRecordB(), null);
-        }
-        return recordB;
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
-        cursorA.recordAt(((UnionCastRecord)record).getRecordA(), atRowId);
-    }
-
-    @Override
-    public void toTop() {
-        cursorA.toTop();
+        cursorA.recordAt(((UnionCastRecord) record).getRecordA(), atRowId);
     }
 
     @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public void toTop() {
+        cursorA.toTop();
     }
 
     private void hashCursorB() {
@@ -135,5 +119,21 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
         // cursor lingers around. If there is exception or circuit breaker fault
         // we will rely on close() method to release reader.
         this.cursorB = Misc.free(this.cursorB);
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
+
+        if (!isOpen) {
+            this.isOpen = true;
+            map.reopen();
+        }
+        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+        castRecord.setAb(false);
+        hashCursorB();
+        castRecord.setAb(true);
+        toTop();
     }
 }

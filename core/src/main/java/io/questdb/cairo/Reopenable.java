@@ -31,6 +31,8 @@ import java.io.Closeable;
  */
 public interface Reopenable extends Closeable {
 
-    /** Re-initialize the resource after `.close()` was called. */
+    /**
+     * Re-initialize the resource after `.close()` was called.
+     */
     void reopen();
 }

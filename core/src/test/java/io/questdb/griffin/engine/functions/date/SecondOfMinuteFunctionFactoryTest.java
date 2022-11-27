@@ -29,11 +29,11 @@ import org.junit.Test;
 
 public class SecondOfMinuteFunctionFactoryTest extends AbstractGriffinTest {
     @Test
-    public void testVanilla() throws Exception {
+    public void testNull() throws Exception {
         assertQuery(
                 "second\n" +
-                        "30\n",
-                "select second('1997-04-11T22:00:30.555555Z'::timestamp)",
+                        "NaN\n",
+                "select second(null)",
                 null,
                 null,
                 true,
@@ -57,11 +57,11 @@ public class SecondOfMinuteFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNull() throws Exception {
+    public void testVanilla() throws Exception {
         assertQuery(
                 "second\n" +
-                        "NaN\n",
-                "select second(null)",
+                        "30\n",
+                "select second('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,

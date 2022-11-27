@@ -38,20 +38,20 @@ class FastFloatMath {
      * Bias used in the exponent of a float.
      */
     private static final int FLOAT_EXPONENT_BIAS = 127;
-    /**
-     * The number of bits in the significand, including the implicit bit.
-     */
-    private static final int FLOAT_SIGNIFICAND_WIDTH = 24;
-    private final static int FLOAT_MIN_EXPONENT_POWER_OF_TEN = -45;
     private final static int FLOAT_MAX_EXPONENT_POWER_OF_TEN = 38;
-    private final static int FLOAT_MIN_EXPONENT_POWER_OF_TWO = Float.MIN_EXPONENT;
     private final static int FLOAT_MAX_EXPONENT_POWER_OF_TWO = Float.MAX_EXPONENT;
+    private final static int FLOAT_MIN_EXPONENT_POWER_OF_TEN = -45;
+    private final static int FLOAT_MIN_EXPONENT_POWER_OF_TWO = Float.MIN_EXPONENT;
     /**
      * Precomputed powers of ten from 10^0 to 10^10. These
      * can be represented exactly using the float type.
      */
     private static final float[] FLOAT_POWER_OF_TEN = {
             1e0f, 1e1f, 1e2f, 1e3f, 1e4f, 1e5f, 1e6f, 1e7f, 1e8f, 1e9f, 1e10f};
+    /**
+     * The number of bits in the significand, including the implicit bit.
+     */
+    private static final int FLOAT_SIGNIFICAND_WIDTH = 24;
 
     /**
      * Don't let anyone instantiate this class.

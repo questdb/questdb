@@ -30,77 +30,74 @@ import io.questdb.std.IntList;
 
 public class PGOids {
 
-    public static final int PG_VARCHAR = 1043;
-    public static final int PG_TIMESTAMP = 1114;
-    public static final int PG_FLOAT8 = 701;
-    public static final int PG_FLOAT4 = 700;
-    public static final int PG_INT4 = 23;
-    public static final int PG_INT2 = 21;
-    public static final int PG_INT8 = 20;
+    public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
+    public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
+    public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
+    public static final int BINARY_TYPE_CHAR = (1 << 31) | ColumnType.CHAR;
+    public static final int BINARY_TYPE_DATE = (1 << 31) | ColumnType.DATE;
+    public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
+    public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
+    public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
+    public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
+    public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
+    public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
+    public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
+    public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
+    public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int PG_BOOL = 16;
-    public static final int PG_CHAR = 18;
-    public static final int PG_DATE = 1082;
     public static final int PG_BYTEA = 17;
-    private static final IntList TYPE_OIDS = new IntList();
+    public static final int PG_CATALOG_OID = 11;
+    public static final int PG_CHAR = 18;
+    public static final int PG_CLASS_OID = 1259;
+    public static final int PG_DATE = 1082;
+    public static final int PG_FLOAT4 = 700;
+    public static final int PG_FLOAT8 = 701;
+    public static final int PG_INT2 = 21;
+    public static final int PG_INT4 = 23;
+    public static final int PG_INT8 = 20;
+    public static final int PG_NAMESPACE_OID = 2615;
+    public static final int PG_PUBLIC_OID = 2200;
+    public static final int PG_TIMESTAMP = 1114;
     public static final IntList PG_TYPE_OIDS = new IntList();
-    public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
-
-    @SuppressWarnings("NumericOverflow")
-    public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
-    public static final int X_B_PG_FLOAT8 = 1 | X_PG_FLOAT8;
-    @SuppressWarnings("NumericOverflow")
-    public static final int X_PG_FLOAT4 = ((PG_FLOAT4 >> 24) & 0xff) | ((PG_FLOAT4 << 8) & 0xff0000) | ((PG_FLOAT4 >> 8) & 0xff00) | ((PG_FLOAT4 << 24) & 0xff000000);
-    public static final int X_B_PG_FLOAT4 = 1 | X_PG_FLOAT4;
-    public static final int X_PG_INT4 = ((PG_INT4 >> 24) & 0xff) | ((PG_INT4 << 8) & 0xff0000) | ((PG_INT4 >> 8) & 0xff00) | ((PG_INT4 << 24) & 0xff000000);
-    public static final int X_B_PG_INT4 = 1 | X_PG_INT4;
-    public static final int X_PG_INT8 = ((PG_INT8 >> 24) & 0xff) | ((PG_INT8 << 8) & 0xff0000) | ((PG_INT8 >> 8) & 0xff00) | ((PG_INT8 << 24) & 0xff000000);
-    public static final int X_B_PG_INT8 = 1 | X_PG_INT8;
-    public static final int X_PG_INT2 = ((PG_INT2 >> 24) & 0xff) | ((PG_INT2 << 8) & 0xff0000) | ((PG_INT2 >> 8) & 0xff00) | ((PG_INT2 << 24) & 0xff000000);
-    public static final int X_B_PG_INT2 = 1 | X_PG_INT2;
+    public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
+    public static final int PG_VARCHAR = 1043;
+    public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
+    public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
+    public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
+    public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
     public static final int X_PG_CHAR = ((PG_CHAR >> 24) & 0xff) | ((PG_CHAR << 8) & 0xff0000) | ((PG_CHAR >> 8) & 0xff00) | ((PG_CHAR << 24) & 0xff000000);
     public static final int X_B_PG_CHAR = 1 | X_PG_CHAR;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_DATE = ((PG_DATE >> 24) & 0xff) | ((PG_DATE << 8) & 0xff0000) | ((PG_DATE >> 8) & 0xff00) | ((PG_DATE << 24) & 0xff000000);
     public static final int X_B_PG_DATE = 1 | X_PG_DATE;
-    public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
-    public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_FLOAT4 = ((PG_FLOAT4 >> 24) & 0xff) | ((PG_FLOAT4 << 8) & 0xff0000) | ((PG_FLOAT4 >> 8) & 0xff00) | ((PG_FLOAT4 << 24) & 0xff000000);
+    public static final int X_B_PG_FLOAT4 = 1 | X_PG_FLOAT4;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
+    public static final int X_B_PG_FLOAT8 = 1 | X_PG_FLOAT8;
+    public static final int X_PG_INT2 = ((PG_INT2 >> 24) & 0xff) | ((PG_INT2 << 8) & 0xff0000) | ((PG_INT2 >> 8) & 0xff00) | ((PG_INT2 << 24) & 0xff000000);
+    public static final int X_B_PG_INT2 = 1 | X_PG_INT2;
+    public static final int X_PG_INT4 = ((PG_INT4 >> 24) & 0xff) | ((PG_INT4 << 8) & 0xff0000) | ((PG_INT4 >> 8) & 0xff00) | ((PG_INT4 << 24) & 0xff000000);
+    public static final int X_B_PG_INT4 = 1 | X_PG_INT4;
+    public static final int X_PG_INT8 = ((PG_INT8 >> 24) & 0xff) | ((PG_INT8 << 8) & 0xff0000) | ((PG_INT8 >> 8) & 0xff00) | ((PG_INT8 << 24) & 0xff000000);
+    public static final int X_B_PG_INT8 = 1 | X_PG_INT8;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
-    public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
-    public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
-    public static final int PG_CATALOG_OID = 11;
-    public static final int PG_CLASS_OID = 1259;
-    public static final int PG_PUBLIC_OID = 2200;
-    public static final int PG_NAMESPACE_OID = 2615;
+    private static final IntList TYPE_OIDS = new IntList();
 
-    public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
-    public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
-    public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
-    public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
-    public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
-    public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
-    public static final int BINARY_TYPE_DATE = (1 << 31) | ColumnType.DATE;
-    public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
-    public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
-
-    public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
-    public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
-    public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
-    public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
-    public static final int BINARY_TYPE_CHAR = (1 << 31) | ColumnType.CHAR;
-
-    static int toColumnBinaryType(short code, int type) {
-        return (((int) code) << 31) | type;
-    }
-
-    static int toParamBinaryType(short code, int type) {
-        return code | type;
+    public static int getTypeOid(int type) {
+        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
     }
 
     static short getColumnBinaryFlag(int type) {
         return (short) ((type >>> 31) & 0xff);
+    }
+
+    static int toColumnBinaryType(short code, int type) {
+        return (((int) code) << 31) | type;
     }
 
     static int toColumnType(int type) {
@@ -108,13 +105,13 @@ public class PGOids {
         return type & (~(1 << 31));
     }
 
+    static int toParamBinaryType(short code, int type) {
+        return code | type;
+    }
+
     static int toParamType(int type) {
         // clear format flag
         return type & (~1);
-    }
-
-    public static int getTypeOid(int type) {
-        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
     }
 
     static {

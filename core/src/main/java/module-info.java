@@ -24,7 +24,7 @@
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.catalogue.PgClassFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -97,6 +97,8 @@ open module io.questdb {
     exports io.questdb.cairo.sql.async;
     exports io.questdb.client;
     exports io.questdb.griffin.engine.functions.long128;
+    exports io.questdb.cairo.wal;
+    exports io.questdb.cairo.wal.seq;
 
     provides FunctionFactory with
             // test functions
@@ -186,6 +188,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.AbsDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory,
 //                    # '~=',
@@ -553,7 +556,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory,
-//                  PostgeSQL catalogue functions
+//                  PostgreSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.PgAttrDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttrDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgAttributeFunctionFactory,
@@ -639,11 +642,29 @@ open module io.questdb {
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
+            // Pad strings
+            io.questdb.griffin.engine.functions.str.LPadFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RPadFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
 
+            // trim
+            io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LTrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RTrimFunctionFactory,
+
+            //starts_with
+            io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,
+            // split_part
+            io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,
+
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
+            // this factory seems to corrupt memory, symptoms of which are visible on M1 CPU
+            //io.questdb.griffin.engine.functions.analytic.RankFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,

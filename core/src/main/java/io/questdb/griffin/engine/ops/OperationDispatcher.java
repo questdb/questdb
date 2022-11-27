@@ -26,22 +26,21 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.Nullable;
 
-public class OperationDispatcher<T extends AbstractOperation> {
+public abstract class OperationDispatcher<T extends AbstractOperation> {
 
-    private final CairoEngine engine;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
+    private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
-    private final CharSequence lockReason;
+    private final String lockReason;
 
-    public OperationDispatcher(CairoEngine engine, CharSequence lockReason) {
+    public OperationDispatcher(CairoEngine engine, String lockReason) {
         this.engine = engine;
         futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
         this.lockReason = lockReason;
@@ -50,30 +49,43 @@ public class OperationDispatcher<T extends AbstractOperation> {
     public OperationFuture execute(
             T operation,
             SqlExecutionContext sqlExecutionContext,
-            @Nullable SCSequence eventSubSeq
-    ) throws SqlException {
+            @Nullable SCSequence eventSubSeq,
+            boolean closeOnDone
+    ) {
         // storing execution context for UPDATE, DROP INDEX execution
         // writer thread will call `apply()` when thread is ready to do so
         // `apply()` will use context stored in the operation
         operation.withContext(sqlExecutionContext);
+        boolean isDone = false;
         try (
-                TableWriter writer = engine.getWriter(
+                TableWriterAPI writer = engine.getTableWriterAPI(
                         sqlExecutionContext.getCairoSecurityContext(),
                         operation.getTableName(),
                         lockReason
                 )
         ) {
-            return doneFuture.of(operation.apply(writer, true));
+            long result = apply(operation, writer);
+            isDone = true;
+            return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
                 throw busyException;
             }
-            return futurePool.pop().of(
+            OperationFutureImpl future = futurePool.pop();
+            future.of(
                     operation,
                     sqlExecutionContext,
                     eventSubSeq,
-                    operation.getTableNamePosition()
+                    operation.getTableNamePosition(),
+                    closeOnDone
             );
+            return future;
+        } finally {
+            if (closeOnDone && isDone) {
+                operation.close();
+            }
         }
     }
+
+    protected abstract long apply(T operation, TableWriterAPI writerFronted);
 }

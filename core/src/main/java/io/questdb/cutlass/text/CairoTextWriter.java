@@ -42,31 +42,31 @@ public class CairoTextWriter implements Closeable, Mutable {
     public static final int NO_INDEX = -1;
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
     private static final String WRITER_LOCK_REASON = "textWriter";
-    private final CairoConfiguration configuration;
-    private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
+    private final CairoConfiguration configuration;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
-    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final CairoEngine engine;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
-    private CharSequence tableName;
-    private TableWriter writer;
+    private final IntList remapIndex = new IntList();
+    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private long _size;
-    private boolean overwrite;
-    private boolean durable;
     private int atomicity;
-    private int partitionBy;
-    private long commitLag = -1;
-    private int maxUncommittedRows = -1;
-    private int timestampIndex = NO_INDEX;
-    private CharSequence importedTimestampColumnName;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
-    private ObjList<TypeAdapter> types;
-    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
+    private boolean durable;
+    private CharSequence importedTimestampColumnName;
+    private int maxUncommittedRows = -1;
+    private long o3MaxLag = -1;
+    private boolean overwrite;
+    private int partitionBy;
+    private CharSequence tableName;
     private TimestampAdapter timestampAdapter;
-    private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
+    private int timestampIndex = NO_INDEX;
+    private ObjList<TypeAdapter> types;
     private int warnings;
-    private final IntList remapIndex = new IntList();
+    private TableWriter writer;
+    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
+    private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
 
     public CairoTextWriter(CairoEngine engine) {
         this.engine = engine;
@@ -114,14 +114,6 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public void setCommitLag(long commitLag) {
-        this.commitLag = commitLag;
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public CharSequence getTableName() {
@@ -187,15 +179,23 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
             }
             w.append();
-            checkMaxAndCommitLag();
+            checkUncommittedRowCount();
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
         }
     }
 
-    private void checkMaxAndCommitLag() {
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
+    }
+
+    private void checkUncommittedRowCount() {
         if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-            writer.commitWithLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
+            writer.ic(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 
@@ -362,9 +362,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         if (canUpdateMetadata) {
             if (PartitionBy.isPartitioned(partitionBy)) {
-                if (commitLag > -1) {
-                    writer.setMetaCommitLag(commitLag);
-                    LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
+                if (o3MaxLag > -1) {
+                    writer.setMetaO3MaxLag(o3MaxLag);
+                    LOG.info().$("updating metadata attribute o3MaxLag to ").$(o3MaxLag).$(", table=").utf8(tableName).$();
                 }
                 if (maxUncommittedRows > -1) {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
@@ -372,7 +372,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
             }
         } else {
-            LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
+            LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
@@ -411,13 +411,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return types.getQuick(columnIndex).isIndexed();
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
+        public long getO3MaxLag() {
+            return configuration.getO3MaxLag();
         }
 
         @Override
@@ -446,23 +446,18 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
+        public boolean isIndexed(int columnIndex) {
+            return types.getQuick(columnIndex).isIndexed();
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return configuration.getMaxUncommittedRows();
+        public boolean isSequential(int columnIndex) {
+            return false;
         }
 
         @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
-        }
-
-        @Override
-        public boolean isWallEnabled() {
-            return configuration.getWallEnabledDefault();
+        public boolean isWalEnabled() {
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

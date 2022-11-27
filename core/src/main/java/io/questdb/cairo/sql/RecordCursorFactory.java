@@ -29,7 +29,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
@@ -38,28 +38,39 @@ import java.io.Closeable;
 /**
  * Factory for creating a SQL execution plan.
  * Queries may be executed more than once without changing execution plan.
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
- *
+ * <p>
  * Example:
- *
+ * <p>
  * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
  * try (SqlCompiler compiler = new SqlCompiler(engine)) {
- *     try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
- *         try (RecordCursor cursor = factory.getCursor(ctx)) {
- *             final Record record = cursor.getRecord();
- *             while (cursor.hasNext()) {
- *                 // access 'record' instance for field values
- *             }
- *         }
- *     }
+ * try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+ * try (RecordCursor cursor = factory.getCursor(ctx)) {
+ * final Record record = cursor.getRecord();
+ * while (cursor.hasNext()) {
+ * // access 'record' instance for field values
  * }
- *
+ * }
+ * }
+ * }
  */
 public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     @Override
     default void close() {
+    }
+
+    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+        return null;
+    }
+
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+        return null;
+    }
+
+    default boolean followedLimitAdvice() {
+        return false;
     }
 
     /**
@@ -69,14 +80,20 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean followedLimitAdvice() {
+    // Factories, such as union all do not conform to the assumption
+    // that key read from symbol column map to symbol values unambiguously.
+    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+    // key 1 at row 100 it might map to 'BBB'.
+    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // via `testSymbolAPI()` call.
+    default boolean fragmentedSymbolTables() {
         return false;
     }
 
     /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.
-     *
+     * <p>
      * The new cursor will have refreshed its view of the data. If new data was added to table(s)
      * the cursor will pick it up.
      *
@@ -99,8 +116,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
-        return null;
+    default boolean hasDescendingOrder() {
+        return false;
+    }
+
+    /* Returns true if this factory handles limit M , N clause already and false otherwise .
+     *  If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).   */
+    default boolean implementsLimit() {
+        return false;
     }
 
     boolean recordCursorSupportsRandomAccess();
@@ -113,40 +136,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean usesCompiledFilter() {
-        return false;
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.type(getClass().getName());
     }
 
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
-    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
-        return null;
-    }
-
-    /* Returns true if this factory handles limit M , N clause already and false otherwise .
-     *  If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).   */
-    default boolean implementsLimit() {
+    default boolean usesCompiledFilter() {
         return false;
-    }
-
-    default boolean hasDescendingOrder() {
-        return false;
-    }
-
-    // Factories, such as union all do not conform to the assumption
-    // that key read from symbol column map to symbol values unambiguously.
-    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
-    // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multi-threaded execution and cannot be tested
-    // via `testSymbolAPI()` call.
-    default boolean fragmentedSymbolTables() {
-        return false;
-    }
-
-    @Override
-    default void toPlan(PlanSink sink) {
-        sink.type(getClass().getName());
     }
 }

@@ -47,39 +47,39 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
-    private static final int PARTITIONS_SLOT_SIZE = 4;
-    private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
-    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
+    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
+    private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
+    private static final int PARTITIONS_SLOT_SIZE = 4;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
-    private final FilesFacade ff;
-    private final Path path;
-    private final int partitionBy;
-    private final int rootLen;
-    private final TableReaderMetadata metadata;
-    private final DateFormat partitionDirFormatMethod;
-    private final LongList openPartitionInfo;
-    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
-    private final String tableName;
-    private final MessageBus messageBus;
-    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final CairoConfiguration configuration;
-    private final TxReader txFile;
-    private final MemoryMR todoMem = Vm.getMRInstance();
-    private final TxnScoreboard txnScoreboard;
+    private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
-    private int partitionCount;
-    private LongList columnTops;
-    private ObjList<MemoryMR> columns;
+    private final CairoConfiguration configuration;
+    private final FilesFacade ff;
+    private final MessageBus messageBus;
+    private final TableReaderMetadata metadata;
+    private final LongList openPartitionInfo;
+    private final int partitionBy;
+    private final DateFormat partitionDirFormatMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final Path path;
+    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
+    private final int rootLen;
+    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
+    private final String tableName;
+    private final MemoryMR todoMem = Vm.getMRInstance();
+    private final TxReader txFile;
+    private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountShl;
+    private LongList columnTops;
+    private ObjList<MemoryMR> columns;
+    private int partitionCount;
     private long rowCount;
-    private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
+    private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
-    private final MillisecondClock clock;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null);
@@ -103,7 +103,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             LOG.debug()
-                    .$("open [id=").$(metadata.getId())
+                    .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(this.tableName)
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
@@ -231,10 +231,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
-    public long getCommitLag() {
-        return metadata.getCommitLag();
-    }
-
     public TableReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
@@ -258,6 +254,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
+    }
+
+    public long getO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     public int getPartitionCount() {
@@ -291,11 +291,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return getSymbolMapReader(columnIndex);
     }
 
-    @Override
-    public StaticSymbolTable newSymbolTable(int columnIndex) {
-        return getSymbolMapReader(columnIndex).newSymbolTableView();
-    }
-
     public String getTableName() {
         return tableName;
     }
@@ -306,6 +301,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TxReader getTxFile() {
         return txFile;
+    }
+
+    public long getTxn() {
+        return txn;
     }
 
     public long getTxnStructureVersion() {
@@ -330,6 +329,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public boolean isOpen() {
         return tempMem8b != 0;
+    }
+
+    @Override
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
+        return getSymbolMapReader(columnIndex).newSymbolTableView();
     }
 
     public long openPartition(int partitionIndex) {
@@ -501,10 +505,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase, Path path) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
-        long exisingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
-        if (exisingPartitionNameTxn != newNameTxn || newSize < 0) {
+        if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
             LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             for (int i = 0; i < this.columnCount; i++) {
@@ -514,7 +518,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             return -1;
         }
         pathGenPartitioned(partitionIndex);
-        TableUtils.txnPartitionConditionally(path, exisingPartitionNameTxn);
+        TableUtils.txnPartitionConditionally(path, existingPartitionNameTxn);
         return newSize;
     }
 
@@ -687,26 +691,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    int getColumnCount() {
-        return columnCount;
-    }
-
-    int getPartitionIndex(int columnBase) {
-        return columnBase >>> columnCountShl;
-    }
-
-    long getPartitionRowCount(int partitionIndex) {
-        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-    }
-
-    public long getTxn() {
-        return txn;
-    }
-
-    TxnScoreboard getTxnScoreboard() {
-        return txnScoreboard;
-    }
-
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
@@ -728,10 +712,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", path=").$(path).$(", timestamp=").$ts(timestamp).I$();
     }
 
-    boolean isColumnCached(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex).isCached();
-    }
-
     @NotNull
     // this method is not thread safe
     private SymbolMapReaderImpl newSymbolMapReader(int symbolColumnIndex, int columnIndex) {
@@ -748,28 +728,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private TableReaderMetadata openMetaFile() {
-        long deadline = clock.getTicks() + this.configuration.getSpinLockTimeout();
-        TableReaderMetadata metadata = new TableReaderMetadata(ff);
-        path.concat(TableUtils.META_FILE_NAME).$();
+        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName);
         try {
-            boolean existenceChecked = false;
-            while (true) {
-                try {
-                    return metadata.deferredInit(path, ColumnType.VERSION);
-                } catch (CairoException ex) {
-                    if (!existenceChecked) {
-                        path.trimTo(rootLen).put(Files.SEPARATOR).$();
-                        if (!ff.exists(path)) {
-                            throw CairoException.nonCritical().put("table does not exist [table=").put(tableName).put(']');
-                        }
-                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    }
-                    existenceChecked = true;
-                    TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
+            metadata.load();
+            return metadata;
+        } catch (Throwable th) {
+            metadata.close();
+            throw th;
         }
     }
 
@@ -1093,12 +1058,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.critical(0).put("Metadata read timeout");
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableName).I$();
+                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableName).put(']');
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
+                TableUtils.handleMetadataLoadException(tableName, deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
 
@@ -1234,14 +1199,32 @@ public class TableReader implements Closeable, SymbolTableSource {
                             closePartitionColumnFile(base, i);
                         }
 
-                        if (copyFrom == i) {
-                            // It appears that column hasn't changed its position. There are three possibilities here:
-                            // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                            //    on Windows before column can be deleted. In this case we must check for marker
-                            //    instance and the column from disk
-                            // 2. Column hasn't been altered, and we can skip to next column.
-                            MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if (col instanceof NullMemoryMR) {
+                        // We should only remove columns from existing metadata if column count has reduced.
+                        // And we should not attempt to reload columns, which have no matches in the metadata
+                        if (i < columnCount) {
+                            if (copyFrom == i) {
+                                // It appears that column hasn't changed its position. There are three possibilities here:
+                                // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                                //    on Windows before column can be deleted. In this case we must check for marker
+                                //    instance and the column from disk
+                                // 2. Column hasn't been altered, and we can skip to next column.
+                                MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                                if (col instanceof NullMemoryMR) {
+                                    reloadColumnAt(
+                                            partitionIndex,
+                                            path,
+                                            columns,
+                                            columnTops,
+                                            bitmapIndexes,
+                                            base,
+                                            i,
+                                            partitionRowCount
+                                    );
+                                }
+                            } else if (copyFrom > -1) {
+                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
+                            } else if (copyFrom != Integer.MIN_VALUE) {
+                                // new instance
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,
@@ -1253,20 +1236,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                                         partitionRowCount
                                 );
                             }
-                        } else if (copyFrom > -1) {
-                            copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
-                        } else if (copyFrom != Integer.MIN_VALUE) {
-                            // new instance
-                            reloadColumnAt(
-                                    partitionIndex,
-                                    path,
-                                    columns,
-                                    columnTops,
-                                    bitmapIndexes,
-                                    base,
-                                    i,
-                                    partitionRowCount
-                            );
                         }
                     }
                 }
@@ -1305,5 +1274,25 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
             }
         }
+    }
+
+    int getColumnCount() {
+        return columnCount;
+    }
+
+    int getPartitionIndex(int columnBase) {
+        return columnBase >>> columnCountShl;
+    }
+
+    long getPartitionRowCount(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+    }
+
+    TxnScoreboard getTxnScoreboard() {
+        return txnScoreboard;
+    }
+
+    boolean isColumnCached(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 }

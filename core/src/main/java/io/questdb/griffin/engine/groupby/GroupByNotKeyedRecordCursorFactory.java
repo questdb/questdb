@@ -32,8 +32,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -45,6 +48,8 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     private final VirtualRecord virtualRecordA;
 
     public GroupByNotKeyedRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
+
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
@@ -57,13 +62,8 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         this.groupByFunctions = groupByFunctions;
         this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
         this.virtualRecordA.of(simpleMapValue);
-        this.cursor = new GroupByNotKeyedRecordCursor();
-    }
-
-    @Override
-    protected void _close() {
-        Misc.freeObjList(groupByFunctions);
-        Misc.free(base);
+        final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+        this.cursor = new GroupByNotKeyedRecordCursor(updater);
     }
 
     @Override
@@ -83,11 +83,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("GroupByNotKeyed");
         sink.meta("vectorized").val(false);
@@ -95,12 +90,28 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         sink.child(base);
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(groupByFunctions);
+        Misc.free(base);
+    }
+
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
+        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
         private int recordsRemaining = 1;
+
+        public GroupByNotKeyedRecordCursor(GroupByFunctionsUpdater groupByFunctionsUpdater) {
+            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+        }
 
         @Override
         public void close() {
@@ -109,8 +120,18 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public Record getRecord() {
+            return virtualRecordA;
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return (SymbolTable) groupByFunctions.getQuick(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return recordsRemaining-- > 0;
         }
 
         @Override
@@ -119,19 +140,14 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
         public void toTop() {
             recordsRemaining = 1;
             GroupByUtils.toTop(groupByFunctions);
-        }
-
-        @Override
-        public Record getRecord() {
-            return virtualRecordA;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return recordsRemaining-- > 0;
         }
 
         RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -139,27 +155,21 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
             final Record baseRecord = baseCursor.getRecord();
-            final int n = groupByFunctions.size();
             Function.init(groupByFunctions, baseCursor, executionContext);
 
             if (baseCursor.hasNext()) {
-                GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
+                groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord);
 
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
                 }
             } else {
-                GroupByUtils.updateEmpty(groupByFunctions, n, simpleMapValue);
+                groupByFunctionsUpdater.updateEmpty(simpleMapValue);
             }
 
             toTop();
             return this;
-        }
-
-        @Override
-        public long size() {
-            return 1;
         }
     }
 }

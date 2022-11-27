@@ -48,29 +48,29 @@ import static io.questdb.cutlass.text.TextLoadWarning.*;
 
 
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
-    static final int RESPONSE_PREFIX = 1;
     static final int MESSAGE_UNKNOWN = 3;
+    static final int RESPONSE_PREFIX = 1;
+    private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
+    private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);
-    private static final int RESPONSE_COLUMN = 2;
-    private static final int RESPONSE_SUFFIX = 3;
-    private static final int RESPONSE_ERROR = 4;
-    private static final int RESPONSE_DONE = 5;
-    private static final int RESPONSE_COMPLETE = 6;
-    private static final int MESSAGE_SCHEMA = 1;
+    // Local value has to be static because each thread will have its own instance of
+    // processor. For different threads to lookup the same value from local value map the key,
+    // which is LV, has to be the same between processor instances
+    private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
     private static final int MESSAGE_DATA = 2;
+    private static final int MESSAGE_SCHEMA = 1;
+    private static final String OVERRIDDEN_FROM_TABLE = "From Table";
+    private static final int RESPONSE_COLUMN = 2;
+    private static final int RESPONSE_COMPLETE = 6;
+    private static final int RESPONSE_DONE = 5;
+    private static final int RESPONSE_ERROR = 4;
+    private static final int RESPONSE_SUFFIX = 3;
     private static final int TO_STRING_COL1_PAD = 15;
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
     private static final int TO_STRING_COL5_PAD = 12;
-    private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
-    private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
-    // Local value has to be static because each thread will have its own instance of
-    // processor. For different threads to lookup the same value from local value map the key,
-    // which is LV, has to be the same between processor instances
-    private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
-    private static final String OVERRIDDEN_FROM_TABLE = "From Table";
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
@@ -81,6 +81,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void close() {
+    }
+
+    @Override
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        sendErrorAndThrowDisconnect(((FlyweightMessageContainer) e).getFlyweightMessage());
     }
 
     @Override
@@ -144,15 +149,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     null
             );
 
-            CharSequence commitLagChars = rh.getUrlParam("commitLag");
-            if (commitLagChars != null) {
+            CharSequence o3MaxLagChars = rh.getUrlParam("o3MaxLag");
+            if (o3MaxLagChars != null) {
                 try {
-                    long commitLag = Numbers.parseLong(commitLagChars);
-                    if (commitLag >= 0) {
-                        transientState.textLoader.setCommitLag(commitLag);
+                    long o3MaxLag = Numbers.parseLong(o3MaxLagChars);
+                    if (o3MaxLag >= 0) {
+                        transientState.textLoader.setO3MaxLag(o3MaxLag);
                     }
                 } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid commitLag, must be a long");
+                    sendErrorAndThrowDisconnect("invalid o3MaxLag value, must be a long");
                 }
             }
 
@@ -203,16 +208,25 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
-    @Override
-    public void onRequestComplete(HttpConnectionContext context) {
-        transientState.clear();
-    }
-
     // This processor implements HttpMultipartContentListener, methods of which
     // have neither context nor dispatcher. During "chunk" processing we may need
     // to send something back to client, or disconnect them. To do that we need
     // these transient references. resumeRecv() will set them and they will remain
     // valid during multipart events.
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) {
+        transientState.clear();
+    }
+
+    @Override
+    public void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        this.transientContext = context;
+        this.transientState = LV.get(context);
+        onChunk(transientState.lo, transientState.hi);
+    }
 
     @Override
     public void resumeRecv(HttpConnectionContext context) {
@@ -232,18 +246,46 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }
 
-    @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        this.transientContext = context;
-        this.transientState = LV.get(context);
-        onChunk(transientState.lo, transientState.hi);
+    private static int getAtomicity(CharSequence name) {
+        if (name == null) {
+            return Atomicity.SKIP_COL;
+        }
+
+        int atomicity = atomicityParamMap.get(name);
+        return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
     }
 
-    @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        sendErrorAndThrowDisconnect(((FlyweightMessageContainer) e).getFlyweightMessage());
+    private static void pad(CharSink b, int w, long value) {
+        int len = (int) Math.log10(value);
+        if (len < 0) {
+            len = 0;
+        }
+        replicate(b, ' ', w - len - 1);
+        b.put(value);
+        b.put("  |");
+    }
+
+    private static CharSink pad(CharSink b, int w, CharSequence value) {
+        int pad = value == null ? w : w - value.length();
+        replicate(b, ' ', pad);
+
+        if (value != null) {
+            if (pad < 0) {
+                b.put("...").put(value.subSequence(-pad + 3, value.length()));
+            } else {
+                b.put(value);
+            }
+        }
+
+        b.put("  |");
+
+        return b;
+    }
+
+    private static void replicate(CharSink b, char c, int times) {
+        for (int i = 0; i < times; i++) {
+            b.put(c);
+        }
     }
 
     private static void resumeJson(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -310,45 +352,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             default:
                 break;
         }
-    }
-
-    private static CharSink pad(CharSink b, int w, CharSequence value) {
-        int pad = value == null ? w : w - value.length();
-        replicate(b, ' ', pad);
-
-        if (value != null) {
-            if (pad < 0) {
-                b.put("...").put(value.subSequence(-pad + 3, value.length()));
-            } else {
-                b.put(value);
-            }
-        }
-
-        b.put("  |");
-
-        return b;
-    }
-
-    private static void pad(CharSink b, int w, long value) {
-        int len = (int) Math.log10(value);
-        if (len < 0) {
-            len = 0;
-        }
-        replicate(b, ' ', w - len - 1);
-        b.put(value);
-        b.put("  |");
-    }
-
-    private static void replicate(CharSink b, char c, int times) {
-        for (int i = 0; i < times; i++) {
-            b.put(c);
-        }
-    }
-
-    private static void sep(CharSink b) {
-        b.put('+');
-        replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);
-        b.put("+\r\n");
     }
 
     private static void resumeText(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -449,13 +452,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
     }
 
-    private static int getAtomicity(CharSequence name) {
-        if (name == null) {
-            return Atomicity.SKIP_COL;
-        }
-
-        int atomicity = atomicityParamMap.get(name);
-        return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
+    private static void sep(CharSink b) {
+        b.put('+');
+        replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);
+        b.put("+\r\n");
     }
 
     private void doResumeSend(
@@ -512,11 +512,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.errorMessage = message;
         if (state.json) {
             socket.status(200, CONTENT_TYPE_JSON);
-            socket.sendHeader();
         } else {
             socket.status(200, CONTENT_TYPE_TEXT);
-            socket.sendHeader();
         }
+        socket.sendHeader();
         socket.sendChunk(false);
         resumeError(state, socket);
     }

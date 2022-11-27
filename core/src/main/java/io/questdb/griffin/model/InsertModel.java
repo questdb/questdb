@@ -30,16 +30,16 @@ import io.questdb.std.str.CharSink;
 
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
-    private final LowerCaseCharSequenceHashSet columnNameSet = new LowerCaseCharSequenceHashSet();
     private final ObjList<CharSequence> columnNameList = new ObjList<>();
-    private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
-    private final IntList endOfRowTupleValuesPositions = new IntList();
+    private final LowerCaseCharSequenceHashSet columnNameSet = new LowerCaseCharSequenceHashSet();
     private final IntList columnPositions = new IntList();
-    private ExpressionNode tableName;
+    private final IntList endOfRowTupleValuesPositions = new IntList();
+    private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
+    private long batchSize = -1;
+    private long o3MaxLag = 0;
     private QueryModel queryModel;
     private int selectKeywordPosition;
-    private long batchSize = -1;
-    private long commitLag = 0;
+    private ExpressionNode tableName;
 
     private InsertModel() {
     }
@@ -54,6 +54,10 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             return;
         }
         throw SqlException.duplicateColumn(columnPosition, columnName);
+    }
+
+    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
+        endOfRowTupleValuesPositions.add(endOfValuesPosition);
     }
 
     public void addRowTupleValues(ObjList<ExpressionNode> row) {
@@ -74,15 +78,40 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.selectKeywordPosition = 0;
         this.endOfRowTupleValuesPositions.clear();
         this.batchSize = -1;
-        this.commitLag = 0;
+        this.o3MaxLag = 0;
+    }
+
+    public long getBatchSize() {
+        return batchSize;
+    }
+
+    public ObjList<CharSequence> getColumnNameList() {
+        return columnNameList;
     }
 
     public int getColumnPosition(int columnIndex) {
         return columnPositions.getQuick(columnIndex);
     }
 
-    public ObjList<CharSequence> getColumnNameList() {
-        return columnNameList;
+    public int getEndOfRowTupleValuesPosition(int index) {
+        return endOfRowTupleValuesPositions.get(index);
+    }
+
+    @Override
+    public int getModelType() {
+        return INSERT;
+    }
+
+    public long getO3MaxLag() {
+        return o3MaxLag;
+    }
+
+    public QueryModel getQueryModel() {
+        return queryModel;
+    }
+
+    public int getRowTupleCount() {
+        return rowTupleValues.size();
     }
 
     public ObjList<ExpressionNode> getRowTupleValues(int index) {
@@ -93,55 +122,28 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return selectKeywordPosition;
     }
 
-    public void setSelectKeywordPosition(int selectKeywordPosition) {
-        this.selectKeywordPosition = selectKeywordPosition;
-    }
-
-    @Override
-    public int getModelType() {
-        return INSERT;
-    }
-
-    public QueryModel getQueryModel() {
-        return queryModel;
-    }
-
-    public void setQueryModel(QueryModel queryModel) {
-        this.queryModel = queryModel;
-    }
-
-    public long getBatchSize() {
-        return batchSize;
+    public ExpressionNode getTableName() {
+        return tableName;
     }
 
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
     }
 
-    public long getCommitLag() {
-        return commitLag;
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
     }
 
-    public void setCommitLag(long lag) {
-        this.commitLag = lag;
+    public void setQueryModel(QueryModel queryModel) {
+        this.queryModel = queryModel;
     }
 
-    public int getRowTupleCount() { return rowTupleValues.size(); }
-
-    public ExpressionNode getTableName() {
-        return tableName;
+    public void setSelectKeywordPosition(int selectKeywordPosition) {
+        this.selectKeywordPosition = selectKeywordPosition;
     }
 
     public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
-    }
-
-    public int getEndOfRowTupleValuesPosition(int index) {
-        return endOfRowTupleValuesPositions.get(index);
-    }
-
-    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
-        endOfRowTupleValuesPositions.add(endOfValuesPosition);
     }
 
     @Override
@@ -151,8 +153,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             sink.put(" batch ").put(batchSize);
         }
 
-        if (commitLag != 0) {
-            sink.put(" lag ").put(commitLag);
+        if (o3MaxLag != 0) {
+            sink.put(" lag ").put(o3MaxLag);
         }
 
         sink.put(" into ").put(tableName.token).put(' ');

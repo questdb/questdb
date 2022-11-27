@@ -64,7 +64,7 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double value = function.getDouble(rec);
-            return Math.log(value);
+            return Math.log10(value);
         }
     }
 }

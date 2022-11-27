@@ -47,59 +47,11 @@ import org.junit.Assert;
 import java.util.Arrays;
 
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
-    private static int toTimestampRefs = 0;
+    private static int toByteRefs = 0;
     private static int toDateRefs = 0;
     private static int toShortRefs = 0;
-    private static int toByteRefs = 0;
+    private static int toTimestampRefs = 0;
     private FunctionFactory factory;
-
-    protected void assertQuery(CharSequence expected, CharSequence sql) throws Exception {
-        assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                assertCursor(expected, cursor, factory.getMetadata(), true);
-            }
-        });
-    }
-
-    protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
-        try {
-            RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-            factory.getCursor(sqlExecutionContext);
-            Assert.fail();
-        } catch (Exception e) {
-            Assert.assertEquals(expectedMsg, e.getMessage());
-        }
-    }
-
-    protected void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
-        assertFailure(false, expectedPosition, expectedMsg, args);
-    }
-
-    protected void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
-        try {
-            callCustomised(forceConstant, true, args);
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(expectedPosition, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMsg);
-        }
-    }
-
-    protected void addExtraFunctions() {
-    }
-
-    protected Invocation call(Object... args) throws SqlException {
-        return callCustomised(false, true, args);
-    }
-
-    protected Invocation callBySignature(String signature, Object... args) throws SqlException {
-        return callCustomised(signature, false, true, args);
-    }
-
-    protected Invocation callCustomised(boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
-        return callCustomised(null, forceConstant, argTypeFromSig, args);
-    }
 
     private Invocation callCustomised(String signature, boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
         setUp();
@@ -300,8 +252,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         return factory;
     }
 
-    protected abstract FunctionFactory getFunctionFactory();
-
     private boolean isNegative(int argType, Object arg) {
         switch (ColumnType.tagOf(argType)) {
             case ColumnType.INT:
@@ -355,7 +305,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             argType = getArgType(arg);
         }
 
-        metadata.add(new TableColumnMetadata(columnName, 0, argType, false, 0, false, null));
+        metadata.add(new TableColumnMetadata(columnName, argType, false, 0, false, null));
 
         if (constantArg || forceConstant) {
             printConstant(argType, expression1, arg);
@@ -377,7 +327,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 if (value == null) {
                     sink.put("null");
                 } else {
-                    byte[] bytes = (byte[])value;
+                    byte[] bytes = (byte[]) value;
                     sink.put('\'');
                     sink.put(Arrays.toString(bytes));
                     sink.put('\'');
@@ -445,6 +395,56 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
     }
 
+    protected void addExtraFunctions() {
+    }
+
+    protected void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
+        assertFailure(false, expectedPosition, expectedMsg, args);
+    }
+
+    protected void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
+        try {
+            callCustomised(forceConstant, true, args);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMsg);
+        }
+    }
+
+    protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
+        try {
+            RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+            factory.getCursor(sqlExecutionContext);
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertEquals(expectedMsg, e.getMessage());
+        }
+    }
+
+    protected void assertQuery(CharSequence expected, CharSequence sql) throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertCursor(expected, cursor, factory.getMetadata(), true);
+            }
+        });
+    }
+
+    protected Invocation call(Object... args) throws SqlException {
+        return callCustomised(false, true, args);
+    }
+
+    protected Invocation callBySignature(String signature, Object... args) throws SqlException {
+        return callCustomised(signature, false, true, args);
+    }
+
+    protected Invocation callCustomised(boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
+        return callCustomised(null, forceConstant, argTypeFromSig, args);
+    }
+
+    protected abstract FunctionFactory getFunctionFactory();
+
     public static class Invocation {
         private final Function function1;
         private final Function function2;
@@ -494,6 +494,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
+        public void andAssertLong256(Long256 expected) {
+            Assert.assertEquals(expected, function1.getLong256A(record));
+            Assert.assertEquals(expected, function2.getLong256A(record));
+            closeFunctions();
+        }
+
         public void andAssertOnlyColumnValues(boolean expected) {
             Assert.assertEquals(expected, function2.getBool(record));
         }
@@ -501,12 +507,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssertTimestamp(long expected) {
             Assert.assertEquals(expected, function1.getTimestamp(record));
             Assert.assertEquals(expected, function2.getTimestamp(record));
-            closeFunctions();
-        }
-
-        public void andAssertLong256(Long256 expected) {
-            Assert.assertEquals(expected, function1.getLong256A(record));
-            Assert.assertEquals(expected, function2.getLong256A(record));
             closeFunctions();
         }
 
@@ -572,6 +572,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
+        public char getChar(int col) {
+            return (char) args[col];
+        }
+
+        @Override
         public double getDouble(int col) {
             Object value = args[col];
             if (value instanceof Integer) {
@@ -601,13 +606,17 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public short getShort(int col) {
-            return (short) (int) args[col];
+        public Long256 getLong256A(int col) {
+            Object o = args[col];
+            if (o == null) {
+                return null;
+            }
+            return (Long256Impl) o;
         }
 
         @Override
-        public char getChar(int col) {
-            return (char) args[col];
+        public short getShort(int col) {
+            return (short) (int) args[col];
         }
 
         @Override
@@ -634,15 +643,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public CharSequence getSymB(int col) {
             return (CharSequence) args[col];
-        }
-
-        @Override
-        public Long256 getLong256A(int col) {
-            Object o = args[col];
-            if (o == null) {
-                return null;
-            }
-            return (Long256Impl)o;
         }
     }
 }

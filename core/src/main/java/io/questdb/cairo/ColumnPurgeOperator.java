@@ -32,26 +32,25 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class ColumnPurgeOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
+    private final LongList completedRowIds = new LongList();
+    private final FilesFacade ff;
+    private final MicrosecondClock microClock;
     private final Path path = new Path();
     private final int pathRootLen;
-    private final FilesFacade ff;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
-    private final LongList completedRowIds = new LongList();
-    private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
-    private TxnScoreboard txnScoreboard;
-    private TxReader txReader;
     private long longBytes;
     private int pathTableLen;
-    private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
     private long purgeLogPartitionFd = -1L;
+    private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
+    private TxReader txReader;
+    private TxnScoreboard txnScoreboard;
 
     public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
         this.ff = configuration.getFilesFacade();
@@ -80,7 +79,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (longBytes != 0L) {
             Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
             longBytes = 0;

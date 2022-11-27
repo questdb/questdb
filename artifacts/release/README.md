@@ -39,7 +39,7 @@ Build for multiple platforms at once and release version tag, `6.0.2` in this
 case. This will take some time.
 
 ```
-docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:6.0.2 .
+docker buildx build --push --platform linux/arm64,linux/amd64 --no-cache --tag questdb/questdb:6.0.2 .
 ```
 
 Then build `latest`. This should be instant.
@@ -70,6 +70,12 @@ https://questdb.slab.com/posts/how-to-release-a-new-aws-ami-w7rkjimy
 You need to SSH to the demo box. Either from your desktop, or AWS console via web browser:
 
 https://questdb.slab.com/posts/update-demo-airbus-and-telemetry-box-kyyl1mnw
+
+## Release helm chart
+
+This can be done from a unit env, Linux or OSX:
+
+https://questdb.slab.com/posts/publish-helm-charts-zq0s8kj7
 
 ## Update pom.xml to snapshot
 

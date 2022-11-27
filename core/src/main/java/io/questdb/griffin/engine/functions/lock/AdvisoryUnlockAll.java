@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.lock;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
@@ -44,7 +43,7 @@ public class AdvisoryUnlockAll implements FunctionFactory {
     }
 
     @Override
-    public boolean isGroupBy() {
+    public boolean isBoolean() {
         return false;
     }
 
@@ -54,7 +53,7 @@ public class AdvisoryUnlockAll implements FunctionFactory {
     }
 
     @Override
-    public boolean isBoolean() {
+    public boolean isGroupBy() {
         return false;
     }
 
@@ -64,7 +63,7 @@ public class AdvisoryUnlockAll implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return StrConstant.NULL;
     }
 }

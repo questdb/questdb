@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -34,9 +35,9 @@ import org.jetbrains.annotations.Nullable;
 class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final int columnIndex;
+    private final IntHashSet deferredSymbolKeys;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
-    private final IntHashSet deferredSymbolKeys;
 
     public LatestByValuesRecordCursor(
             int columnIndex,
@@ -51,28 +52,6 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
     }
 
-    @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
-        prepare();
-        DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
-
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
-                recordA.setRecordIndex(row);
-                int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
-                int index = map.keyIndex(key);
-                if (index < 0 && map.valueAt(index) == 0) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
-                    map.putAt(index, key, 1);
-                }
-            }
-        }
-    }
-
     private void prepare() {
         if (deferredSymbolKeys != null) {
             // We need to clean up the map when there are deferred keys since
@@ -84,6 +63,30 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
         }
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             map.put(symbolKeys.get(i), 0);
+        }
+    }
+
+    @Override
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        prepare();
+        DataFrame frame;
+        while ((frame = this.dataFrameCursor.next()) != null) {
+            final int partitionIndex = frame.getPartitionIndex();
+            final long rowLo = frame.getRowLo();
+            final long rowHi = frame.getRowHi() - 1;
+
+            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
+            for (long row = rowHi; row >= rowLo; row--) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                recordA.setRecordIndex(row);
+                int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
+                int index = map.keyIndex(key);
+                if (index < 0 && map.valueAt(index) == 0) {
+                    rows.add(Rows.toRowID(partitionIndex, row));
+                    map.putAt(index, key, 1);
+                }
+            }
         }
     }
 }

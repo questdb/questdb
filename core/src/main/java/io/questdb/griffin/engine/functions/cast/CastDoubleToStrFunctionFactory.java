@@ -59,9 +59,9 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
 
     public static class CastDoubleToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
+        private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private final int scale;
 
         public CastDoubleToStrFunction(Function arg, int scale) {
             this.arg = arg;
@@ -85,6 +85,15 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final double value = arg.getDouble(rec);
+            if (Double.isNaN(value)) {
+                return;
+            }
+            sink.put(value, scale);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
@@ -93,15 +102,6 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value, scale);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
-            }
-            sink.put(value, scale);
         }
     }
 }

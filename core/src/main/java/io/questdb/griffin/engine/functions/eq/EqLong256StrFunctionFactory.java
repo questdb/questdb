@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -53,7 +52,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(1);
         if (ColumnType.isNull(arg.getType())) {
             return new Func(arg);
@@ -83,17 +82,17 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             final Long256 value = arg.getLong256A(rec);
             return negated != (value.getLong0() == long0 &&
                     value.getLong1() == long1 &&
                     value.getLong2() == long2 &&
                     value.getLong3() == long3);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
     }
 
@@ -111,7 +110,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             long3 = l3;
         }
 
-        private Func newInstance(Function arg, CharSequence hexLong256)  {
+        private Func newInstance(Function arg, CharSequence hexLong256) {
             decode(hexLong256, 2, hexLong256.length(), decoder);
             return new Func(arg, long0, long1, long2, long3);
         }

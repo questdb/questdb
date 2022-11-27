@@ -28,13 +28,15 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,8 +49,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateConcurrentTest extends AbstractGriffinTest {
-    private final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
-    private final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
+    private static final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
+    private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() {
@@ -64,13 +66,13 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
-        testConcurrency(1, 1, 50, PartitionMode.SINGLE);
+    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
-    public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
-        testConcurrency(1, 10, 40, PartitionMode.SINGLE);
+    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
@@ -79,23 +81,8 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
-        testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
-    }
-
-    @Test
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
-    }
-
-    @Test
-    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
-        testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
-    }
-
-    @Test
-    public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
-        testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
@@ -104,8 +91,49 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
-        testConcurrency(4, 10, 8, PartitionMode.NONE);
+    public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
+        testConcurrency(1, 10, 40, PartitionMode.SINGLE);
+    }
+
+    @Test
+    public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
+        testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
+    }
+
+    @Test
+    public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
+        testConcurrency(1, 1, 50, PartitionMode.NONE);
+    }
+
+    @Test
+    public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
+        testConcurrency(1, 1, 50, PartitionMode.SINGLE);
+    }
+
+    private void assertReader(TableReader rdr, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
+        final RecordMetadata metadata = rdr.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            validators.get(i).reset();
+        }
+        RecordCursor cursor = rdr.getCursor();
+        final Record record = cursor.getRecord();
+        int recordIndex = 0;
+        while (cursor.hasNext()) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
+                readerSink.clear();
+                TestUtils.printColumn(record, metadata, i, readerSink);
+                CharSequence[] expectedValueArray = expectedValues.get(i);
+                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                if (!validators.get(i).validate(expectedValue, readerSink)) {
+                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                            .put(", columnIndex=").put(i)
+                            .put(", expected=").put(expectedValue)
+                            .put(", actual=").put(readerSink);
+                }
+            }
+            recordIndex++;
+        }
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
@@ -158,9 +186,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                             CompiledQuery cc = updateCompiler.compile("UPDATE up SET x = " + i, sqlExecutionContext);
                             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
-                            try (
-                                    AbstractOperation op = cc.getOperation();
-                                    OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence.get())) {
+                            try (OperationFuture fut = cc.execute(eventSubSequence.get())) {
                                 fut.await(10 * Timestamps.SECOND_MILLIS);
                             }
                             current.incrementAndGet();
@@ -170,6 +196,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
                     }
+                    Path.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();
@@ -186,16 +213,16 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         private CharSequence value;
 
                         @Override
+                        public void reset() {
+                            value = null;
+                        }
+
+                        @Override
                         public boolean validate(CharSequence expected, CharSequence actual) {
                             if (value == null) {
                                 value = actual.toString();
                             }
                             return actual.equals(value);
-                        }
-
-                        @Override
-                        public void reset() {
-                            value = null;
                         }
                     });
 
@@ -214,6 +241,8 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);
                     }
+
+                    Path.clearThreadLocals();
                 });
                 threads.add(reader);
                 reader.start();
@@ -229,59 +258,19 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
         });
     }
 
-    private interface Validator {
-        boolean validate(CharSequence expected, CharSequence actual);
-        default void reset() {
-        }
-    }
-
-    private void assertReader(TableReader rdr, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
-        final RecordMetadata metadata = rdr.getMetadata();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            validators.get(i).reset();
-        }
-        RecordCursor cursor = rdr.getCursor();
-        final Record record = cursor.getRecord();
-        int recordIndex = 0;
-        while (cursor.hasNext()) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final StringSink readerSink = this.readerSink.get();
-                readerSink.clear();
-                TestUtils.printColumn(record, metadata, i, readerSink);
-                CharSequence[] expectedValueArray = expectedValues.get(i);
-                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                if (!validators.get(i).validate(expectedValue, readerSink)) {
-                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                            .put(", columnIndex=").put(i)
-                            .put(", expected=").put(expectedValue)
-                            .put(", actual=").put(readerSink);
-                }
-            }
-            recordIndex++;
-        }
-    }
-
     private enum PartitionMode {
         NONE, SINGLE, MULTIPLE;
 
-        static boolean isPartitioned(PartitionMode mode) {
-            return mode != NONE;
-        }
-
-        static long getTimestampSeq(PartitionMode mode) {
-            return mode == MULTIPLE ? 43200000000L : 1000000L;
-        }
-
         static CharSequence[] getExpectedTimestamps(PartitionMode mode) {
             return mode == MULTIPLE ?
-                    new CharSequence[] {
+                    new CharSequence[]{
                             "1970-01-01T00:00:00.000000Z",
                             "1970-01-01T12:00:00.000000Z",
                             "1970-01-02T00:00:00.000000Z",
                             "1970-01-02T12:00:00.000000Z",
                             "1970-01-03T00:00:00.000000Z"
                     } :
-                    new CharSequence[] {
+                    new CharSequence[]{
                             "1970-01-01T00:00:00.000000Z",
                             "1970-01-01T00:00:01.000000Z",
                             "1970-01-01T00:00:02.000000Z",
@@ -289,5 +278,20 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                             "1970-01-01T00:00:04.000000Z"
                     };
         }
+
+        static long getTimestampSeq(PartitionMode mode) {
+            return mode == MULTIPLE ? 43200000000L : 1000000L;
+        }
+
+        static boolean isPartitioned(PartitionMode mode) {
+            return mode != NONE;
+        }
+    }
+
+    private interface Validator {
+        default void reset() {
+        }
+
+        boolean validate(CharSequence expected, CharSequence actual);
     }
 }

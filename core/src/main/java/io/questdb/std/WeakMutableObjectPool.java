@@ -38,15 +38,15 @@ public class WeakMutableObjectPool<T extends Mutable> extends WeakObjectPoolBase
     }
 
     @Override
-    public boolean push(T obj) {
-        return super.push(obj);
-    }
-
-    @Override
     public void close() {
         while (cache.size() > 0) {
             Misc.freeIfCloseable(cache.pop());
         }
+    }
+
+    @Override
+    public boolean push(T obj) {
+        return super.push(obj);
     }
 
     @Override

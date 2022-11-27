@@ -38,9 +38,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public class LineUdpParserSupportTest extends LineUdpInsertTest {
+    private static final String locationColumnName = "location";
     private static final String tableName = "table";
     private static final String targetColumnName = "column";
-    private static final String locationColumnName = "location";
 
     @Test
     public void testGetValueType() {
@@ -276,7 +276,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics, 2)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {

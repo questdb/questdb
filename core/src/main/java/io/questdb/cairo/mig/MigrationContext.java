@@ -33,22 +33,14 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
 class MigrationContext {
+    private final CairoEngine engine;
+    private final MemoryMARW rwMemory;
     private final long tempMemory;
     private final int tempMemoryLen;
     private final MemoryARW tempVirtualMem;
-    private final MemoryMARW rwMemory;
-    private final CairoEngine engine;
-    private Path tablePath;
     private long metadataFd;
+    private Path tablePath;
     private Path tablePath2;
-
-    public MemoryMARW getRwMemory() {
-        return rwMemory;
-    }
-
-    public long getTempMemory() {
-        return tempMemory;
-    }
 
     public MigrationContext(
             CairoEngine engine,
@@ -87,12 +79,20 @@ class MigrationContext {
         return (int) engine.getTableIdGenerator().getNextId();
     }
 
+    public MemoryMARW getRwMemory() {
+        return rwMemory;
+    }
+
     public Path getTablePath() {
         return tablePath;
     }
 
     public Path getTablePath2() {
         return tablePath2;
+    }
+
+    public long getTempMemory() {
+        return tempMemory;
     }
 
     public long getTempMemory(int size) {
@@ -110,10 +110,9 @@ class MigrationContext {
         return tempVirtualMem;
     }
 
-    public MigrationContext of(Path path, Path pathCopy, long metadataFd) {
+    public void of(Path path, Path pathCopy, long metadataFd) {
         this.tablePath = path;
         this.tablePath2 = pathCopy;
         this.metadataFd = metadataFd;
-        return this;
     }
 }

@@ -34,12 +34,6 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     private LogRecord line;
 
     @Override
-    public CharSink put(CharSequence cs) {
-        line.$(cs);
-        return this;
-    }
-
-    @Override
     public CharSink encodeUtf8(CharSequence cs) {
         throw new UnsupportedOperationException();
     }
@@ -52,6 +46,17 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     @Override
     public char[] getDoubleDigitsBuffer() {
         throw new UnsupportedOperationException();
+    }
+
+    public LogRecordSinkAdapter of(LogRecord line) {
+        this.line = line;
+        return this;
+    }
+
+    @Override
+    public CharSink put(CharSequence cs) {
+        line.$(cs);
+        return this;
     }
 
     @Override
@@ -109,6 +114,11 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     }
 
     @Override
+    public CharSink put(char[] chars, int start, int len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public CharSink putISODate(long value) {
         line.$ts(value);
         return this;
@@ -123,16 +133,6 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     @Override
     public CharSink putQuoted(CharSequence cs) {
         line.$('\"').$(cs).I$();
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        throw new UnsupportedOperationException();
-    }
-
-    public LogRecordSinkAdapter of(LogRecord line) {
-        this.line = line;
         return this;
     }
 }

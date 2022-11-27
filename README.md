@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+  <a href="https://questdb.io/" target="blank"><img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/></a>
 </div>
 <p>&nbsp;</p>
 
@@ -15,23 +15,24 @@
   </a>
 </p>
 
-English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md)
+English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md) | [Português](./i18n/README.pt.md) | [日本](./i18n/README.ja-ja.md)
 
 # QuestDB
 
-QuestDB is a high-performance, open-source SQL database for applications in
-financial services, IoT, machine learning, DevOps and observability. It includes
-endpoints for PostgreSQL wire protocol, high-throughput schema-agnostic
-ingestion using InfluxDB Line Protocol, and a REST API for queries, bulk
-imports, and exports.
+QuestDB is an open-source time-series database for high throughput ingestion and
+fast SQL queries with operational simplicity. It supports schema-agnostic
+ingestion using the InfluxDB line protocol, PostgreSQL wire protocol, and a REST
+API for bulk imports and exports.
 
-QuestDB implements ANSI SQL with native extensions for time-oriented language
-features. These extensions make it simple to correlate data from multiple
-sources using relational and time series joins. QuestDB achieves high
-performance from a column-oriented storage model, massively-parallelized vector
-execution, SIMD instructions, and various low-latency techniques. The entire
-codebase was built from the ground up in Java and C++, with no dependencies, and
-is 100% free from garbage collection.
+QuestDB is well suited for financial market data, application metrics, sensor
+data, real-time analytics, dashboards, and infrastructure monitoring.
+
+QuestDB implements ANSI SQL with native time-series SQL semantics. These SQL
+semantics make it simple to correlate data from multiple sources using
+relational and time-series joins. We achieve high performance by adopting a
+column-oriented storage model, parallelized vector execution, SIMD instructions,
+and low-latency techniques. The entire codebase is built from the ground up in
+Java and C++, with no dependencies and zero garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -44,11 +45,23 @@ is 100% free from garbage collection.
 We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
-- 10 years of NYC taxi trips with 1.6 billion rows
-- live trading data from a cryptocurrency exchange
-- geolocations of 250k unique ships over time
+- Trips: 10 years of NYC taxi trips with 1.6 billion rows
+- Trades: live crytocurrency market data with 30M+ rows per month
+- Pos: geolocations of 250k unique ships over time
 
-## Install QuestDB
+| Query                                                                         | Execution time                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+
+Our demo is running on `c5.metal` instance and using 24 cores out of 96.
+
+## Get started
+
+### Install QuestDB
 
 To run QuestDB, Docker can be used to get started quickly:
 
@@ -74,15 +87,32 @@ methods.
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) listening on port
-  `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
-  port `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
+- [Web Console](https://questdb.io/docs/develop/web-console/) for interactive
+  SQL editor on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for
   high-throughput ingestion on port `9009`
+- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
+- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on
+  port `8812`
+
+### Insert data
+
+Below are our official InfluxDB line protocol clients for popular programming
+languages:
+
+- [.NET](https://github.com/questdb/net-questdb-client)
+- [C/C++](https://github.com/questdb/c-questdb-client)
+- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
+- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
+- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
+- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
+- [Rust](https://docs.rs/crate/questdb-rs/latest)
 
 ## How QuestDB compares to other open source TSDBs
+
+[This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
+compares QuestDB to other open source time series databases spanning
+functionality, maturity and performance.
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -93,15 +123,6 @@ results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
     <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
-
-The following table shows query execution time of a billion rows run on a
-`c5.metal` instance using 16 of the 96 threads available:
-
-| Query                                                        | Runtime    |
-| ------------------------------------------------------------ | ---------- |
-| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## Resources
 
@@ -120,8 +141,6 @@ The following table shows query execution time of a billion rows run on a
   questions, and meet other users!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
   issues with QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose
-  new features or show what you've built.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for
   common troubleshooting solutions.
 

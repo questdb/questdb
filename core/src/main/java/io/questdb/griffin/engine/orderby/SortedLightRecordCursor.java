@@ -32,8 +32,8 @@ import io.questdb.std.Misc;
 
 class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain chain;
-    private final RecordComparator comparator;
     private final LongTreeChain.TreeCursor chainCursor;
+    private final RecordComparator comparator;
     private RecordCursor base;
     private Record baseRecord;
     private boolean isOpen;
@@ -57,23 +57,18 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public long size() {
-        return base.size();
-    }
-
-    @Override
     public Record getRecord() {
         return baseRecord;
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        return base.getRecordB();
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return base.newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return base.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -86,18 +81,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return base.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
-    }
-
-    @Override
-    public void toTop() {
-        chainCursor.toTop();
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -125,6 +110,21 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
                     comparator
             );
         }
+        chainCursor.toTop();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public long size() {
+        return base.size();
+    }
+
+    @Override
+    public void toTop() {
         chainCursor.toTop();
     }
 }

@@ -45,16 +45,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
+    private final ObjList<Function> recordFunctions;
 
     public GroupByRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
@@ -68,7 +68,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
-            this.cursor = new GroupByRecordCursor(recordFunctions, keyTypes, valueTypes, configuration);
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            this.cursor = new GroupByRecordCursor(recordFunctions, updater, keyTypes, valueTypes, configuration);
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;
@@ -76,15 +77,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
@@ -105,11 +98,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(false);
@@ -118,39 +106,34 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(base);
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
+        Misc.free(cursor);
+    }
+
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final Map dataMap;
+        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private boolean isOpen;
 
-        public GroupByRecordCursor(ObjList<Function> functions,
-                                   @Transient @NotNull ArrayColumnTypes keyTypes,
-                                   @Transient @NotNull ArrayColumnTypes valueTypes,
-                                   CairoConfiguration configuration) {
+        public GroupByRecordCursor(
+                ObjList<Function> functions,
+                GroupByFunctionsUpdater groupByFunctionsUpdater,
+                @Transient @NotNull ArrayColumnTypes keyTypes,
+                @Transient @NotNull ArrayColumnTypes valueTypes,
+                CairoConfiguration configuration
+        ) {
             super(functions);
             this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.isOpen = true;
-        }
-
-        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    dataMap.reopen();
-                }
-                final Record baseRecord = baseCursor.getRecord();
-                final int n = groupByFunctions.size();
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    final MapKey key = dataMap.withKey();
-                    mapSink.copy(baseRecord, key);
-                    MapValue value = key.createValue();
-                    GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
-                }
-                super.of(baseCursor, dataMap.getCursor());
-            } catch (Throwable e) {
-                close();
-                throw e;
-            }
         }
 
         @Override
@@ -160,6 +143,31 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 Misc.free(dataMap);
                 Misc.clearObjList(groupByFunctions);
                 super.close();
+            }
+        }
+
+        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    dataMap.reopen();
+                }
+                final Record baseRecord = baseCursor.getRecord();
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final MapKey key = dataMap.withKey();
+                    mapSink.copy(baseRecord, key);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    } else {
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    }
+                }
+                super.of(baseCursor, dataMap.getCursor());
+            } catch (Throwable e) {
+                close();
+                throw e;
             }
         }
     }

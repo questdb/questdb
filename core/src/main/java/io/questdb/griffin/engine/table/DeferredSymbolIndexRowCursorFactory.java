@@ -35,11 +35,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
-    private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
+    private final int columnIndex;
+    private final int indexDirection;
     private final Function symbol;
     private int symbolKey;
-    private final int indexDirection;
 
     public DeferredSymbolIndexRowCursorFactory(
             int columnIndex,
@@ -55,11 +55,6 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public Function getFunction() {
-        return symbol;
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             return EmptyRowCursor.INSTANCE;
@@ -71,12 +66,8 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        symbol.init(tableReader, sqlExecutionContext);
-        int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol.getSymbol(null));
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.symbolKey = TableUtils.toIndexKey(symbolKey);
-        }
+    public Function getFunction() {
+        return symbol;
     }
 
     @Override
@@ -87,5 +78,14 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     @Override
     public boolean isUsingIndex() {
         return true;
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        symbol.init(tableReader, sqlExecutionContext);
+        int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol.getSymbol(null));
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            this.symbolKey = TableUtils.toIndexKey(symbolKey);
+        }
     }
 }

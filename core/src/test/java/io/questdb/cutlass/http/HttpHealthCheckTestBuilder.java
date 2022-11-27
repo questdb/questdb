@@ -45,10 +45,9 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpHealthCheckTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
-
+    private boolean injectUnhandledError;
     private Metrics metrics;
     private TemporaryFolder temp;
-    private boolean injectUnhandledError;
 
     public void run(HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -76,7 +75,7 @@ public class HttpHealthCheckTestBuilder {
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
                     HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
             ) {
                 workerPool.start(LOG);
@@ -99,13 +98,13 @@ public class HttpHealthCheckTestBuilder {
         });
     }
 
-    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
-        this.metrics = metrics;
+    public HttpHealthCheckTestBuilder withInjectedUnhandledError() {
+        this.injectUnhandledError = true;
         return this;
     }
 
-    public HttpHealthCheckTestBuilder withInjectedUnhandledError() {
-        this.injectUnhandledError = true;
+    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
+        this.metrics = metrics;
         return this;
     }
 

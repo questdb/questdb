@@ -29,8 +29,8 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -44,79 +44,32 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LogFactory implements Closeable {
 
+    public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
-    public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
-
-    //name of default logging configuration file (in jar and in $root/conf/ dir )
+    // placeholder that can be used in log.conf to point to $root/log/ dir
+    public static final String LOG_DIR_VAR = "${log.dir}";
+    // name of default logging configuration file (in jar and in $root/conf/ dir)
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
-
-    //placeholder that can be used in log.conf to point to $root/log/ dir
-    public static final String LOG_DIR_VAR = "${log.dir}";
-    private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
+    static boolean envEnabled = true;
     private static LogFactory INSTANCE;
     private static boolean overwriteWithSyncLogging = false;
-    static boolean envEnabled = true;
-
-    public static void configureSync() {
-        overwriteWithSyncLogging = true;
-    }
-
-    public static void configureAsync() {
-        overwriteWithSyncLogging = false;
-    }
-
-    public static synchronized void configureFromSystemProperties(@NotNull LogFactory logFactory, @Nullable String rootDir) {
-        configureFromSystemProperties(logFactory, rootDir, true);
-    }
-
-    public static Log getLog(Class<?> clazz) {
-        return getLog(clazz.getName());
-    }
-
-    public static Log getLog(CharSequence key) {
-        return getInstance().create(key);
-    }
-
-    public static synchronized LogFactory getInstance() {
-        LogFactory logFactory = INSTANCE;
-        if (logFactory == null) {
-            logFactory = new LogFactory();
-            configureFromSystemProperties(logFactory, null);
-            INSTANCE = logFactory;
-        }
-        return logFactory;
-    }
-
-    public static synchronized void haltInstance() {
-        LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.haltThread();
-        }
-    }
-
-    public static synchronized void closeInstance() {
-        LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.close(true);
-            INSTANCE = null;
-        }
-    }
-
-
+    private static String rootDir;
+    private final MicrosecondClock clock;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
+    private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
+    private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
-    private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
-    private final MicrosecondClock clock;
     private final StringSink sink = new StringSink();
-    private final AtomicBoolean running = new AtomicBoolean();
-    private final AtomicBoolean closed = new AtomicBoolean();
     private final WorkerPool workerPool;
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
@@ -130,6 +83,11 @@ public class LogFactory implements Closeable {
         this.clock = clock;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
+            public String getPoolName() {
+                return "logging";
+            }
+
+            @Override
             public int getWorkerCount() {
                 return 1;
             }
@@ -138,15 +96,61 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-
-            @Override
-            public String getPoolName() {
-                return "logging";
-            }
         }, Metrics.disabled().health());
     }
 
-    public void add(final LogWriterConfig config) {
+    public static synchronized void closeInstance() {
+        LogFactory logFactory = INSTANCE;
+        if (logFactory != null) {
+            logFactory.close(true);
+            INSTANCE = null;
+        }
+    }
+
+    public static void configureAsync() {
+        overwriteWithSyncLogging = false;
+    }
+
+    public static void configureRootDir(String rootDir) {
+        LogFactory.rootDir = rootDir;
+    }
+
+    public static void configureSync() {
+        overwriteWithSyncLogging = true;
+    }
+
+    public static synchronized LogFactory getInstance() {
+        LogFactory logFactory = INSTANCE;
+        if (logFactory == null) {
+            logFactory = new LogFactory();
+            // Some log writers created in the later init() call may do some logging,
+            // so we store the instance before the factory was fully initialized.
+            // Any logging calls done on a non-initialized log factory and its loggers
+            // are no-op. Once the factory is fully configured, it replaces no-op
+            // loggers with the end ones.
+            INSTANCE = logFactory;
+            logFactory.init(rootDir);
+        }
+        return logFactory;
+    }
+
+    public static Log getLog(Class<?> clazz) {
+        return getLog(clazz.getName());
+    }
+
+    public static Log getLog(String key) {
+        return getInstance().create(key);
+    }
+
+    public static synchronized void haltInstance() {
+        LogFactory logFactory = INSTANCE;
+        if (logFactory != null) {
+            logFactory.haltThread();
+        }
+    }
+
+    public synchronized void add(final LogWriterConfig config) {
+        assert !configured;
         final int index = scopeConfigMap.keyIndex(config.getScope());
         ScopeConfiguration scopeConf;
         if (index > -1) {
@@ -158,7 +162,7 @@ public class LogFactory implements Closeable {
         scopeConf.add(config);
     }
 
-    public void bind() {
+    public synchronized void bind() {
         if (configured) {
             return;
         }
@@ -179,21 +183,47 @@ public class LogFactory implements Closeable {
         }
     }
 
-    public int getQueueDepth() {
-        return queueDepth;
+    @Override
+    public void close() {
+        close(false);
     }
 
-    public int getRecordLength() {
-        return recordLength;
+    public void close(boolean flush) {
+        if (closed.compareAndSet(false, true)) {
+            haltThread();
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                LogWriter job = jobs.get(i);
+                try {
+                    if (job != null && flush) {
+                        try {
+                            // noinspection StatementWithEmptyBody
+                            while (job.run(0)) {
+                                // Keep running the job until it returns false to log all the buffered messages
+                            }
+                        } catch (Exception th) {
+                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                            // Switch to the next job.
+                        }
+                    }
+                } finally {
+                    Misc.freeIfCloseable(job);
+                }
+            }
+            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+                Misc.free(scopeConfigs.getQuick(i));
+            }
+        }
     }
 
     public Log create(Class<?> clazz) {
         return create(clazz.getName());
     }
 
-    public Log create(CharSequence key) {
+    public synchronized Log create(String key) {
         if (!configured) {
-            throw new LogError("Not configured");
+            DeferredLogger log = new DeferredLogger(key);
+            deferredLoggers.add(log);
+            return log;
         }
 
         ScopeConfiguration scopeConfiguration = find(key);
@@ -251,77 +281,39 @@ public class LogFactory implements Closeable {
         );
     }
 
-    public void startThread() {
-        assert !closed.get();
-        if (running.compareAndSet(false, true)) {
-            for (int i = 0, n = jobs.size(); i < n; i++) {
-                workerPool.assign(jobs.get(i));
-            }
-            workerPool.start();
-        }
-    }
-
-    private void haltThread() {
-        if (running.compareAndSet(true, false)) {
-            workerPool.halt();
-        }
-    }
-
-    @Override
-    public void close() {
-        close(false);
-    }
-
-    public void close(boolean flush) {
-        if (closed.compareAndSet(false, true)) {
-            haltThread();
-            for (int i = 0, n = jobs.size(); i < n; i++) {
-                LogWriter job = jobs.get(i);
+    @TestOnly
+    public void flushJobs() {
+        pauseThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
                 try {
-                    if (job != null && flush) {
-                        try {
-                            // noinspection StatementWithEmptyBody
-                            while (job.run(0)) {
-                                // Keep running the job until it returns false to log all the buffered messages
-                            }
-                        } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                            // Switch to the next job.
-                        }
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
                     }
-                } finally {
-                    Misc.freeIfCloseable(job);
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
                 }
             }
-            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-                Misc.free(scopeConfigs.getQuick(i));
-            }
         }
+        startThread();
     }
 
-    @TestOnly
-    ObjHashSet<LogWriter> getJobs() {
-        return jobs;
+    public int getQueueDepth() {
+        return queueDepth;
     }
 
-    private void setQueueDepth(int queueDepth) {
-        this.queueDepth = queueDepth;
+    public int getRecordLength() {
+        return recordLength;
     }
 
-    private void setRecordLength(int recordLength) {
-        this.recordLength = recordLength;
-    }
+    public synchronized void init(@Nullable String rootDir) {
+        if (configured) {
+            return;
+        }
 
-    @TestOnly
-    static void configureFromSystemProperties(LogFactory logFactory) {
-        configureFromSystemProperties(logFactory, null, false);
-    }
-
-    static synchronized void configureFromSystemProperties(
-            @NotNull LogFactory logFactory,
-            @Nullable String rootDir,
-            boolean replacePrevInstance
-    ) {
         String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
             conf = DEFAULT_CONFIG;
@@ -344,7 +336,7 @@ public class LogFactory implements Closeable {
                 try (FileInputStream fis = new FileInputStream(logPath)) {
                     Properties properties = new Properties();
                     properties.load(fis);
-                    logFactory.configureFromProperties(properties, logDir);
+                    configureFromProperties(properties, logDir);
                     initialized = true;
                 } catch (IOException e) {
                     throw new LogError("Cannot read " + logPath, e);
@@ -353,12 +345,12 @@ public class LogFactory implements Closeable {
         }
 
         if (!initialized) {
-            //in this order of initialization specifying -Dout might end up using internal jar resources ...
+            // in this order of initialization specifying -Dout might end up using internal jar resources ...
             try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
                 if (is != null) {
                     Properties properties = new Properties();
                     properties.load(is);
-                    logFactory.configureFromProperties(properties, logDir);
+                    configureFromProperties(properties, logDir);
                     System.err.println("Log configuration loaded from default internal file.");
                 } else {
                     File f = new File(conf);
@@ -366,108 +358,76 @@ public class LogFactory implements Closeable {
                         try (FileInputStream fis = new FileInputStream(f)) {
                             Properties properties = new Properties();
                             properties.load(fis);
-                            logFactory.configureFromProperties(properties, logDir);
+                            configureFromProperties(properties, logDir);
                             System.err.printf("Log configuration loaded from: %s%n", conf);
                         }
                     } else {
-                        logFactory.configureDefaultWriter();
-                        System.err.println("Log configuration loaded loaded using factory defaults.");
+                        configureDefaultWriter();
+                        System.err.println("Log configuration loaded using factory defaults.");
                     }
                 }
             } catch (IOException e) {
                 if (!DEFAULT_CONFIG.equals(conf)) {
                     throw new LogError("Cannot read " + conf, e);
                 } else {
-                    logFactory.configureDefaultWriter();
+                    configureDefaultWriter();
                 }
             }
         }
 
-        if (replacePrevInstance) {
-            LogFactory oldLogFactory = INSTANCE;
-            if (oldLogFactory != null) {
-                oldLogFactory.close();
-            }
-            INSTANCE = logFactory;
+        // swap no-op loggers created by the configured log writers with the real ones
+        for (int i = 0, n = deferredLoggers.size(); i < n; i++) {
+            deferredLoggers.get(i).init(this);
         }
-        logFactory.startThread();
+        deferredLoggers.clear();
+
+        startThread();
     }
 
-    private void configureDefaultWriter() {
-        int level = DEFAULT_LOG_LEVEL;
-        if (isForcedDebug()) {
-            level = level | LogLevel.DEBUG;
+    public void startThread() {
+        assert !closed.get();
+        if (running.compareAndSet(false, true)) {
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                workerPool.assign(jobs.get(i));
+            }
+            workerPool.start();
         }
-        add(new LogWriterConfig(level, LogConsoleWriter::new));
-        bind();
     }
 
-    private ScopeConfiguration find(CharSequence key) {
-        ObjList<CharSequence> keys = scopeConfigMap.keys();
-        CharSequence k = null;
-
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            CharSequence s = keys.getQuick(i);
-            if (Chars.startsWith(key, s)) {
-                k = s;
-                break;
+    /**
+     * Converts fully qualified class name into an abbreviated form:
+     * com.questdb.mp.Sequence -> c.n.m.Sequence
+     *
+     * @param key     typically class name
+     * @param builder used for producing the resulting form
+     * @return abbreviated form of key
+     */
+    private static CharSequence compressScope(CharSequence key, StringSink builder) {
+        builder.clear();
+        char c = 0;
+        boolean pick = true;
+        int z = 0;
+        for (int i = 0, n = key.length(); i < n; i++) {
+            char a = key.charAt(i);
+            if (a == '.') {
+                if (!pick) {
+                    builder.put(c).put('.');
+                    pick = true;
+                }
+            } else if (pick) {
+                c = a;
+                z = i;
+                pick = false;
             }
         }
 
-        if (k == null) {
-            return null;
+        for (; z < key.length(); z++) {
+            builder.put(key.charAt(z));
         }
 
-        return scopeConfigMap.get(k);
-    }
+        builder.put(' ');
 
-    private void configureFromProperties(Properties properties, String logDir) {
-        String writers = getProperty(properties, "writers");
-
-        if (writers == null) {
-            configured = true;
-            return;
-        }
-
-        String s;
-
-        s = getProperty(properties, "queueDepth");
-        if (s != null && s.length() > 0) {
-            try {
-                setQueueDepth(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for queueDepth");
-            }
-        }
-
-        s = getProperty(properties, "recordLength");
-        if (s != null && s.length() > 0) {
-            try {
-                setRecordLength(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for recordLength");
-            }
-        }
-
-        for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
-            if (conf != null) {
-                add(conf);
-            }
-        }
-
-        bind();
-    }
-
-    private static String getProperty(final Properties properties, String key) {
-        if (envEnabled) {
-            final String envValue = System.getenv("QDB_LOG_" + key.replace('.', '_').toUpperCase());
-            if (envValue == null) {
-                return properties.getProperty(key);
-            }
-            return envValue;
-        }
-        return properties.getProperty(key);
+        return builder.toString();
     }
 
     @SuppressWarnings("rawtypes")
@@ -561,51 +521,425 @@ public class LogFactory implements Closeable {
         });
     }
 
+    private static String getProperty(final Properties properties, String key) {
+        if (envEnabled) {
+            final String envKey = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
+            final String envValue = System.getenv(envKey);
+            if (envValue == null) {
+                return properties.getProperty(key);
+            }
+            System.err.println("    Using env: " + envKey + "=" + envValue);
+            return envValue;
+        }
+        return properties.getProperty(key);
+    }
+
     private static boolean isForcedDebug() {
         return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
     }
 
-    /**
-     * Converts fully qualified class name into an abbreviated form:
-     * com.questdb.mp.Sequence -> c.n.m.Sequence
-     *
-     * @param key     typically class name
-     * @param builder used for producing the resulting form
-     * @return abbreviated form of key
-     */
-    private static CharSequence compressScope(CharSequence key, StringSink builder) {
-        builder.clear();
-        char c = 0;
-        boolean pick = true;
-        int z = 0;
-        for (int i = 0, n = key.length(); i < n; i++) {
-            char a = key.charAt(i);
-            if (a == '.') {
-                if (!pick) {
-                    builder.put(c).put('.');
-                    pick = true;
-                }
-            } else if (pick) {
-                c = a;
-                z = i;
-                pick = false;
+    private void configureDefaultWriter() {
+        int level = DEFAULT_LOG_LEVEL;
+        if (isForcedDebug()) {
+            level = level | LogLevel.DEBUG;
+        }
+        add(new LogWriterConfig(level, LogConsoleWriter::new));
+        bind();
+    }
+
+    private void configureFromProperties(Properties properties, String logDir) {
+        String writers = getProperty(properties, "writers");
+
+        if (writers == null) {
+            configured = true;
+            return;
+        }
+
+        String s = getProperty(properties, "queueDepth");
+        if (s != null && s.length() > 0) {
+            try {
+                setQueueDepth(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for queueDepth");
             }
         }
 
-        for (; z < key.length(); z++) {
-            builder.put(key.charAt(z));
+        s = getProperty(properties, "recordLength");
+        if (s != null && s.length() > 0) {
+            try {
+                setRecordLength(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for recordLength");
+            }
         }
 
-        builder.put(' ');
+        for (String w : writers.split(",")) {
+            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
+            if (conf != null) {
+                add(conf);
+            }
+        }
 
-        return builder.toString();
+        bind();
+    }
+
+    private ScopeConfiguration find(CharSequence key) {
+        ObjList<CharSequence> keys = scopeConfigMap.keys();
+        CharSequence k = null;
+
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence s = keys.getQuick(i);
+            if (Chars.startsWith(key, s)) {
+                k = s;
+                break;
+            }
+        }
+
+        if (k == null) {
+            return null;
+        }
+
+        return scopeConfigMap.get(k);
+    }
+
+    private void haltThread() {
+        if (running.compareAndSet(true, false)) {
+            workerPool.halt();
+        }
+    }
+
+    @TestOnly
+    private void pauseThread() {
+        if (running.compareAndSet(true, false)) {
+            workerPool.pause();
+        }
+    }
+
+    private void setQueueDepth(int queueDepth) {
+        this.queueDepth = queueDepth;
+    }
+
+    private void setRecordLength(int recordLength) {
+        this.recordLength = recordLength;
+    }
+
+    @TestOnly
+    ObjHashSet<LogWriter> getJobs() {
+        return jobs;
+    }
+
+    private static class DeferredLogger implements Log {
+
+        private static final NoOpLogRecord noOpRecord = new NoOpLogRecord();
+
+        private final String key;
+        private Log delegate;
+
+        public DeferredLogger(String key) {
+            this.key = key;
+        }
+
+        @Override
+        public LogRecord advisory() {
+            if (delegate != null) {
+                return delegate.advisory();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord advisoryW() {
+            if (delegate != null) {
+                return delegate.advisoryW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord critical() {
+            if (delegate != null) {
+                return delegate.critical();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord criticalW() {
+            if (delegate != null) {
+                return delegate.criticalW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord debug() {
+            if (delegate != null) {
+                return delegate.debug();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord debugW() {
+            if (delegate != null) {
+                return delegate.debugW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord error() {
+            if (delegate != null) {
+                return delegate.error();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord errorW() {
+            if (delegate != null) {
+                return delegate.errorW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord info() {
+            if (delegate != null) {
+                return delegate.info();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord infoW() {
+            if (delegate != null) {
+                return delegate.infoW();
+            }
+            return noOpRecord;
+        }
+
+        public void init(LogFactory logFactory) {
+            this.delegate = logFactory.create(key);
+        }
+
+        @Override
+        public LogRecord xDebugW() {
+            if (delegate != null) {
+                return delegate.xDebugW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xInfoW() {
+            if (delegate != null) {
+                return delegate.xInfoW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xadvisory() {
+            if (delegate != null) {
+                return delegate.xadvisory();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xcritical() {
+            if (delegate != null) {
+                return delegate.xcritical();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xdebug() {
+            if (delegate != null) {
+                return delegate.xdebug();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xerror() {
+            if (delegate != null) {
+                return delegate.xerror();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xinfo() {
+            if (delegate != null) {
+                return delegate.xinfo();
+            }
+            return noOpRecord;
+        }
+    }
+
+    private static class Holder implements Closeable {
+        private final Sequence lSeq;
+        private final RingQueue<LogRecordSink> ring;
+        private FanOut fanOut;
+        private SCSequence wSeq;
+
+        public Holder(int queueDepth, final int recordLength) {
+            this.ring = new RingQueue<>(
+                    LogRecordSink::new,
+                    Numbers.ceilPow2(recordLength),
+                    queueDepth,
+                    MemoryTag.NATIVE_LOGGER
+            );
+            this.lSeq = new MPSequence(queueDepth);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(ring);
+        }
+    }
+
+    private static class LengthDescendingComparator implements Comparator<CharSequence>, Serializable {
+        @Override
+        public int compare(CharSequence o1, CharSequence o2) {
+            int l1, l2;
+            if ((l1 = o1.length()) < (l2 = o2.length())) {
+                return 1;
+            }
+
+            if (l1 > l2) {
+                return -11;
+            }
+
+            return 0;
+        }
+    }
+
+    private static class NoOpLogRecord implements LogRecord {
+
+        @Override
+        public void $() {
+        }
+
+        @Override
+        public LogRecord $(CharSequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(CharSequence sequence, int lo, int hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(int x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(double x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(long l) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(boolean x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(char c) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(Throwable e) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(File x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(Object x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(Sinkable x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $256(long a, long b, long c, long d) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $hex(long value) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $hexPadded(long value) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $ip(long ip) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $ts(long x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $utf8(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return false;
+        }
+
+        @Override
+        public LogRecord microTime(long x) {
+            return this;
+        }
+
+        @Override
+        public CharSinkBase put(char c) {
+            return this;
+        }
+
+        @Override
+        public LogRecord ts() {
+            return this;
+        }
+
+        @Override
+        public LogRecord utf8(CharSequence sequence) {
+            return this;
+        }
     }
 
     private static class ScopeConfiguration implements Closeable {
         private final int[] channels;
-        private final ObjList<LogWriterConfig> writerConfigs = new ObjList<>();
-        private final IntObjHashMap<Holder> holderMap = new IntObjHashMap<>();
         private final ObjList<Holder> holderList = new ObjList<>();
+        private final IntObjHashMap<Holder> holderMap = new IntObjHashMap<>();
+        private final ObjList<LogWriterConfig> writerConfigs = new ObjList<>();
         private int ci = 0;
 
         public ScopeConfiguration(int levels) {
@@ -614,8 +948,7 @@ public class LogFactory implements Closeable {
 
         public void bind(ObjHashSet<LogWriter> jobs, int queueDepth, int recordLength) {
             // create queues for processed channels
-            for (int i = 0, n = channels.length; i < n; i++) {
-                int index = channels[i];
+            for (int index : channels) {
                 if (index > 0) {
                     int keyIndex = holderMap.keyIndex(index);
                     if (keyIndex > -1) {
@@ -629,7 +962,7 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = writerConfigs.size(); i < n; i++) {
                 LogWriterConfig c = writerConfigs.getQuick(i);
                 // the channels array has a guarantee that
-                // all bits in level mask will point to the same queue
+                // all bits in level mask will point to the same queue,
                 // so we just get most significant bit number
                 // and dereference queue on its index
                 Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);
@@ -733,44 +1066,6 @@ public class LogFactory implements Closeable {
 
         private Holder getHolder(int index) {
             return holderMap.get(channels[index]);
-        }
-    }
-
-    private static class LengthDescendingComparator implements Comparator<CharSequence>, Serializable {
-        @Override
-        public int compare(CharSequence o1, CharSequence o2) {
-            int l1, l2;
-            if ((l1 = o1.length()) < (l2 = o2.length())) {
-                return 1;
-            }
-
-            if (l1 > l2) {
-                return -11;
-            }
-
-            return 0;
-        }
-    }
-
-    private static class Holder implements Closeable {
-        private final RingQueue<LogRecordSink> ring;
-        private final Sequence lSeq;
-        private SCSequence wSeq;
-        private FanOut fanOut;
-
-        public Holder(int queueDepth, final int recordLength) {
-            this.ring = new RingQueue<>(
-                    LogRecordSink::new,
-                    Numbers.ceilPow2(recordLength),
-                    queueDepth,
-                    MemoryTag.NATIVE_LOGGER
-            );
-            this.lSeq = new MPSequence(queueDepth);
-        }
-
-        @Override
-        public void close() {
-            Misc.free(ring);
         }
     }
 

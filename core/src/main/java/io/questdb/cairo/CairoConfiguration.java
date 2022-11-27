@@ -38,11 +38,10 @@ import java.lang.ThreadLocal;
 
 public interface CairoConfiguration {
 
-    long O_NONE = 0;
     long O_ASYNC = 0x40;
-    long O_SYNC = 0x80;
     long O_DIRECT = 0x4000;
-
+    long O_NONE = 0;
+    long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -88,14 +87,6 @@ public interface CairoConfiguration {
     double getColumnPurgeRetryDelayMultiplier();
 
     int getColumnPurgeTaskPoolCapacity();
-
-    /**
-     * Default commit lag in microseconds for new tables. This value
-     * can be overridden with 'create table' statement.
-     *
-     * @return commit lag in microseconds
-     */
-    long getCommitLag();
 
     int getCommitMode();
 
@@ -147,6 +138,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -164,6 +157,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getMetadataPoolCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -183,11 +178,27 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
+    default double getO3LagDecreaseFactor() {
+        return 0.5;
+    }
+
+    default double getO3LagIncreaseFactor() {
+        return 1.5;
+    }
+
+    /**
+     * Default commit lag in microseconds for new tables. This value
+     * can be overridden with 'create table' statement.
+     *
+     * @return upper bound of "commit lag" in micros
+     */
+    long getO3MaxLag();
+
+    long getO3MinLag();
+
     int getO3OpenColumnQueueCapacity();
 
     int getO3PartitionQueueCapacity();
-
-    int getO3PartitionUpdateQueueCapacity();
 
     int getO3PurgeDiscoveryQueueCapacity();
 
@@ -226,8 +237,6 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
-
-    int getReplaceFunctionMaxBufferLength();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -364,6 +373,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getStrFunctionMaxBufferLength();
+
     CharSequence getSystemTableNamePrefix();
 
     TelemetryConfiguration getTelemetryConfiguration();
@@ -374,7 +385,15 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    boolean getWallEnabledDefault();
+    boolean getWalEnabledDefault();
+
+    long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
+
+    long getWalSegmentRolloverRowCount();
+
+    int getWalTxnNotificationQueueCapacity();
 
     int getWithClauseModelPoolCapacity();
 
@@ -410,4 +429,6 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isWalSupported();
 }

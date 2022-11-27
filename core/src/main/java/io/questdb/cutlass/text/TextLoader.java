@@ -47,30 +47,30 @@ import java.io.Closeable;
 
 public class TextLoader implements Closeable, Mutable {
 
-    public static final int LOAD_JSON_METADATA = 0;
     public static final int ANALYZE_STRUCTURE = 1;
     public static final int LOAD_DATA = 2;
+    public static final int LOAD_JSON_METADATA = 0;
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
-    private final TextConfiguration textConfiguration;
-    private final TextMetadataDetector textMetadataDetector;
-    private final TextMetadataParser textMetadataParser;
     private final JsonLexer jsonLexer;
+    private final ObjList<ParserMethod> parseMethods = new ObjList<>();
     private final Path path = new Path();
     private final int textAnalysisMaxLines;
+    private final TextConfiguration textConfiguration;
     private final TextDelimiterScanner textDelimiterScanner;
-    private final DirectCharSink utf8Sink;
-    private final TypeManager typeManager;
+    private final TextMetadataDetector textMetadataDetector;
+    private final TextMetadataParser textMetadataParser;
     private final CairoTextWriter textWriter;
     private final TextLexerWrapper tlw;
-    private final ObjList<ParserMethod> parseMethods = new ObjList<>();
-    private AbstractTextLexer lexer;
-    private TimestampAdapter timestampAdapter;
-    private int state;
-    private boolean forceHeaders = false;
+    private final TypeManager typeManager;
+    private final DirectCharSink utf8Sink;
     private byte columnDelimiter = -1;
-    private CharSequence timestampColumn;
-    private CharSequence tableName;
+    private boolean forceHeaders = false;
+    private AbstractTextLexer lexer;
     private boolean skipLinesWithExtraValues = true;
+    private int state;
+    private CharSequence tableName;
+    private TimestampAdapter timestampAdapter;
+    private CharSequence timestampColumn;
 
     public TextLoader(CairoEngine engine) {
         this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
@@ -214,10 +214,6 @@ public class TextLoader implements Closeable, Mutable {
         return forceHeaders;
     }
 
-    public void setForceHeaders(boolean forceHeaders) {
-        this.forceHeaders = forceHeaders;
-    }
-
     public void parse(long lo, long hi, int lineCountLimit, CsvTextLexer.Listener textLexerListener) {
         lexer.parse(lo, hi, lineCountLimit, textLexerListener);
     }
@@ -245,18 +241,22 @@ public class TextLoader implements Closeable, Mutable {
         lexer.restart(header);
     }
 
-    public void setCommitLag(long commitLag) {
-        textWriter.setCommitLag(commitLag);
-    }
-
     public void setDelimiter(byte delimiter) {
         this.lexer = tlw.getLexer(delimiter);
         this.lexer.setTableName(tableName);
         this.lexer.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
     }
 
+    public void setForceHeaders(boolean forceHeaders) {
+        this.forceHeaders = forceHeaders;
+    }
+
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         textWriter.setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    public void setO3MaxLag(long o3MaxLagUs) {
+        textWriter.setO3MaxLag(o3MaxLagUs);
     }
 
     public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {

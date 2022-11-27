@@ -54,15 +54,13 @@ public class SqlJitCompilerBenchmark {
     private static final int NUM_ROWS = (PARTITION_SIZE_MB * 1024 * 1024) / Long.BYTES;
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
-
-    @Param({"SIMD", "SCALAR", "DISABLED"})
-    public JitMode jitMode;
     @Param({"i64", "i32"})
     public String column;
-
-    private CairoEngine engine;
-    private SqlExecutionContextImpl ctx;
+    @Param({"SIMD", "SCALAR", "DISABLED"})
+    public JitMode jitMode;
     private SqlCompiler compiler;
+    private SqlExecutionContextImpl ctx;
+    private CairoEngine engine;
     private RecordCursorFactory factory;
 
     public static void main(String[] args) throws RunnerException {

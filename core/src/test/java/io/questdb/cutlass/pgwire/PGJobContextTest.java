@@ -42,6 +42,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -51,10 +53,10 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -64,12 +66,10 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.GregorianCalendar;
-import java.util.List;
-import java.util.Properties;
-import java.util.TimeZone;
+import java.util.*;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -80,22 +80,25 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
+
+@RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
-    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
     public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
     public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
+    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
+    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
+    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_ALL =
             CONN_AWARE_SIMPLE_BINARY
                     | CONN_AWARE_SIMPLE_TEXT
@@ -106,14 +109,32 @@ public class PGJobContextTest extends BasePGTest {
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
 
-    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
+    /**
+     * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
+     */
+    public static final boolean SKIP_FAILING_WAL_TESTS = true;
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
 
+    private final boolean walEnabled;
+
+    public PGJobContextTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
+
     @BeforeClass
-    public static void init() {
+    public static void setUpStatic() {
+        BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -121,6 +142,17 @@ public class PGJobContextTest extends BasePGTest {
                 .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        BasePGTest.tearDownStatic();
+    }
+
+    @Before
+    public void setUp() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
+        super.setUp();
     }
 
     @Test
@@ -1937,6 +1969,19 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCreateTableAsSelectTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement(
+                    "create table tab as (select rnd_double() from long_sequence(1000));")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try {
@@ -2118,6 +2163,19 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExtendedQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -2281,7 +2339,7 @@ if __name__ == "__main__":
      * }
      * </pre>
      */
-    public void testGoLangBoolean() throws Exception {
+    public void testGolangBoolean() throws Exception {
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
                 ">0000002400030000757365720078797a00646174616261736500706f7374677265730000\n" +
@@ -2441,6 +2499,8 @@ if __name__ == "__main__":
 
     @Test
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
+        maySkipOnWalRun();  // Assertion error select is empty. Adding `mayDrainWalQueue()` busy spins and hangs.
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -2461,6 +2521,9 @@ if __name__ == "__main__":
                             "), index(b) timestamp(k) partition by DAY").execute();
 
                     sink.clear();
+
+                    mayDrainWalQueue();
+
                     try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ?")) {
                         ps.setString(1, "VTJW");
                         try (ResultSet rs = ps.executeQuery()) {
@@ -2514,6 +2577,8 @@ if __name__ == "__main__":
 
     @Test
     public void testIndexedSymbolBindVariableNotMultipleValuesMultipleExecutions() throws Exception {
+        maySkipOnWalRun();  // select after create fails. Inserting `mayDrainWalQueue()` hangs the test.
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -2532,6 +2597,8 @@ if __name__ == "__main__":
                             " from" +
                             " long_sequence(1)" +
                             "), index(b) timestamp(k) partition by DAY").execute();
+
+                    mayDrainWalQueue();
 
                     // First we try to filter out not yet existing keys.
                     sink.clear();
@@ -2612,6 +2679,20 @@ if __name__ == "__main__":
     @Test
     public void testInsertAllTypesText() throws Exception {
         testInsertAllTypes(false);
+    }
+
+    @Test
+    public void testInsertAsSelectTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            compiler.compile("create table tab (d double)", sqlExecutionContext);
+            try (final PreparedStatement statement = connection.prepareStatement(
+                    "insert into tab select rnd_double() from long_sequence(1000);")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
     }
 
     @Test
@@ -3643,6 +3724,8 @@ nodejs code:
                                 "    )");
                     }
 
+                    mayDrainWalQueue();
+
                     double sum = 0;
                     long count = 0;
                     try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT * FROM recorded_l1_data;")) {
@@ -4374,6 +4457,8 @@ nodejs code:
 
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
+        maySkipOnWalRun();  // Assertion error: java.lang.AssertionError: cannot insert null when the column is designated
+
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
@@ -4393,12 +4478,16 @@ nodejs code:
                         insert.executeUpdate();
                         fail("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
-                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed", expected.getMessage());
+                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
+                                "  Position: 1", expected.getMessage());
                     }
                     // Insert a dud
                     insert.setString(1, "1970-01-01 00:11:22.334455");
                     insert.setNull(2, Types.NULL);
                     insert.executeUpdate();
+
+                    mayDrainWalQueue();
+
                     try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
                         StringSink sink = new StringSink();
                         String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
@@ -4690,7 +4779,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4700,13 +4789,17 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
+                    mayDrainWalQueue();
                     queryTimestampsInRange(connection);
                 }
 
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     queryTimestampsInRange(connection);
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
+
+                    if (isEnabledForWalRun()) {
+                        try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                            statement.execute();
+                        }
                     }
                 }
             }
@@ -4715,7 +4808,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4725,6 +4818,7 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
+                    mayDrainWalQueue();
                     queryTimestampsInRange(connection);
                 }
 
@@ -4741,9 +4835,11 @@ nodejs code:
                     }
                 }
 
-                try (final Connection connection = getConnection(server.getPort(), false, false);
-                     PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                    statement.execute();
+                if (isEnabledForWalRun()) {
+                    try (final Connection connection = getConnection(server.getPort(), false, false);
+                         PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
                 }
                 Assert.assertTrue("Exception is not thrown", caught);
             }
@@ -4752,6 +4848,8 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesTimestampRange() throws Exception {
+        // TODO: Add "assertMemoryLeak(() -> { .. });"  - There seems to be an issue with an open FD that gets closed.
+
         // todo: simple mode doesn't work because PG sends timestamp as:
         //     dateadd('d', -1, '1973-03-12 16:00:00+00')
         //     we don't yet support text argument for the dateadd function.
@@ -4760,17 +4858,21 @@ nodejs code:
                 statement.execute();
             }
 
+            mayDrainWalQueue();
+
             queryTimestampsInRange(connection);
 
-            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                statement.execute();
+            if (isEnabledForWalRun()) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
             }
         });
     }
 
     @Test
     public void testPreparedStatementWithNowFunction() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5242,6 +5344,7 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         assertMemoryLeak(() -> {
+            maySkipOnWalRun(); // Alters do not wait for WAL tables
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
@@ -5655,8 +5758,7 @@ create table tab as (
         compiler.compile("create table tab2 (a double);", sqlExecutionContext);
         executeInsert("insert into 'tab2' values (0.7);");
         executeInsert("insert into 'tab2' values (0.2);");
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
+        engine.clear();
 
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
@@ -5729,6 +5831,32 @@ create table tab as (
             try (ResultSet resultSet = select.executeQuery()) {
                 Assert.assertEquals(resultSet.findColumn("a"), 1);
                 Assert.assertEquals(resultSet.findColumn("b"), 2);
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleCountQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select count(*) from t1 where s = 's10'");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleGroupByQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select s, count(*) from t1 group by s ");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
             }
         });
     }
@@ -5873,6 +6001,8 @@ create table tab as (
                 statement.execute();
             }
 
+            mayDrainWalQueue();
+
             try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
                 sink.clear();
                 String date = "1970-01-01";
@@ -5942,8 +6072,10 @@ create table tab as (
                 }
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                statement.execute();
+            if (isEnabledForWalRun()) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
             }
         });
     }
@@ -6129,6 +6261,21 @@ create table tab as (
 
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public int getBindPort() {
+                            return 0;  // Bind to ANY port.
+                        }
+
+                        @Override
+                        public String getDispatcherLogName() {
+                            return "pg-server";
+                        }
+                    };
+                }
+
+                @Override
                 public int getSendBufferSize() {
                     return 300;
                 }
@@ -6165,8 +6312,10 @@ create table tab as (
                             " rnd_str(5,16,2) l256" +
                             " from long_sequence(10000)" +
                             ") timestamp (ts) partition by DAY");
-                    String sql = "SELECT * FROM x";
 
+                    mayDrainWalQueue();
+
+                    String sql = "SELECT * FROM x";
                     try {
                         statement.execute(sql);
                         Assert.fail();
@@ -6229,6 +6378,20 @@ create table tab as (
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row description");
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSqlBatchTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            try (final Statement statement = connection.createStatement()) {
+                statement.execute("create table tab (d double);" +
+                        "select count(*) from tab;" +
+                        "insert into tab select count(*) from tab;");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
             }
         });
     }
@@ -6362,8 +6525,36 @@ create table tab as (
     }
 
     @Test
+    public void testTimeoutIsPerPreparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
+                statement.execute();
+            }
+            Os.sleep(1000);
+            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
+                statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testTimeoutIsPerSimpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 1000, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+            }
+            Os.sleep(1000);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+            }
+        });
+    }
+
+    @Test
     public void testTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6376,6 +6567,8 @@ create table tab as (
                     connection.prepareStatement("INSERT INTO ts VALUES(0, '2021-09-27T16:45:03.202345Z')").execute();
                     connection.commit();
                     connection.setAutoCommit(true);
+
+                    mayDrainWalQueue();
 
                     // select the timestamp that we just inserted
                     Timestamp ts;
@@ -6437,6 +6630,8 @@ create table tab as (
                         ps.execute();
                     }
 
+                    mayDrainWalQueue();
+
                     try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
                         sink.clear();
                         try (ResultSet rs = statement.executeQuery()) {
@@ -6452,7 +6647,10 @@ create table tab as (
                             );
                         }
                     }
-                    connection.prepareStatement("drop table ts").execute();
+
+                    if (isEnabledForWalRun()) {
+                        connection.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
@@ -6460,7 +6658,7 @@ create table tab as (
 
     @Test
     public void testTimestampSentEqualsReceived() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final Timestamp expectedTs = new Timestamp(1632761103202L); // '2021-09-27T16:45:03.202000Z'
             assertEquals(1632761103202L, expectedTs.getTime());
@@ -6488,6 +6686,8 @@ create table tab as (
                         insert.execute();
                     }
 
+                    mayDrainWalQueue();
+
                     // select
                     final Timestamp tsBack;
                     try (ResultSet queryResult = conn.prepareStatement("SELECT * FROM ts").executeQuery()) {
@@ -6499,7 +6699,9 @@ create table tab as (
                     assertEquals(expectedTs, tsBack);
 
                     // cleanup
-                    conn.prepareStatement("drop table ts").execute();
+                    if (isEnabledForWalRun()) {
+                        conn.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
@@ -6549,10 +6751,6 @@ create table tab as (
         testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     public void testTruncateAndUpdateOnTable(String config) throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement stat = connection.createStatement()) {
@@ -6560,16 +6758,20 @@ create table tab as (
             }
 
             try (Statement stat = connection.createStatement()) {
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("insert into tb values (1, true, now());");
+                stat.execute("update tb set i = 10, b = true;");
                 stat.execute("truncate table tb;");
-                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("insert into tb values (2, true, cast(0 as timestamp));");
+                stat.execute("insert into tb values (1, true, '2022-09-28T17:00:00.000000Z');");
+                stat.execute("update tb set i = 12, b = true;");
 
-                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
+                mayDrainWalQueue();
+
+                try (ResultSet result = stat.executeQuery("tb")) {
                     StringSink sink = new StringSink();
-                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
+                    assertResultSet("i[INTEGER],b[BIT],ts[TIMESTAMP]\n" +
+                            "12,true,1970-01-01 00:00:00.0\n" +
+                            "12,true,2022-09-28 17:00:00.0\n", sink, result);
                 }
             }
         });
@@ -6658,6 +6860,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -6943,6 +7149,34 @@ create table tab as (
             String script,
             PGWireConfiguration configuration
     ) throws Exception {
+
+        /*
+            You can use Wireshark to capture and decode. You can also see executed statements in the logs.
+            From a Wireshark capture you can right-click on a packet and follow conversation:
+
+            ...n....user.xyz.database.qdb.client_encoding.UTF8.DateStyle.ISO.TimeZone.Europe/London.extra_float_digits.2..R........p....oh.R........S....TimeZone.GMT.S....application_name.QuestDB.S....server_version.11.3.S....integer_datetimes.on.S....client_encoding.UTF8.Z....IP...".SET extra_float_digits = 3...B............E...	.....S....1....2....C....SET.Z....IP...7.SET application_name = 'PostgreSQL JDBC Driver'...B............E...	.....S....1....2....C....SET.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...-S_1.select 1,2,3 from long_sequence(1)...B.....S_1.......D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IX....
+        */
+
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server = createPGServer(configuration);
@@ -6955,48 +7189,52 @@ create table tab as (
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
+    }
+
+    private void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.Simple, true, runnable, -2);
-            assertWithPgServer(Mode.Simple, true, runnable, -1);
+            assertWithPgServer(Mode.Simple, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Simple, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.Simple, false, runnable, -2);
-            assertWithPgServer(Mode.Simple, false, runnable, -1);
+            assertWithPgServer(Mode.Simple, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Simple, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.Extended, true, runnable, -2);
-            assertWithPgServer(Mode.Extended, true, runnable, -1);
+            assertWithPgServer(Mode.Extended, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Extended, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.Extended, false, runnable, -2);
-            assertWithPgServer(Mode.Extended, false, runnable, -1);
+            assertWithPgServer(Mode.Extended, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Extended, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2);
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1);
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2);
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1);
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2);
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1);
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2);
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1);
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1, queryTimeout);
         }
     }
 
-    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
+    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold, long queryTimeout) throws Exception {
         LOG.info().$("asserting PG Wire server [mode=").$(mode)
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
@@ -7005,7 +7243,7 @@ create table tab as (
         try {
             assertMemoryLeak(() -> {
                 try (
-                        final PGWireServer server = createPGServer(2);
+                        final PGWireServer server = createPGServer(2, queryTimeout);
                         WorkerPool workerPool = server.getWorkerPool()
                 ) {
                     workerPool.start(LOG);
@@ -7148,6 +7386,24 @@ create table tab as (
                 }
             }
         });
+    }
+
+    private boolean isEnabledForWalRun() {
+        return !SKIP_FAILING_WAL_TESTS || !walEnabled;
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
+
+    /**
+     * Marker method for tests that don't quite work with the WAL yet.
+     * Disables and skips the test.
+     */
+    private void maySkipOnWalRun() {
+        Assume.assumeTrue("Test disabled during WAL run.", !SKIP_FAILING_WAL_TESTS || !walEnabled);
     }
 
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
@@ -7596,6 +7852,8 @@ create table tab as (
     }
 
     private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
+        maySkipOnWalRun();  // Difference in asserted vs expected data.
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -7614,6 +7872,8 @@ create table tab as (
                     connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.1, 0)").execute();
                     connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.2, 1)").execute();
                     connection.commit();
+
+                    mayDrainWalQueue();
 
                     // single key value in filter
 
@@ -8370,18 +8630,18 @@ create table tab as (
     }
 
     @FunctionalInterface
-    interface OnTickAction {
-        void run(TableWriter writer);
-    }
-
-    @FunctionalInterface
     interface ConnectionAwareRunnable {
         void run(Connection connection, boolean binary) throws Exception;
     }
 
+    @FunctionalInterface
+    interface OnTickAction {
+        void run(TableWriter writer);
+    }
+
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
-        private final AtomicBoolean delaying = new AtomicBoolean(false);
         private final AtomicInteger delayedAttemptsCounter = new AtomicInteger(0);
+        private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
         public int send(long fd, long buffer, int bufferLen) {

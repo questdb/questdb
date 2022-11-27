@@ -37,89 +37,29 @@ import java.nio.charset.StandardCharsets;
  */
 final class FastDoubleMem {
 
-    /**
-     * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
-     * white space.
-     * <blockquote>
-     * <dl>
-     * <dt><i>FloatingPointLiteralWithWhiteSpace:</i></dt>
-     * <dd><i>[WhiteSpace] FloatingPointLiteral [WhiteSpace]</i></dd>
-     * </dl>
-     * </blockquote>
-     * See {@link io.questdb.std.fastdouble} for the grammar of
-     * {@code FloatingPointLiteral}.
-     *
-     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
-     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param rejectOverflow reject parsed values that overflow double type
-     * @return the parsed value, if the input is legal;
-     * @throws NumericException is the input is illegal.
-     */
-    static double parseFloatingPointLiteral(long str, int offset, int length, boolean rejectOverflow) throws NumericException {
-        final int endIndex = offset + length;
-        if (offset < 0) {
-            throw NumericException.INSTANCE;
-        }
-
-        // Skip leading whitespace
-        // -------------------
-        int index = skipWhitespace(str, offset, endIndex);
-        if (index == endIndex) {
-            throw NumericException.INSTANCE;
-        }
-        byte ch = Unsafe.getUnsafe().getByte(str + index);
-
-        // Parse optional sign
-        // -------------------
-        final boolean isNegative = ch == '-';
-        if (isNegative || ch == '+') {
-            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
-            if (ch == 0) {
+    private static double dealWithNaN(double value, long str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+        if (Double.isNaN(value)) {
+            int len = endIndex - startIndex;
+            byte[] b = new byte[len];
+            for (int i = 0; i < len; i++) {
+                b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
+            }
+            double v = Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
+            if (rejectOverflow && (
+                    v == Double.POSITIVE_INFINITY
+                            || v == Double.NEGATIVE_INFINITY
+                            || v == 0.0
+            )
+            ) {
                 throw NumericException.INSTANCE;
             }
+            return v;
         }
-
-        // Parse NaN or Infinity
-        // ---------------------
-        if (ch >= 'I') {
-            return ch == 'N'
-                    ? parseNaN(str, index, endIndex)
-                    : parseInfinity(str, index, endIndex, isNegative);
-        }
-
-        // Parse optional leading zero
-        // ---------------------------
-        final boolean hasLeadingZero = ch == '0';
-        if (hasLeadingZero) {
-            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
-            if (ch == 'x' || ch == 'X') {
-                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
-            }
-        }
-
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
+        return value;
     }
 
     private static boolean isDigit(byte c) {
         return '0' <= c && c <= '9';
-    }
-
-    /**
-     * Skips optional white space in the provided string
-     *
-     * @param str      a string
-     * @param index    start index (inclusive) of the optional white space
-     * @param endIndex end index (exclusive) of the optional white space
-     * @return index after the optional white space
-     */
-    private static int skipWhitespace(long str, int index, int endIndex) {
-        for (; index < endIndex; index++) {
-            if ((Unsafe.getUnsafe().getByte(str + index) & 0xff) > ' ') {
-                break;
-            }
-        }
-        return index;
     }
 
     /**
@@ -493,13 +433,89 @@ final class FastDoubleMem {
         throw NumericException.INSTANCE;
     }
 
-    /*
-    private static long tryToParseEightHexDigits(byte[] str, int offset) {
-        return FastDoubleVector.tryToParseEightHexDigitsUtf8(str, offset);
-    }*/
+    /**
+     * Skips optional white space in the provided string
+     *
+     * @param str      a string
+     * @param index    start index (inclusive) of the optional white space
+     * @param endIndex end index (exclusive) of the optional white space
+     * @return index after the optional white space
+     */
+    private static int skipWhitespace(long str, int index, int endIndex) {
+        for (; index < endIndex; index++) {
+            if ((Unsafe.getUnsafe().getByte(str + index) & 0xff) > ' ') {
+                break;
+            }
+        }
+        return index;
+    }
 
     private static int tryToParseEightDigits(long str, int offset) {
         return FastDoubleSwar.tryToParseEightDigitsUtf8(Unsafe.getUnsafe().getLong(str + offset));
+    }
+
+    /**
+     * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
+     * white space.
+     * <blockquote>
+     * <dl>
+     * <dt><i>FloatingPointLiteralWithWhiteSpace:</i></dt>
+     * <dd><i>[WhiteSpace] FloatingPointLiteral [WhiteSpace]</i></dd>
+     * </dl>
+     * </blockquote>
+     * See {@link io.questdb.std.fastdouble} for the grammar of
+     * {@code FloatingPointLiteral}.
+     *
+     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException is the input is illegal.
+     */
+    static double parseFloatingPointLiteral(long str, int offset, int length, boolean rejectOverflow) throws NumericException {
+        final int endIndex = offset + length;
+        if (offset < 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        // Skip leading whitespace
+        // -------------------
+        int index = skipWhitespace(str, offset, endIndex);
+        if (index == endIndex) {
+            throw NumericException.INSTANCE;
+        }
+        byte ch = Unsafe.getUnsafe().getByte(str + index);
+
+        // Parse optional sign
+        // -------------------
+        final boolean isNegative = ch == '-';
+        if (isNegative || ch == '+') {
+            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+            if (ch == 0) {
+                throw NumericException.INSTANCE;
+            }
+        }
+
+        // Parse NaN or Infinity
+        // ---------------------
+        if (ch >= 'I') {
+            return ch == 'N'
+                    ? parseNaN(str, index, endIndex)
+                    : parseInfinity(str, index, endIndex, isNegative);
+        }
+
+        // Parse optional leading zero
+        // ---------------------------
+        final boolean hasLeadingZero = ch == '0';
+        if (hasLeadingZero) {
+            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+            if (ch == 'x' || ch == 'X') {
+                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
+            }
+        }
+
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
     }
 
     static double valueOfFloatLiteral(
@@ -521,27 +537,6 @@ final class FastDoubleMem {
                 exponentOfTruncatedSignificand
         );
         return dealWithNaN(d, str, startIndex, endIndex, rejectOverflow);
-    }
-
-    private static double dealWithNaN(double value, long str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
-        if (Double.isNaN(value)) {
-            int len = endIndex - startIndex;
-            byte[] b = new byte[len];
-            for (int i = 0; i < len; i++) {
-                b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
-            }
-            double v = Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
-            if (rejectOverflow && (
-                    v == Double.POSITIVE_INFINITY
-                            || v == Double.NEGATIVE_INFINITY
-                            || v == 0.0
-            )
-            ) {
-                throw NumericException.INSTANCE;
-            }
-            return v;
-        }
-        return value;
     }
 
     static double valueOfHexLiteral(

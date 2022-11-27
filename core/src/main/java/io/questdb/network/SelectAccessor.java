@@ -25,19 +25,19 @@
 package io.questdb.network;
 
 public class SelectAccessor {
-    public static final int COUNT_OFFSET;
     public static final int ARRAY_OFFSET;
+    public static final int COUNT_OFFSET;
     static final int FD_READ = 1;
     static final int FD_WRITE = 2;
+
+    public static native int select(long readfds, long writefds, long exceptfds);
+
+    private static native int arrayOffset();
+
+    private static native int countOffset();
 
     static {
         ARRAY_OFFSET = SelectAccessor.arrayOffset();
         COUNT_OFFSET = SelectAccessor.countOffset();
     }
-
-    public static native int select(long readfds, long writefds, long exceptfds);
-
-    private static native int countOffset();
-
-    private static native int arrayOffset();
 }

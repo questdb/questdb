@@ -39,6 +39,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
     private static volatile long txn;
+    private static volatile long writerMin;
 
     @Test
     public void testCheckNoLocksBeforeTxn() {
@@ -399,7 +400,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                             try {
                                 if (scoreboard.acquireTxn(txn + (long) s * entryCount)) {
                                     scoreboard.releaseTxn(txn + (long) s * entryCount);
-                                    Thread.yield();
+                                    Os.pause();
                                 }
                             } catch (CairoException e) {
                                 if (Chars.contains(e.getFlyweightMessage(), "max txn-inflight limit reached")) {
@@ -478,7 +479,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 // This one also fails, but those could be readers that didn't roll back yet
                                 anomaly.incrementAndGet();
                             }
-                            Thread.yield();
+                            Os.pause();
                         }
                     } catch (Throwable e) {
                         LOG.errorW().$(e).$();
@@ -603,7 +604,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             }
 
             // Writer constantly increments txn number
-            Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations, readers);
+            Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations);
             writer.start();
 
             latch.await();
@@ -617,12 +618,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     private static class Reader extends Thread {
 
-        private final TxnScoreboard scoreboard;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger anomaly;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
         private final int readers;
+        private final TxnScoreboard scoreboard;
 
         private Reader(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;
@@ -640,8 +641,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 long t;
                 while ((t = txn) < iterations) {
                     if (scoreboard.acquireTxn(t)) {
+                        long writerMinLoc = writerMin;
                         long activeReaderCount = scoreboard.getActiveReaderCount(t);
-                        if (activeReaderCount > readers || activeReaderCount < 1) {
+                        if (activeReaderCount > readers + 1 || activeReaderCount < 1) {
                             LOG.errorW()
                                     .$("activeReaderCount=")
                                     .$(activeReaderCount)
@@ -652,17 +654,23 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                             anomaly.addAndGet(100);
                         }
                         Os.pause();
-                        scoreboard.releaseTxn(t);
-                        long min = scoreboard.getMin();
-                        long prevCount = scoreboard.getActiveReaderCount(t - 1);
-                        if (min == t && prevCount > 0) {
+                        if (writerMinLoc > t) {
+                            LOG.errorW()
+                                    .$("writer min too optimistic writerMin=").$(writerMinLoc)
+                                    .$(",lockedTxn=").$(t)
+                                    .$();
                             anomaly.incrementAndGet();
-                            LOG.errorW().$("min=").$(min).$(",prev_count=").$(prevCount).$();
                         }
-                        if (prevCount > readers - 1 || prevCount < 0) {
-                            LOG.errorW().$("prev_count=").$(prevCount).$();
-                            anomaly.addAndGet(10);
+                        long rangeTo = txn;
+                        if (scoreboard.isRangeAvailable(t, Math.max(rangeTo, t + 1))) {
+                            LOG.errorW()
+                                    .$("range available from=").$(t)
+                                    .$(", to=").$(rangeTo)
+                                    .$(",lockedTxn=").$(t)
+                                    .$();
+                            anomaly.incrementAndGet();
                         }
+                        scoreboard.releaseTxn(t);
                         LockSupport.parkNanos(10);
                     }
                 }
@@ -677,39 +685,42 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     private static class Writer extends Thread {
 
-        private final TxnScoreboard scoreboard;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger anomaly;
+        private final CyclicBarrier barrier;
         private final int iterations;
-        private final int readers;
+        private final CountDownLatch latch;
+        private final TxnScoreboard scoreboard;
 
-        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
+        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations) {
             this.scoreboard = scoreboard;
             this.barrier = barrier;
             this.latch = latch;
             this.anomaly = anomaly;
             this.iterations = iterations;
-            this.readers = readers;
         }
 
         @Override
         public void run() {
             try {
                 long publishWaitBarrier = scoreboard.getEntryCount() - 2;
+                txn = 1;
+                scoreboard.acquireTxn(txn);
+                scoreboard.releaseTxn(txn);
+                writerMin = scoreboard.getMin();
+
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
                     for (int sleepCount = 0; sleepCount < 50 && txn - scoreboard.getMin() > publishWaitBarrier; sleepCount++) {
                         // Some readers are slow and haven't release transaction yet. Give them a bit more time
-                        long min = scoreboard.getMin();
                         LOG.infoW().$("slow reader release, waiting... [txn=")
                                 .$(txn)
-                                .$(", min=").$(min)
+                                .$(", min=").$(scoreboard.getMin())
                                 .$(", size=").$(scoreboard.getEntryCount())
                                 .I$();
                         Os.sleep(100);
                     }
-                    if (txn - scoreboard.getMin() > scoreboard.getEntryCount()) {
+
+                    if (txn - scoreboard.getMin() > publishWaitBarrier) {
                         // Wait didn't help. Abort the test.
                         anomaly.addAndGet(1000);
                         LOG.errorW().$("slow reader release, abort [txn=")
@@ -722,14 +733,29 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     }
 
                     // This is the only writer
-                    @SuppressWarnings("NonAtomicOperationOnVolatileField") long nextTxn = txn++;
-                    Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
-                    Os.pause();
-                    Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
+                    //noinspection NonAtomicOperationOnVolatileField
+                    txn++;
+                    long nextTxn = txn;
+
+                    // Simulate TableWriter trying to find if there are readers before the published transaction
+                    if (scoreboard.acquireTxn(nextTxn)) {
+                        scoreboard.releaseTxn(nextTxn);
+                    }
+
+                    writerMin = scoreboard.getMin();
+                    if (writerMin > nextTxn) {
+                        LOG.errorW()
+                                .$("writer min is above max published transaction=").$(writerMin)
+                                .$(",publishedTxn=").$(nextTxn)
+                                .$();
+                        anomaly.addAndGet(10000);
+                    }
                 }
-            } catch (Exception e) {
+                LOG.infoW().$("writer done").I$();
+            } catch (Throwable e) {
                 LOG.errorW().$(e).$();
                 anomaly.incrementAndGet();
+                txn = iterations;
             } finally {
                 latch.countDown();
             }

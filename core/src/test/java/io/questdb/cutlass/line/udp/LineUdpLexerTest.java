@@ -351,10 +351,10 @@ public class LineUdpLexerTest {
 
     private class TestLineUdpParser implements LineUdpParser {
         final HashMap<Long, String> tokens = new HashMap<>();
-        boolean fields = false;
-        int errorState;
         int errorCode;
         int errorPosition;
+        int errorState;
+        boolean fields = false;
 
         @Override
         public void onError(int position, int state, int code) {

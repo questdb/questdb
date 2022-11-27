@@ -37,8 +37,8 @@ import java.lang.reflect.Proxy;
 
 public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
-    protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
+    protected static SqlExecutionContext sqlExecutionContext;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -60,7 +60,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         );
         // free engine from the superclass
         Misc.free(engine);
-        engine = new CairoEngine(configuration, metrics);
+        engine = new CairoEngine(configuration, metrics, 2);
         compiler = new SqlCompiler(engine, null, null);
         compiler.setFullFatJoins(true);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
@@ -94,6 +94,8 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(101, 1);");
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(102, 3);");
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(103, 5);");
+
+            engine.releaseInactive();
         } catch (SqlException e) {
             Assert.fail(e.getMessage());
         }
@@ -101,7 +103,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinNoLeak() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     try {
                         compiler.compile(
@@ -122,13 +124,14 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                                 ex.getFlyweightMessage(),
                                 "limit of -1 resizes exceeded in FastMap"
                         );
+                        Assert.assertFalse(ex.isCritical());
                     }
                 });
     }
 
     @Test
     public void testLtJoinNoLeak() throws Exception {
-        TestUtils.assertMemoryLeak(
+        assertMemoryLeak(
                 () -> {
                     try {
                         compiler.compile(
@@ -149,6 +152,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                                 ex.getFlyweightMessage(),
                                 "limit of -1 resizes exceeded in FastMap"
                         );
+                        Assert.assertFalse(ex.isCritical());
                     }
                 });
     }

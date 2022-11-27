@@ -25,12 +25,16 @@
 package io.questdb.std;
 
 import java.util.Arrays;
+import java.util.NoSuchElementException;
+import java.util.PrimitiveIterator;
 
 
 public class IntHashSet extends AbstractIntHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final IntList list;
+
+    private IntIteratorImpl it;
 
     public IntHashSet() {
         this(MIN_INITIAL_CAPACITY);
@@ -88,8 +92,60 @@ public class IntHashSet extends AbstractIntHashSet {
         list.clear();
     }
 
+    public boolean contains(int key) {
+        return keyIndex(key) < 0;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        IntHashSet that = (IntHashSet) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (int i = 0, n = list.size(); i < n; i++) {
+            int key = list.getQuick(i);
+            if (key != noEntryKeyValue && that.excludes(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean excludes(int key) {
         return keyIndex(key) > -1;
+    }
+
+    public int get(int index) {
+        return list.getQuick(index);
+    }
+
+    public int getLast() {
+        return list.getLast();
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += keys[i];
+            }
+        }
+        return hashCode;
+    }
+
+    /**
+     * Returns a reset borrowed iterator. It can't be used to iterate the collection in parallel.
+     */
+    public PrimitiveIterator.OfInt iterator() {
+        if (it == null) {
+            it = new IntIteratorImpl();
+        } else {
+            it.reset();
+        }
+        return it;
     }
 
     public int remove(int key) {
@@ -111,59 +167,8 @@ public class IntHashSet extends AbstractIntHashSet {
     }
 
     @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
-    }
-
-    public boolean contains(int key) {
-        return keyIndex(key) < 0;
-    }
-
-    public int get(int index) {
-        return list.getQuick(index);
-    }
-
-    public int getLast() {
-        return list.getLast();
-    }
-
-    @Override
     public String toString() {
         return list.toString();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        IntHashSet that = (IntHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (int i = 0, n = list.size(); i < n; i++) {
-            int key = list.getQuick(i);
-            if (key != noEntryKeyValue && that.excludes(key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += keys[i];
-            }
-        }
-        return hashCode;
     }
 
     private void rehash() {
@@ -178,6 +183,45 @@ public class IntHashSet extends AbstractIntHashSet {
         for (int i = 0; i < n; i++) {
             final int key = list.getQuick(i);
             keys[keyIndex(key)] = key;
+        }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
+    }
+
+    private class IntIteratorImpl implements PrimitiveIterator.OfInt {
+        private int keysIndex;
+        private int yieldedCount;
+
+        @Override
+        public boolean hasNext() {
+            return yieldedCount < size();
+        }
+
+        @Override
+        public int nextInt() {
+            while (keysIndex < keys.length) {
+                final int entry = keys[keysIndex];
+                ++keysIndex;
+                if (entry != noEntryKeyValue) {
+                    ++yieldedCount;
+                    return entry;
+                }
+            }
+            throw new NoSuchElementException();
+        }
+
+        public void reset() {
+            keysIndex = 0;
+            yieldedCount = 0;
         }
     }
 }

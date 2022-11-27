@@ -85,13 +85,13 @@ public class PrefixedPgGetKeywordsFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            row = -1;
+        public long size() {
+            return rowCount;
         }
 
         @Override
-        public long size() {
-            return rowCount;
+        public void toTop() {
+            row = -1;
         }
 
         class KeywordCatalogueRecord implements Record {
@@ -121,9 +121,9 @@ public class PrefixedPgGetKeywordsFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("word", 1, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("catcode", 2, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("catdesc", 3, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("word", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("catcode", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("catdesc", ColumnType.STRING));
         METADATA = metadata;
     }
 }

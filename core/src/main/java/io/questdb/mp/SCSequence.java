@@ -48,18 +48,6 @@ public class SCSequence extends AbstractSSequence {
         return this.value;
     }
 
-    @Override
-    // The method is final is because we call it from
-    // the constructor.
-    public final void setCurrent(long value) {
-        this.value = value;
-    }
-
-    @Override
-    public long current() {
-        return value;
-    }
-
     public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
         long cursor = next();
         if (cursor < 0) {
@@ -80,6 +68,11 @@ public class SCSequence extends AbstractSSequence {
     }
 
     @Override
+    public long current() {
+        return value;
+    }
+
+    @Override
     public void done(long cursor) {
         this.value = cursor;
         barrier.getWaitStrategy().signal();
@@ -93,6 +86,13 @@ public class SCSequence extends AbstractSSequence {
         }
 
         return next0(next + 1);
+    }
+
+    // The method is final is because we call it from
+    // the constructor.
+    @Override
+    public final void setCurrent(long value) {
+        this.value = value;
     }
 
     private long next0(long next) {

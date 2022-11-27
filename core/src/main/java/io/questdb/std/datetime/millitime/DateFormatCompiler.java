@@ -29,157 +29,107 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 
 public class DateFormatCompiler {
-    static final int OP_ERA = 1;
-    static final int OP_YEAR_ONE_DIGIT = 2;
-    static final int OP_YEAR_TWO_DIGITS = 3;
-    static final int OP_YEAR_THREE_DIGITS = 39;
-    static final int OP_YEAR_FOUR_DIGITS = 4;
-    static final int OP_MONTH_ONE_DIGIT = 5;
-    static final int OP_MONTH_TWO_DIGITS = 6;
-    static final int OP_MONTH_SHORT_NAME = 7;
-    static final int OP_MONTH_LONG_NAME = 8;
+    static final int OP_AM_PM = 14;
+    static final int OP_DAY_GREEDY = 139;
+    static final int OP_DAY_NAME_LONG = 12;
+    static final int OP_DAY_NAME_SHORT = 11;
+    static final int OP_DAY_OF_WEEK = 13;
+    static final int OP_DAY_OF_YEAR = 36;
     static final int OP_DAY_ONE_DIGIT = 9;
     static final int OP_DAY_TWO_DIGITS = 10;
-    static final int OP_DAY_NAME_SHORT = 11;
-    static final int OP_DAY_NAME_LONG = 12;
-    static final int OP_DAY_OF_WEEK = 13;
-    static final int OP_AM_PM = 14;
-    static final int OP_HOUR_24_ONE_DIGIT = 15;
-    static final int OP_HOUR_24_TWO_DIGITS = 32;
-    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
-    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+    static final int OP_ERA = 1;
+    static final int OP_HOUR_12_GREEDY = 142;
+    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
     static final int OP_HOUR_12_ONE_DIGIT = 17;
-    static final int OP_HOUR_12_TWO_DIGITS = 34;
     static final int OP_HOUR_12_ONE_DIGIT_ONE_BASED = 18;
+    static final int OP_HOUR_12_TWO_DIGITS = 34;
     static final int OP_HOUR_12_TWO_DIGITS_ONE_BASED = 35;
-    static final int OP_MINUTE_ONE_DIGIT = 19;
-    static final int OP_MINUTE_TWO_DIGITS = 29;
-    static final int OP_SECOND_ONE_DIGIT = 20;
-    static final int OP_SECOND_TWO_DIGITS = 30;
+    static final int OP_HOUR_24_GREEDY = 140;
+    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
+    static final int OP_HOUR_24_ONE_DIGIT = 15;
+    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
+    static final int OP_HOUR_24_TWO_DIGITS = 32;
+    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+    static final int OP_MILLIS_GREEDY = 146;
     static final int OP_MILLIS_ONE_DIGIT = 21;
     static final int OP_MILLIS_THREE_DIGITS = 31;
+    static final int OP_MINUTE_GREEDY = 144;
+    static final int OP_MINUTE_ONE_DIGIT = 19;
+    static final int OP_MINUTE_TWO_DIGITS = 29;
+    static final int OP_MONTH_GREEDY = 135;
+    static final int OP_MONTH_LONG_NAME = 8;
+    static final int OP_MONTH_ONE_DIGIT = 5;
+    static final int OP_MONTH_SHORT_NAME = 7;
+    static final int OP_MONTH_TWO_DIGITS = 6;
+    static final int OP_SECOND_GREEDY = 145;
+    static final int OP_SECOND_ONE_DIGIT = 20;
+    static final int OP_SECOND_TWO_DIGITS = 30;
     static final int OP_TIME_ZONE_GMT_BASED = 22;
-    static final int OP_TIME_ZONE_SHORT = 23;
-    static final int OP_TIME_ZONE_LONG = 24;
-    static final int OP_TIME_ZONE_RFC_822 = 25;
     static final int OP_TIME_ZONE_ISO_8601_1 = 26;
     static final int OP_TIME_ZONE_ISO_8601_2 = 27;
     static final int OP_TIME_ZONE_ISO_8601_3 = 28;
-    static final int OP_DAY_OF_YEAR = 36;
-    static final int OP_WEEK_OF_YEAR = 37;
+    static final int OP_TIME_ZONE_LONG = 24;
+    static final int OP_TIME_ZONE_RFC_822 = 25;
+    static final int OP_TIME_ZONE_SHORT = 23;
     static final int OP_WEEK_OF_MONTH = 38;
+    static final int OP_WEEK_OF_YEAR = 37;
+    static final int OP_YEAR_FOUR_DIGITS = 4;
     static final int OP_YEAR_GREEDY = 132;
-    static final int OP_MONTH_GREEDY = 135;
-    static final int OP_DAY_GREEDY = 139;
-    static final int OP_HOUR_24_GREEDY = 140;
-    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
-    static final int OP_HOUR_12_GREEDY = 142;
-    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
-    static final int OP_MINUTE_GREEDY = 144;
-    static final int OP_SECOND_GREEDY = 145;
-    static final int OP_MILLIS_GREEDY = 146;
-    static final CharSequenceIntHashMap opMap;
+    static final int OP_YEAR_ONE_DIGIT = 2;
+    static final int OP_YEAR_THREE_DIGITS = 39;
+    static final int OP_YEAR_TWO_DIGITS = 3;
     static final ObjList<String> opList;
-    private static final int FA_LOCAL_DATETIME = 1;
-    private static final int FA_LOCAL_SINK = 5;
-    private static final int FA_LOCAL_LOCALE = 3;
-    private static final int FA_LOCAL_TIMEZONE = 4;
-    private static final int FA_SECOND_MILLIS = 1;
-    private static final int FA_SECOND = 2;
-    private static final int FA_MINUTE = 3;
-    private static final int FA_HOUR = 4;
+    static final CharSequenceIntHashMap opMap;
     private static final int FA_DAY = 5;
-    private static final int FA_MONTH = 6;
-    private static final int FA_YEAR = 7;
-    private static final int FA_LEAP = 8;
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_DAY_OF_YEAR = 11;
-    private static final int FA_WEEK_OF_YEAR = 12;
+    private static final int FA_HOUR = 4;
+    private static final int FA_LEAP = 8;
+    private static final int FA_LOCAL_DATETIME = 1;
+    private static final int FA_LOCAL_LOCALE = 3;
+    private static final int FA_LOCAL_SINK = 5;
+    private static final int FA_LOCAL_TIMEZONE = 4;
+    private static final int FA_MINUTE = 3;
+    private static final int FA_MONTH = 6;
+    private static final int FA_SECOND = 2;
+    private static final int FA_SECOND_MILLIS = 1;
     private static final int FA_WEEK_OF_MONTH = 13;
-    private static final int P_INPUT_STR = 1;
-    private static final int P_LO = 2;
-    private static final int P_HI = 3;
-    private static final int P_LOCALE = 4;
+    private static final int FA_WEEK_OF_YEAR = 12;
+    private static final int FA_YEAR = 7;
+    private static final int FORMAT_METHOD_STACK_START = 6;
     private static final int LOCAL_DAY = 5;
-    private static final int LOCAL_MONTH = 6;
-    private static final int LOCAL_YEAR = 7;
+    private static final int LOCAL_ERA = 19;
     private static final int LOCAL_HOUR = 8;
-    private static final int LOCAL_MINUTE = 9;
-    private static final int LOCAL_SECOND = 10;
+    private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_MILLIS = 11;
+    private static final int LOCAL_MINUTE = 9;
+    private static final int LOCAL_MONTH = 6;
+    private static final int LOCAL_OFFSET = 16;
     private static final int LOCAL_POS = 12;
+    private static final int LOCAL_SECOND = 10;
     private static final int LOCAL_TEMP_LONG = 13;
     private static final int LOCAL_TIMEZONE = 15;
-    private static final int LOCAL_OFFSET = 16;
-    private static final int LOCAL_HOUR_TYPE = 18;
-    private static final int LOCAL_ERA = 19;
-    private static final int FORMAT_METHOD_STACK_START = 6;
-
-    static {
-        opMap = new CharSequenceIntHashMap();
-        opList = new ObjList<>();
-
-        addOp("G", OP_ERA);
-        addOp("y", OP_YEAR_ONE_DIGIT);
-        addOp("yy", OP_YEAR_TWO_DIGITS);
-        addOp("yyy", OP_YEAR_THREE_DIGITS);
-        addOp("yyyy", OP_YEAR_FOUR_DIGITS);
-        addOp("M", OP_MONTH_ONE_DIGIT);
-        addOp("MM", OP_MONTH_TWO_DIGITS);
-        addOp("MMM", OP_MONTH_SHORT_NAME);
-        addOp("MMMM", OP_MONTH_LONG_NAME);
-        addOp("d", OP_DAY_ONE_DIGIT);
-        addOp("dd", OP_DAY_TWO_DIGITS);
-        addOp("D", OP_DAY_OF_YEAR);
-        addOp("w", OP_WEEK_OF_YEAR);
-        addOp("W", OP_WEEK_OF_MONTH);
-        addOp("E", OP_DAY_NAME_SHORT);
-        addOp("EE", OP_DAY_NAME_LONG);
-        addOp("u", OP_DAY_OF_WEEK);
-        addOp("a", OP_AM_PM);
-        addOp("H", OP_HOUR_24_ONE_DIGIT);
-        addOp("HH", OP_HOUR_24_TWO_DIGITS);
-        addOp("k", OP_HOUR_24_ONE_DIGIT_ONE_BASED);
-        addOp("kk", OP_HOUR_24_TWO_DIGITS_ONE_BASED);
-        addOp("K", OP_HOUR_12_ONE_DIGIT);
-        addOp("KK", OP_HOUR_12_TWO_DIGITS);
-        addOp("h", OP_HOUR_12_ONE_DIGIT_ONE_BASED);
-        addOp("hh", OP_HOUR_12_TWO_DIGITS_ONE_BASED);
-        addOp("m", OP_MINUTE_ONE_DIGIT);
-        addOp("mm", OP_MINUTE_TWO_DIGITS);
-        addOp("s", OP_SECOND_ONE_DIGIT);
-        addOp("ss", OP_SECOND_TWO_DIGITS);
-        addOp("S", OP_MILLIS_ONE_DIGIT);
-        addOp("SSS", OP_MILLIS_THREE_DIGITS);
-        addOp("z", OP_TIME_ZONE_SHORT);
-        addOp("zz", OP_TIME_ZONE_GMT_BASED);
-        addOp("zzz", OP_TIME_ZONE_LONG);
-        addOp("Z", OP_TIME_ZONE_RFC_822);
-        addOp("x", OP_TIME_ZONE_ISO_8601_1);
-        addOp("xx", OP_TIME_ZONE_ISO_8601_2);
-        addOp("merge_copy_var_column", OP_TIME_ZONE_ISO_8601_3);
-    }
-
-    private final GenericLexer lexer = new GenericLexer(2048);
+    private static final int LOCAL_YEAR = 7;
+    private static final int P_HI = 3;
+    private static final int P_INPUT_STR = 1;
+    private static final int P_LO = 2;
+    private static final int P_LOCALE = 4;
     private final BytecodeAssembler asm = new BytecodeAssembler();
-    private final IntList ops = new IntList();
-    private final ObjList<String> delimiters = new ObjList<>();
     private final IntList delimiterIndexes = new IntList();
-    private final LongList frameOffsets = new LongList();
+    private final ObjList<String> delimiters = new ObjList<>();
     private final int[] fmtAttributeIndex = new int[32];
+    private final LongList frameOffsets = new LongList();
+    private final GenericLexer lexer = new GenericLexer(2048);
+    private final IntList ops = new IntList();
 
     public DateFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
-    }
-
-    private static void addOp(String op, int opDayTwoDigits) {
-        opMap.put(op, opDayTwoDigits);
-        opList.add(op);
     }
 
     public DateFormat compile(CharSequence pattern) {
@@ -231,6 +181,11 @@ public class DateFormatCompiler {
         return generic ? new GenericDateFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
+    private static void addOp(String op, int opDayTwoDigits) {
+        opMap.put(op, opDayTwoDigits);
+        opList.add(op);
+    }
+
     private void addTempToPos(int decodeLenIndex) {
         asm.iload(LOCAL_POS);
         decodeInt(decodeLenIndex);
@@ -238,19 +193,47 @@ public class DateFormatCompiler {
         asm.istore(LOCAL_POS);
     }
 
-    private void assembleFormatMethod(IntList ops, ObjList<String> delimiters,
-                                      int getWeekdayIndex, int getShortWeekdayIndex,
-                                      int getMonthIndex, int getShortMonthIndex,
-                                      int appendEraIndex, int appendAmPmIndex, int appendHour12Index, int appendHour12PaddedIndex, int appendHour121Index, int appendHour121PaddedIndex,
-                                      int getYearIndex, int isLeapYearIndex,
-                                      int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex,
-                                      int getDayOfWeekIndex, int getDayOfYearIndex,
-                                      int getWeekOfYearIndex, int getWeekOfMonthIndex,
-                                      int append000Index, int append00Index, int append0Index,
-                                      int sinkPutIntIndex, int sinkPutStrIndex, int sinkPutChrIndex, int formatNameIndex, int formatSigIndex
+    private void assembleFormatMethod(
+            IntList ops,
+            ObjList<String> delimiters,
+            int getWeekdayIndex,
+            int getShortWeekdayIndex,
+            int getMonthIndex,
+            int getShortMonthIndex,
+            int appendEraIndex,
+            int appendAmPmIndex,
+            int appendHour12Index,
+            int appendHour12PaddedIndex,
+            int appendHour121Index,
+            int appendHour121PaddedIndex,
+            int getYearIndex,
+            int isLeapYearIndex,
+            int getMonthOfYearIndex,
+            int getDayOfMonthIndex,
+            int getHourOfDayIndex,
+            int getMinuteOfHourIndex,
+            int getSecondOfMinuteIndex,
+            int getMillisOfSecondIndex,
+            int getDayOfWeekIndex,
+            int getDayOfYearIndex,
+            int getWeekOfYearIndex,
+            int getWeekOfMonthIndex,
+            int appendYear000Index,
+            int append00Index,
+            int append0Index,
+            int sinkPutIntIndex,
+            int sinkPutStrIndex,
+            int sinkPutChrIndex,
+            int formatNameIndex,
+            int formatSigIndex
     ) {
         int formatAttributes = computeFormatAttributes(ops);
-        asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
+        asm.startMethod(
+                formatNameIndex,
+                formatSigIndex,
+                6,
+                FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes)
+        );
 
         assembleFormatMethodStack(
                 formatAttributes,
@@ -487,7 +470,7 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.invokeStatic(append000Index);
+                    asm.invokeStatic(appendYear000Index);
                     break;
                 // ERA
                 case DateFormatCompiler.OP_ERA:
@@ -525,10 +508,8 @@ public class DateFormatCompiler {
                         asm.pop();
                     }
                     break;
-
             }
         }
-
 
         asm.return_();
         asm.endMethodCode();
@@ -537,11 +518,21 @@ public class DateFormatCompiler {
         asm.endMethod();
     }
 
-    private void assembleFormatMethodStack(int formatAttributes, int getYearIndex, int isLeapYearIndex,
-                                           int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex,
-                                           int getMinuteOfHourIndex, int getSecondOfMinuteIndex,
-                                           int getMillisOfSecondIndex, int getDayOfWeekIndex, int getDayOfYearIndex,
-                                           int getWeekOfYearIndex, int getWeekOfMonthIndex) {
+    private void assembleFormatMethodStack(
+            int formatAttributes,
+            int getYearIndex,
+            int isLeapYearIndex,
+            int getMonthOfYearIndex,
+            int getDayOfMonthIndex,
+            int getHourOfDayIndex,
+            int getMinuteOfHourIndex,
+            int getSecondOfMinuteIndex,
+            int getMillisOfSecondIndex,
+            int getDayOfWeekIndex,
+            int getDayOfYearIndex,
+            int getWeekOfYearIndex,
+            int getWeekOfMonthIndex
+    ) {
         int index = FORMAT_METHOD_STACK_START;
         if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
             fmtAttributeIndex[FA_YEAR] = index++;
@@ -719,9 +710,6 @@ public class DateFormatCompiler {
             switch (op) {
                 // AM/PM
                 case OP_AM_PM:
-                    // l = locale.matchAMPM(in, pos, hi);
-                    // hourType = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeMatch(matchAMPMIndex);
                     decodeInt(decodeIntIndex);
@@ -729,28 +717,19 @@ public class DateFormatCompiler {
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_MILLIS_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // millis = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MILLIS);
                     break;
                 case OP_MILLIS_THREE_DIGITS:
-                    // assertRemaining(pos + 2, hi);
-                    // millis = Numbers.parseInt(in, pos, pos += 3);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MILLIS);
                     break;
                 case OP_MILLIS_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // millis = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseInt000Greedy, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);
                     break;
                 case OP_SECOND_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // second = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_SECOND);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_SECOND);
                     break;
@@ -759,63 +738,37 @@ public class DateFormatCompiler {
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_SECOND);
                     break;
                 case OP_SECOND_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // second = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_SECOND);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_SECOND);
                     break;
                 case OP_MINUTE_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // minute = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MINUTE);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MINUTE);
                     break;
                 case OP_MINUTE_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // minute = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_MINUTE);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MINUTE);
                     break;
 
                 case OP_MINUTE_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // minute = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MINUTE);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MINUTE);
                     break;
                 // HOUR (0-11)
                 case OP_HOUR_12_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos);
-                    // if (hourType == HOUR_24) {
-                    //     hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
                 case OP_HOUR_12_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2);
-                    // if (hourType == HOUR_24) {
-                    //     hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
 
                 case OP_HOUR_12_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
-                    // if (hourType == HOUR_24) {
-                    //     hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
@@ -823,34 +776,18 @@ public class DateFormatCompiler {
                     break;
                 // HOUR (1-12)
                 case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    // if (hourType == HOUR_24) {
-                    //    hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
                     setHourType(stackState);
                     break;
 
                 case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    // if (hourType == HOUR_24) {
-                    //    hourType = HOUR_AM;
-                    //}
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
                     setHourType(stackState);
                     break;
 
                 case OP_HOUR_12_GREEDY_ONE_BASED:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l) - 1;
-                    // pos += Numbers.decodeHighInt(l);
-                    // if (hourType == HOUR_24) {
-                    //    hourType = HOUR_AM;
-                    //}
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -868,46 +805,32 @@ public class DateFormatCompiler {
                     break;
                 // HOUR (0-23)
                 case OP_HOUR_24_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     break;
 
                 case OP_HOUR_24_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     break;
 
                 case OP_HOUR_24_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
                     break;
                 // HOUR (1 - 24)
                 case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos) - 1;
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
                     break;
 
                 case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2) - 1;
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
                     break;
 
                 case OP_HOUR_24_GREEDY_ONE_BASED:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l) - 1;
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -924,37 +847,26 @@ public class DateFormatCompiler {
                     break;
                 // DAY
                 case OP_DAY_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    //day = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_DAY);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_DAY);
                     break;
                 case OP_DAY_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // day = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_DAY);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_DAY);
                     break;
                 case OP_DAY_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // day = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_DAY);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_DAY);
                     break;
                 case OP_DAY_NAME_LONG:
                 case OP_DAY_NAME_SHORT:
-                    // l = locale.matchWeekday(in, pos, hi);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeMatch(matchWeekdayIndex);
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_WEEK_OF_YEAR:
                 case OP_DAY_OF_YEAR:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     asm.aload(P_INPUT_STR);
                     asm.iload(LOCAL_POS);
@@ -965,9 +877,6 @@ public class DateFormatCompiler {
                     break;
                 case OP_WEEK_OF_MONTH:
                 case OP_DAY_OF_WEEK:
-                    // assertRemaining(pos, hi);
-                    // // ignore weekday
-                    // Numbers.parseInt(in, pos, ++pos);
                     asm.iload(LOCAL_POS);
                     asm.iload(P_HI);
                     asm.invokeStatic(assertRemainingIndex);
@@ -981,21 +890,14 @@ public class DateFormatCompiler {
                     break;
 
                 case OP_MONTH_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // month = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MONTH);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MONTH);
                     break;
                 case OP_MONTH_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // month = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_MONTH);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MONTH);
                     break;
                 case OP_MONTH_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // month = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MONTH);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MONTH);
@@ -1003,9 +905,6 @@ public class DateFormatCompiler {
 
                 case OP_MONTH_SHORT_NAME:
                 case OP_MONTH_LONG_NAME:
-                    // l = locale.matchMonth(in, pos, hi);
-                    // month = Numbers.decodeLowInt(l) + 1;
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MONTH);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -1018,14 +917,10 @@ public class DateFormatCompiler {
                     break;
 
                 case OP_YEAR_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // year = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_YEAR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_YEAR);
                     break;
                 case OP_YEAR_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // year = adjustYear(Numbers.parseInt(in, pos, pos += 2));
                     stackState &= ~(1 << LOCAL_YEAR);
 
                     asm.iload(LOCAL_POS);
@@ -1043,8 +938,6 @@ public class DateFormatCompiler {
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_THREE_DIGITS:
-                    // assertRemaining(pos + 2, hi);
-                    // year = Numbers.parseInt(in, pos, pos += 3);
                     stackState &= ~(1 << LOCAL_YEAR);
 
                     asm.iload(LOCAL_POS);
@@ -1062,13 +955,6 @@ public class DateFormatCompiler {
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_FOUR_DIGITS: {
-                    // if (pos < hi && in.charAt(pos) == '-') {
-                    //    assertRemaining(pos + 4, hi);
-                    //    year = -Numbers.parseInt(in, pos + 1, pos += 5);
-                    //} else {
-                    //    assertRemaining(pos + 3, hi);
-                    //    year = Numbers.parseInt(in, pos, pos += 4);
-                    //}
                     asm.iload(LOCAL_POS);
                     asm.iload(P_HI);
                     int b1 = asm.if_icmpge();
@@ -1119,15 +1005,6 @@ public class DateFormatCompiler {
                 }
                 break;
                 case OP_YEAR_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // len = Numbers.decodeHighInt(l);
-                    // if (len == 2) {
-                    //     year = adjustYear(Numbers.decodeLowInt(l));
-                    // } else {
-                    //     year = Numbers.decodeLowInt(l);
-                    // }
-                    // pos += len;
-
                     stackState &= ~(1 << LOCAL_YEAR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -1141,9 +1018,6 @@ public class DateFormatCompiler {
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_ERA:
-                    // l = locale.matchEra(in, pos, hi);
-                    // era = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_ERA);
 
                     invokeMatch(matchEraIndex);
@@ -1158,17 +1032,6 @@ public class DateFormatCompiler {
                 case OP_TIME_ZONE_ISO_8601_3:
                 case OP_TIME_ZONE_LONG:
                 case OP_TIME_ZONE_RFC_822:
-
-                    // l = Dates.parseOffset(in, pos, hi);
-                    // if (l == Long.MIN_VALUE) {
-                    //     l = locale.matchZone(in, pos, hi);
-                    //     timezone = Numbers.decodeLowInt(l);
-                    //     pos += Numbers.decodeHighInt(l);
-                    // } else {
-                    //     offset = Numbers.decodeLowInt(l) * Dates.MINUTE_MILLIS;
-                    //     pos += Numbers.decodeHighInt(l);
-                    // }
-
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
                     asm.aload(P_INPUT_STR);
@@ -1411,7 +1274,7 @@ public class DateFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int append000Index = asm.poolMethod(DateFormatUtils.class, "append000", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
 
@@ -1521,7 +1384,7 @@ public class DateFormatCompiler {
                 getDayOfYearIndex,
                 getWeekOfYearIndex,
                 getWeekOfMonthIndex,
-                append000Index,
+                appendYear000Index,
                 append00Index,
                 append0Index,
                 sinkPutIntIndex,
@@ -1846,5 +1709,50 @@ public class DateFormatCompiler {
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
         asm.setJmp(branch, p);
+    }
+
+    static {
+        opMap = new CharSequenceIntHashMap();
+        opList = new ObjList<>();
+
+        addOp("G", OP_ERA);
+        addOp("y", OP_YEAR_ONE_DIGIT);
+        addOp("yy", OP_YEAR_TWO_DIGITS);
+        addOp("yyy", OP_YEAR_THREE_DIGITS);
+        addOp("yyyy", OP_YEAR_FOUR_DIGITS);
+        addOp("M", OP_MONTH_ONE_DIGIT);
+        addOp("MM", OP_MONTH_TWO_DIGITS);
+        addOp("MMM", OP_MONTH_SHORT_NAME);
+        addOp("MMMM", OP_MONTH_LONG_NAME);
+        addOp("d", OP_DAY_ONE_DIGIT);
+        addOp("dd", OP_DAY_TWO_DIGITS);
+        addOp("D", OP_DAY_OF_YEAR);
+        addOp("w", OP_WEEK_OF_YEAR);
+        addOp("W", OP_WEEK_OF_MONTH);
+        addOp("E", OP_DAY_NAME_SHORT);
+        addOp("EE", OP_DAY_NAME_LONG);
+        addOp("u", OP_DAY_OF_WEEK);
+        addOp("a", OP_AM_PM);
+        addOp("H", OP_HOUR_24_ONE_DIGIT);
+        addOp("HH", OP_HOUR_24_TWO_DIGITS);
+        addOp("k", OP_HOUR_24_ONE_DIGIT_ONE_BASED);
+        addOp("kk", OP_HOUR_24_TWO_DIGITS_ONE_BASED);
+        addOp("K", OP_HOUR_12_ONE_DIGIT);
+        addOp("KK", OP_HOUR_12_TWO_DIGITS);
+        addOp("h", OP_HOUR_12_ONE_DIGIT_ONE_BASED);
+        addOp("hh", OP_HOUR_12_TWO_DIGITS_ONE_BASED);
+        addOp("m", OP_MINUTE_ONE_DIGIT);
+        addOp("mm", OP_MINUTE_TWO_DIGITS);
+        addOp("s", OP_SECOND_ONE_DIGIT);
+        addOp("ss", OP_SECOND_TWO_DIGITS);
+        addOp("S", OP_MILLIS_ONE_DIGIT);
+        addOp("SSS", OP_MILLIS_THREE_DIGITS);
+        addOp("z", OP_TIME_ZONE_SHORT);
+        addOp("zz", OP_TIME_ZONE_GMT_BASED);
+        addOp("zzz", OP_TIME_ZONE_LONG);
+        addOp("Z", OP_TIME_ZONE_RFC_822);
+        addOp("x", OP_TIME_ZONE_ISO_8601_1);
+        addOp("xx", OP_TIME_ZONE_ISO_8601_2);
+        addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
     }
 }

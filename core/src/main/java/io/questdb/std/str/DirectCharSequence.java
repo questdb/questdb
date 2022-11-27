@@ -28,9 +28,14 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
 public class DirectCharSequence extends AbstractCharSequence implements Mutable {
-    private long lo;
     private long hi;
     private int len;
+    private long lo;
+
+    @Override
+    public char charAt(int index) {
+        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
+    }
 
     @Override
     public void clear() {
@@ -51,21 +56,8 @@ public class DirectCharSequence extends AbstractCharSequence implements Mutable 
     }
 
     @Override
-    public CharSequence subSequence(int start, int end) {
-        DirectCharSequence seq = new DirectCharSequence();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
-        return seq;
-    }
-
-    @Override
     public int length() {
         return len;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
     }
 
     public DirectCharSequence of(long lo, long hi) {
@@ -73,5 +65,13 @@ public class DirectCharSequence extends AbstractCharSequence implements Mutable 
         this.hi = hi;
         this.len = (int) ((hi - lo) / 2);
         return this;
+    }
+
+    @Override
+    protected CharSequence _subSequence(int start, int end) {
+        DirectCharSequence seq = new DirectCharSequence();
+        seq.lo = this.lo + start;
+        seq.hi = this.lo + end;
+        return seq;
     }
 }

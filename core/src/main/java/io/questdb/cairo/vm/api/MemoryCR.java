@@ -55,6 +55,11 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getByte(addressOf(offset));
     }
 
+    default char getChar(long offset) {
+        assert addressOf(offset + Character.BYTES) > 0;
+        return Unsafe.getUnsafe().getChar(addressOf(offset));
+    }
+
     default double getDouble(long offset) {
         assert addressOf(offset + Double.BYTES) > 0;
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
@@ -75,14 +80,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
-    default long getPageSize() {
-        return size();
-    }
-
-    default short getShort(long offset) {
-        return Unsafe.getUnsafe().getShort(addressOf(offset));
-    }
-
     default void getLong256(long offset, CharSink sink) {
         final long addr = addressOf(offset + Long256.BYTES);
         final long a, b, c, d;
@@ -93,17 +90,17 @@ public interface MemoryCR extends MemoryC, MemoryR {
         Numbers.appendLong256(a, b, c, d, sink);
     }
 
-    default char getChar(long offset) {
-        assert addressOf(offset + Character.BYTES) > 0;
-        return Unsafe.getUnsafe().getChar(addressOf(offset));
+    default long getPageSize() {
+        return size();
     }
 
-    default int getStrLen(long offset) {
-        return getInt(offset);
+    default short getShort(long offset) {
+        return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
 
     default CharSequence getStr(long offset, CharSequenceView view) {
         long addr = addressOf(offset);
+        assert addr > 0;
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
             if (len + 4 + offset <= size()) {
@@ -121,13 +118,22 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return null;
     }
 
-    class ByteSequenceView implements BinarySequence {
+    default int getStrLen(long offset) {
+        return getInt(offset);
+    }
+
+    class ByteSequenceView implements BinarySequence, Mutable {
         private long address;
         private long len = -1;
 
         @Override
         public byte byteAt(long index) {
             return Unsafe.getUnsafe().getByte(address + index);
+        }
+
+        @Override
+        public void clear() {
+            len = -1;
         }
 
         @Override
@@ -149,18 +155,23 @@ public interface MemoryCR extends MemoryC, MemoryR {
         }
     }
 
-    class CharSequenceView extends AbstractCharSequence {
-        private int len;
+    class CharSequenceView extends AbstractCharSequence implements Mutable {
         private long address;
-
-        @Override
-        public int length() {
-            return len;
-        }
+        private int len;
 
         @Override
         public char charAt(int index) {
             return Unsafe.getUnsafe().getChar(address + index * 2L);
+        }
+
+        @Override
+        public void clear() {
+            len = 0;
+        }
+
+        @Override
+        public int length() {
+            return len;
         }
 
         public CharSequenceView of(long address, int len) {

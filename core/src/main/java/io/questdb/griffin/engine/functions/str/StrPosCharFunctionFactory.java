@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -54,7 +53,7 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final Function substrFunc = args.getQuick(1);
         if (substrFunc.isConstant()) {
             char substr = substrFunc.getChar(null);
@@ -78,6 +77,31 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
             }
         }
         return 0;
+    }
+
+    public static class ConstFunc extends IntFunction implements UnaryFunction {
+
+        private final Function strFunc;
+        private final char substr;
+
+        public ConstFunc(Function strFunc, char substr) {
+            this.strFunc = strFunc;
+            this.substr = substr;
+        }
+
+        @Override
+        public Function getArg() {
+            return strFunc;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final CharSequence str = this.strFunc.getStr(rec);
+            if (str == null) {
+                return Numbers.INT_NaN;
+            }
+            return strpos(str, substr);
+        }
     }
 
     public static class Func extends IntFunction implements BinaryFunction {
@@ -111,31 +135,6 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return substrFunc;
-        }
-    }
-
-    public static class ConstFunc extends IntFunction implements UnaryFunction {
-
-        private final Function strFunc;
-        private final char substr;
-
-        public ConstFunc(Function strFunc, char substr) {
-            this.strFunc = strFunc;
-            this.substr = substr;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
-            if (str == null) {
-                return Numbers.INT_NaN;
-            }
-            return strpos(str, substr);
-        }
-
-        @Override
-        public Function getArg() {
-            return strFunc;
         }
     }
 }

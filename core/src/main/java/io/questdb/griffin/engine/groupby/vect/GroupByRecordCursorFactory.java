@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,20 +54,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
     private final static int ROSTI_MINIMIZED_SIZE = 16;//16 is the minimum size usable on arm 
-
-    private final RecordCursorFactory base;
-    private final ObjList<VectorAggregateFunction> vafList;
-    private final ObjectPool<VectorAggregateEntry> entryPool;
     private final ObjList<VectorAggregateEntry> activeEntries;
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-
-    private final long[] pRosti;
-    private final int keyColumnIndex;
+    private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
-    private final RostiAllocFacade raf;
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
-
-    private final CairoConfiguration configuration;
+    private final long[] pRosti;
+    private final RostiAllocFacade raf;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
+    private final ObjList<VectorAggregateFunction> vafList;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -80,7 +78,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
         super(metadata);
-        this.configuration = configuration;
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -90,6 +87,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // ...
         // functions[n].type == columnTypes[n+1]
 
+        this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.base = base;
         // first column is INT or SYMBOL
         this.pRosti = new long[workerCount];
@@ -155,35 +153,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    private static void addOffsets(
-            IntList columnSkewIndex,
-            @Transient ObjList<VectorAggregateFunction> vafList,
-            int start,
-            int end,
-            long columnOffsets
-    ) {
-        for (int i = start; i < end; i++) {
-            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
-        }
-    }
-
-    @Override
-    protected void _close() {
-        Misc.free(base);
-        Misc.freeObjList(vafList);
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            raf.free(pRosti[i]);
-        }
-    }
-
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
             raf.clear(pRosti[i]);
         }
 
-        oomCounter.set(0);
+        this.oomCounter.set(0);
 
         final MessageBus bus = executionContext.getMessageBus();
 
@@ -198,6 +177,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
         final Sequence pubSeq = bus.getVectorAggregatePubSeq();
 
+        this.sharedCircuitBreaker.reset();
         this.entryPool.clear();
         this.activeEntries.clear();
         int queuedCount = 0;
@@ -213,7 +193,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (thread instanceof Worker) {
             workerId = ((Worker) thread).getWorkerId();
         } else {
-            workerId = pRosti.length - 1;//to avoid clashing with other worker with id=0 in tests 
+            workerId = pRosti.length - 1;//to avoid clashing with other worker with id=0 in tests
         }
 
         try {
@@ -241,6 +221,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     long seq = pubSeq.next();
                     if (seq < 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         if (keyAddress == 0) {
                             vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
                         } else {
@@ -255,9 +236,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         if (keyAddress != 0 || valueAddress != 0) {
                             final VectorAggregateEntry entry = entryPool.next();
                             if (keyAddress == 0) {
-                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null);
+                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null, sharedCircuitBreaker);
                             } else {
-                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf);
+                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf, sharedCircuitBreaker);
                             }
                             activeEntries.add(entry);
                             queue.get(seq).entry = entry;
@@ -268,8 +249,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
         } catch (Throwable e) {
+            sharedCircuitBreaker.cancel();
             Misc.free(cursor);
-            resetRostiMemorySize();
             throw e;
         } finally {
             // all done? great start consuming the queue we just published
@@ -281,7 +262,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // tasks in flight.
 
             // start at the back to reduce chance of clashing
-            reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
+            reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG, circuitBreaker, sharedCircuitBreaker);
+            //we can't reallocate rosti until tasks are complete because some other thread could be using it
+            if (sharedCircuitBreaker.isCanceled()) {
+                resetRostiMemorySize();
+            }
         }
 
         if (oomCounter.get() > 0) {
@@ -294,81 +279,83 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // merge maps only when cursor was fetched successfully
         // otherwise assume error and save CPU cycles
         long pRostiBig = pRosti[0];
+        try {
+            if (pRosti.length > 1) {
+                LOG.debug().$("merging").$();
 
-        if (pRosti.length > 1) {
-            LOG.debug().$("merging").$();
-
-            //due to uneven load distribution some rostis could be much bigger and some empty
-            long size = raf.getSize(pRostiBig);
-            for (int i = 1, n = pRosti.length; i < n; i++) {
-                long curSize = raf.getSize(pRosti[i]);
-                if (curSize > size) {
-                    size = curSize;
-                    pRostiBig = pRosti[i];
-                }
-            }
-
-            for (int j = 0; j < vafCount; j++) {
-                final VectorAggregateFunction vaf = vafList.getQuick(j);
-                for (int i = 0, n = pRosti.length; i < n; i++) {
-                    if (pRostiBig == pRosti[i] ||
-                            raf.getSize(pRosti[i]) < 1) {
-                        continue;
+                //due to uneven load distribution some rostis could be much bigger and some empty
+                long size = raf.getSize(pRostiBig);
+                for (int i = 1, n = pRosti.length; i < n; i++) {
+                    long curSize = raf.getSize(pRosti[i]);
+                    if (curSize > size) {
+                        size = curSize;
+                        pRostiBig = pRosti[i];
                     }
+                }
+
+                for (int j = 0; j < vafCount; j++) {
+                    final VectorAggregateFunction vaf = vafList.getQuick(j);
+                    for (int i = 0, n = pRosti.length; i < n; i++) {
+                        if (pRostiBig == pRosti[i] ||
+                                raf.getSize(pRosti[i]) < 1) {
+                            continue;
+                        }
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        long oldSize = Rosti.getAllocMemory(pRostiBig);
+                        if (!vaf.merge(pRostiBig, pRosti[i])) {
+                            Misc.free(cursor);
+                            resetRostiMemorySize();
+                            throw new OutOfMemoryError();
+                        }
+                        raf.updateMemoryUsage(pRostiBig, oldSize);
+                    }
+
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+                    //some wrapUp() methods can increase rosti size
                     long oldSize = Rosti.getAllocMemory(pRostiBig);
-                    if (!vaf.merge(pRostiBig, pRosti[i])) {
+                    if (!vaf.wrapUp(pRostiBig)) {
                         Misc.free(cursor);
                         resetRostiMemorySize();
                         throw new OutOfMemoryError();
                     }
                     raf.updateMemoryUsage(pRostiBig, oldSize);
                 }
-                if (!vaf.wrapUp(pRostiBig)) {
-                    Misc.free(cursor);
-                    resetRostiMemorySize();
-                    throw new OutOfMemoryError();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                for (int i = 0, n = pRosti.length; i < n; i++) {
+                    if (pRostiBig == pRosti[i]) {
+                        continue;
+                    }
+
+                    if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
+                        LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
+                    }
+                }
+
+            } else {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                for (int j = 0; j < vafCount; j++) {
+                    if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
+                        Misc.free(cursor);
+                        resetRostiMemorySize();
+                        throw new OutOfMemoryError();
+                    }
                 }
             }
+        } catch (Throwable t) {
+            Misc.free(cursor);
+            resetRostiMemorySize();
 
-            for (int i = 0, n = pRosti.length; i < n; i++) {
-                if (pRostiBig == pRosti[i]) {
-                    continue;
-                }
-
-                if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
-                    LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
-                }
-            }
-
-        } else {
-            for (int j = 0; j < vafCount; j++) {
-                if (!vafList.getQuick(j).wrapUp(pRostiBig)) {
-                    Misc.free(cursor);
-                    resetRostiMemorySize();
-                    throw new OutOfMemoryError();
-                }
-            }
+            throw t;
         }
+
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(pRostiBig, cursor);
-    }
-
-    private void resetRostiMemorySize() {
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
-                LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
-            }
-        }
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
     }
 
     @Override
@@ -380,34 +367,59 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(base);
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    private static void addOffsets(
+            IntList columnSkewIndex,
+            @Transient ObjList<VectorAggregateFunction> vafList,
+            int start,
+            int end,
+            long columnOffsets
+    ) {
+        for (int i = start; i < end; i++) {
+            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
+        }
+    }
+
+    private void resetRostiMemorySize() {
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
+                LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
+            }
+        }
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(base);
+        Misc.freeObjList(vafList);
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            raf.free(pRosti[i]);
+        }
+    }
+
     private class RostiRecordCursor implements RecordCursor {
-        private final RostiRecord record;
-        private long pRosti;
-        private final IntList symbolTableSkewIndex;
         private final IntList columnSkewIndex;
-        private RostiRecord recordB;
-        private long ctrlStart;
+        private final RostiRecord record;
+        private final IntList symbolTableSkewIndex;
+        private long count;
         private long ctrl;
-        private long slots;
+        private long ctrlStart;
+        private long pRosti;
+        private PageFrameCursor parent;
+        private RostiRecord recordB;
         private long shift;
         private long size;
-        private long count;
-        private PageFrameCursor parent;
-        private final int defaultMapSize;
+        private long slots;
 
         public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex, int defaultMapSize) {
             this.pRosti = pRosti;
             this.record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
-            this.defaultMapSize = defaultMapSize;
-        }
-
-        public RostiRecordCursor of(long pRosti, PageFrameCursor parent) {
-            this.pRosti = pRosti;
-            this.parent = parent;
-            this.toTop();
-            return this;
         }
 
         @Override
@@ -419,6 +431,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public Record getRecord() {
             return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (recordB != null) {
+                return recordB;
+            }
+            return (recordB = new RostiRecord());
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
         @Override
@@ -438,16 +463,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            if (recordB != null) {
-                return recordB;
-            }
-            return (recordB = new RostiRecord());
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return parent.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
+        }
+
+        public RostiRecordCursor of(long pRosti, PageFrameCursor parent) {
+            this.pRosti = pRosti;
+            this.parent = parent;
+            this.toTop();
+            return this;
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
             ((RostiRecord) record).of(atRowId);
+        }
+
+        @Override
+        public long size() {
+            return size;
         }
 
         @Override
@@ -460,30 +494,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.count = 0;
         }
 
-        @Override
-        public long size() {
-            return size;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return parent.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
-        }
-
         private class RostiRecord implements Record {
-            private long pRow;
-
             private final Long256Impl long256A = new Long256Impl();
             private final Long256Impl long256B = new Long256Impl();
-
-            public void of(long pRow) {
-                this.pRow = pRow;
-            }
+            private long pRow;
 
             @Override
             public BinarySequence getBin(int col) {
@@ -515,10 +529,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return getLong(col);
             }
 
-            private long getValueOffset(int column) {
-                return pRow + columnSkewIndex.getQuick(column);
-            }
-
             @Override
             public double getDouble(int col) {
                 return Unsafe.getUnsafe().getDouble(getValueOffset(col));
@@ -527,6 +537,26 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public float getFloat(int col) {
                 return 0;
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+                return getByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return getInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return getShort(col);
             }
 
             @Override
@@ -610,24 +640,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return getLong(col);
             }
 
-            @Override
-            public byte getGeoByte(int col) {
-                return getByte(col);
+            public void of(long pRow) {
+                this.pRow = pRow;
             }
 
-            @Override
-            public short getGeoShort(int col) {
-                return getShort(col);
-            }
-
-            @Override
-            public int getGeoInt(int col) {
-                return getInt(col);
-            }
-
-            @Override
-            public long getGeoLong(int col) {
-                return getLong(col);
+            private long getValueOffset(int column) {
+                return pRow + columnSkewIndex.getQuick(column);
             }
         }
     }

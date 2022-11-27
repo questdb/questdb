@@ -43,10 +43,10 @@ public class PrefixedPgIndexFunctionFactory extends AbstractEmptyCatalogueFuncti
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indrelid", 2, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indexrelid", 3, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indisprimary", 4, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

@@ -65,6 +65,11 @@ public class GeoShortColumn extends GeoShortFunction {
         return true;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoShortColumn(").put(columnIndex).put(')');
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;
@@ -79,10 +84,5 @@ public class GeoShortColumn extends GeoShortFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOSHORT_MIN_BITS] = new GeoShortColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("GeoShortColumn(").put(columnIndex).put(')');
     }
 }

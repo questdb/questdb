@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -37,10 +34,10 @@ import org.jetbrains.annotations.NotNull;
 class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
-    private final int symbolKey;
     private final Function filter;
-    private boolean hasNext;
+    private final int symbolKey;
     private boolean found;
+    private boolean hasNext;
 
     public LatestByValueIndexedFilteredRecordCursor(
             int columnIndex,
@@ -64,18 +61,26 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         hasNext = found;
         filter.toTop();
     }
 
-    private void findRecord() {
+    private void findRecord(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         found = false;
         while ((frame = this.dataFrameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
@@ -84,6 +89,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
 
             RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
             while (cursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(cursor.next());
                 if (filter.getBool(recordA)) {
                     found = true;
@@ -94,17 +100,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     }
 
     @Override
-    public long size() {
-        return -1;
-    }
-
-    @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
         filter.init(this, executionContext);
-        findRecord();
+        findRecord(executionContext);
         hasNext = found;
     }
 }

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -35,8 +36,8 @@ import org.jetbrains.annotations.NotNull;
 class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
-    private final int symbolKey;
     private final Function filter;
+    private final int symbolKey;
     private boolean empty;
     private boolean hasNext;
 
@@ -58,12 +59,6 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        hasNext = !empty;
-        filter.toTop();
-    }
-
-    @Override
     public boolean hasNext() {
         if (hasNext) {
             hasNext = false;
@@ -78,16 +73,13 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        filter.init(this, executionContext);
-        findRecord();
+    public void toTop() {
         hasNext = !empty;
+        filter.toTop();
     }
 
-    private void findRecord() {
+    private void findRecord(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         empty = true;
         DataFrame frame;
         OUT:
@@ -97,6 +89,7 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 if (filter.getBool(recordA)) {
                     int key = recordA.getInt(columnIndex);
@@ -107,5 +100,15 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
                 }
             }
         }
+    }
+
+    @Override
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
+        findRecord(executionContext);
+        hasNext = !empty;
     }
 }

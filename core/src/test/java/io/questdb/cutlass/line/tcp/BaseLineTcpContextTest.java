@@ -35,6 +35,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -45,11 +46,10 @@ import java.util.concurrent.locks.LockSupport;
 
 
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
-    static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     static final int FD = 1_000_000;
-    protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+    static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     protected final NetworkIOJob NO_NETWORK_IO_JOB = new NetworkIOJob() {
-        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
@@ -62,7 +62,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableUpdateDetails getLocalTableDetails(CharSequence tableName) {
+        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
         }
 
@@ -82,24 +82,27 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             return false;
         }
     };
-    protected LineTcpConnectionContext context;
-    protected LineTcpReceiverConfiguration lineTcpConfiguration;
-    protected LineTcpMeasurementScheduler scheduler;
-    protected boolean disconnected;
-    protected String recvBuffer;
-    protected WorkerPool workerPool;
-    protected int nWriterThreads;
-    protected long microSecondTicks;
-    protected boolean disconnectOnError;
-    protected boolean stringToCharCastAllowed;
-    protected boolean symbolAsFieldSupported;
-    protected short floatDefaultColumnType;
-    protected short integerDefaultColumnType;
+    protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
+    protected LineTcpConnectionContext context;
+    protected boolean disconnectOnError;
+    protected boolean disconnected;
+    protected short floatDefaultColumnType;
+    protected short integerDefaultColumnType;
+    protected LineTcpReceiverConfiguration lineTcpConfiguration;
+    protected long microSecondTicks;
+    protected int nWriterThreads;
+    protected String recvBuffer;
+    protected LineTcpMeasurementScheduler scheduler;
+    protected boolean stringToCharCastAllowed;
+    protected boolean symbolAsFieldSupported;
+    protected WorkerPool workerPool;
 
     @Before
-    public void before() {
+    @Override
+    public void setUp() {
+        super.setUp();
         nWriterThreads = 2;
         microSecondTicks = -1;
         recvBuffer = null;
@@ -113,12 +116,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
-    NetworkFacade provideLineTcpNetworkFacade() {
-        return new LineTcpNetworkFacade();
-    }
-
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public long getSleepTimeout() {
+                return 1;
+            }
+
             @Override
             public int getWorkerCount() {
                 return workerCount;
@@ -158,6 +162,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         return new DefaultLineTcpReceiverConfiguration() {
             @Override
+            public String getAuthDbPath() {
+                if (withAuth) {
+                    URL u = getClass().getResource("authDb.txt");
+                    assert u != null;
+                    return u.getFile();
+                }
+                return super.getAuthDbPath();
+            }
+
+            @Override
             public boolean getAutoCreateNewColumns() {
                 return autoCreateNewColumns;
             }
@@ -168,18 +182,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getNetMsgBufferSize() {
-                return netMsgBufferSize.get();
+            public short getDefaultColumnTypeForFloat() {
+                return floatDefaultColumnType;
             }
 
             @Override
-            public int getMaxMeasurementSize() {
-                return 128;
-            }
-
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
+            public short getDefaultColumnTypeForInteger() {
+                return integerDefaultColumnType;
             }
 
             @Override
@@ -188,23 +197,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isStringToCharCastAllowed() {
-                return stringToCharCastAllowed;
-            }
-
-            @Override
-            public boolean isSymbolAsFieldSupported() {
-                return symbolAsFieldSupported;
-            }
-
-            @Override
-            public short getDefaultColumnTypeForFloat() {
-                return floatDefaultColumnType;
-            }
-
-            @Override
-            public short getDefaultColumnTypeForInteger() {
-                return integerDefaultColumnType;
+            public int getMaxMeasurementSize() {
+                return 128;
             }
 
             @Override
@@ -221,18 +215,28 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public String getAuthDbPath() {
-                if (withAuth) {
-                    URL u = getClass().getResource("authDb.txt");
-                    assert u != null;
-                    return u.getFile();
-                }
-                return super.getAuthDbPath();
+            public int getNetMsgBufferSize() {
+                return netMsgBufferSize.get();
+            }
+
+            @Override
+            public NetworkFacade getNetworkFacade() {
+                return nf;
             }
 
             @Override
             public long getWriterIdleTimeout() {
                 return 150;
+            }
+
+            @Override
+            public boolean isStringToCharCastAllowed() {
+                return stringToCharCastAllowed;
+            }
+
+            @Override
+            public boolean isSymbolAsFieldSupported() {
+                return symbolAsFieldSupported;
             }
         };
     }
@@ -252,6 +256,10 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 break;
         }
         return false;
+    }
+
+    NetworkFacade provideLineTcpNetworkFacade() {
+        return new LineTcpNetworkFacade();
     }
 
     protected void runInAuthContext(Runnable r) throws Exception {
@@ -292,7 +300,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 engine,
                 createWorkerPool(1, true),
                 null,
-                workerPool = createWorkerPool(nWriterThreads, false)) {
+                workerPool = createWorkerPool(nWriterThreads, false)
+        ) {
 
             @Override
             protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
@@ -335,13 +344,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
-                return false;
+            public boolean isListening() {
+                return true;
             }
 
             @Override
-            public boolean isListening() {
-                return true;
+            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
+                return false;
             }
 
             @Override

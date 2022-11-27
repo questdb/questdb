@@ -30,7 +30,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -47,15 +46,15 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         collectMetrics(values);
         cursor.of(KEYS, values);
         return cursor;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     private static void collectMetrics(long[] collector) {
@@ -69,8 +68,8 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("memory_tag", 0, ColumnType.STRING));
-        metadata.add(1, new TableColumnMetadata("bytes", 1, ColumnType.LONG));
+        metadata.add(0, new TableColumnMetadata("memory_tag", ColumnType.STRING));
+        metadata.add(1, new TableColumnMetadata("bytes", ColumnType.LONG));
         METADATA = metadata;
 
         KEYS[0] = "TOTAL_USED";

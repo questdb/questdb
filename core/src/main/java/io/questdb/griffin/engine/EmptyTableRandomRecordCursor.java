@@ -24,10 +24,9 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.VirtualRecordNoRowid;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.ObjList;
 
 final public class EmptyTableRandomRecordCursor implements RecordCursor {
@@ -57,7 +56,8 @@ final public class EmptyTableRandomRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return EmptySymbolMapReader.INSTANCE;
     }
 
     @Override
@@ -66,11 +66,15 @@ final public class EmptyTableRandomRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
+    public void recordAt(Record record, long atRowId) {
     }
 
     @Override
     public long size() {
         return 0;
+    }
+
+    @Override
+    public void toTop() {
     }
 }

@@ -49,8 +49,6 @@ abstract class AbstractFloatNumericallyGeneratedTest {
                 .forEach(this::testLegalInput);
     }
 
-    protected abstract float parse(String str) throws NumericException;
-
     private void testLegalInput(String str, float expected) {
         float actual;
         try {
@@ -65,4 +63,6 @@ abstract class AbstractFloatNumericallyGeneratedTest {
     private void testLegalInput(float expected) {
         testLegalInput(expected + "", expected);
     }
+
+    protected abstract float parse(String str) throws NumericException;
 }

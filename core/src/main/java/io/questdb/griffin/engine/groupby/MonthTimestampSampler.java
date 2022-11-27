@@ -32,10 +32,10 @@ class MonthTimestampSampler implements TimestampSampler {
     private final int monthCount;
     private int startDay;
     private int startHour;
+    private int startMicros;
+    private int startMillis;
     private int startMin;
     private int startSec;
-    private int startMillis;
-    private int startMicros;
 
     MonthTimestampSampler(int monthCount) {
         this.monthCount = monthCount;
@@ -71,7 +71,7 @@ class MonthTimestampSampler implements TimestampSampler {
         this.startMin = Timestamps.getMinuteOfHour(timestamp);
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
-        this.startMicros = Timestamps.getMicrosOfSecond(timestamp);
+        this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
     }
 
     private long addMonth(long timestamp, int monthCount) {

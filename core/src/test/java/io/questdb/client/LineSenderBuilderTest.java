@@ -178,23 +178,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testConnectPlainAuthWithTokenSuccess() throws Exception {
-        authKeyId = AUTH_KEY_ID1;
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .address(LOCALHOST)
-                    .port(bindPort)
-                    .enableAuth(AUTH_KEY_ID1)
-                    .authToken(AUTH_TOKEN_KEY1)
-                    .build()) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
     public void testConnectPlainAuthWithTokenFailure() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         nf = new NetworkFacadeImpl() {
@@ -216,6 +199,23 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should have failed");
             } catch (LineSenderException e) {
                 // ignored
+            }
+        });
+    }
+
+    @Test
+    public void testConnectPlainAuthWithTokenSuccess() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(bindPort)
+                    .enableAuth(AUTH_KEY_ID1)
+                    .authToken(AUTH_TOKEN_KEY1)
+                    .build()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
             }
         });
     }
@@ -266,7 +266,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                     .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
-                fail("non existing trust store should throw an exception");
+                fail("nonexistent trust store should throw an exception");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "configured trust store is unavailable [path=classpath:/foo/whatever/non-existing]");
             }
@@ -283,7 +283,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                     .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
-                fail("non existing trustore should throw an exception");
+                fail("nonexistent trustore should throw an exception");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not create SSL engine");
             }
@@ -309,7 +309,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testConnectTls_TruststoreFile() throws Exception {
         URL trustStoreResource = LineSenderBuilderTest.class.getResource(TRUSTSTORE_PATH);
-        assertNotNull("Someone accidenteally deleted trust store?", trustStoreResource);
+        assertNotNull("Someone accidentally deleted trust store?", trustStoreResource);
         String truststore = trustStoreResource.getFile();
         runInContext(r -> {
             try (Sender sender = Sender.builder()
@@ -334,7 +334,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                     .enableTls().advancedTls().customTrustStore(truststore, "wrong password".toCharArray());
             try {
                 builder.build();
-                fail("non existing trust store should throw an exception");
+                fail("nonexistent trust store should throw an exception");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "could not create SSL engine");
                 TestUtils.assertContains(e.getCause().getMessage(), "password");

@@ -36,22 +36,22 @@ import java.io.Closeable;
 public class LineUdpLexer implements Mutable, Closeable {
 
     protected final CharSequenceCache charSequenceCache;
-    private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
-    private int state = LineUdpParser.EVT_MEASUREMENT;
-    private boolean escape = false;
-    private boolean escapeQuote = false; // flag to signify we saw a '\' but while parsing a string
+    private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
     private long buffer;
     private long bufferHi;
     private long dstPos = 0;
     private long dstTop = 0;
-    private boolean skipLine = false;
-    private LineUdpParser parser;
-    private long utf8ErrorTop;
-    private long utf8ErrorPos;
     private int errorCode = 0;
+    private boolean escape = false;
+    private boolean escapeQuote = false; // flag to signify we saw a '\' but while parsing a string
+    private LineUdpParser parser;
+    private boolean skipLine = false;
+    private int state = LineUdpParser.EVT_MEASUREMENT;
     private boolean unquoted = true;
+    private long utf8ErrorPos;
+    private long utf8ErrorTop;
 
     public LineUdpLexer(int bufferSize) {
         buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_ILP_RSS);
@@ -121,10 +121,6 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
     }
 
-    protected void doSkipLineComplete() {
-        // for extension
-    }
-
     private void fireEvent() throws LineProtoException {
         // two bytes less between these and one more byte so we don't have to use >=
         if (dstTop > dstPos - 3 && state != LineUdpParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
@@ -175,26 +171,6 @@ public class LineUdpLexer implements Mutable, Closeable {
         escapeQuote = false;
     }
 
-    protected void onEol() throws LineProtoException {
-        if (!escapeQuote) {
-            switch (state) {
-                case LineUdpParser.EVT_MEASUREMENT:
-                    chop();
-                    break;
-                case LineUdpParser.EVT_TAG_VALUE:
-                case LineUdpParser.EVT_FIELD_VALUE:
-                case LineUdpParser.EVT_TIMESTAMP:
-                    fireEvent();
-                    parser.onLineEnd(charSequenceCache);
-                    clear();
-                    break;
-                default:
-                    errorCode = LineUdpParser.ERROR_EXPECTED;
-                    throw LineProtoException.INSTANCE;
-            }
-        }
-    }
-
     private void onEquals() {
         if (!escapeQuote && unquoted) {
             fireEventTransition2();
@@ -226,7 +202,88 @@ public class LineUdpLexer implements Mutable, Closeable {
         escapeQuote = false;
     }
 
-    protected long parsePartial(final long bytesPtr, final long hi) {
+    private long repairMultiByteChar(long lo, long hi, byte b) throws LineProtoException {
+        int n = -1;
+        do {
+            // UTF8 error
+            if (utf8ErrorTop == -1) {
+                utf8ErrorTop = utf8ErrorPos = dstPos + 1;
+            }
+            // store partial byte
+            dstPos = utf8ErrorPos;
+            utf8ErrorPos += 1;
+            sink.put((char) b);
+
+            // try to decode partial bytes
+            long errorLen = utf8ErrorPos - utf8ErrorTop;
+            if (errorLen > 1) {
+                dstPos = utf8ErrorTop - 1;
+                n = Chars.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
+            }
+
+            if (n == -1 && errorLen > 3) {
+                errorCode = LineUdpParser.ERROR_ENCODING;
+                throw LineProtoException.INSTANCE;
+            }
+
+            if (n == -1 && ++lo < hi) {
+                b = Unsafe.getUnsafe().getByte(lo);
+            } else {
+                break;
+            }
+        } while (true);
+
+        // we can only be in error when we ran out of bytes to read
+        // in which case we return array pointer to original position and exit method
+        dstPos = utf8ErrorTop - 1;
+
+        if (n > 0) {
+            // if we are successful, reset error pointers
+            utf8ErrorTop = utf8ErrorPos = -1;
+            // bump pos by one more byte in addition to what we may have incremented in the loop
+            return lo + 1;
+        }
+        throw Utf8RepairContinue.INSTANCE;
+    }
+
+    private long utf8Decode(long lo, long hi, byte b) throws LineProtoException {
+        if (utf8ErrorPos > -1) {
+            return repairMultiByteChar(lo, hi, b);
+        }
+
+        int n = Chars.utf8DecodeMultiByte(lo, hi, b, sink);
+        if (n == -1) {
+            return repairMultiByteChar(lo, hi, b);
+        } else {
+            return lo + n;
+        }
+    }
+
+    protected void doSkipLineComplete() {
+        // for extension
+    }
+
+    protected void onEol() throws LineProtoException {
+        if (!escapeQuote) {
+            switch (state) {
+                case LineUdpParser.EVT_MEASUREMENT:
+                    chop();
+                    break;
+                case LineUdpParser.EVT_TAG_VALUE:
+                case LineUdpParser.EVT_FIELD_VALUE:
+                case LineUdpParser.EVT_TIMESTAMP:
+                    fireEvent();
+                    parser.onLineEnd(charSequenceCache);
+                    clear();
+                    break;
+                default:
+                    errorCode = LineUdpParser.ERROR_EXPECTED;
+                    throw LineProtoException.INSTANCE;
+            }
+        }
+    }
+
+    protected void parsePartial(final long bytesPtr, final long hi) {
         long p = bytesPtr;
 
         byte lastByte = (byte) 0;
@@ -296,7 +353,6 @@ public class LineUdpLexer implements Mutable, Closeable {
             }
         }
 
-        return p;
     }
 
     protected boolean partialComplete() {
@@ -304,70 +360,8 @@ public class LineUdpLexer implements Mutable, Closeable {
         return false;
     }
 
-    private long repairMultiByteChar(long lo, long hi, byte b) throws LineProtoException {
-        int n = -1;
-        do {
-            // UTF8 error
-            if (utf8ErrorTop == -1) {
-                utf8ErrorTop = utf8ErrorPos = dstPos + 1;
-            }
-            // store partial byte
-            dstPos = utf8ErrorPos;
-            utf8ErrorPos += 1;
-            sink.put((char) b);
-
-            // try to decode partial bytes
-            long errorLen = utf8ErrorPos - utf8ErrorTop;
-            if (errorLen > 1) {
-                dstPos = utf8ErrorTop - 1;
-                n = Chars.utf8DecodeMultiByte(utf8ErrorTop, utf8ErrorPos, Unsafe.getUnsafe().getByte(utf8ErrorTop), sink);
-            }
-
-            if (n == -1 && errorLen > 3) {
-                errorCode = LineUdpParser.ERROR_ENCODING;
-                throw LineProtoException.INSTANCE;
-            }
-
-            if (n == -1 && ++lo < hi) {
-                b = Unsafe.getUnsafe().getByte(lo);
-            } else {
-                break;
-            }
-        } while (true);
-
-        // we can only be in error when we ran out of bytes to read
-        // in which case we return array pointer to original position and exit method
-        dstPos = utf8ErrorTop - 1;
-
-        if (n > 0) {
-            // if we are successful, reset error pointers
-            utf8ErrorTop = utf8ErrorPos = -1;
-            // bump pos by one more byte in addition to what we may have incremented in the loop
-            return lo + 1;
-        }
-        throw Utf8RepairContinue.INSTANCE;
-    }
-
-    private long utf8Decode(long lo, long hi, byte b) throws LineProtoException {
-        if (utf8ErrorPos > -1) {
-            return repairMultiByteChar(lo, hi, b);
-        }
-
-        int n = Chars.utf8DecodeMultiByte(lo, hi, b, sink);
-        if (n == -1) {
-            return repairMultiByteChar(lo, hi, b);
-        } else {
-            return lo + n;
-        }
-    }
-
     private static class FloatingCharSequence extends AbstractCharSequence {
         long lo, hi;
-
-        @Override
-        public int length() {
-            return (int) (hi - lo) / 2;
-        }
 
         @Override
         public char charAt(int index) {
@@ -375,11 +369,34 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
 
         @Override
-        public @NotNull CharSequence subSequence(int start, int end) {
+        public int length() {
+            return (int) (hi - lo) / 2;
+        }
+
+        @Override
+        protected @NotNull CharSequence _subSequence(int start, int end) {
             FloatingCharSequence fcs = new FloatingCharSequence();
             fcs.lo = this.lo + start * 2L;
             fcs.hi = this.lo + end * 2L;
             return fcs;
+        }
+    }
+
+    private class ArrayBackedCharSequence extends AbstractCharSequence implements CachedCharSequence {
+
+        @Override
+        public char charAt(int index) {
+            return Unsafe.getUnsafe().getChar(dstTop + index * 2L);
+        }
+
+        @Override
+        public long getCacheAddress() {
+            return Numbers.encodeLowHighInts((int) (dstPos - buffer), (int) (dstTop - buffer));
+        }
+
+        @Override
+        public int length() {
+            return (int) ((dstPos - dstTop) / 2 - 1);
         }
     }
 
@@ -406,24 +423,6 @@ public class LineUdpLexer implements Mutable, Closeable {
             buffer = buf;
             dstPos = buf + offset + (dstPos - dstTop);
             dstTop = buf + offset;
-        }
-    }
-
-    private class ArrayBackedCharSequence extends AbstractCharSequence implements CachedCharSequence {
-
-        @Override
-        public long getCacheAddress() {
-            return Numbers.encodeLowHighInts((int) (dstPos - buffer), (int) (dstTop - buffer));
-        }
-
-        @Override
-        public int length() {
-            return (int) ((dstPos - dstTop) / 2 - 1);
-        }
-
-        @Override
-        public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(dstTop + index * 2L);
         }
     }
 }

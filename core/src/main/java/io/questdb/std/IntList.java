@@ -91,6 +91,14 @@ public class IntList implements Mutable {
         pos = capacity;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof IntList && equals((IntList) that);
+    }
+
     public void extendAndSet(int index, int value) {
         ensureCapacity0(index + 1);
         if (index >= pos) {
@@ -113,7 +121,7 @@ public class IntList implements Mutable {
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
+     * Instead, the responsibility to check bounds is placed on application code,
      * which is often the case anyway, for example in indexed for() loop.
      *
      * @param index of the element
@@ -137,34 +145,13 @@ public class IntList implements Mutable {
         return hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof IntList && equals((IntList) that);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
-
-        b.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                b.put(',');
-            }
-            b.put(get(i));
-        }
-        b.put(']');
-        return b.toString();
-    }
-
     public void increment(int index) {
         buffer[index] = buffer[index] + 1;
+    }
+
+    public void increment(int index, int delta) {
+        assert delta > -1;
+        buffer[index] = buffer[index] + delta;
     }
 
     public int indexOf(int v, int low, int high) {
@@ -237,6 +224,24 @@ public class IntList implements Mutable {
         return pos;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        CharSink b = Misc.getThreadLocalBuilder();
+
+        b.put('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                b.put(',');
+            }
+            b.put(get(i));
+        }
+        b.put(']');
+        return b.toString();
+    }
+
     public void zero(int value) {
         Arrays.fill(buffer, 0, pos, value);
     }
@@ -276,5 +281,4 @@ public class IntList implements Mutable {
         }
         return -(high + 1);
     }
-
 }

@@ -49,13 +49,6 @@ public final class TlsProxyRule implements TestRule {
         return new TlsProxyRule(host, port, DEFAULT_KEYSTORE, DEFAULT_KEYSTORE_PASSWORD);
     }
 
-    public int getListeningPort() {
-        if (srcPort < 0) {
-            throw new IllegalStateException("test is not running yet!");
-        }
-        return srcPort;
-    }
-
     @Override
     public Statement apply(Statement base, Description description) {
         return new Statement() {
@@ -70,5 +63,12 @@ public final class TlsProxyRule implements TestRule {
                 }
             }
         };
+    }
+
+    public int getListeningPort() {
+        if (srcPort < 0) {
+            throw new IllegalStateException("test is not running yet!");
+        }
+        return srcPort;
     }
 }

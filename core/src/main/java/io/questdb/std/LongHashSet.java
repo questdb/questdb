@@ -87,31 +87,12 @@ public class LongHashSet extends AbstractLongHashSet {
         list.clear();
     }
 
-    public boolean excludes(long key) {
-        return keyIndex(key) > -1;
-    }
-
-    public void removeAt(int index) {
-        if (index < 0) {
-            long key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
-    }
-
     public boolean contains(long key) {
         return keyIndex(key) < 0;
+    }
+
+    public boolean excludes(long key) {
+        return keyIndex(key) > -1;
     }
 
     public long get(int index) {
@@ -120,6 +101,14 @@ public class LongHashSet extends AbstractLongHashSet {
 
     public long getLast() {
         return list.getLast();
+    }
+
+    public void removeAt(int index) {
+        if (index < 0) {
+            long key = keys[-index - 1];
+            super.removeAt(index);
+            list.remove(key);
+        }
     }
 
     @Override
@@ -141,5 +130,16 @@ public class LongHashSet extends AbstractLongHashSet {
             int keyIndex = keyIndex(key);
             keys[keyIndex] = key;
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
     }
 }

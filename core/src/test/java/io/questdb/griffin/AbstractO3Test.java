@@ -57,9 +57,8 @@ public class AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3Test.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    protected static CharSequence root;
     protected static int dataAppendPageSize = -1;
-
+    protected static CharSequence root;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -96,7 +95,7 @@ public class AbstractO3Test {
             String table,
             CairoEngine engine
     ) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG, true);
+        TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
         TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
     }
 
@@ -117,27 +116,12 @@ public class AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        printSqlResult(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
-                "y where sym = 'googl' order by ts"
+                "y where sym = 'googl' order by ts",
+                "x where sym = 'googl'"
         );
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x where sym = 'googl'",
-                sink2
-        );
-        TestUtils.assertEquals(sink, sink2);
-    }
-
-    protected static void printSqlResult(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql
-    ) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
     }
 
     protected static void assertIndexResultAgainstFile(
@@ -148,34 +132,45 @@ public class AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
-    protected static void assertO3DataCursors(
+    static void assertMaxTimestamp(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            @Nullable String referenceTableDDL,
-            String referenceSQL,
-            String o3InsertSQL,
-            String assertSQL,
-            String countReferenceSQL,
-            String countAssertSQL
+            SqlExecutionContext executionContext,
+            String expectedSql
     ) throws SqlException {
-        // create third table, which will contain both X and 1AM
-        if (referenceTableDDL != null) {
-            compiler.compile(referenceTableDDL, sqlExecutionContext);
-        }
-        compiler.compile(o3InsertSQL, sqlExecutionContext);
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
-        engine.releaseAllReaders();
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
-
-        TestUtils.assertSqlCursors(
+        TestUtils.printSql(
                 compiler,
-                sqlExecutionContext,
-                "select count() from " + countReferenceSQL,
-                "select count() from " + countAssertSQL,
-                LOG,
-                false
+                executionContext,
+                expectedSql,
+                sink2
         );
+
+        assertMaxTimestamp(engine, executionContext, sink2);
+    }
+
+    static void assertMaxTimestamp(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            CharSequence expected
+    ) {
+        try (
+                final TableWriter w = engine.getWriter(
+                        executionContext.getCairoSecurityContext(),
+                        "x",
+                        "test"
+                )
+        ) {
+            sink.clear();
+            sink.put("max\n");
+            TimestampFormatUtils.appendDateTimeUSec(sink, w.getMaxTimestamp());
+            sink.put('\n');
+            TestUtils.assertEquals(expected, sink);
+            Assert.assertEquals(0, w.getO3RowCount());
+        }
+    }
+
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(code);
     }
 
     protected static void assertO3DataConsistency(
@@ -201,6 +196,72 @@ public class AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
     }
 
+    static void assertO3DataConsistency(
+            final CairoEngine engine,
+            final SqlCompiler compiler,
+            final SqlExecutionContext sqlExecutionContext,
+            final String referenceTableDDL,
+            final String o3InsertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+
+        compiler.compile(o3InsertSQL, sqlExecutionContext);
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts",
+                "x"
+        );
+
+        engine.releaseAllReaders();
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts",
+                "x"
+        );
+
+        engine.releaseAllWriters();
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts",
+                "x"
+        );
+    }
+
+    protected static void assertO3DataCursors(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable String referenceTableDDL,
+            String referenceSQL,
+            String o3InsertSQL,
+            String assertSQL,
+            String countReferenceSQL,
+            String countAssertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        if (referenceTableDDL != null) {
+            compiler.compile(referenceTableDDL, sqlExecutionContext);
+        }
+        compiler.compile(o3InsertSQL, sqlExecutionContext);
+        TestUtils.assertEquals(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+        engine.releaseAllReaders();
+        TestUtils.assertEquals(compiler, sqlExecutionContext, referenceSQL, assertSQL);
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "select count() from " + countReferenceSQL,
+                "select count() from " + countAssertSQL
+        );
+    }
+
     protected static void assertSqlResultAgainstFile(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -213,12 +274,26 @@ public class AbstractO3Test {
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
 
-    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(code);
+    static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+        TestUtils.assertEquals(sink2, sink);
+    }
+
+    protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.assertEquals(compiler, sqlExecutionContext, "select count() from x", "select count() from y");
+        assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
         AbstractO3Test.assertMemoryLeak(code);
+    }
+
+    protected static void executeVanilla(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), LOG));
+    }
+
+    protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled(), LOG));
     }
 
     protected static void executeWithPool(
@@ -298,11 +373,6 @@ public class AbstractO3Test {
                     }
 
                     @Override
-                    public int getO3PartitionUpdateQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
                     public int getO3PurgeDiscoveryQueueCapacity() {
                         return 0;
                     }
@@ -312,105 +382,11 @@ public class AbstractO3Test {
         });
     }
 
-    protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select count() from x", "select count() from y", LOG);
-        assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
-    }
-
-    protected static void executeVanilla(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), LOG));
-    }
-
-    protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled(), LOG));
-    }
-
-    static void assertO3DataConsistency(
-            final CairoEngine engine,
-            final SqlCompiler compiler,
-            final SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String o3InsertSQL
-    ) throws SqlException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
-
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
-        compiler.compile(o3InsertSQL, sqlExecutionContext);
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink2
-        );
-
-        TestUtils.assertEquals(sink, sink2);
-
-        engine.releaseAllReaders();
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink2
-        );
-
-        TestUtils.assertEquals(sink, sink2);
-
-        engine.releaseAllWriters();
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink2
-        );
-
-        TestUtils.assertEquals(sink, sink2);
-    }
-
-    static void assertMaxTimestamp(
-            CairoEngine engine,
+    protected static void printSqlResult(
             SqlCompiler compiler,
-            SqlExecutionContext executionContext,
-            String expectedSql
+            SqlExecutionContext sqlExecutionContext,
+            String sql
     ) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                executionContext,
-                expectedSql,
-                sink2
-        );
-
-        assertMaxTimestamp(engine, executionContext, sink2);
-    }
-
-    static void assertMaxTimestamp(
-            CairoEngine engine,
-            SqlExecutionContext executionContext,
-            CharSequence expected
-    ) {
-        try (
-                final TableWriter w = engine.getWriter(
-                        executionContext.getCairoSecurityContext(),
-                        "x",
-                        "test"
-                )
-        ) {
-            sink.clear();
-            sink.put("max\n");
-            TimestampFormatUtils.appendDateTimeUSec(sink, w.getMaxTimestamp());
-            sink.put('\n');
-            TestUtils.assertEquals(expected, sink);
-            Assert.assertEquals(0, w.getO3RowCount());
-        }
-    }
-
-    static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
-        TestUtils.assertEquals(sink2, sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
     }
 }

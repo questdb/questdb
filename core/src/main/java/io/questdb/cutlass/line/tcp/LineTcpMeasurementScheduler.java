@@ -30,7 +30,10 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -47,24 +50,25 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private final ObjList<TableUpdateDetails>[] assignedTables;
+    private final boolean autoCreateNewColumns;
+    private final boolean autoCreateNewTables;
+    private final LineTcpReceiverConfiguration configuration;
+    private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
-    private final CairoSecurityContext securityContext;
-    private final RingQueue<LineTcpMeasurementEvent>[] queue;
-    private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
-    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
     private final long[] loadByWriterThread;
-    private final long writerIdleTimeout;
     private final NetworkIOJob[] netIoJobs;
+    private final Path path = new Path();
+    private final MPSequence[] pubSeq;
+    private final RingQueue<LineTcpMeasurementEvent>[] queue;
+    private final CairoSecurityContext securityContext;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
-    private final Path path = new Path();
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
-    private final LineTcpReceiverConfiguration configuration;
-    private final MPSequence[] pubSeq;
-    private final boolean autoCreateNewTables;
-    private final boolean autoCreateNewColumns;
+    private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
+    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
+    private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
@@ -88,6 +92,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
             netIoJobs[i] = netIoJob;
             ioWorkerPool.assign(i, netIoJob);
+            ioWorkerPool.freeOnExit(netIoJob);
         }
 
         // Worker count is set to 1 because we do not use this execution context
@@ -104,6 +109,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
+        //noinspection unchecked
+        assignedTables = new ObjList[nWriterThreads];
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);
             pubSeq[i] = ps;
@@ -118,7 +125,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lineConfiguration.isStringToCharCastAllowed(),
                             lineConfiguration.isSymbolAsFieldSupported(),
                             lineConfiguration.getMaxFileNameLength(),
-                            lineConfiguration.getAutoCreateNewColumns()
+                            lineConfiguration.getAutoCreateNewColumns(),
+                            engine.getConfiguration().getDefaultSymbolCapacity(),
+                            engine.getConfiguration().getDefaultSymbolCacheFlag()
                     ),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
@@ -129,6 +138,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             SCSequence subSeq = new SCSequence();
             ps.then(subSeq).then(ps);
 
+            assignedTables[i] = new ObjList<>();
+
             final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
                     i,
                     q,
@@ -136,7 +147,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     milliClock,
                     commitIntervalDefault,
                     this,
-                    engine.getMetrics()
+                    engine.getMetrics(),
+                    assignedTables[i]
             );
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
@@ -149,27 +161,29 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void close() {
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            closeLocals(
-            tableUpdateDetailsUtf16);
-                closeLocals(
-            idleTableUpdateDetailsUtf16);
+            closeLocals(tableUpdateDetailsUtf16);
+            closeLocals(idleTableUpdateDetailsUtf16);
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
         Misc.free(path);
         Misc.free(ddlMem);
+        for (int i = 0, n = assignedTables.length; i < n; i++) {
+            Misc.freeObjList(assignedTables[i]);
+            assignedTables[i].clear();
+        }
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
     }
 
     public boolean doMaintenance(
-            CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final CharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tab = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (millis - tab.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
@@ -238,19 +252,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             tudUtf16.get(tableNames.get(n)).closeLocals();
         }
         tudUtf16.clear();
-    }
-
-    protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
-        return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);
-    }
-
-    long getNextPublisherEventSequence(int writerWorkerId) {
-        assert isOpen();
-        long seq;
-        while ((seq = pubSeq[writerWorkerId].next()) == -2) {
-            Os.pause();
-        }
-        return seq;
     }
 
     private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
@@ -326,6 +327,62 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
+    @NotNull
+    private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16) {
+        unsafeCalcThreadLoad();
+        long leastLoad = Long.MAX_VALUE;
+        int threadId = 0;
+
+        for (int i = 0, n = loadByWriterThread.length; i < n; i++) {
+            if (loadByWriterThread[i] < leastLoad) {
+                leastLoad = loadByWriterThread[i];
+                threadId = i;
+            }
+        }
+
+        final TableUpdateDetails tableUpdateDetails = new TableUpdateDetails(
+                configuration,
+                engine,
+                // get writer here to avoid constructing
+                // object instance and potentially leaking memory if
+                // writer allocation fails
+                engine.getTableWriterAPI(securityContext, tableNameUtf16, "tcpIlp"),
+                threadId,
+                netIoJobs,
+                defaultColumnTypes
+        );
+        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tableUpdateDetails.getTableNameUtf16(), tableUpdateDetails);
+        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        return tableUpdateDetails;
+    }
+
+    private void unsafeCalcThreadLoad() {
+        Arrays.fill(loadByWriterThread, 0);
+        ObjList<CharSequence> tableNames = tableUpdateDetailsUtf16.keys();
+        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+            final CharSequence tableName = tableNames.getQuick(n);
+            final TableUpdateDetails stats = tableUpdateDetailsUtf16.get(tableName);
+            if (stats != null) {
+                loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
+            } else {
+                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
+            }
+        }
+    }
+
+    protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+        return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);
+    }
+
+    long getNextPublisherEventSequence(int writerWorkerId) {
+        assert isOpen();
+        long seq;
+        while ((seq = pubSeq[writerWorkerId].next()) == -2) {
+            Os.pause();
+        }
+        return seq;
+    }
+
     boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
         TableUpdateDetails tab;
         try {
@@ -370,48 +427,5 @@ class LineTcpMeasurementScheduler implements Closeable {
     @TestOnly
     void setListener(LineTcpReceiver.SchedulerListener listener) {
         this.listener = listener;
-    }
-
-    @NotNull
-    private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16) {
-        unsafeCalcThreadLoad();
-        long leastLoad = Long.MAX_VALUE;
-        int threadId = 0;
-
-        for (int i = 0, n = loadByWriterThread.length; i < n; i++) {
-            if (loadByWriterThread[i] < leastLoad) {
-                leastLoad = loadByWriterThread[i];
-                threadId = i;
-            }
-        }
-
-        final TableUpdateDetails tableUpdateDetails = new TableUpdateDetails(
-                configuration,
-                engine,
-                // get writer here to avoid constructing
-                // object instance and potentially leaking memory if
-                // writer allocation fails
-                engine.getWriter(securityContext, tableNameUtf16, "tcpIlp"),
-                threadId,
-                netIoJobs,
-                defaultColumnTypes
-        );
-        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tableUpdateDetails.getTableNameUtf16(), tableUpdateDetails);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
-        return tableUpdateDetails;
-    }
-
-    private void unsafeCalcThreadLoad() {
-        Arrays.fill(loadByWriterThread, 0);
-        ObjList<CharSequence> tableNames = tableUpdateDetailsUtf16.keys();
-        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-            final CharSequence tableName = tableNames.getQuick(n);
-            final TableUpdateDetails stats = tableUpdateDetailsUtf16.get(tableName);
-            if (stats != null) {
-                loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
-            } else {
-                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
-            }
-        }
     }
 }

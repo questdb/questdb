@@ -32,6 +32,11 @@ import org.junit.Test;
 
 public class MulLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
+    public void testBothNan() throws SqlException {
+        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
+    }
+
+    @Test
     public void testLeftNan() throws SqlException {
         call(Numbers.LONG_NaN, 5L).andAssert(Numbers.LONG_NaN);
     }
@@ -44,11 +49,6 @@ public class MulLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testRightNan() throws SqlException {
         call(123L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
-    }
-
-    @Test
-    public void testBothNan() throws SqlException {
-        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
     }
 
     @Test

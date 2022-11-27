@@ -44,14 +44,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        }
-
-        @Override
-        public void setNull(MapValue mapValue) {
-        }
-
-        @Override
         public int getArrayLength() {
             return 0;
         }
@@ -97,6 +89,26 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public byte getGeoByte(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return 0;
+        }
+
+        @Override
         public int getInt(Record rec) {
             return 0;
         }
@@ -104,6 +116,16 @@ public class GroupByFunctionTest {
         @Override
         public long getLong(Record rec) {
             return 0;
+        }
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -121,22 +143,12 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public long getLong128Hi(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getLong128Lo(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public RecordCursorFactory getRecordCursorFactory() {
+        public Record getRecord(Record rec) {
             return null;
         }
 
         @Override
-        public Record getRecord(Record rec) {
+        public RecordCursorFactory getRecordCursorFactory() {
             return null;
         }
 
@@ -199,26 +211,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public byte getGeoByte(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public int getGeoInt(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public long getGeoLong(Record rec) {
-            return 0;
-        }
-
-        @Override
         public int getType() {
             return 0;
         }
@@ -226,6 +218,14 @@ public class GroupByFunctionTest {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        }
+
+        @Override
+        public void setNull(MapValue mapValue) {
         }
     };
 

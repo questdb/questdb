@@ -192,6 +192,8 @@ public class TableWriterTest extends AbstractCairoTest {
             int totalColAddCount = 1000;
             writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
             int tableId = 11;
+            // Reduce disk space by for the test run.
+            dataAppendPageSize = 1 << 20; // 1MB
 
             String tableName = "testAddColumnConcurrentWithDataUpdates";
             try (Path path = new Path()) {
@@ -239,7 +241,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, tableName, tableId)
-                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOperation = alterOperationBuilder.build();
                         try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
                             if (writer != null) {
@@ -1464,8 +1466,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    // tests scenario where truncate is supported (linux) but fails on close
-    // close is expected not to fail
+    // tests scenario where truncate is supported (linux) but fails on close()
     public void testCannotTruncateColumnOnClose() throws Exception {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
@@ -1601,19 +1602,13 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, 4);
             try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
                 writer.updateCommitInterval(0.0, 1000);
-                writer.setMetaCommitLag(5_000_000);
                 Assert.assertEquals(1000, writer.getCommitInterval());
 
                 writer.updateCommitInterval(0.5, 1000);
-                writer.setMetaCommitLag(5_000_000);
-                Assert.assertEquals(2500, writer.getCommitInterval());
+                Assert.assertEquals(500, writer.getCommitInterval());
 
-                writer.updateCommitInterval(0.5, 1000);
-                writer.setMetaCommitLag(15_000_000);
-                Assert.assertEquals(7500, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 3000);
-                writer.setMetaCommitLag(0);
+                writer.updateCommitInterval(-0.5, 3000);
+                writer.setMetaO3MaxLag(0);
                 Assert.assertEquals(3000, writer.getCommitInterval());
             }
         });
@@ -3082,6 +3077,18 @@ public class TableWriterTest extends AbstractCairoTest {
         testSymbolCacheFlag(false);
     }
 
+    private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
+        TableWriter.Row r = w.newRow(timestamp - increment * 4);
+        r.putSym(0, rnd.nextString(5));
+        r.putSym(1, rnd.nextString(5));
+        r.append();
+
+        r = w.newRow(timestamp - increment * 8);
+        r.putSym(0, rnd.nextString(5));
+        r.putSym(1, rnd.nextString(5));
+        r.append();
+    }
+
     private static void danglingRowModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp);
         r.putSym(0, rnd.nextString(5));
@@ -3090,18 +3097,6 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private static void danglingTransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp);
-        r.putSym(0, rnd.nextString(5));
-        r.putSym(1, rnd.nextString(5));
-        r.append();
-    }
-
-    private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
-        TableWriter.Row r = w.newRow(timestamp - increment * 4);
-        r.putSym(0, rnd.nextString(5));
-        r.putSym(1, rnd.nextString(5));
-        r.append();
-
-        r = w.newRow(timestamp - increment * 8);
         r.putSym(0, rnd.nextString(5));
         r.putSym(1, rnd.nextString(5));
         r.append();
@@ -3278,12 +3273,6 @@ public class TableWriterTest extends AbstractCairoTest {
         Assert.assertEquals(reader.size(), calculatedRowCount);
     }
 
-    protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
-        }
-    }
-
     private void create(FilesFacade ff, int partitionBy, int N) {
         try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
             @Override
@@ -3350,21 +3339,6 @@ public class TableWriterTest extends AbstractCairoTest {
         for (int i = 0; i < count; i++) {
             ts = populateRow(writer, rnd, ts, increment);
         }
-        return ts;
-    }
-
-    long populateTable() throws NumericException {
-        return populateTable(TableWriterTest.FF, PartitionBy.DAY);
-    }
-
-    long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
-        int N = 10000;
-        long used = Unsafe.getMemUsed();
-        long fileCount = ff.getOpenFileCount();
-        create(ff, partitionBy, N);
-        long ts = populateTable0(ff, N);
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(fileCount, ff.getOpenFileCount());
         return ts;
     }
 
@@ -4350,6 +4324,27 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    protected void assertTable(CharSequence expected, CharSequence tableName) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        }
+    }
+
+    long populateTable() throws NumericException {
+        return populateTable(TableWriterTest.FF, PartitionBy.DAY);
+    }
+
+    long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
+        int N = 10000;
+        long used = Unsafe.getMemUsed();
+        long fileCount = ff.getOpenFileCount();
+        create(ff, partitionBy, N);
+        long ts = populateTable0(ff, N);
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(fileCount, ff.getOpenFileCount());
+        return ts;
+    }
+
     void verifyTimestampPartitions(MemoryARW vmem) {
         int i;
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
@@ -4372,22 +4367,8 @@ public class TableWriterTest extends AbstractCairoTest {
         void modify(TableWriter w, Rnd rnd, long timestamp, long increment);
     }
 
-    private static class SwapMetaRenameDenyingFacade extends TestFilesFacade {
-        boolean hit = false;
-
-        @Override
-        public int rename(LPSZ from, LPSZ to) {
-            if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
-                hit = true;
-                return Files.FILES_RENAME_ERR_OTHER;
-            }
-            return super.rename(from, to);
-        }
-
-        @Override
-        public boolean wasCalled() {
-            return hit;
-        }
+    static class CountingFilesFacade extends FilesFacadeImpl {
+        long count = Long.MAX_VALUE;
     }
 
     private static class MetaRenameDenyingFacade extends TestFilesFacade {
@@ -4408,7 +4389,21 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    static class CountingFilesFacade extends FilesFacadeImpl {
-        long count = Long.MAX_VALUE;
+    private static class SwapMetaRenameDenyingFacade extends TestFilesFacade {
+        boolean hit = false;
+
+        @Override
+        public int rename(LPSZ from, LPSZ to) {
+            if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
+                hit = true;
+                return Files.FILES_RENAME_ERR_OTHER;
+            }
+            return super.rename(from, to);
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return hit;
+        }
     }
 }

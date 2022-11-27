@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -52,8 +53,17 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final AnalyticContext analyticContext = sqlExecutionContext.getAnalyticContext();
+        if (analyticContext.isEmpty()) {
+            throw SqlException.$(position, "analytic function called in non-analytic context, make sure to add OVER clause");
+        }
 
         if (analyticContext.getPartitionByRecord() != null) {
             Map map = MapFactory.createMap(
@@ -67,25 +77,65 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     analyticContext.getPartitionBySink()
             );
         }
+        if (analyticContext.isOrdered()) {
+            return new OrderRowNumberFunction();
+        }
         return new SequenceRowNumberFunction();
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
+    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+        private int columnIndex;
         private long next = 1;
 
-        @Override
-        public long getLong(Record rec) {
-            return next++;
+        public OrderRowNumberFunction() {
         }
 
         @Override
-        public void toTop() {
+        public void close() {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
+            next++;
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void reopen() {
+            reset();
+        }
+
+        @Override
+        public void reset() {
             next = 1;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            toTop();
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
         }
     }
 
@@ -114,6 +164,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return false;
         }
@@ -135,11 +189,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void preparePass2(RecordCursor cursor) {
+        public void pass2(Record record) {
         }
 
         @Override
-        public void pass2(Record record) {
+        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
@@ -155,6 +209,59 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+    }
+
+    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+        private int columnIndex;
+        private long next = 1;
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            toTop();
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next++);
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void reopen() {
+            toTop();
+        }
+
+        @Override
+        public void reset() {
+            toTop();
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toTop() {
+            next = 1;
         }
     }
 }
