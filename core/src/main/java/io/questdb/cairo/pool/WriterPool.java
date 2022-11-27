@@ -210,7 +210,7 @@ public class WriterPool extends AbstractPool {
             return reinterpretOwnershipReason(e.ownershipReason);
         }
 
-        LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
+        //LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
         return reinterpretOwnershipReason(e.ownershipReason);
     }

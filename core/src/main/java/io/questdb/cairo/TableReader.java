@@ -831,12 +831,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
                 CairoException exception = CairoException.critical(0).put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
-                TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
+            //    TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
                 exception.put("' does not exist in table '")
                         .put(tableName)
                         .put("' directory. Run [ALTER TABLE ").put(tableName).put(" DROP PARTITION LIST '");
                 formatPartitionDirName(partitionIndex, exception.message);
-                TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
+              //  TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
                 exception.put("'] to repair the table or restore the partition directory.");
                 throw exception;
             } else {
