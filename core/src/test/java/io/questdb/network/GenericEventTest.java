@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
+import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -39,6 +40,7 @@ public class GenericEventTest {
             // The event is not yet triggered, so read has to fail.
             try {
                 event.read();
+                Assert.fail();
             } catch (NetworkError e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected eventfd read value"));
             }
