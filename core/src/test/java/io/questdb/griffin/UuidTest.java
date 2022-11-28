@@ -252,6 +252,17 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertNullUuidColumnIntoStringColumnImplicitCast() throws Exception {
+        assertCompile("create table x (u uuid)");
+        assertCompile("insert into x values (null)");
+        assertCompile("create table y (s string)");
+        assertCompile("insert into y select u from x");
+        assertQuery("column\n" +
+                        "true\n",
+                "select s is null from y", null, null, true, true, true);
+    }
+
+    @Test
     public void testInsertUuidColumnIntoIntColumnImplicitCast() throws Exception {
         assertCompile("create table x (u uuid)");
         assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");

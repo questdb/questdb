@@ -46,11 +46,6 @@ public class BytecodeAssembler {
     private static final int aload_1 = 0x2b;
     private static final int aload_2 = 0x2c;
     private static final int aload_3 = 0x2d;
-    private static final int astore = 0x3a;
-    private static final int astore_0 = 0x4b;
-    private static final int astore_1 = 0x4c;
-    private static final int astore_2 = 0x4d;
-    private static final int astore_3 = 0x4e;
     private static final int bipush = 0x10;
     private static final int iconst_0 = 3;
     private static final int iconst_m1 = 2;
@@ -104,10 +99,6 @@ public class BytecodeAssembler {
     public void append_frame(int itemCount, int offset) {
         putByte(0xfc + itemCount - 1);
         putShort(offset);
-    }
-
-    public void astore(int value) {
-        optimisedIO(astore_0, astore_1, astore_2, astore_3, astore, value);
     }
 
     @SuppressWarnings("unused")

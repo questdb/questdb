@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 
 public class RecordToRowCopierUtils {
     private RecordToRowCopierUtils() {
@@ -128,9 +129,7 @@ public class RecordToRowCopierUtils {
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int implicitCastGeoHashAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastGeoHashAsGeoHash", "(JII)J");
-        int implicitCastUuidAsStr = asm.poolMethod(SqlUtil.class, "implicitCastUuidAsStr", "(JJLio/questdb/std/str/CharSink;)Z");
-
-        int getThreadLocalBuilder = asm.poolMethod(Misc.class, "getThreadLocalBuilder", "()Lio/questdb/std/str/StringSink;");
+        int transferUuidToStrCol = asm.poolMethod(RecordToRowCopierUtils.class, "transferUuidToStrCol", "(Lio/questdb/cairo/TableWriter$Row;IJJ)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -771,25 +770,31 @@ public class RecordToRowCopierUtils {
                 case ColumnType.UUID:
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.UUID:
-                            asm.invokeInterface(rGetUuidHi);
-                            asm.aload(1);
-                            asm.iconst(i);
-                            asm.invokeInterface(rGetUuidLo);
-                            asm.invokeInterface(wPutUuid, 5);
+                            // at this point the stack looks like this: [RowWriter, Record, columnIndex]
+                            asm.invokeInterface(rGetUuidHi); // this consumes the Record and columnIndex and push uuidHi to a stack
+                            // Stack now looks like this: [RowWriter, uuidHi]
+                            // we also need to get uuidLo from the Record -> we have to push Record and columnIndex back to the stack
+                            asm.aload(1);  // Record is at the local variables slot #1. Push it to a stack.
+                            asm.iconst(i); // "i" is a column index. Push it to a stack
+                            // Stack now looks like this: [RowWriter, uuidHi, Record, columnIndex]
+                            asm.invokeInterface(rGetUuidLo); // this consumes the Record and columnIndex and push uuidLo to a stack
+                            // Stack now looks this: [RowWriter, uuidHi, uuidLo]
+                            asm.invokeInterface(wPutUuid, 5); //uuidHi and uuidLo are longs = each uses 2 slots on the stack -> 5 arg in total
+                            // invokeInterface consumes the stack. Including the RowWriter as invoke interface receives "this"" as the first argument
                             break;
                         case ColumnType.STRING:
+                            // this logic is very similar to the one for ColumnType.STRING
+                            // There is one major difference: `SqlUtil.implicitCastUuidAsStr()` returns `false` to indicate
+                            // that the UUID value represents null. In this case we won't call the writer and let null value
+                            // to be written by TableWriter/WalWriter NullSetters. However, generating branches via asm is
+                            // complicated as JVM requires jump targets to have stack maps, etc. This would complicate things
+                            // so we rely on an auxiliary method `transferUuidToStrCol()` to do branching job and javac generates
+                            // the stack maps.
                             asm.invokeInterface(rGetUuidHi);
                             asm.aload(1);
                             asm.iconst(i);
                             asm.invokeInterface(rGetUuidLo);
-                            asm.invokeStatic(getThreadLocalBuilder);
-                            asm.astore(3);
-                            asm.aload(3);
-                            asm.invokeStatic(implicitCastUuidAsStr);
-                            // todo: store null when casting returns false
-                            asm.pop();
-                            asm.aload(3);
-                            asm.invokeInterface(wPutStr, 2);
+                            asm.invokeStatic(transferUuidToStrCol);
                             break;
                         default:
                             assert false;
@@ -808,10 +813,8 @@ public class RecordToRowCopierUtils {
         // exceptions
         asm.putShort(0);
 
-        // we have to add stack map table as branch target
-        // jvm requires it
-
-        // attributes: 0 (void, no stack verification)
+        // we have do not have to add a stack map table because there are no branches
+        // attributes: 0 (void, no branches -> no stack verification)
         asm.putShort(0);
 
         asm.endMethod();
@@ -820,5 +823,13 @@ public class RecordToRowCopierUtils {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    // Called from dynamically generated bytecode
+    public static void transferUuidToStrCol(TableWriter.Row row, int col, long hi, long lo) {
+        StringSink threadLocalBuilder = Misc.getThreadLocalBuilder();
+        if (SqlUtil.implicitCastUuidAsStr(hi, lo, threadLocalBuilder)) {
+            row.putStr(col, threadLocalBuilder);
+        }
     }
 }
