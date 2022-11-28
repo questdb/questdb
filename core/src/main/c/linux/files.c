@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/fcntl.h>
+#include <sys/time.h>
 #include <sys/vfs.h>
 #include <fcntl.h>
 #include "../share/sysutil.h"
