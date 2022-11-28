@@ -901,6 +901,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass 
         if (GetDiskFreeSpaceExW(NULL, &lpFreeBytesAvailableToCaller, NULL, NULL)) {
             return (jlong) lpFreeBytesAvailableToCaller.QuadPart;
         }
+        SaveLastError();
     }
     return -1;
 }
