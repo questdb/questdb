@@ -1513,7 +1513,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.HOUR);
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             Thread writerThread = new Thread(() -> {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
@@ -1589,7 +1589,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.HOUR);
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             Thread writerThread = new Thread(() -> {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
