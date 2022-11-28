@@ -83,6 +83,7 @@ final class WhereClauseParser implements Mutable {
     private final IntList tempT = new IntList();
     private final IntList tempType = new IntList();
     private boolean allKeyExcludedValuesAreKnown = true;
+    private boolean allKeyValuesAreKnown = true;
     private boolean isConstFunction;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
@@ -100,15 +101,12 @@ final class WhereClauseParser implements Mutable {
         this.tempK.clear();
         this.tempP.clear();
         this.tempT.clear();
-        this.tempKeyValues.clear();
-        this.tempKeyValuePos.clear();
-        this.tempKeyValueType.clear();
-        this.tempKeyExcludedValues.clear();
-        this.tempKeyExcludedValuePos.clear();
-        this.tempKeyExcludedValueType.clear();
+        clearKeys();
+        clearExcludedKeys();
         this.csPool.clear();
         this.timestamp = null;
         this.preferredKeyColumn = null;
+        this.allKeyValuesAreKnown = true;
         this.allKeyExcludedValuesAreKnown = true;
     }
 
@@ -194,12 +192,31 @@ final class WhereClauseParser implements Mutable {
         }
     }
 
-    private boolean allKeyExcludedValuesAreKnown() {
-        return !tempKeyExcludedValueType.contains(ExpressionNode.BIND_VARIABLE);
+    private static void revertNodes(ObjList<ExpressionNode> nodes) {
+        for (int n = 0, k = nodes.size(); n < k; n++) {
+            nodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+        }
+        nodes.clear();
     }
 
-    private boolean allKeyValuesAreKnown() {
-        return !tempKeyValueType.contains(ExpressionNode.BIND_VARIABLE);
+    private void addExcludedValue(ExpressionNode parentNode, ExpressionNode valueNode, CharSequence value) {
+        if (tempKeyExcludedValues.add(value)) {
+            tempKeyExcludedValuePos.add(valueNode.position);
+            tempKeyExcludedValueType.add(valueNode.type);
+            allKeyExcludedValuesAreKnown &= (valueNode.type != ExpressionNode.BIND_VARIABLE);
+        }
+        parentNode.intrinsicValue = IntrinsicModel.TRUE;
+        keyExclNodes.add(parentNode);
+    }
+
+    private void addValue(ExpressionNode parentNode, ExpressionNode valueNode, CharSequence value) {
+        if (tempKeyValues.add(value)) {
+            tempKeyValuePos.add(valueNode.position);
+            tempKeyValueType.add(valueNode.type);
+            allKeyValuesAreKnown &= (valueNode.type != ExpressionNode.BIND_VARIABLE);
+        }
+        parentNode.intrinsicValue = IntrinsicModel.TRUE;
+        keyNodes.add(parentNode);
     }
 
     private boolean analyzeBetween(
@@ -344,80 +361,54 @@ final class WhereClauseParser implements Mutable {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
+                                //IN sets can't be merged if either contains a bind variable (even if it's the same) so we've to push new set to filter
+                                if (!allKeyValuesAreKnown || (b.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                                    node.intrinsicValue = IntrinsicModel.FALSE;
+                                    return false;
+                                }
                                 if (b.type == ExpressionNode.FUNCTION) {
                                     CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
                                     if (!isConstFunction) {
                                         node.intrinsicValue = IntrinsicModel.FALSE;
                                         return false;
                                     }
-
                                     value = testValue;
                                 }
 
                                 // we can refer to the accumulated key values, compute overlap of values
                                 // if values do overlap, keep only our value otherwise invalidate entire model
                                 if (tempKeyValues.contains(value)) {
-                                    //IN sets can't be merged if either contains a bind variable (even if it's the same) so we've to push new set to filter
-                                    if (!allKeyValuesAreKnown() || b.type == ExpressionNode.BIND_VARIABLE) {
-                                        return false;
-                                    }
-
                                     // x in ('a,'b') and x = 'a' then x = 'b' can't happen
                                     if (tempKeyValues.size() > 1) {
-                                        tempKeyValues.clear();
-                                        tempKeyValuePos.clear();
-                                        tempKeyValueType.clear();
-                                        tempKeyValues.add(value);
-                                        tempKeyValuePos.add(b.position);
-                                        tempKeyValueType.add(b.type);
-                                        node.intrinsicValue = IntrinsicModel.TRUE;
+                                        clearKeys();
+                                        addValue(node, b, value);
                                     }
                                 } else if (tempKeyValues.size() > 0) {
-                                    //IN sets can't be merged if either contains a bind variable (even if it's the same) so we've to push new set to filter
-                                    if (!allKeyValuesAreKnown() || b.type == ExpressionNode.BIND_VARIABLE) {
-                                        node.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
-                                    }
-
                                     // "x in ('a','b') and x = 'c' means we have a conflicting predicates 
-                                    tempKeyValues.clear();
-                                    tempKeyValueType.clear();
-                                    tempKeyValuePos.clear();
+                                    clearKeys();
                                     node.intrinsicValue = IntrinsicModel.TRUE;
                                     model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
 
-                                // x not in ('a', 'b') and x = 'a' or x not in ($1, 'a') and x = $1  means we have conflicting predicates
+                                // x not in ('a', 'b') and x = 'a'  or 
+                                // x not in ($1, 'a') and x = $1  means we have conflicting predicates
                                 if (tempKeyExcludedValues.contains(value)) {
                                     if (value != null) {
                                         int idx = tempKeyExcludedValues.getListIndexOf(value);
-
-                                        //if one is bind variable and other is not then there's no match  
-                                        if (isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
-                                            tempKeyValues.add(value);
-                                            tempKeyValuePos.add(b.position);
-                                            tempKeyValueType.add(b.type);
+                                        if (!isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
+                                            //clear all excluded values because conflict was detected
+                                            clearExcludedKeys();
                                             node.intrinsicValue = IntrinsicModel.TRUE;
+                                            model.intrinsicValue = IntrinsicModel.FALSE;
                                             return false;
                                         }
                                     }
-
-                                    //clear all excluded values because conflict was detected 
-                                    tempKeyExcludedValues.clear();
-                                    tempKeyExcludedValuePos.clear();
-                                    tempKeyExcludedValueType.clear();
-                                    removeNodes(b, keyExclNodes);
-
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
-                                    model.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                } else {//no conflicts detected so just add the value 
-                                    tempKeyValues.add(value);
-                                    tempKeyValuePos.add(b.position);
-                                    tempKeyValueType.add(b.type);
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
                                 }
+
+                                //no conflicts detected so just add the value
+                                addValue(node, b, value);
+                                return true;
                             } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
                                 if (!isCorrectType(b.type)) {
                                     b.intrinsicValue = IntrinsicModel.FALSE;
@@ -429,22 +420,15 @@ final class WhereClauseParser implements Mutable {
                                         node.intrinsicValue = IntrinsicModel.FALSE;
                                         return false;
                                     }
-
                                     value = testValue;
                                 }
 
                                 model.keyColumn = columnName;
-                                tempKeyValues.clear();
-                                tempKeyValuePos.clear();
-                                tempKeyValueType.clear();
-                                tempKeyExcludedValues.clear();
-                                tempKeyExcludedValuePos.clear();
-                                tempKeyExcludedValueType.clear();
-                                tempKeyValues.add(value);
-                                tempKeyValuePos.add(b.position);
-                                tempKeyValueType.add(b.type);
+                                clearKeys();
+                                clearExcludedKeys();
                                 resetNodes();
-                                node.intrinsicValue = IntrinsicModel.TRUE;
+                                addValue(node, b, value);
+                                return true;
                             }
                             keyNodes.add(node);
                             return true;
@@ -643,15 +627,17 @@ final class WhereClauseParser implements Mutable {
                 throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
-            tempKeyValues.clear();
-            tempKeyValuePos.clear();
-            tempKeyValueType.clear();
+            clearKeys();
             tempKeyValuePos.add(node.position);
             tempKeyValueType.add(node.type);
             model.keySubQuery = node.rhs.queryModel;
 
             // revert previously processed nodes
-            return revertProcessedNodes(keyNodes, model, columnName, node);
+            revertNodes(keyNodes);
+            model.keyColumn = columnName;
+            keyNodes.add(node);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
         }
         return false;
     }
@@ -711,7 +697,7 @@ final class WhereClauseParser implements Mutable {
             }
 
             //if key values contain bind variable then we can't merge it with any other set and have to push this list to filter 
-            if (!allKeyValuesAreKnown()) {
+            if (!allKeyValuesAreKnown) {
                 return false;
             }
 
@@ -719,6 +705,7 @@ final class WhereClauseParser implements Mutable {
             tempKeys.clear();
             tempPos.clear();
             tempType.clear();
+            boolean tmpAllKeyValuesAreKnown = true;
 
             if (i == 1) {
                 if (node.rhs == null ||
@@ -745,6 +732,7 @@ final class WhereClauseParser implements Mutable {
                 if (tempKeys.add(value)) {
                     tempPos.add(node.position);
                     tempType.add(node.rhs.type);
+                    tmpAllKeyValuesAreKnown = (node.rhs.type != ExpressionNode.BIND_VARIABLE);
                 }
             } else {
                 for (i--; i > -1; i--) {
@@ -775,36 +763,43 @@ final class WhereClauseParser implements Mutable {
                         if (tempKeys.add(value)) {
                             tempPos.add(c.position);
                             tempType.add(c.type);
+                            tmpAllKeyValuesAreKnown &= (c.type != ExpressionNode.BIND_VARIABLE);
                         }
                     }
                 }
             }
 
-            // clear values if this is new column
-            // and reset intrinsic values on nodes associated with old column
+            // clear values if this is new column and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                tempKeyValues.clear();
-                tempKeyValuePos.clear();
-                tempKeyValueType.clear();
+                clearKeys();
                 tempKeyValues.addAll(tempKeys);
                 tempKeyValuePos.addAll(tempPos);
                 tempKeyValueType.addAll(tempType);
-                return revertProcessedNodes(keyNodes, model, columnName, node);
-            } else {
-                if (tempKeyValues.size() == 0) {
-                    tempKeyValues.addAll(tempKeys);
-                    tempKeyValuePos.addAll(tempPos);
-                    tempKeyValueType.addAll(tempType);
-                }
+                allKeyValuesAreKnown = tmpAllKeyValuesAreKnown;
+                revertNodes(keyNodes);
+                model.keyColumn = columnName;
+                keyNodes.add(node);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             }
+
+            if (tempKeyValues.size() == 0) {
+                tempKeyValues.addAll(tempKeys);
+                tempKeyValuePos.addAll(tempPos);
+                tempKeyValueType.addAll(tempType);
+            } else if (!tmpAllKeyValuesAreKnown) {
+                node.intrinsicValue = IntrinsicModel.FALSE;
+                return false;
+            }
+
+            allKeyValuesAreKnown &= tmpAllKeyValuesAreKnown;
 
             if (model.keySubQuery == null) {
                 // calculate overlap of values
                 mergeKeys(model, true);
-                if (tempKeyExcludedValues.size() > 0 && (!allKeyValuesAreKnown() || !allKeyExcludedValuesAreKnown())) {
-                    tempKeyExcludedValues.clear();
-                    tempKeyExcludedValuePos.clear();
-                    tempKeyExcludedValueType.clear();
+                //we can't merge sets with bind vars so push excluded keys to filter
+                if (tempKeyExcludedValues.size() > 0 && (!allKeyValuesAreKnown || !allKeyExcludedValuesAreKnown)) {
+                    clearExcludedKeys();
                     resetExcludedNodes();
                 }
 
@@ -925,53 +920,43 @@ final class WhereClauseParser implements Mutable {
                                 if (tempKeyExcludedValues.contains(value)) {
                                     // x not in ('a,'b') and x != 'a' means x not in ('a,'b')
                                     if (value != null) {
-                                        //don't mix bind var with literal, push new node to filter 
                                         int idx = tempKeyExcludedValues.getListIndexOf(value);
+                                        //don't mix bind var with literal, push new node to filter
                                         if (isTypeMismatch(tempKeyExcludedValueType.get(idx), b.type)) {
                                             node.intrinsicValue = IntrinsicModel.FALSE;
                                             return false;
                                         }
                                     }
                                     node.intrinsicValue = IntrinsicModel.TRUE;
-                                } else {
-                                    boolean doAdd = true;
-
+                                    keyExclNodes.add(node);
+                                } else if (tempKeyValues.contains(value) &&
+                                    (allKeyValuesAreKnown && b.type != ExpressionNode.BIND_VARIABLE)) {
                                     //sets can't be merged if either contains a bind variable 
-                                    if (tempKeyValues.contains(value) &&
-                                        (allKeyValuesAreKnown() && b.type != ExpressionNode.BIND_VARIABLE)) {
-                                        int listIdx;
-                                        if (value == null) {
-                                            listIdx = tempKeyValues.removeNull();
-                                        } else {
-                                            int hashIdx = tempKeyValues.keyIndex(value);
-                                            listIdx = tempKeyValues.getListIndexAt(hashIdx);
-                                            tempKeyValues.removeAt(hashIdx);
-                                        }
-                                        tempKeyValuePos.removeIndex(listIdx);
-                                        tempKeyValueType.removeIndex(listIdx);
-                                        removeNodes(b, keyNodes);
-                                        doAdd = false;
-
-                                        //in set is empty  
-                                        if (tempKeyValues.size() == 0) {
-                                            model.intrinsicValue = IntrinsicModel.FALSE;
-                                        }
+                                    int listIdx;
+                                    if (value == null) {
+                                        listIdx = tempKeyValues.removeNull();
+                                    } else {
+                                        int hashIdx = tempKeyValues.keyIndex(value);
+                                        listIdx = tempKeyValues.getListIndexAt(hashIdx);
+                                        tempKeyValues.removeAt(hashIdx);
                                     }
-
-                                    if (doAdd) {//if tempKeys contained the value then just remove it and don't add to excludedKeys   
-                                        allKeyExcludedValuesAreKnown &= (b.type != ExpressionNode.BIND_VARIABLE);
-                                        tempKeyExcludedValues.add(value);
-                                        tempKeyExcludedValuePos.add(b.position);
-                                        tempKeyExcludedValueType.add(b.type);
-                                    }
+                                    tempKeyValuePos.removeIndex(listIdx);
+                                    tempKeyValueType.removeIndex(listIdx);
+                                    removeNodes(b, keyNodes);
                                     node.intrinsicValue = IntrinsicModel.TRUE;
+
+                                    //in set is empty  
+                                    if (tempKeyValues.size() == 0) {
+                                        model.intrinsicValue = IntrinsicModel.FALSE;
+                                    }
+                                } else {
+                                    addExcludedValue(node, b, value);
                                 }
                             } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
                                 if (!isCorrectType(b.type)) {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
-
                                 if (b.type == ExpressionNode.FUNCTION) {
                                     CharSequence testValue = getStrFromFunction(functionParser, b, m, executionContext);
                                     if (!isConstFunction) {
@@ -983,18 +968,11 @@ final class WhereClauseParser implements Mutable {
                                 }
 
                                 model.keyColumn = columnName;
-                                tempKeyValues.clear();
-                                tempKeyValuePos.clear();
-                                tempKeyValueType.clear();
-                                tempKeyExcludedValues.clear();
-                                tempKeyExcludedValuePos.clear();
-                                tempKeyExcludedValueType.clear();
-                                allKeyExcludedValuesAreKnown &= (b.type != ExpressionNode.BIND_VARIABLE);
-                                tempKeyExcludedValues.add(value);
-                                tempKeyExcludedValuePos.add(b.position);
-                                tempKeyExcludedValueType.add(b.type);
+                                clearKeys();
+                                clearExcludedKeys();
                                 resetNodes();
-                                node.intrinsicValue = IntrinsicModel.TRUE;
+                                addExcludedValue(node, b, value);
+                                return true;
                             }
                             keyExclNodes.add(node);
                             return true;
@@ -1104,7 +1082,7 @@ final class WhereClauseParser implements Mutable {
                 if (tempKeys.add(value)) {
                     tempPos.add(node.position);
                     tempType.add(node.rhs.type);
-                    tmpAllKeyExcludedValuesAreKnown = (node.type != ExpressionNode.BIND_VARIABLE);
+                    tmpAllKeyExcludedValuesAreKnown = (node.rhs.type != ExpressionNode.BIND_VARIABLE);
                 }
             } else {
                 for (i--; i > -1; i--) {
@@ -1135,31 +1113,38 @@ final class WhereClauseParser implements Mutable {
                         if (tempKeys.add(value)) {
                             tempPos.add(c.position);
                             tempType.add(c.type);
-                            tmpAllKeyExcludedValuesAreKnown &= (node.type != ExpressionNode.BIND_VARIABLE);
+                            tmpAllKeyExcludedValuesAreKnown &= (c.type != ExpressionNode.BIND_VARIABLE);
                         }
                     }
                 }
             }
 
-            // clear values if this is new column
-            // and reset intrinsic values on nodes associated with old column
+            // clear values if this is new column and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                tempKeyExcludedValues.clear();
-                tempKeyExcludedValuePos.clear();
-                tempKeyExcludedValueType.clear();
-                allKeyExcludedValuesAreKnown &= tmpAllKeyExcludedValuesAreKnown;
+                clearKeys();
+                revertNodes(keyNodes);
+                clearExcludedKeys();
+                revertNodes(keyExclNodes);
+
+                model.keyColumn = columnName;
+                keyExclNodes.add(notNode);
+                notNode.intrinsicValue = IntrinsicModel.TRUE;
+
                 tempKeyExcludedValues.addAll(tempKeys);
                 tempKeyExcludedValuePos.addAll(tempPos);
                 tempKeyExcludedValueType.addAll(tempType);
-                revertProcessedNodes(keyExclNodes, model, columnName, notNode);
+                allKeyExcludedValuesAreKnown = tmpAllKeyExcludedValuesAreKnown;
+
                 return;
-            } else {
-                if (tempKeyExcludedValues.size() == 0) {
-                    tempKeyExcludedValues.addAll(tempKeys);
-                    tempKeyExcludedValuePos.addAll(tempPos);
-                    tempKeyExcludedValueType.addAll(tempType);
-                }
             }
+
+            if (tempKeyExcludedValues.size() == 0) {
+                tempKeyExcludedValues.addAll(tempKeys);
+                tempKeyExcludedValuePos.addAll(tempPos);
+                tempKeyExcludedValueType.addAll(tempType);
+            }
+
+            allKeyExcludedValuesAreKnown &= tmpAllKeyExcludedValuesAreKnown;
 
             if (model.keySubQuery == null) {
                 // calculate sum of values
@@ -1315,7 +1300,7 @@ final class WhereClauseParser implements Mutable {
         if (model.keyColumn != null &&
             tempKeyValues.size() > 0 &&
             keyExclNodes.size() > 0) {
-            if (allKeyValuesAreKnown() && allKeyExcludedValuesAreKnown()) {
+            if (allKeyValuesAreKnown && allKeyExcludedValuesAreKnown) {
                 OUT:
                 for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
                     ExpressionNode parent = keyExclNodes.getQuick(i);
@@ -1366,12 +1351,11 @@ final class WhereClauseParser implements Mutable {
             if (tempKeyValues.size() > 0 && tempKeyExcludedValues.size() > 0) {
                 //if both sets are constant values it's fine but 
                 //if any set contains bind variables then we've to push not in set to filter
-                if (!allKeyValuesAreKnown() || !allKeyExcludedValuesAreKnown()) {
+                if (!allKeyValuesAreKnown || !allKeyExcludedValuesAreKnown) {
                     resetExcludedNodes();
                 }
-                tempKeyExcludedValues.clear();
-                tempKeyExcludedValuePos.clear();
-                tempKeyExcludedValueType.clear();
+                clearExcludedKeys();
+                allKeyExcludedValuesAreKnown = true;
 
             }
         }
@@ -1402,6 +1386,21 @@ final class WhereClauseParser implements Mutable {
             return true;
         }
         return ColumnType.isString(type);
+    }
+
+
+    private void clearExcludedKeys() {
+        tempKeyExcludedValues.clear();
+        tempKeyExcludedValuePos.clear();
+        tempKeyExcludedValueType.clear();
+        allKeyExcludedValuesAreKnown = true;
+    }
+
+    private void clearKeys() {
+        tempKeyValues.clear();
+        tempKeyValuePos.clear();
+        tempKeyValueType.clear();
+        allKeyValuesAreKnown = true;
     }
 
     //removes nodes extracted into special symbol/key or timestamp filters from given node   
@@ -1493,9 +1492,7 @@ final class WhereClauseParser implements Mutable {
                 tempKeyValueType.get(i));
             model.keyValueFuncs.add(func);
         }
-        tempKeyValues.clear();
-        tempKeyValuePos.clear();
-        tempKeyValueType.clear();
+        clearKeys();
 
         for (int i = 0, n = tempKeyExcludedValues.size(); i < n; i++) {
             Function func = createKeyValueBindVariable(
@@ -1507,9 +1504,8 @@ final class WhereClauseParser implements Mutable {
             );
             model.keyExcludedValueFuncs.add(func);
         }
-        tempKeyExcludedValues.clear();
-        tempKeyExcludedValuePos.clear();
-        tempKeyExcludedValueType.clear();
+
+        clearExcludedKeys();
     }
 
     private void excludeKeyValue(IntrinsicModel model, FunctionParser functionParser, RecordMetadata m, SqlExecutionContext executionContext, ExpressionNode val) throws SqlException {
@@ -1846,29 +1842,12 @@ final class WhereClauseParser implements Mutable {
     }
 
     private void resetExcludedNodes() {
-        for (int n = 0, k = keyExclNodes.size(); n < k; n++) {
-            keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
-        }
-        keyExclNodes.clear();
+        revertNodes(keyExclNodes);
     }
 
     private void resetNodes() {
-        for (int n = 0, k = keyNodes.size(); n < k; n++) {
-            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
-        }
-        keyNodes.clear();
+        revertNodes(keyNodes);
         resetExcludedNodes();
-    }
-
-    private boolean revertProcessedNodes(ObjList<ExpressionNode> nodes, IntrinsicModel model, CharSequence columnName, ExpressionNode node) {
-        for (int n = 0, k = nodes.size(); n < k; n++) {
-            nodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
-        }
-        nodes.clear();
-        model.keyColumn = columnName;
-        nodes.add(node);
-        node.intrinsicValue = IntrinsicModel.TRUE;
-        return true;
     }
 
     private boolean translateBetweenToTimestampModel(
@@ -1922,12 +1901,8 @@ final class WhereClauseParser implements Mutable {
         boolean latestByMultiColumn,
         TableReader reader
     ) throws SqlException {
-        this.tempKeyValues.clear();
-        this.tempKeyValuePos.clear();
-        this.tempKeyValueType.clear();
-        this.tempKeyExcludedValues.clear();
-        this.tempKeyExcludedValuePos.clear();
-        this.tempKeyExcludedValueType.clear();
+        clearKeys();
+        clearExcludedKeys();
 
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
