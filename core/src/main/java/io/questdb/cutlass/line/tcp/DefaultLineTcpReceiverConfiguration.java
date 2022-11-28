@@ -196,6 +196,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public boolean isSymbolAsFieldSupported() {
-        return true;
+        return false;
     }
 }
