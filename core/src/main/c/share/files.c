@@ -24,6 +24,7 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
@@ -43,6 +44,7 @@
 #include <dirent.h>
 #include <sys/errno.h>
 #include <sys/time.h>
+#include <sys/mount.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
@@ -201,7 +203,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
-    (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+        (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
 
     struct stat st;
     if (lstat((const char *) pcharSoftLink, &st) == 0) {
@@ -282,25 +284,26 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
     // MACOS allocates additional space. Check what size the file currently is
     struct stat st;
-    if (fstat((int) fd, &st) != 0) {
+    int _fd = (int) fd;
+    if (fstat(_fd, &st) != 0) {
         return JNI_FALSE;
     }
-    const jlong  fileLen = st.st_blksize * st.st_blocks;
+    const jlong fileLen = st.st_blksize * st.st_blocks;
     jlong deltaLen = len - fileLen;
     if (deltaLen > 0) {
         // F_ALLOCATECONTIG - try to allocate continuous space.
         fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, deltaLen, 0};
-        int result = fcntl(fd, F_PREALLOCATE, &flags);
+        int result = fcntl(_fd, F_PREALLOCATE, &flags);
         if (result == -1) {
             // F_ALLOCATEALL - try to allocate non-continuous space.
             flags.fst_flags = F_ALLOCATEALL;
-            result = fcntl((int)fd, F_PREALLOCATE, &flags);
+            result = fcntl((int) fd, F_PREALLOCATE, &flags);
             if (result == -1) {
                 return JNI_FALSE;
             }
         }
     }
-    return ftruncate((int)fd, len) == 0;
+    return ftruncate((int) fd, len) == 0;
 }
 
 #else
@@ -447,7 +450,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
     if (fileSize > 0) {
-        if (flock((int)fd, LOCK_EX | LOCK_NB) == 0) {
+        if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
             // truncate file to 0 byte
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
@@ -497,4 +500,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
     return access((const char *) lpsz, F_OK) == 0;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
+    struct statfs buf;
+    if (statfs((const char *) lpszPath, &buf) == 0) {
+        uint64_t k = buf.f_bavail * buf.f_bsize;
+        return (jlong) k;
+    }
+    return -1;
 }

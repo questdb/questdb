@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -313,7 +312,7 @@ public class FilesTest {
 
     @Test
     public void testLastModified() throws Exception {
-        Log ignore = LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
+        LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
@@ -1009,6 +1008,12 @@ public class FilesTest {
 
     @Test
     public void testAllocateConcurrent() throws IOException, InterruptedException {
+        // This test allocates (but doesn't write to) potentially very large files
+        // size of which will depend on free disk space of the host OS.
+        // I found that on OSX (m1) with large disk allocate() call is painfully slow and
+        // for that reason (until we understood the problem better) we won't run this test
+        // on OSX
+        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
@@ -1033,12 +1038,14 @@ public class FilesTest {
             long fd = -1;
             long mem = -1;
             long diskSize = ff.getDiskSize(p2);
+            System.out.println("GiB: "+diskSize/1024/1024/1024);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
             try {
                 fd = ff.openRW(path, CairoConfiguration.O_NONE);
                 assert fd != -1;
                 if (ff.allocate(fd, fileSize)) {
+                    System.out.println("here");
                     mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
                     Unsafe.getUnsafe().putLong(mem, 123455);
                 }
