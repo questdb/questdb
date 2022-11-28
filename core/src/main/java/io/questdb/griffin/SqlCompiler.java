@@ -1424,8 +1424,7 @@ public class SqlCompiler implements Closeable {
             RecordCursor cursor,
             RecordMetadata metadata,
             TableWriterAPI writer,
-            RecordMetadata
-                    writerMetadata,
+            RecordMetadata writerMetadata,
             RecordToRowCopier recordToRowCopier,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
