@@ -25,6 +25,7 @@
 #include <jni.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#include <unistd.h>
 #include <stddef.h>
 
 
@@ -93,7 +94,30 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlDel
     return EPOLL_CTL_DEL;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_EventFDAccessor_eventFd
+JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_eventFd
         (JNIEnv *e, jclass cl) {
     return eventfd(0, EFD_NONBLOCK);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_readEventFd
+        (JNIEnv *e, jclass cl, jlong fd) {
+    uint64_t u;
+    ssize_t s;
+    s = read((int) fd, &u, sizeof(uint64_t));
+    if (s != sizeof(uint64_t)) {
+        return -1;
+    }
+    return (jlong) u;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_writeEventFd
+        (JNIEnv *e, jclass cl, jlong fd) {
+    uint64_t u;
+    ssize_t s;
+    u = 1;
+    s = write((int) fd, &u, sizeof(uint64_t));
+    if (s != sizeof(uint64_t)) {
+        return -1;
+    }
+    return 0;
 }

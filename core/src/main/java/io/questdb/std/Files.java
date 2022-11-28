@@ -72,7 +72,7 @@ public final class Files {
     }
 
     public static synchronized boolean auditOpen(long fd) {
-        if (null == openFds) {
+        if (openFds == null) {
             openFds = new LongHashSet();
         }
         if (fd < 0) {

@@ -24,8 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Os;
-
 public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
 
     private static final int M_ID = 2;
@@ -34,8 +32,8 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private long fdid = 1;
 
     public IODispatcherOsx(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+        IODispatcherConfiguration configuration,
+        IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
         this.capacity = configuration.getEventCapacity();
@@ -138,7 +136,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
     private void registerWithKQueue(int changeCount) {
         if (kqueue.register(changeCount) != 0) {
-            throw NetworkError.instance(Os.errno()).put("could not register [changeCount=").put(changeCount).put(']');
+            throw NetworkError.instance(nf.errno()).put("could not register [changeCount=").put(changeCount).put(']');
         }
         LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
     }

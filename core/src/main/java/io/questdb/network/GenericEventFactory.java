@@ -24,34 +24,26 @@
 
 package io.questdb.network;
 
-import java.io.Closeable;
+import io.questdb.std.Os;
 
-/**
- * Used for generic single-time events that can be used with
- * {@link IODispatcher}. Such events aren't necessarily network I/O
- * related, but instead provide an efficient way of suspending a task
- * done in the IODispatcher's event loop and resume it later when another
- * thread sends us a notification through the event.
- * <p>
- * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
- */
-public interface GenericEvent extends Closeable {
-    /**
-     * Event is assumed to be held and then closed by two parties.
-     * The underlying OS resources are freed on the second close call.
-     */
-    @Override
-    void close();
+public class GenericEventFactory {
 
-    long getFd();
+    private GenericEventFactory() {
+    }
 
-    /**
-     * Marks the event as received.
-     */
-    void read();
-
-    /**
-     * Sends the event to the receiving side.
-     */
-    void write();
+    public static GenericEvent newInstance(IODispatcherConfiguration configuration) {
+        switch (Os.type) {
+            case Os.LINUX_AMD64:
+            case Os.LINUX_ARM64:
+                return new EventFd(configuration.getEpollFacade());
+            case Os.OSX_AMD64:
+            case Os.OSX_ARM64:
+            case Os.FREEBSD:
+                // TODO
+            case Os.WINDOWS:
+                // TODO
+            default:
+                throw new RuntimeException();
+        }
+    }
 }

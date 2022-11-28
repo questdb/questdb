@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.log.Log;
+import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 
@@ -54,6 +55,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public boolean bindUdp(long fd, int ipv4Address, int port) {
         return Net.bindUdp(fd, ipv4Address, port);
+    }
+
+    @Override
+    public void bumpFdCount(long fd) {
+        Files.bumpFileCount(fd);
     }
 
     @Override

@@ -64,6 +64,10 @@ public class EpollAccessor {
 
     static native short getEventsOffset();
 
+    static native long readEventFd(long fd);
+
+    static native int writeEventFd(long fd);
+
     static {
         DATA_OFFSET = getDataOffset();
         EVENTS_OFFSET = getEventsOffset();

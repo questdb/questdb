@@ -163,26 +163,6 @@ public class IODispatcherTest {
             ));
     }
 
-    @Test
-    public void queryWithDoubleQuotesParsedCorrectly() throws Exception {
-        new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-            .withTelemetry(false)
-            .run(engine -> {
-                // select 1 as "select"
-                // with select being the column name to check double quote parsing
-                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                    "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
-                    "67\r\n"
-                        + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
-                        + "00\r\n"
-                        + "\r\n"
-                );
-            });
-    }
-
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -5319,6 +5299,26 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testQueryWithDoubleQuotesParsedCorrectly() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(1)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .run(engine -> {
+                // select 1 as "select"
+                // with select being the column name to check double quote parsing
+                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                    "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
+                    "67\r\n"
+                        + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                        + "00\r\n"
+                        + "\r\n"
+                );
+            });
+    }
+
+    @Test
     public void testQueuedConnectionTimeout() throws Exception {
         testQueuedConnectionTimeoutImpl(9001);
     }
@@ -7074,7 +7074,15 @@ public class IODispatcherTest {
             1000);
     }
 
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+    private static void assertDownloadResponse(
+        long fd,
+        Rnd rnd,
+        long buffer,
+        int len,
+        int nonRepeatedContentLength,
+        String expectedResponseHeader,
+        long expectedResponseLen
+    ) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
         long downloadedSoFar = 0;

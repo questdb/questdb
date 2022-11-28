@@ -72,9 +72,9 @@ public final class Net {
 
     public static void appendIP4(CharSink sink, long ip) {
         sink.put((ip >> 24) & 0xff).put('.')
-                .put((ip >> 16) & 0xff).put('.')
-                .put((ip >> 8) & 0xff).put('.')
-                .put(ip & 0xff);
+            .put((ip >> 16) & 0xff).put('.')
+            .put((ip >> 8) & 0xff).put('.')
+            .put(ip & 0xff);
     }
 
     public native static boolean bindTcp(long fd, int ipv4address, int port);
@@ -84,6 +84,10 @@ public final class Net {
     }
 
     public native static boolean bindUdp(long fd, int ipv4Address, int port);
+
+    public static void bumpFdCount(long fd) {
+        Files.bumpFileCount(fd);
+    }
 
     public static int close(long fd) {
         return Files.close(fd);

@@ -24,36 +24,54 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
-
-import java.io.IOException;
 
 public class EventFd implements GenericEvent {
 
     private static final long REF_COUNT_OFFSET;
 
+    private final EpollFacade epf;
     private final long fd;
     @SuppressWarnings("unused")
     private volatile int refCount;
 
-    public EventFd(long fd) {
+    public EventFd(EpollFacade epf) {
+        this.epf = epf;
+        long fd = epf.eventFd();
+        if (fd < 0) {
+            throw NetworkError.instance(epf.errno(), "cannot create eventfd event");
+        }
         this.fd = fd;
+        epf.getNetworkFacade().bumpFdCount(fd);
         this.refCount = 2;
-        Files.bumpFileCount(fd);
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
         if (prevRefCount == 1) {
-            Files.close(fd);
+            epf.getNetworkFacade().close(fd);
         }
     }
 
     @Override
     public long getFd() {
         return fd;
+    }
+
+    @Override
+    public void read() {
+        long value = epf.readEventFd(fd);
+        if (value != 1) {
+            throw NetworkError.instance(epf.errno()).put("unexpected eventfd read value [value=").put(value).put(", fd=").put(fd).put(']');
+        }
+    }
+
+    @Override
+    public void write() {
+        if (epf.writeEventFd(fd) < 0) {
+            throw NetworkError.instance(epf.errno()).put("could not write to eventfd [fd=").put(fd).put(']');
+        }
     }
 
     static {

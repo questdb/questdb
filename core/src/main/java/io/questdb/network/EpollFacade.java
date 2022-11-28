@@ -36,4 +36,8 @@ public interface EpollFacade {
     long eventFd();
 
     NetworkFacade getNetworkFacade();
+
+    long readEventFd(long fd);
+
+    int writeEventFd(long fd);
 }

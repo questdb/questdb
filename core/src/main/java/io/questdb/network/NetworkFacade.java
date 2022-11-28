@@ -39,6 +39,8 @@ public interface NetworkFacade {
 
     boolean bindUdp(long fd, int ipv4Address, int port);
 
+    void bumpFdCount(long fd);
+
     int close(long fd);
 
     void close(long fd, Log logger);

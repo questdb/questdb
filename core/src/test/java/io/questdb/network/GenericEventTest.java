@@ -24,34 +24,28 @@
 
 package io.questdb.network;
 
-import java.io.Closeable;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
+import org.junit.Test;
 
-/**
- * Used for generic single-time events that can be used with
- * {@link IODispatcher}. Such events aren't necessarily network I/O
- * related, but instead provide an efficient way of suspending a task
- * done in the IODispatcher's event loop and resume it later when another
- * thread sends us a notification through the event.
- * <p>
- * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
- */
-public interface GenericEvent extends Closeable {
-    /**
-     * Event is assumed to be held and then closed by two parties.
-     * The underlying OS resources are freed on the second close call.
-     */
-    @Override
-    void close();
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-    long getFd();
+public class GenericEventTest {
 
-    /**
-     * Marks the event as received.
-     */
-    void read();
-
-    /**
-     * Sends the event to the receiving side.
-     */
-    void write();
+    @Test
+    public void testCreateAndClose() throws Exception {
+        assertMemoryLeak(() -> {
+            GenericEvent event = GenericEventFactory.newInstance(new DefaultIODispatcherConfiguration());
+            // The event is not yet triggered, so read has to fail.
+            try {
+                event.read();
+            } catch (NetworkError e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected eventfd read value"));
+            }
+            event.write();
+            event.read();
+            event.close();
+            event.close();
+        });
+    }
 }
