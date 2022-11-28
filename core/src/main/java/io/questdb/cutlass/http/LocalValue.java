@@ -27,8 +27,8 @@ package io.questdb.cutlass.http;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class LocalValue<T> {
-    private final static AtomicInteger atomicInteger = new AtomicInteger();
-    final int hashCode = atomicInteger.getAndIncrement();
+    private final static AtomicInteger hashCodeSequence = new AtomicInteger();
+    final int hashCode = hashCodeSequence.getAndIncrement();
 
     public T get(Locality locality) {
         return locality.getMap().get(this);
