@@ -101,7 +101,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
     off_t offset = srcOffset;
 
     while (len > 0) {
-        ssize_t writtenLen = sendfile64((int)output, (int)input, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
+        ssize_t writtenLen = sendfile64((int) output, (int) input, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
         if (writtenLen <= 0
             // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
             && errno != EINTR) {
@@ -382,7 +382,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
     struct statvfs buf;
     if (statvfs((const char *) lpszPath, &buf) == 0) {
-        unsigned long long k = ((unsigned long long)buf.f_bavail) * buf.f_bsize;
+        unsigned long long k = ((unsigned long long) buf.f_bavail) * buf.f_bsize;
         return (jlong) k;
     }
     return -1;
@@ -410,4 +410,11 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         return JNI_TRUE;
     }
     return JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
+        (JNIEnv *e, jclass cl, jlong pchar) {
+    struct stat st;
+    int r = stat((const char *) pchar, &st);
+    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
 }

@@ -29,12 +29,6 @@
 #include <sys/mman.h>
 #include "sysutil.h"
 
-#ifdef __APPLE__
-
-#include <sys/time.h>
-
-#endif
-
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/errno.h>
@@ -145,17 +139,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
     return result;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
-        (JNIEnv *e, jclass cl, jlong pchar) {
-    struct stat st;
-    int r = stat((const char *) pchar, &st);
-#ifdef __APPLE__
-    return r == 0 ? ((1000 * st.st_mtimespec.tv_sec) + (st.st_mtimespec.tv_nsec / 1000000)) : r;
-#else
-    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
-#endif
-}
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_RDONLY);
@@ -235,19 +218,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists
     int r = fstat((int) fd, &st);
     return (jboolean) (r == 0 ? st.st_nlink > 0 : 0);
 }
-
-#ifdef __APPLE__
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
-    struct timeval t[2];
-    gettimeofday(t, NULL);
-    t[1].tv_sec = millis / 1000;
-    t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
-    return (jboolean) (utimes((const char *) lpszName, t) == 0);
-}
-
-#endif
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
@@ -459,16 +429,3 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
     return access((const char *) lpsz, F_OK) == 0;
 }
-
-#ifdef __APPLE__
-
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
-    struct statfs buf;
-    if (statfs((const char *) lpszPath, &buf) == 0) {
-        uint64_t k = buf.f_bavail * buf.f_bsize;
-        return (jlong) k;
-    }
-    return -1;
-}
-
-#endif
