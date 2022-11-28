@@ -42,6 +42,8 @@
 #include <sys/fcntl.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+#include <sys/time.h>
+#include <sys/stat.h>
 #endif
 
 static inline jlong _io_questdb_std_Files_mremap0
@@ -146,7 +148,11 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
     struct timeval t[2];
     gettimeofday(t, NULL);
     t[1].tv_sec = millis / 1000;
+#ifdef __APPLE__    
     t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
+#else
+    t[1].tv_usec = ((millis % 1000) * 1000);
+#endif    
     return (jboolean) (utimes((const char *) lpszName, t) == 0);
 }
 
