@@ -1038,14 +1038,12 @@ public class FilesTest {
             long fd = -1;
             long mem = -1;
             long diskSize = ff.getDiskSize(p2);
-            System.out.println("GiB: "+diskSize/1024/1024/1024);
             Assert.assertNotEquals(-1, diskSize);
             long fileSize = diskSize / 3 * 2;
             try {
                 fd = ff.openRW(path, CairoConfiguration.O_NONE);
                 assert fd != -1;
                 if (ff.allocate(fd, fileSize)) {
-                    System.out.println("here");
                     mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
                     Unsafe.getUnsafe().putLong(mem, 123455);
                 }
