@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -75,6 +76,127 @@ public class ConcurrentTest {
 
         latch.await();
         Assert.assertEquals(threads * iterations, doneCount.get());
+    }
+
+    @Test
+    public void testConcurrentFanOutAsyncOffloadPattern() {
+        // This test aims to reproduce a simplified variant of async offload inter-thread communication pattern.
+
+        class Item {
+            int owner;
+        }
+
+        final int capacity = 2;
+        final int collectorThreads = 2;
+        final int reducerThreads = 2;
+        final int itemsToDispatch = 8;
+        final int iterations = 100;
+
+        final RingQueue<Item> queue = new RingQueue<Item>(() -> new Item(), capacity);
+        final MPSequence reducePubSeq = new MPSequence(capacity);
+        final MCSequence reduceSubSeq = new MCSequence(capacity);
+        final FanOut collectFanOut = new FanOut();
+
+        reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
+
+        final CyclicBarrier start = new CyclicBarrier(collectorThreads + reducerThreads);
+        final SOCountDownLatch latch = new SOCountDownLatch(collectorThreads + reducerThreads);
+        final AtomicInteger doneCollectors = new AtomicInteger();
+        final AtomicInteger anomalies = new AtomicInteger();
+
+        // Start reducer threads.
+        for (int i = 0; i < reducerThreads; i++) {
+            new Thread(() -> {
+                try {
+                    start.await();
+
+                    while (doneCollectors.get() != collectorThreads) {
+                        long cursor = reduceSubSeq.next();
+                        if (cursor > -1) {
+                            reduceSubSeq.done(cursor);
+                        } else {
+                            Os.pause();
+                        }
+                    }
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                    anomalies.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        // Start collector threads.
+        for (int i = 0; i < collectorThreads; i++) {
+            final int threadI = i;
+            new Thread(() -> {
+                final SCSequence collectSubSeq = new SCSequence();
+
+                try {
+                    start.await();
+
+                    for (int j = 0; j < iterations; j++) {
+                        collectFanOut.and(collectSubSeq);
+
+                        int collected = 0;
+
+                        // Dispatch all items.
+                        for (int k = 0; k < itemsToDispatch; k++) {
+                            while (true) {
+                                long dispatchCursor = reducePubSeq.next();
+                                if (dispatchCursor > -1) {
+                                    queue.get(dispatchCursor).owner = threadI;
+                                    reducePubSeq.done(dispatchCursor);
+                                    break;
+                                } else if (dispatchCursor == -1) {
+                                    // Collect as many items as we can.
+                                    long collectCursor;
+                                    while ((collectCursor = collectSubSeq.next()) > -1) {
+                                        if (queue.get(collectCursor).owner == threadI) {
+                                            queue.get(collectCursor).owner = -1;
+                                            collected++;
+                                        }
+                                        collectSubSeq.done(collectCursor);
+                                    }
+                                    Os.pause();
+                                } else {
+                                    Os.pause();
+                                }
+                            }
+                        }
+
+                        // Await for all remaining items.
+                        while (collected != itemsToDispatch) {
+                            long collectCursor = collectSubSeq.next();
+                            if (collectCursor > -1) {
+                                if (queue.get(collectCursor).owner == threadI) {
+                                    queue.get(collectCursor).owner = -1;
+                                    collected++;
+                                }
+                                collectSubSeq.done(collectCursor);
+                            } else {
+                                Os.pause();
+                            }
+                        }
+
+                        collectFanOut.remove(collectSubSeq);
+                        collectSubSeq.clear();
+                    }
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                    anomalies.incrementAndGet();
+                } finally {
+                    doneCollectors.incrementAndGet();
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        if (!latch.await(TimeUnit.SECONDS.toNanos(60))) {
+            Assert.fail("Wait limit exceeded");
+        }
+        Assert.assertEquals(0, anomalies.get());
     }
 
     @Test

@@ -74,17 +74,6 @@ public class CairoTestUtils {
         );
     }
 
-    public static void createTableWithVersion(TableModel model, int version) {
-        TableUtils.createTable(
-                model.getConfiguration(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                version,
-                1
-        );
-    }
-
     public static void createTableWithVersionAndId(TableModel model, int version, int tableId) {
         TableUtils.createTable(
                 model.getConfiguration(),

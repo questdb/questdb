@@ -71,8 +71,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     public final void clear() {
         this.state = START_PARSING;
         this.boundaryPtr = 0;
+        this.boundaryByte = 0;
+        this.boundary = null;
         this.consumedBoundaryLen = 0;
-        headerParser.clear();
+        this.headerParser.clear();
     }
 
     @Override
@@ -85,7 +87,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     }
 
     /**
-     * Setup multi-part parser with boundary. Boundary value retrieved from HTTP header must be
+     * Setup multipart parser with boundary. Boundary value retrieved from HTTP header must be
      * prefixed with '\r\n--'.
      *
      * @param boundary boundary value
@@ -96,8 +98,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         this.boundaryByte = (byte) boundary.charAt(0);
     }
 
-    public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public boolean parse(
+            long lo,
+            long hi,
+            HttpMultipartContentListener listener
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
@@ -211,7 +216,6 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     // DONE
                     return true;
             }
-
         }
 
         if (state == BODY) {
@@ -253,7 +257,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         try {
             listener.onChunk(lo, hi);
         } catch (RetryOperationException e) {
-            // Request re-try
+            // Request re-try.
             needsRetry = e;
         } catch (NotEnoughLinesException e) {
             if (handleIncomplete) {
@@ -264,11 +268,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
             }
         }
 
-        // Roll to next state
+        // Roll to the next state.
         this.state = state;
 
-        // And save point to continue
-        // even if RetryOperationException happened
+        // And save point to continue even if RetryOperationException happened.
         this.resumePtr = resumePtr;
 
         // If retry exception happened, rethrow after setting state and resume point.
