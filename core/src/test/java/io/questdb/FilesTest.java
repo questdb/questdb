@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
@@ -1004,5 +1005,57 @@ public class FilesTest {
                 Assert.assertTrue(Files.remove(softLinkRenamedFilePath));
             }
         });
+    }
+
+    @Test
+    public void testAllocateConcurrent() throws IOException, InterruptedException {
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+        String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
+        AtomicInteger errors = new AtomicInteger();
+
+        for (int i = 0; i < 10; i++) {
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
+            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors));
+            th1.start();
+            th2.start();
+            th1.join();
+            th2.join();
+            Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
+        try (
+            Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
+            Path p2 = new Path().of(pathName).$()
+        ) {
+            long fd = -1;
+            long mem = -1;
+            long diskSize = ff.getDiskSize(p2);
+            Assert.assertNotEquals(-1, diskSize);
+            long fileSize = diskSize / 3 * 2;
+            try {
+                fd = ff.openRW(path, CairoConfiguration.O_NONE);
+                assert fd != -1;
+                if (ff.allocate(fd, fileSize)) {
+                    mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
+                    Unsafe.getUnsafe().putLong(mem, 123455);
+                }
+            } finally {
+                if (mem != -1) {
+                    ff.munmap(mem, fileSize, 0);
+                }
+
+                if (fd != -1) {
+                    ff.close(fd);
+                }
+
+                ff.remove(path);
+            }
+        } catch (Throwable e) {
+            e.printStackTrace();
+            errors.incrementAndGet();
+        }
     }
 }
