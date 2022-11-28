@@ -222,6 +222,7 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
         Misc.freeObjListAndClear(selectors);
+        Misc.free(httpContextFactory);
     }
 
     @FunctionalInterface

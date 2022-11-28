@@ -51,7 +51,7 @@ public class FanOut implements Barrier {
 
     public FanOut and(Barrier barrier) {
         Holder _new;
-        boolean barrierNotSetUp = true;
+        Barrier root = null;
 
         final long current = this.barrier != null ? this.barrier.current() : -1;
         Unsafe.getUnsafe().loadFence();
@@ -64,14 +64,11 @@ public class FanOut implements Barrier {
                 return this;
             }
 
-            if (this.barrier != null) {
-                if (barrierNotSetUp) {
-                    Barrier b = barrier.root();
-                    b.setBarrier(this.barrier);
-                    b.setCurrent(current);
-                    barrierNotSetUp = false;
-                    Unsafe.getUnsafe().storeFence();
-                }
+            if (root == null && this.barrier != null) {
+                root = barrier.root();
+                root.setBarrier(this.barrier);
+                root.setCurrent(current);
+                Unsafe.getUnsafe().storeFence();
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -83,12 +80,15 @@ public class FanOut implements Barrier {
             }
             _new.setupWaitStrategy();
             if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {
+                // catch up with others
+                if (root != null && this.barrier != null) {
+                    root.setCurrent(this.barrier.current());
+                }
                 break;
             }
         } while (true);
 
         Unsafe.getUnsafe().storeFence();
-
         return this;
     }
 
@@ -121,7 +121,6 @@ public class FanOut implements Barrier {
     }
 
     public void remove(Barrier barrier) {
-
         Unsafe.getUnsafe().storeFence();
 
         Holder _new;
