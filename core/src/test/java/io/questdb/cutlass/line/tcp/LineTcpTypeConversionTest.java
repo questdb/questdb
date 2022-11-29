@@ -38,18 +38,26 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
-
     private final boolean walEnabled;
     private long time;
 
-    public LineTcpTypeConversionTest(WalMode walMode) {
-        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    public LineTcpTypeConversionTest(WalMode walMode, SymbolAsFieldMode symbolAsFieldMode, StringAsTagMode stringAsTagMode) {
+        walEnabled = (walMode == WalMode.WITH_WAL);
+        symbolAsFieldSupported = (symbolAsFieldMode == SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD);
+        stringAsTagSupported = (stringAsTagMode == StringAsTagMode.WITH_STRINGS_AS_TAG);
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0}, {1}, {2}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+                {WalMode.WITH_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.WITH_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG},
+                {WalMode.WITH_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.WITH_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG}
         });
     }
 
@@ -183,6 +191,10 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         testConversionToType("SYMBOL", "testCol\ttime\n" +
                 "questdb\t2016-06-13T17:43:50.100401Z\n" +
                 "q\t2016-06-13T17:43:50.100402Z\n" +
+                (stringAsTagSupported
+                    ? "\"questdbb\"\t2016-06-13T17:43:50.100403Z\n" +
+                    "\"q\"\t2016-06-13T17:43:50.100404Z\n"
+                    : "") +
                 "100i\t2016-06-13T17:43:50.100405Z\n" +
                 "-100i\t2016-06-13T17:43:50.100406Z\n" +
                 "0x100i\t2016-06-13T17:43:50.100407Z\n" +
@@ -191,7 +203,22 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "23.3\t2016-06-13T17:43:50.100410Z\n" +
                 "T\t2016-06-13T17:43:50.100411Z\n" +
                 "false\t2016-06-13T17:43:50.100412Z\n" +
-                "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n"
+                "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n" +
+                (symbolAsFieldSupported
+                    ? "questdb\t2016-06-13T17:43:50.100414Z\n" +
+                    "q\t2016-06-13T17:43:50.100415Z\n"
+                    : "") +
+                "questdbb\t2016-06-13T17:43:50.100416Z\n" +
+                "q\t2016-06-13T17:43:50.100417Z\n" +
+                "100\t2016-06-13T17:43:50.100418Z\n" +
+                "-100\t2016-06-13T17:43:50.100419Z\n" +
+                "0x0150\t2016-06-13T17:43:50.100420Z\n" +
+                "123\t2016-06-13T17:43:50.100421Z\n" +
+                "-54\t2016-06-13T17:43:50.100422Z\n" +
+                "23.3\t2016-06-13T17:43:50.100423Z\n" +
+                "T\t2016-06-13T17:43:50.100424Z\n" +
+                "false\t2016-06-13T17:43:50.100425Z\n" +
+                "1465839830101500\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 

@@ -952,7 +952,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             Set<Long> detachedPartitionTimestamps = new ConcurrentSkipListSet<>();
             AtomicInteger detachedCount = new AtomicInteger();
             AtomicInteger attachedCount = new AtomicInteger();
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             Thread detThread = new Thread(() -> {
                 try {
