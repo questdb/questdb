@@ -30,8 +30,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private long fdid = 1;
 
     public IODispatcherLinux(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+        IODispatcherConfiguration configuration,
+        IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
@@ -48,13 +48,20 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             epoll.setOffset(offset);
+            int operation = (int) pending.get(i, M_OP);
+            int epollOp = EpollAccessor.EPOLL_CTL_MOD;
+            if (operation < 0) {
+                // This is a new connection.
+                operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
+                epollOp = EpollAccessor.EPOLL_CTL_ADD;
+            }
             if (
-                    epoll.control(
-                            (int) pending.get(i, M_FD),
-                            pending.get(i, M_ID),
-                            EpollAccessor.EPOLL_CTL_ADD,
-                            initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                    ) < 0
+                epoll.control(
+                    (int) pending.get(i, M_FD),
+                    pending.get(i, M_ID),
+                    epollOp,
+                    operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                ) < 0
             ) {
                 LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
@@ -76,21 +83,35 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         while ((cursor = interestSubSeq.next()) > -1) {
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
-            int operation = evt.operation;
-            if (operation == IOOperation.WRITE_LOWPRIO) {
-                operation = IOOperation.WRITE;
-            } else {
-                useful = true;
-            }
+            int requestedOperation = evt.operation;
+            useful = true;
             interestSubSeq.done(cursor);
 
             int fd = (int) context.getFd();
+            int operation = requestedOperation;
+            int epollOp = EpollAccessor.EPOLL_CTL_MOD;
+
+            SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // Looks like we need to suspend the original operation.
+                fd = (int) suspendEvent.getFd();
+                operation = IOOperation.READ;
+                epollOp = EpollAccessor.EPOLL_CTL_ADD;
+            }
+
             final long id = fdid++;
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
             LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
             epoll.setOffset(offset);
-            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT) < 0) {
+            if (
+                epoll.control(
+                    fd,
+                    id,
+                    epollOp,
+                    operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                ) < 0
+            ) {
                 System.out.println("oops2: " + nf.errno());
             }
             offset += EpollAccessor.SIZEOF_EVENT;
@@ -99,6 +120,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             pending.set(r, M_TIMESTAMP, timestamp);
             pending.set(r, M_FD, fd);
             pending.set(r, M_ID, id);
+            pending.set(r, M_OP, requestedOperation);
             pending.set(r, context);
         }
 
@@ -154,12 +176,26 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         continue;
                     }
 
-                    C context = pending.get(row);
-                    useful |= !context.isLowPriority();
-                    publishOperation(
+                    useful = true;
+                    final C context = pending.get(row);
+                    final int operation = (int) pending.get(row, M_OP);
+                    SuspendEvent suspendEvent = context.getSuspendEvent();
+                    if (suspendEvent != null) {
+                        // The original operation was suspended, so let's resume it.
+                        // To do that, we add a new pending operation above the watermark.
+                        int newRow = pending.addRow();
+                        pending.set(newRow, M_TIMESTAMP, timestamp);
+                        pending.set(newRow, M_FD, context.getFd());
+                        pending.set(newRow, M_OP, operation);
+                        pending.set(newRow, context);
+                        pendingAdded(newRow);
+                        context.clearSuspendEvent();
+                    } else {
+                        publishOperation(
                             (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
                             context
-                    );
+                        );
+                    }
                     pending.deleteRow(row);
                     watermark--;
                 }

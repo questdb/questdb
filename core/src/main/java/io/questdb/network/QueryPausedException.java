@@ -24,6 +24,20 @@
 
 package io.questdb.network;
 
+import io.questdb.std.ThreadLocal;
+
 public class QueryPausedException extends Exception {
-    public static final QueryPausedException INSTANCE = new QueryPausedException();
+    private static final ThreadLocal<QueryPausedException> tlException = new ThreadLocal<>(QueryPausedException::new);
+
+    private SuspendEvent event;
+
+    public static QueryPausedException instance(SuspendEvent event) {
+        QueryPausedException ex = tlException.get();
+        ex.event = event;
+        return ex;
+    }
+
+    public SuspendEvent getEvent() {
+        return event;
+    }
 }

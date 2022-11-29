@@ -54,16 +54,16 @@ public class PGWireServer implements Closeable {
     private final WorkerPool workerPool;
 
     public PGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine engine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            PGConnectionContextFactory contextFactory
+        PGWireConfiguration configuration,
+        CairoEngine engine,
+        WorkerPool workerPool,
+        FunctionFactoryCache functionFactoryCache,
+        DatabaseSnapshotAgent snapshotAgent,
+        PGConnectionContextFactory contextFactory
     ) {
         this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                contextFactory
+            configuration.getDispatcherConfiguration(),
+            contextFactory
         );
         this.metrics = engine.getMetrics();
         this.workerPool = workerPool;
@@ -88,13 +88,14 @@ public class PGWireServer implements Closeable {
                     } catch (PeerIsSlowToReadException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (QueryPausedException e) {
-                        context.getDispatcher().registerChannel(context, IOOperation.WRITE_LOWPRIO);
+                        context.setSuspendEvent(e.getEvent());
+                        context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
                         context.getDispatcher().disconnect(
-                                context,
-                                operation == IOOperation.READ
-                                        ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
-                                        : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+                            context,
+                            operation == IOOperation.READ
+                                ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                                : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
                         );
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
@@ -147,14 +148,14 @@ public class PGWireServer implements Closeable {
 
     public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {
         public PGConnectionContextFactory(
-                CairoEngine engine,
-                PGWireConfiguration configuration,
-                ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
+            CairoEngine engine,
+            PGWireConfiguration configuration,
+            ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
         ) {
             super(() -> new PGConnectionContext(
-                    engine,
-                    configuration,
-                    executionContextObjectFactory.newInstance()
+                engine,
+                configuration,
+                executionContextObjectFactory.newInstance()
             ), configuration.getConnectionPoolInitialCapacity());
         }
     }

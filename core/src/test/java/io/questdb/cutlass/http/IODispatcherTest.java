@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -64,6 +65,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -5259,25 +5261,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailable() throws Exception {
-        new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(2)
-            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-            .withTelemetry(false)
-            .run((engine) -> {
-                final String select = "select * from test_data_unavailable(3, 100)";
-                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                    "GET /query?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
-                    "c2\r\n" +
-                        "{\"query\":\"select * from test_data_unavailable(3, 100)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-                );
-            });
-    }
-
-    @Test
     public void testQueryEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
         new HttpQueryTestBuilder()
             .withTempFolder(temp)
@@ -5285,9 +5268,19 @@ public class IODispatcherTest {
             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
             .withTelemetry(false)
             .run((engine) -> {
-                final String select = "select * from test_data_unavailable(32, 10)";
+                int totalRows = 32;
+                int backoffCount = 10;
+
+                final AtomicInteger totalEvents = new AtomicInteger();
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                    event.write();
+                    event.close();
+                    totalEvents.incrementAndGet();
+                };
+
+                final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                 new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                    "GET /query?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                    "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                     "0100\r\n" +
                         "{\"query\":\"select * from test_data_unavailable(32, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10],[11,11,11],[12\r\n" +
                         "f0\r\n" +
@@ -5295,6 +5288,91 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
                 );
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+            });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventFiredAfterDelay() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(2)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .run((engine) -> {
+                int totalRows = 3;
+                int backoffCount = 3;
+
+                final AtomicInteger totalEvents = new AtomicInteger();
+                final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                final AtomicBoolean stopDelayThread = new AtomicBoolean();
+
+                final Thread delayThread = new Thread(() -> {
+                    while (!stopDelayThread.get()) {
+                        SuspendEvent event = eventRef.getAndSet(null);
+                        if (event != null) {
+                            Os.sleep(1);
+                            try {
+                                event.write();
+                                event.close();
+                                totalEvents.incrementAndGet();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        } else {
+                            Os.pause();
+                        }
+                    }
+                });
+                delayThread.start();
+
+                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                    "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                    "c0\r\n" +
+                        "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                );
+                stopDelayThread.set(true);
+
+                delayThread.join();
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+            });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventFiredImmediately() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(2)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .run((engine) -> {
+                int totalRows = 3;
+                int backoffCount = 10;
+
+                final AtomicInteger totalEvents = new AtomicInteger();
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                    event.write();
+                    event.close();
+                    totalEvents.incrementAndGet();
+                };
+
+                final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                    "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                    "c1\r\n" +
+                        "{\"query\":\"select * from test_data_unavailable(3, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                );
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
             });
     }
 
@@ -6310,37 +6388,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailable() throws Exception {
-        new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(2)
-            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-            .withTelemetry(false)
-            .run((engine) -> {
-                final String select = "select * from test_data_unavailable(3, 100)";
-                new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "22\r\n" +
-                        "\"x\",\"y\",\"z\"\r\n" +
-                        "1,1,1\r\n" +
-                        "2,2,2\r\n" +
-                        "3,3,3\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-                );
-            });
-    }
-
-    @Test
     public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
         new HttpQueryTestBuilder()
             .withTempFolder(temp)
@@ -6399,6 +6446,113 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
                 );
+            });
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventFiredAfterDelay() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(2)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .run((engine) -> {
+                int totalRows = 3;
+                int backoffCount = 3;
+
+                final AtomicInteger totalEvents = new AtomicInteger();
+                final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                final AtomicBoolean stopDelayThread = new AtomicBoolean();
+
+                final Thread delayThread = new Thread(() -> {
+                    while (!stopDelayThread.get()) {
+                        SuspendEvent event = eventRef.getAndSet(null);
+                        if (event != null) {
+                            Os.sleep(1);
+                            try {
+                                event.write();
+                                event.close();
+                                totalEvents.incrementAndGet();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        } else {
+                            Os.pause();
+                        }
+                    }
+                });
+                delayThread.start();
+
+                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "22\r\n" +
+                        "\"x\",\"y\",\"z\"\r\n" +
+                        "1,1,1\r\n" +
+                        "2,2,2\r\n" +
+                        "3,3,3\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                );
+                stopDelayThread.set(true);
+
+                delayThread.join();
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+            });
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventFiredImmediately() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(2)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .run((engine) -> {
+                int totalRows = 3;
+                int backoffCount = 10;
+
+                final AtomicInteger totalEvents = new AtomicInteger();
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                    event.write();
+                    event.close();
+                    totalEvents.incrementAndGet();
+                };
+
+                final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "22\r\n" +
+                        "\"x\",\"y\",\"z\"\r\n" +
+                        "1,1,1\r\n" +
+                        "2,2,2\r\n" +
+                        "3,3,3\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                );
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
             });
     }
 

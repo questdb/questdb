@@ -38,8 +38,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+        IODispatcherConfiguration configuration,
+        IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
         this.readFdSet = new FDSet(configuration.getEventCapacity());
@@ -66,12 +66,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
-            if (operation == IOOperation.WRITE_LOWPRIO) {
-                operation = IOOperation.WRITE;
-            } else {
-                useful = true;
-            }
             interestSubSeq.done(cursor);
+
+            useful = true;
 
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, timestamp);

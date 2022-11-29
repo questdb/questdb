@@ -94,12 +94,9 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
-            if (operation == IOOperation.WRITE_LOWPRIO) {
-                operation = IOOperation.WRITE;
-            } else {
-                useful = true;
-            }
             interestSubSeq.done(cursor);
+
+            useful = true;
 
             long id = fdid++;
             final int fd = (int) context.getFd();

@@ -26,7 +26,7 @@ package io.questdb.network;
 
 import io.questdb.std.Unsafe;
 
-public class EventFd implements GenericEvent {
+public class EventFd implements SuspendEvent {
 
     private static final long REF_COUNT_OFFSET;
 

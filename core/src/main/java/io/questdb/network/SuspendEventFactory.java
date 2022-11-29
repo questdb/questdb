@@ -24,30 +24,26 @@
 
 package io.questdb.network;
 
-import org.hamcrest.CoreMatchers;
-import org.hamcrest.MatcherAssert;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.std.Os;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+public class SuspendEventFactory {
 
-public class GenericEventTest {
+    private SuspendEventFactory() {
+    }
 
-    @Test
-    public void testCreateAndClose() throws Exception {
-        assertMemoryLeak(() -> {
-            GenericEvent event = GenericEventFactory.newInstance(new DefaultIODispatcherConfiguration());
-            // The event is not yet triggered, so read has to fail.
-            try {
-                event.read();
-                Assert.fail();
-            } catch (NetworkError e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected eventfd read value"));
-            }
-            event.write();
-            event.read();
-            event.close();
-            event.close();
-        });
+    public static SuspendEvent newInstance(IODispatcherConfiguration configuration) {
+        switch (Os.type) {
+            case Os.LINUX_AMD64:
+            case Os.LINUX_ARM64:
+                return new EventFd(configuration.getEpollFacade());
+            case Os.OSX_AMD64:
+            case Os.OSX_ARM64:
+            case Os.FREEBSD:
+                // TODO
+            case Os.WINDOWS:
+                // TODO
+            default:
+                throw new RuntimeException();
+        }
     }
 }

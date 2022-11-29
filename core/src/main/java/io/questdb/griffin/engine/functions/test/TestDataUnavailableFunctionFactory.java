@@ -31,10 +31,16 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.SuspendEvent;
+import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TestDataUnavailableFunctionFactory implements FunctionFactory {
+
+    public static SuspendEventCallback eventCallback;
 
     @Override
     public String getSignature() {
@@ -43,18 +49,25 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
+        int position,
+        ObjList<Function> args,
+        IntList argPositions,
+        CairoConfiguration configuration,
+        SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
         return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount));
     }
 
+    @FunctionalInterface
+    public interface SuspendEventCallback {
+        void onSuspendEvent(SuspendEvent event);
+    }
+
     private static class DataUnavailableRecordCursor implements NoRandomAccessRecordCursor {
+
+        private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
 
         private final long backoffCount;
         private final LongConstRecord record = new LongConstRecord();
@@ -78,15 +91,20 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            if (rows >= totalRows) {
+                return false;
+            }
             if (attempts++ < backoffCount) {
-                throw DataUnavailableException.instance("foo", "2022-01-01");
+                SuspendEvent event = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                if (eventCallback != null) {
+                    eventCallback.onSuspendEvent(event);
+                }
+                throw DataUnavailableException.instance("foo", "2022-01-01", event);
             }
-            if (rows++ < totalRows) {
-                record.of(rows);
-                attempts = 0;
-                return true;
-            }
-            return false;
+            rows++;
+            record.of(rows);
+            attempts = 0;
+            return true;
         }
 
         public void reset() {

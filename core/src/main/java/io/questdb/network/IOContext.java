@@ -27,12 +27,19 @@ package io.questdb.network;
 import java.io.Closeable;
 
 public interface IOContext extends Closeable {
+    default void clearSuspendEvent() {
+    }
+
     @Override
     void close();
 
     IODispatcher<?> getDispatcher();
 
     long getFd();
+
+    default SuspendEvent getSuspendEvent() {
+        return null;
+    }
 
     default boolean invalid() {
         return getFd() == -1;

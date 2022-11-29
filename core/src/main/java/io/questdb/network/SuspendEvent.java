@@ -35,7 +35,7 @@ import java.io.Closeable;
  * <p>
  * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
  */
-public interface GenericEvent extends Closeable {
+public interface SuspendEvent extends Closeable {
     /**
      * Event is assumed to be held and then closed by two parties.
      * The underlying OS resources are freed on the second close call.

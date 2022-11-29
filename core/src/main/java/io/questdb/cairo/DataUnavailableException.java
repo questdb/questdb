@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.network.SuspendEvent;
 import io.questdb.std.ThreadLocal;
 
 /**
@@ -36,13 +37,20 @@ import io.questdb.std.ThreadLocal;
 public class DataUnavailableException extends CairoException {
     private static final ThreadLocal<DataUnavailableException> tlException = new ThreadLocal<>(DataUnavailableException::new);
 
-    public static DataUnavailableException instance(CharSequence table, CharSequence partition) {
+    private SuspendEvent event;
+
+    public static DataUnavailableException instance(CharSequence table, CharSequence partition, SuspendEvent event) {
         DataUnavailableException ex = tlException.get();
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
-        ex.put("partition is located in cold storage, retry query later [table=").put(table)
-                .put(", partition=").put(partition)
-                .put(']');
+        ex.event = event;
+        ex.put("partition is located in cold storage, query will be suspended [table=").put(table)
+            .put(", partition=").put(partition)
+            .put(']');
         return ex;
+    }
+
+    public SuspendEvent getEvent() {
+        return event;
     }
 }

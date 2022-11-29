@@ -27,7 +27,6 @@ package io.questdb.network;
 public final class IOOperation {
     public static final int READ = 1;
     public static final int WRITE = 4;
-    public static final int WRITE_LOWPRIO = -4;
 
     private IOOperation() {
     }

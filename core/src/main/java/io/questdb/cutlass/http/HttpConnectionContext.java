@@ -65,6 +65,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     private int receivedBytes;
     private long recvBuffer;
     private HttpRequestProcessor resumeProcessor = null;
+    private SuspendEvent suspendEvent;
     private long totalBytesSent;
 
     public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
@@ -105,6 +106,12 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
+        clearSuspendEvent();
+    }
+
+    @Override
+    public void clearSuspendEvent() {
+        suspendEvent = Misc.free(suspendEvent);
     }
 
     @Override
@@ -129,6 +136,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink.close();
         this.receivedBytes = 0;
+        clearSuspendEvent();
         LOG.debug().$("closed").$();
     }
 
@@ -179,6 +187,11 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
 
     public HttpResponseHeader getResponseHeader() {
         return responseSink.getHeader();
+    }
+
+    @Override
+    public SuspendEvent getSuspendEvent() {
+        return suspendEvent;
     }
 
     public long getTotalBytesSent() {
@@ -294,11 +307,12 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 resumeProcessor = processor;
                 getDispatcher().registerChannel(this, IOOperation.WRITE);
             } catch (QueryPausedException e) {
-                LOG.info().$("partition is in cold storage [fd=").$(fd).$(", thread=")
+                LOG.info().$("partition is in cold storage, suspending query [fd=").$(fd).$(", thread=")
                     .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                getDispatcher().registerChannel(this, IOOperation.WRITE_LOWPRIO);
+                suspendEvent = e.getEvent();
+                getDispatcher().registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
@@ -620,7 +634,8 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 // event off to dispatcher
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                dispatcher.registerChannel(this, IOOperation.WRITE_LOWPRIO);
+                suspendEvent = e.getEvent();
+                dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
             }
         } catch (HttpException e) {
@@ -641,10 +656,11 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 resumeProcessor.parkRequest(this, false);
                 LOG.debug().$("peer is slow reader").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
-            } catch (QueryPausedException ignore) {
+            } catch (QueryPausedException e) {
                 resumeProcessor.parkRequest(this, true);
+                suspendEvent = e.getEvent();
                 LOG.debug().$("partition is in cold storage").$();
-                dispatcher.registerChannel(this, IOOperation.WRITE_LOWPRIO);
+                dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (PeerDisconnectedException ignore) {
                 handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {
