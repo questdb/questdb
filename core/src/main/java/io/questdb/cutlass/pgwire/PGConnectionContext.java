@@ -340,7 +340,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         Misc.free(utf8Sink);
         Misc.free(circuitBreaker);
         freeBuffers();
-        clearSuspendEvent();
     }
 
     @Override

@@ -42,7 +42,7 @@ public class SuspendEventTest {
                 event.read();
                 Assert.fail();
             } catch (NetworkError e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected eventfd read value"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("read value"));
             }
             event.write();
             event.read();

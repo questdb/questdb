@@ -54,8 +54,15 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         int index = 0;
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
             kqueue.setWriteOffset(offset);
+
             final int fd = (int) pending.get(i, M_FD);
-            if (initialBias == IODispatcherConfiguration.BIAS_READ) {
+            int operation = (int) pending.get(i, M_OP);
+            if (operation < 0) {
+                // This is a new connection.
+                operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
+            }
+
+            if (operation == IOOperation.READ) {
                 kqueue.readFD(fd, pending.get(i, M_ID));
                 LOG.debug().$("kq [op=1, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             } else {
@@ -93,14 +100,23 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         while ((cursor = interestSubSeq.next()) > -1) {
             final IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
-            int operation = evt.operation;
+            int requestedOperation = evt.operation;
             interestSubSeq.done(cursor);
 
             useful = true;
-
             long id = fdid++;
-            final int fd = (int) context.getFd();
-            LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(']').$();
+            int fd = (int) context.getFd();
+            int operation = requestedOperation;
+            LOG.debug().$("processing registration [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
+
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // Looks like we need to suspend the original operation.
+                fd = suspendEvent.getFd();
+                operation = IOOperation.READ;
+                LOG.debug().$("registering suspend event [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
+            }
+
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ) {
                 kqueue.readFD(fd, id);
@@ -115,6 +131,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             pending.set(r, M_TIMESTAMP, timestamp);
             pending.set(r, M_FD, fd);
             pending.set(r, M_ID, id);
+            pending.set(r, M_OP, requestedOperation);
             pending.set(r, context);
 
             if (count > capacity - 1) {
@@ -182,7 +199,21 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
                     C context = pending.get(row);
                     useful |= !context.isLowPriority();
-                    publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE, context);
+                    final int operation = (int) pending.get(row, M_OP);
+                    final SuspendEvent suspendEvent = context.getSuspendEvent();
+                    if (suspendEvent != null) {
+                        // The original operation was suspended, so let's resume it.
+                        // To do that, we add a new pending operation above the watermark.
+                        int newRow = pending.addRow();
+                        pending.set(newRow, M_TIMESTAMP, timestamp);
+                        pending.set(newRow, M_FD, context.getFd());
+                        pending.set(newRow, M_OP, operation);
+                        pending.set(newRow, context);
+                        pendingAdded(newRow);
+                        context.clearSuspendEvent();
+                    } else {
+                        publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE, context);
+                    }
                     pending.deleteRow(row);
                     watermark--;
                 }

@@ -48,6 +48,9 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             epoll.setOffset(offset);
+
+            final int fd = (int) pending.get(i, M_FD);
+            final long id = pending.get(i, M_ID);
             int operation = (int) pending.get(i, M_OP);
             int epollOp = EpollAccessor.EPOLL_CTL_MOD;
             if (operation < 0) {
@@ -55,10 +58,11 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
                 epollOp = EpollAccessor.EPOLL_CTL_ADD;
             }
+
             if (
                 epoll.control(
-                    (int) pending.get(i, M_FD),
-                    pending.get(i, M_ID),
+                    fd,
+                    id,
                     epollOp,
                     operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
                 ) < 0
@@ -84,17 +88,16 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int requestedOperation = evt.operation;
-            useful = true;
             interestSubSeq.done(cursor);
 
+            useful = true;
             final long id = fdid++;
-
             int fd = (int) context.getFd();
             int operation = requestedOperation;
             int epollOp = EpollAccessor.EPOLL_CTL_MOD;
             LOG.debug().$("processing registration [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
 
-            SuspendEvent suspendEvent = context.getSuspendEvent();
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
                 // Looks like we need to suspend the original operation.
                 fd = suspendEvent.getFd();
@@ -178,10 +181,10 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         continue;
                     }
 
-                    useful = true;
                     final C context = pending.get(row);
+                    useful |= !context.isLowPriority();
                     final int operation = (int) pending.get(row, M_OP);
-                    SuspendEvent suspendEvent = context.getSuspendEvent();
+                    final SuspendEvent suspendEvent = context.getSuspendEvent();
                     if (suspendEvent != null) {
                         // The original operation was suspended, so let's resume it.
                         // To do that, we add a new pending operation above the watermark.
