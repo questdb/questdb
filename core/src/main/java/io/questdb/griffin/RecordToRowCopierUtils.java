@@ -41,10 +41,10 @@ public class RecordToRowCopierUtils {
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
     public static RecordToRowCopier generateCopier(
-            BytecodeAssembler asm,
-            ColumnTypes from,
-            RecordMetadata to,
-            ColumnFilter toColumnFilter
+        BytecodeAssembler asm,
+        ColumnTypes from,
+        RecordMetadata to,
+        ColumnFilter toColumnFilter
     ) {
         int timestampIndex = to.getTimestampIndex();
         asm.init(RecordToRowCopier.class);
@@ -82,7 +82,7 @@ public class RecordToRowCopierUtils {
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
         int wPutUuid = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(IJJ)V");
-        int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidStr", "(ILjava/lang/CharSequence;)V");
+        int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -140,8 +140,8 @@ public class RecordToRowCopierUtils {
         int fromColumnType_0 = toColumnType_0 + 1;
         for (int i = 0; i < n; i++) {
             asm.poolIntConst(
-                    to.getColumnType(
-                            toColumnFilter.getColumnIndexFactored(i))
+                to.getColumnType(
+                    toColumnFilter.getColumnIndexFactored(i))
             );
             asm.poolIntConst(from.getColumnType(i));
         }
@@ -780,10 +780,11 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(rGetUuidLo); // this consumes the Record and columnIndex and push uuidLo to a stack
                             // Stack now looks this: [RowWriter, uuidHi, uuidLo]
                             asm.invokeInterface(wPutUuid, 5); //uuidHi and uuidLo are longs = each uses 2 slots on the stack -> 5 arg in total
-                            // invokeInterface consumes the stack. Including the RowWriter as invoke interface receives "this"" as the first argument
+                            // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
+                            // The stack is now empty, and we are done with this column
                             break;
                         case ColumnType.STRING:
-                            // this logic is very similar to the one for ColumnType.STRING
+                            // this logic is very similar to the one for ColumnType.UUID above
                             // There is one major difference: `SqlUtil.implicitCastUuidAsStr()` returns `false` to indicate
                             // that the UUID value represents null. In this case we won't call the writer and let null value
                             // to be written by TableWriter/WalWriter NullSetters. However, generating branches via asm is
