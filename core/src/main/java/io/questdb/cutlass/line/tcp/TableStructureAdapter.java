@@ -32,7 +32,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8Decode;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
@@ -63,7 +63,7 @@ class TableStructureAdapter implements TableStructure {
         if (columnIndex == getTimestampIndex()) {
             return DEFAULT_TIMESTAMP_FIELD;
         }
-        CharSequence colName = entities.get(columnIndex).getUtf8Name().toString();
+        CharSequence colName = entities.get(columnIndex).getName().toString();
         if (TableUtils.isValidColumnName(colName, cairoConfiguration.getMaxFileNameLength())) {
             return colName;
         }
@@ -141,8 +141,8 @@ class TableStructureAdapter implements TableStructure {
         final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
-            final DirectByteCharSequence colNameUtf8 = entity.getUtf8Name();
-            final CharSequence colNameUtf16 = utf8Decode(colNameUtf8, tempSink.get(), hasNonAsciiChars);
+            final DirectByteCharSequence colNameUtf8 = entity.getName();
+            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);
             int index = entityNamesUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 entityNamesUtf16.addAt(index, colNameUtf16.toString());

@@ -82,8 +82,8 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence utf8TableName) {
-        return tableUpdateDetailsUtf8.get(utf8TableName);
+    public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
+        return tableUpdateDetailsUtf8.get(tableName);
     }
 
     @Override

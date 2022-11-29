@@ -68,7 +68,7 @@ public class LineTcpParser {
     private static final boolean[] controlChars;
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
-    private final DirectByteCharSequence utf8TableName = new DirectByteCharSequence();
+    private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final boolean stringAsTagSupported;
     private final boolean symbolAsFieldSupported;
     private long bufAt;
@@ -109,8 +109,8 @@ public class LineTcpParser {
         return errorCode;
     }
 
-    public DirectByteCharSequence getUtf8TableName() {
-        return utf8TableName;
+    public DirectByteCharSequence getMeasurementName() {
+        return measurementName;
     }
 
     public long getTimestamp() {
@@ -285,7 +285,7 @@ public class LineTcpParser {
     public void shl(long shl) {
         bufAt -= shl;
         entityLo -= shl;
-        utf8TableName.shl(shl);
+        measurementName.shl(shl);
         charSeq.shl(shl);
         for (int i = 0; i < nEntities; i++) {
             entityCache.getQuick(i).shl(shl);
@@ -439,7 +439,7 @@ public class LineTcpParser {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
-            utf8TableName.of(entityLo, hi);
+            measurementName.of(entityLo, hi);
             entityHandler = ENTITY_HANDLER_NAME;
             return true;
         }
@@ -573,7 +573,7 @@ public class LineTcpParser {
             return longValue;
         }
 
-        public DirectByteCharSequence getUtf8Name() {
+        public DirectByteCharSequence getName() {
             return name;
         }
 
@@ -581,7 +581,7 @@ public class LineTcpParser {
             return type;
         }
 
-        public DirectByteCharSequence getUtf8Value() {
+        public DirectByteCharSequence getValue() {
             return value;
         }
 

@@ -1371,10 +1371,7 @@ public class SqlCompiler implements Closeable {
      * Sets insertCount to number of copied rows.
      */
     private TableWriter copyTableData(
-            CairoSecurityContext securityContext, 
-            CharSequence tableName,
-            boolean isWalEnabled,
-            RecordCursor cursor,
+            CairoSecurityContext securityContext, CharSequence tableName, boolean isWalEnabled, RecordCursor cursor,
             RecordMetadata cursorMetadata,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {

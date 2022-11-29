@@ -281,11 +281,11 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         this.columnNames.setAll(count, "");
     }
 
-    private void stashPossibleHeader(ObjList<DirectByteCharSequence> utf8Values, int hi) {
+    private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {
         for (int i = 0; i < hi; i++) {
-            DirectByteCharSequence value = utf8Values.getQuick(i);
+            DirectByteCharSequence value = values.getQuick(i);
             utf8Sink.clear();
-            if (Chars.utf8Decode(value, utf8Sink)) {
+            if (Chars.utf8Decode(value.getLo(), value.getHi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();

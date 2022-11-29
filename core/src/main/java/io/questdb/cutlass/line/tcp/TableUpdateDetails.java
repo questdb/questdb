@@ -43,7 +43,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8Decode;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -66,7 +66,8 @@ public class TableUpdateDetails implements Closeable {
     private long nextCommitTime;
     private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
-    private MetadataChangeSPI metadataChangeSPI;
+    // todo: rename
+    private MetadataChangeSPI writerSPI;
     private int writerThreadId;
 
     TableUpdateDetails(
@@ -91,11 +92,11 @@ public class TableUpdateDetails implements Closeable {
         this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableNameUtf16 = Chars.toString(writer.getTableName());
         if (writer instanceof MetadataChangeSPI) {
-            metadataChangeSPI = (MetadataChangeSPI) writer;
-            metadataChangeSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-            this.nextCommitTime = millisecondClock.getTicks() + metadataChangeSPI.getCommitInterval();
+            writerSPI = (MetadataChangeSPI) writer;
+            writerSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
+            this.nextCommitTime = millisecondClock.getTicks() + writerSPI.getCommitInterval();
         } else {
-            metadataChangeSPI = null;
+            writerSPI = null;
             this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
         }
         this.localDetailsArray = new ThreadLocalDetails[n];
@@ -145,7 +146,7 @@ public class TableUpdateDetails implements Closeable {
                 } finally {
                     // returning to pool rolls back the transaction
                     writerAPI = Misc.free(writerAPI);
-                    metadataChangeSPI = null;
+                    writerSPI = null;
                 }
             }
             writerThreadId = Integer.MIN_VALUE;
@@ -164,7 +165,7 @@ public class TableUpdateDetails implements Closeable {
         return networkIOOwnerCount;
     }
 
-    public String getUtf16TableName() {
+    public String getTableNameUtf16() {
         return tableNameUtf16;
     }
 
@@ -203,8 +204,8 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void tick() {
-        if (metadataChangeSPI != null) {
-            metadataChangeSPI.tick();
+        if (writerSPI != null) {
+            writerSPI.tick();
         }
     }
 
@@ -231,15 +232,15 @@ public class TableUpdateDetails implements Closeable {
     }
 
     private long getCommitInterval() {
-        if (metadataChangeSPI != null) {
-            return metadataChangeSPI.getCommitInterval();
+        if (writerSPI != null) {
+            return writerSPI.getCommitInterval();
         }
         return defaultCommitInterval;
     }
 
     private long getMetaMaxUncommittedRows() {
-        if (metadataChangeSPI != null) {
-            return metadataChangeSPI.getMetaMaxUncommittedRows();
+        if (writerSPI != null) {
+            return writerSPI.getMetaMaxUncommittedRows();
         }
         return defaultMaxUncommittedRows;
     }
@@ -313,7 +314,7 @@ public class TableUpdateDetails implements Closeable {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
                 writerAPI = Misc.free(writerAPI);
-                metadataChangeSPI = null;
+                writerSPI = null;
             }
         }
     }
@@ -374,7 +375,7 @@ public class TableUpdateDetails implements Closeable {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and
-                    // the reader is a bit behind and cannot see the column, yet
+                    // the reader is a bit behind and cannot see the column yet
                     // we will pass the symbol as string
                     return NOT_FOUND_LOOKUP;
                 }
@@ -488,7 +489,7 @@ public class TableUpdateDetails implements Closeable {
             int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
             if (colWriterIndex < 0) {
                 // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
-                final CharSequence colNameUtf16 = utf8Decode(colNameUtf8, tempSink, hasNonAsciiChars);
+                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
                 final int index = addedColsUtf16.keyIndex(colNameUtf16);
                 if (index > -1) {
                     // column has not been sent to the writer by name on this line before

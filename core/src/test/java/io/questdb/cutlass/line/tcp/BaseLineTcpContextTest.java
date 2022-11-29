@@ -62,8 +62,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence utf8TableName) {
-            return localTableUpdateDetailsByTableName.get(utf8TableName);
+        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
+            return localTableUpdateDetailsByTableName.get(tableName);
         }
 
         @Override
