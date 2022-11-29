@@ -91,7 +91,7 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
 
     public void setUuidValue(long hi, long lo) {
         sink.clear();
-        if (!SqlUtil.implicitCastUuidAsStr(hi, lo, sink)) {
+        if (SqlUtil.implicitCastUuidAsStr(hi, lo, sink)) {
             isNull = false;
         }
     }
