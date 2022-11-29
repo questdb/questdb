@@ -63,9 +63,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try {
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                     CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
-                    AlterOperation creepyAlterOperation = new AlterOperation();
-                    creepyAlterOperation.of((short) 1000, "product", writer.getMetadata().getTableId(), 1000);
-                    cc.ofAlter(creepyAlterOperation);
+                    AlterOperation creepyAlterOp = new AlterOperation();
+                    creepyAlterOp.of((short) 1000, "product", writer.getMetadata().getTableId(), 1000);
+                    cc.ofAlter(creepyAlterOp);
                     fut = cc.execute(commandReplySequence);
                 }
                 fut.await();
@@ -270,7 +270,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test lock")) {
                 final int tableId = writer.getMetadata().getTableId();
                 short command = ADD_COLUMN;
-                AlterOperation creepyAlter = new AlterOperation() {
+                AlterOperation creepyAlterOp = new AlterOperation() {
                     @Override
                     public void serialize(TableWriterTask event) {
                         event.of(TableWriterTask.CMD_ALTER_TABLE, tableId, tableName);
@@ -280,9 +280,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         event.putInt(1000);
                     }
                 };
-                creepyAlter.of(command, tableName, tableId, 100);
+                creepyAlterOp.of(command, tableName, tableId, 100);
                 CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
-                cc.ofAlter(creepyAlter);
+                cc.ofAlter(creepyAlterOp);
                 fut = cc.execute(commandReplySequence);
             } // Unblock table
 
@@ -417,7 +417,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                 CompiledQuery cc = compiler.compile("ALTER TABLE product add column colTest int", sqlExecutionContext);
                 try {
-                    cc.execute(commandReplySequence);
+                    cc.execute(commandReplySequence).close();
                     Assert.fail();
                 } catch (CairoException exception) {
                     TestUtils.assertContains(exception.getFlyweightMessage(), "async command/event queue buffer overflow");

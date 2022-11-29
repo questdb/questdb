@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.wal.MetadataChangeSPI;
+import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
@@ -56,7 +56,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
-    private final LongList longList;
+    private final LongList info;
     private final ObjCharSequenceList objCharList;
     private CharSequenceList charSequenceList;
     private short command;
@@ -66,8 +66,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this(new LongList(), new ObjList<>());
     }
 
-    public AlterOperation(LongList longList, ObjList<CharSequence> charSequenceObjList) {
-        this.longList = longList;
+    public AlterOperation(LongList info, ObjList<CharSequence> charSequenceObjList) {
+        this.info = info;
         this.objCharList = new ObjCharSequenceList(charSequenceObjList);
         this.command = DO_NOTHING;
     }
@@ -75,62 +75,62 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
-    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+    public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         try {
             switch (command) {
                 case ADD_COLUMN:
-                    applyAddColumn(tableWriter);
+                    applyAddColumn(svc);
                     break;
                 case DROP_COLUMN:
                     if (!contextAllowsAnyStructureChanges) {
                         throw AlterTableContextException.INSTANCE;
                     }
-                    applyDropColumn(tableWriter);
+                    applyDropColumn(svc);
                     break;
                 case RENAME_COLUMN:
                     if (!contextAllowsAnyStructureChanges) {
                         throw AlterTableContextException.INSTANCE;
                     }
-                    applyRenameColumn(tableWriter);
+                    applyRenameColumn(svc);
                     break;
                 case DROP_PARTITION:
-                    applyDropPartition(tableWriter);
+                    applyDropPartition(svc);
                     break;
                 case DETACH_PARTITION:
-                    applyDetachPartition(tableWriter);
+                    applyDetachPartition(svc);
                     break;
                 case ATTACH_PARTITION:
-                    applyAttachPartition(tableWriter);
+                    applyAttachPartition(svc);
                     break;
                 case ADD_INDEX:
-                    applyAddIndex(tableWriter);
+                    applyAddIndex(svc);
                     break;
                 case DROP_INDEX:
-                    applyDropIndex(tableWriter);
+                    applyDropIndex(svc);
                     break;
                 case ADD_SYMBOL_CACHE:
-                    applySetSymbolCache(tableWriter, true);
+                    applySetSymbolCache(svc, true);
                     break;
                 case REMOVE_SYMBOL_CACHE:
-                    applySetSymbolCache(tableWriter, false);
+                    applySetSymbolCache(svc, false);
                     break;
                 case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-                    applyParamUncommittedRows(tableWriter);
+                    applyParamUncommittedRows(svc);
                     break;
                 case SET_PARAM_COMMIT_LAG:
-                    applyParamO3MaxLag(tableWriter);
+                    applyParamO3MaxLag(svc);
                     break;
                 default:
                     LOG.error()
-                            .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(tableWriter.getTableName())
+                        .$("invalid alter table command [code=").$(command)
+                        .$(" ,table=").$(svc.getTableName())
                             .I$();
                     throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableName())
+            LOG.critical().$("could not alter table [table=").$(svc.getTableName())
                     .$(", command=").$(command)
                     .$(", errno=").$(e.getErrno())
                     .$(", message=`").$(e.getFlyweightMessage()).$('`')
@@ -147,7 +147,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         objCharList.clear();
         directCharList.clear();
         charSequenceList = objCharList;
-        longList.clear();
+        info.clear();
         clearCommandCorrelationId();
     }
 
@@ -188,9 +188,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (longSize < 0 || readPtr + longSize * 8L >= hi) {
             throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [2]");
         }
-        longList.clear();
+        info.clear();
         for (int i = 0; i < longSize; i++) {
-            longList.add(buffer.getLong(readPtr));
+            info.add(buffer.getLong(readPtr));
             readPtr += 8;
         }
         directCharList.of(buffer, readPtr, hi);
@@ -226,9 +226,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         super.serialize(event);
         event.putShort(command);
         event.putInt(tableNamePosition);
-        event.putInt(longList.size());
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            event.putLong(longList.getQuick(i));
+        event.putInt(info.size());
+        for (int i = 0, n = info.size(); i < n; i++) {
+            event.putLong(info.getQuick(i));
         }
 
         event.putInt(objCharList.size());
@@ -240,9 +240,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void serializeBody(MemoryA sink) {
         sink.putShort(command);
         sink.putInt(tableNamePosition);
-        sink.putInt(longList.size());
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            sink.putLong(longList.getQuick(i));
+        sink.putInt(info.size());
+        for (int i = 0, n = info.size(); i < n; i++) {
+            sink.putLong(info.getQuick(i));
         }
 
         sink.putInt(objCharList.size());
@@ -255,25 +255,25 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void startAsync() {
     }
 
-    private void applyAddColumn(MetadataChangeSPI tableWriter) {
+    private void applyAddColumn(MetadataService svc) {
         int lParam = 0;
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
-            int type = (int) longList.get(lParam++);
-            int symbolCapacity = (int) longList.get(lParam++);
-            boolean symbolCacheFlag = longList.get(lParam++) > 0;
-            boolean isIndexed = longList.get(lParam++) > 0;
-            int indexValueBlockCapacity = (int) longList.get(lParam++);
-            int columnNamePosition = (int) longList.get(lParam++);
+            int type = (int) info.get(lParam++);
+            int symbolCapacity = (int) info.get(lParam++);
+            boolean symbolCacheFlag = info.get(lParam++) > 0;
+            boolean isIndexed = info.get(lParam++) > 0;
+            int indexValueBlockCapacity = (int) info.get(lParam++);
+            int columnNamePosition = (int) info.get(lParam++);
             try {
-                tableWriter.addColumn(
-                        columnName,
-                        type,
-                        symbolCapacity,
-                        symbolCacheFlag,
-                        isIndexed,
-                        indexValueBlockCapacity,
-                        false
+                svc.addColumn(
+                    columnName,
+                    type,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    false
                 );
             } catch (CairoException e) {
                 e.position(columnNamePosition);
@@ -282,10 +282,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAddIndex(MetadataChangeSPI tableWriter) {
+    private void applyAddIndex(MetadataService svc) {
         final CharSequence columnName = charSequenceList.getStrA(0);
         try {
-            tableWriter.addIndex(columnName, (int) longList.get(0));
+            svc.addIndex(columnName, (int) info.get(0));
         } catch (CairoException e) {
             // augment exception with table position
             e.position(tableNamePosition);
@@ -293,107 +293,107 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAttachPartition(MetadataChangeSPI tableWriter) {
-        for (int i = 0, n = longList.size() / 2; i < n; i++) {
-            final long partitionTimestamp = longList.getQuick(i * 2);
-            AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
+    private void applyAttachPartition(MetadataService svc) {
+        for (int i = 0, n = info.size() / 2; i < n; i++) {
+            final long partitionTimestamp = info.getQuick(i * 2);
+            AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableName)
-                        .put(", detachStatus=").put(attachDetachStatus.name())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
-                        .put(']')
-                        .position((int) longList.getQuick(i * 2 + 1));
+                    .put(", detachStatus=").put(attachDetachStatus.name())
+                    .put(", partitionTimestamp=").ts(partitionTimestamp)
+                    .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                    .put(']')
+                    .position((int) info.getQuick(i * 2 + 1));
             }
         }
     }
 
-    private void applyDetachPartition(MetadataChangeSPI tableWriter) {
-        for (int i = 0, n = longList.size() / 2; i < n; i++) {
-            final long partitionTimestamp = longList.getQuick(i * 2);
-            AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
+    private void applyDetachPartition(MetadataService svc) {
+        for (int i = 0, n = info.size() / 2; i < n; i++) {
+            final long partitionTimestamp = info.getQuick(i * 2);
+            AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableName)
-                        .put(", detachStatus=").put(attachDetachStatus.name())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
-                        .put(']')
-                        .position((int) longList.getQuick(i * 2 + 1));
+                    .put(", detachStatus=").put(attachDetachStatus.name())
+                    .put(", partitionTimestamp=").ts(partitionTimestamp)
+                    .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                    .put(']')
+                    .position((int) info.getQuick(i * 2 + 1));
             }
         }
     }
 
-    private void applyDropColumn(MetadataChangeSPI writer) {
+    private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
-            writer.removeColumn(charSequenceList.getStrA(i));
+            svc.removeColumn(charSequenceList.getStrA(i));
         }
     }
 
-    private void applyDropIndex(MetadataChangeSPI tableWriter) {
+    private void applyDropIndex(MetadataService svc) {
         final CharSequence columnName = charSequenceList.getStrA(0);
-        final int columnNamePosition = (int) longList.get(0);
+        final int columnNamePosition = (int) info.get(0);
         try {
-            tableWriter.dropIndex(columnName);
+            svc.dropIndex(columnName);
         } catch (CairoException e) {
             e.position(columnNamePosition);
             throw e;
         }
     }
 
-    private void applyDropPartition(MetadataChangeSPI tableWriter) {
+    private void applyDropPartition(MetadataService svc) {
         // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
-        for (int i = 0, n = longList.size() / 2; i < n; i++) {
-            long partitionTimestamp = longList.getQuick(i * 2);
-            if (!tableWriter.removePartition(partitionTimestamp)) {
+        for (int i = 0, n = info.size() / 2; i < n; i++) {
+            long partitionTimestamp = info.getQuick(i * 2);
+            if (!svc.removePartition(partitionTimestamp)) {
                 throw CairoException.nonCritical()
-                        .put("could not remove partition [table=").put(tableName)
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
-                        .put(']')
-                        .position((int) longList.getQuick(i * 2 + 1));
+                    .put("could not remove partition [table=").put(tableName)
+                    .put(", partitionTimestamp=").ts(partitionTimestamp)
+                    .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                    .put(']')
+                    .position((int) info.getQuick(i * 2 + 1));
             }
         }
     }
 
-    private void applyParamO3MaxLag(MetadataChangeSPI tableWriter) {
-        long o3MaxLag = longList.get(0);
+    private void applyParamO3MaxLag(MetadataService svc) {
+        long o3MaxLag = info.get(0);
         try {
-            tableWriter.setMetaO3MaxLag(o3MaxLag);
+            svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
             LOG.error().$("could not change o3MaxLag [table=").$(tableName)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
+                .$(", errno=").$(e.getErrno())
+                .$(", error=").$(e.getFlyweightMessage())
+                .I$();
             throw e;
         }
     }
 
-    private void applyParamUncommittedRows(MetadataChangeSPI tableWriter) {
-        int maxUncommittedRows = (int) longList.get(0);
+    private void applyParamUncommittedRows(MetadataService svc) {
+        int maxUncommittedRows = (int) info.get(0);
         try {
-            tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
+            svc.setMetaMaxUncommittedRows(maxUncommittedRows);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;
         }
     }
 
-    private void applyRenameColumn(MetadataChangeSPI writer) {
+    private void applyRenameColumn(MetadataService svc) {
         // To avoid storing 2 var len fields, store only new name as CharSequence
         // and index of existing column.
         int i = 0, n = charSequenceList.size();
         while (i < n) {
             CharSequence columnName = charSequenceList.getStrA(i++);
             CharSequence newName = charSequenceList.getStrB(i++);
-            writer.renameColumn(columnName, newName);
+            svc.renameColumn(columnName, newName);
         }
     }
 
-    private void applySetSymbolCache(MetadataChangeSPI tableWriter, boolean isCacheOn) {
+    private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {
         CharSequence columnName = charSequenceList.getStrA(0);
-        tableWriter.changeCacheFlag(
-                tableWriter.getMetadata().getColumnIndex(columnName),
-                isCacheOn
+        svc.changeCacheFlag(
+            svc.getMetadata().getColumnIndex(columnName),
+            isCacheOn
         );
     }
 

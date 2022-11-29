@@ -69,7 +69,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
+public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -89,7 +89,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
-    private final AlterOperation alterTableStatement = new AlterOperation();
+    private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final LongList columnTops;
     private final ColumnVersionWriter columnVersionWriter;
@@ -616,8 +616,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
-    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        return operation.apply(this, contextAllowsAnyStructureChanges);
+    public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        return alterOp.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
@@ -1278,7 +1278,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         if (cmd.getTableId() == getMetadata().getTableId()) {
             switch (cmd.getType()) {
                 case CMD_ALTER_TABLE:
-                    processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
+                    processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
                     break;
                 case CMD_UPDATE_TABLE:
                     processAsyncWriterCommand(cmd.getAsyncWriterCommand(), cmd, cursor, commandSubSeq, false);

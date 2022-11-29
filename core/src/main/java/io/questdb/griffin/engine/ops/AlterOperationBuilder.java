@@ -32,7 +32,7 @@ import static io.questdb.griffin.engine.ops.AlterOperation.*;
 public class AlterOperationBuilder {
     private final LongList longList = new LongList();
     private final ObjList<CharSequence> objCharList = new ObjList<>();
-    private final AlterOperation resultInstance;
+    private final AlterOperation op;
     private short command;
     private int tableId = -1;
     private String tableName;
@@ -40,7 +40,7 @@ public class AlterOperationBuilder {
 
     // builder and the operation it is building share two lists.
     public AlterOperationBuilder() {
-        this.resultInstance = new AlterOperation(longList, objCharList);
+        this.op = new AlterOperation(longList, objCharList);
     }
 
     public void addColumnToList(
@@ -68,11 +68,11 @@ public class AlterOperationBuilder {
     }
 
     public AlterOperation build() {
-        return resultInstance.of(command, tableName, tableId, tableNamePosition);
+        return op.of(command, tableName, tableId, tableNamePosition);
     }
 
     public void clear() {
-        resultInstance.clear();
+        op.clear();
         objCharList.clear();
         longList.clear();
         command = DO_NOTHING;
@@ -108,7 +108,13 @@ public class AlterOperationBuilder {
         longList.add(columnNamePosition);
     }
 
-    public AlterOperationBuilder ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
+    public AlterOperationBuilder ofAddIndex(
+        int tableNamePosition,
+        String tableName,
+        int tableId,
+        CharSequence columnName,
+        int indexValueBlockSize
+    ) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;

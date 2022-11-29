@@ -29,7 +29,7 @@ import io.questdb.std.QuietCloseable;
 public interface TableSequencer extends QuietCloseable {
     long NO_TXN = Long.MIN_VALUE;
 
-    TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo);
+    TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo);
 
     int getNextWalId();
 

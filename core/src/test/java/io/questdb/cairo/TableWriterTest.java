@@ -240,12 +240,12 @@ public class TableWriterTest extends AbstractCairoTest {
                         alterOperationBuilder.clear();
                         String columnName = "col" + i;
                         alterOperationBuilder
-                                .ofAddColumn(0, tableName, tableId)
-                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
-                        AlterOperation alterOperation = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
+                            .ofAddColumn(0, tableName, tableId)
+                            .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
+                        AlterOperation alterOp = alterOperationBuilder.build();
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOp)) {
                             if (writer != null) {
-                                writer.publishAsyncWriterCommand(alterOperation);
+                                writer.publishAsyncWriterCommand(alterOp);
                             }
                         }
                         columnsAdded.incrementAndGet();
@@ -1297,7 +1297,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-                }, PRODUCT, metrics);
+                }, PRODUCT, metrics).close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -2073,7 +2073,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try {
-                new TableWriter(configuration, "x", metrics);
+                new TableWriter(configuration, "x", metrics).close();
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
@@ -2088,7 +2088,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
-                    new TableWriter(configuration, "all", metrics);
+                    new TableWriter(configuration, "all", metrics).close();
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
@@ -2869,7 +2869,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testTableDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new TableWriter(configuration, PRODUCT, metrics);
+                new TableWriter(configuration, PRODUCT, metrics).close();
                 Assert.fail();
             } catch (CairoException e) {
                 LOG.info().$((Sinkable) e).$();
@@ -2940,7 +2940,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (TableWriter ignored = new TableWriter(configuration, "all", metrics)) {
             try {
-                new TableWriter(configuration, "all", metrics);
+                new TableWriter(configuration, "all", metrics).close();
                 Assert.fail();
             } catch (CairoException ignored2) {
             }
@@ -3055,7 +3055,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-                }, PRODUCT, metrics);
+                }, PRODUCT, metrics).close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -3507,7 +3507,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try {
-                new TableWriter(configuration, PRODUCT, metrics);
+                new TableWriter(configuration, PRODUCT, metrics).close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -3695,7 +3695,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-                }, PRODUCT, metrics);
+                }, PRODUCT, metrics).close();
                 Assert.fail();
             } catch (CairoException e) {
                 LOG.info().$((Sinkable) e).$();
@@ -4024,7 +4024,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-                }, "all", metrics);
+                }, "all", metrics).close();
                 Assert.fail();
             } catch (CairoException ignore) {
             }

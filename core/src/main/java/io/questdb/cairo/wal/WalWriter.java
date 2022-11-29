@@ -32,7 +32,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
-import io.questdb.cairo.wal.seq.SequencerMetadataChangeSPI;
+import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -65,7 +65,8 @@ public class WalWriter implements TableWriterAPI {
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
     private final WalWriterMetadata metadata;
-    private final MetadataValidator metadataValidator = new MetadataValidator();
+    private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
+    private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
@@ -79,7 +80,6 @@ public class WalWriter implements TableWriterAPI {
     private final String tableName;
     private final TableSequencerAPI tableSequencerAPI;
     private final int walId;
-    private final SequencerMetadataChangeSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final String walName;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -137,37 +137,37 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+    public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
         }
-        if (operation.isStructureChange()) {
+        if (alterOp.isStructureChange()) {
             long txn;
             do {
                 boolean retry = true;
                 try {
-                    metadataValidator.startAlterValidation();
-                    operation.apply(metadataValidator, true);
-                    if (metadataValidator.structureVersion != metadata.getStructureVersion() + 1) {
+                    metaValidatorSvc.startAlterValidation();
+                    alterOp.apply(metaValidatorSvc, true);
+                    if (metaValidatorSvc.structureVersion != metadata.getStructureVersion() + 1) {
                         retry = false;
                         throw CairoException.nonCritical()
-                                .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                        " are currently not supported for WAL tables [table=").put(tableName)
-                                .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                                .put(", newStructureVersion=").put(metadataValidator.structureVersion).put(']');
+                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
+                                " are currently not supported for WAL tables [table=").put(tableName)
+                            .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                            .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
                     }
                 } catch (CairoException e) {
                     if (retry) {
                         // Table schema (metadata) changed and this Alter is not valid anymore.
                         // Try to update WAL metadata to latest and repeat one more time.
                         goActive();
-                        operation.apply(metadataValidator, true);
+                        alterOp.apply(metaValidatorSvc, true);
                     } else {
                         throw e;
                     }
                 }
 
-                txn = tableSequencerAPI.nextStructureTxn(tableName, getStructureVersion(), operation);
+                txn = tableSequencerAPI.nextStructureTxn(tableName, getStructureVersion(), alterOp);
                 if (txn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }
@@ -175,7 +175,7 @@ public class WalWriter implements TableWriterAPI {
 
             // Apply to itself.
             try {
-                operation.apply(walMetadataUpdater, true);
+                alterOp.apply(metaWriterSvc, true);
             } catch (Throwable th) {
                 // Transaction successful, but writing using this WAL writer should not be possible.
                 LOG.error().$("Exception during alter [ex=").$(th).I$();
@@ -183,7 +183,7 @@ public class WalWriter implements TableWriterAPI {
             }
             return txn;
         } else {
-            return applyNonStructuralOperation(operation);
+            return applyNonStructuralOperation(alterOp);
         }
     }
 
@@ -546,7 +546,7 @@ public class WalWriter implements TableWriterAPI {
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();
                 try {
-                    tableMetadataChange.apply(walMetadataUpdater, true);
+                    tableMetadataChange.apply(metaWriterSvc, true);
                 } catch (CairoException e) {
                     distressed = true;
                     throw e;
@@ -1231,18 +1231,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private class MetadataValidator implements SequencerMetadataChangeSPI {
+    private class MetadataValidatorService implements MetadataServiceStub {
         public long structureVersion;
 
         @Override
         public void addColumn(
-                CharSequence columnName,
-                int columnType,
-                int symbolCapacity,
-                boolean symbolCacheFlag,
-                boolean isIndexed,
-                int indexValueBlockCapacity,
-                boolean isSequential
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1492,17 +1492,17 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private class WalMetadataUpdaterBackend implements SequencerMetadataChangeSPI {
+    private class MetadataWriterService implements MetadataServiceStub {
 
         @Override
         public void addColumn(
-                CharSequence columnName,
-                int columnType,
-                int symbolCapacity,
-                boolean symbolCacheFlag,
-                boolean isIndexed,
-                int indexValueBlockCapacity,
-                boolean isSequential
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 

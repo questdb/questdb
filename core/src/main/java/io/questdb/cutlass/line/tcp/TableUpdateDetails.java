@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.MetadataChangeSPI;
+import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -67,7 +67,7 @@ public class TableUpdateDetails implements Closeable {
     private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
     // todo: rename
-    private MetadataChangeSPI writerSPI;
+    private MetadataService writerSPI;
     private int writerThreadId;
 
     TableUpdateDetails(
@@ -91,8 +91,8 @@ public class TableUpdateDetails implements Closeable {
         TableRecordMetadata tableMetadata = writer.getMetadata();
         this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableNameUtf16 = Chars.toString(writer.getTableName());
-        if (writer instanceof MetadataChangeSPI) {
-            writerSPI = (MetadataChangeSPI) writer;
+        if (writer instanceof MetadataService) {
+            writerSPI = (MetadataService) writer;
             writerSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
             this.nextCommitTime = millisecondClock.getTicks() + writerSPI.getCommitInterval();
         } else {
@@ -101,10 +101,11 @@ public class TableUpdateDetails implements Closeable {
         }
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
+            //noinspection resource
             this.localDetailsArray[i] = new ThreadLocalDetails(
-                    configuration,
-                    netIoJobs[i].getUnusedSymbolCaches(),
-                    writer.getMetadata().getColumnCount()
+                configuration,
+                netIoJobs[i].getUnusedSymbolCaches(),
+                writer.getMetadata().getColumnCount()
             );
         }
     }

@@ -49,7 +49,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final Path path;
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
-    private final SequencerMetadataUpdater sequencerMetadataUpdater;
+    private final SequencerMetadataService metadataSvc;
     private final String tableName;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
@@ -70,7 +70,7 @@ public class TableSequencerImpl implements TableSequencer {
             this.mkDirMode = configuration.getMkDirMode();
 
             metadata = new SequencerMetadata(ff);
-            sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableName);
+            metadataSvc = new SequencerMetadataService(metadata, tableName);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             tableTransactionLog = new TableTransactionLog(ff);
         } catch (Throwable th) {
@@ -100,7 +100,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo) {
+    public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         if (metadata.getStructureVersion() == structureVersionLo) {
             // Nothing to do.
             return EmptyOperationCursor.INSTANCE;
@@ -275,7 +275,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void applyToMetadata(TableMetadataChange change) {
-        change.apply(sequencerMetadataUpdater, true);
+        change.apply(metadataSvc, true);
         metadata.syncToMetaFile();
     }
 

@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import java.io.Closeable;
 
 public interface TableWriterAPI extends Closeable {
-    long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
+    long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 
     long apply(UpdateOperation operation);
 

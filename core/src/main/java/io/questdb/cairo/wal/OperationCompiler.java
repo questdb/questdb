@@ -77,9 +77,9 @@ public class OperationCompiler implements Closeable {
     public AlterOperation compileAlterSql(CharSequence alterSql) {
         try {
             final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, sqlExecutionContext);
-            final AlterOperation alterOperation = compiledQuery.getAlterOperation();
-            alterOperation.withContext(sqlExecutionContext);
-            return alterOperation;
+            final AlterOperation alterOp = compiledQuery.getAlterOperation();
+            alterOp.withContext(sqlExecutionContext);
+            return alterOp;
         } catch (SqlException e) {
             // we could not compile SQL query, but this should not stop us from
             // processing other operations.
