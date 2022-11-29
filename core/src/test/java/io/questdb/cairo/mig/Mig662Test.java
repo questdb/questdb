@@ -143,7 +143,7 @@ public class Mig662Test {
                 final TxReader txReader = new TxReader(ff);
                 final Path path = new Path().of(dbRoot).concat(TableUtils.META_FILE_NAME).$()
         ) {
-            metaReader.load0(path, currentVersion + 1);
+            metaReader.load(path);
             txReader.ofRO(path.parent().concat(TableUtils.TXN_FILE_NAME).$(), metaReader.getPartitionBy());
             txReader.unsafeLoadAll();
             Assert.assertEquals(2, txReader.getSymbolColumnCount());

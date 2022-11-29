@@ -1539,6 +1539,15 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        
+        // check RO flag
+        if (txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
+            throw CairoException.nonCritical()
+                .put("cannot drop read-only partition [table=").put(tableName)
+                .put(", partitionIndex=").put(txWriter.getPartitionIndex(timestamp))
+                .put(", partitionTs=").ts(partitionFloorMethod.floor(timestamp))
+                .put(']');            
+        }
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
