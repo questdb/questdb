@@ -33,10 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.MutableUuid;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public final class CastStrToUuidFunctionFactory implements FunctionFactory {
     @Override
@@ -64,7 +61,6 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
     public static class Func extends UuidFunction implements UnaryFunction {
         private final Function arg;
-        private final MutableUuid uuid = new MutableUuid();
 
         public Func(Function arg) {
             this.arg = arg;
@@ -79,32 +75,28 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getUuidHi(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return UuidConstant.NULL_HI_AND_LO;
+                return UuidUtil.NULL_HI_AND_LO;
             }
-            // TODO: This is a horrible hack to make the UUID tests to pass.
-            // We must reimplement this with a proper zero-gc UUID codec.
             try {
-                uuid.of(value);
+                UuidUtil.checkDashesAndLength(value);
+                return UuidUtil.parseHi(value);
             } catch (NumericException e) {
-                return UuidConstant.NULL_HI_AND_LO;
+                return UuidUtil.NULL_HI_AND_LO;
             }
-            return uuid.getHi();
         }
 
         @Override
         public long getUuidLo(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return UuidConstant.NULL_HI_AND_LO;
+                return UuidUtil.NULL_HI_AND_LO;
             }
-            // TODO: This is a horrible hack to make the UUID tests to pass.
-            // We must reimplement this with a proper zero-gc UUID codec
             try {
-                uuid.of(value);
+                UuidUtil.checkDashesAndLength(value);
+                return UuidUtil.parseLo(value);
             } catch (NumericException e) {
-                return UuidConstant.NULL_HI_AND_LO;
+                return UuidUtil.NULL_HI_AND_LO;
             }
-            return uuid.getLo();
         }
     }
 }

@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.LongLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -58,7 +57,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     public void computeFirst(MapValue mapValue, Record record) {
         LongLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, UuidConstant.NULL_HI_AND_LO));
+            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, UuidUtil.NULL_HI_AND_LO));
         } else {
             set = sets.getQuick(setIndex);
         }

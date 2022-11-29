@@ -27,17 +27,18 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.std.UuidUtil;
 
 public class UuidTypeConstant extends UuidFunction implements TypeConstant {
     public static final UuidTypeConstant INSTANCE = new UuidTypeConstant();
 
     @Override
     public long getUuidHi(Record rec) {
-        return UuidConstant.NULL_HI_AND_LO;
+        return UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override
     public long getUuidLo(Record rec) {
-        return UuidConstant.NULL_HI_AND_LO;
+        return UuidUtil.NULL_HI_AND_LO;
     }
 }

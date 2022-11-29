@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.UuidUtil;
 import io.questdb.std.str.CharSink;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
@@ -221,12 +222,12 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public long getUuidHi(Record rec) {
-        return UuidConstant.NULL_HI_AND_LO;
+        return UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override
     public long getUuidLo(Record rec) {
-        return UuidConstant.NULL_HI_AND_LO;
+        return UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override

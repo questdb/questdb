@@ -24,16 +24,89 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
-
 public final class UuidUtil {
     public static final int BYTES = Long.BYTES * 2;
+    public static final int FIRST_DASH_POS = 8;
+    public static final int FOURTH_DASH_POS = 23;
+    public static final long NULL_HI_AND_LO = Numbers.LONG_NaN;
+    public static final int SECOND_DASH_POS = 13;
+    public static final int THIRD_DASH_POS = 18;
     public static final int UUID_LENGTH = 36;
 
     private UuidUtil() {
     }
 
+    /**
+     * Check UUID string has the right length and dashes in the right places.
+     * It does not perform full validation of the UUID string.
+     * Call this method before calling {@link #parseHi(CharSequence)} or {@link #parseLo(CharSequence)}.
+     *
+     * @param uuid UUID string
+     * @throws NumericException if UUID string has wrong length or dashes in wrong places
+     */
+    public static void checkDashesAndLength(CharSequence uuid) throws NumericException {
+        if (uuid.length() != UUID_LENGTH) {
+            throw NumericException.INSTANCE;
+        }
+        if (uuid.charAt(FIRST_DASH_POS) != '-'
+            || uuid.charAt(SECOND_DASH_POS) != '-'
+            || uuid.charAt(UuidUtil.THIRD_DASH_POS) != '-'
+            || uuid.charAt(UuidUtil.FOURTH_DASH_POS) != '-') {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    /**
+     * Check if UUID is null.
+     *
+     * @param hi high 64 bits of UUID
+     * @param lo low 64 bits of UUID
+     * @return true if UUID is null
+     */
     public static boolean isNull(long hi, long lo) {
-        return hi == UuidConstant.NULL_HI_AND_LO && lo == UuidConstant.NULL_HI_AND_LO;
+        return hi == NULL_HI_AND_LO && lo == NULL_HI_AND_LO;
+    }
+
+    /**
+     * Returns highest 64 bits of UUID.
+     * <p>
+     * This method assumes that UUID has correct length and dashes in correct positions
+     * Use {@link #checkDashesAndLength(CharSequence)} to validate that before calling this method.
+     * <p>
+     * Returned bits are in little-endian order.
+     *
+     * @param uuid uuid string
+     * @return high UUID bits
+     * @throws NumericException if UUID is not valid
+     */
+    public static long parseHi(CharSequence uuid) throws NumericException {
+        long hi1;
+        long hi2;
+        long hi3;
+        hi1 = Numbers.parseHexLong(uuid, 0, FIRST_DASH_POS);
+        hi2 = Numbers.parseHexLong(uuid, FIRST_DASH_POS + 1, SECOND_DASH_POS);
+        hi3 = Numbers.parseHexLong(uuid, SECOND_DASH_POS + 1, THIRD_DASH_POS);
+        return (hi1 << 32) | (hi2 << 16) | hi3;
+    }
+
+
+    /**
+     * Returns lowest 64 bits of UUID.
+     * <p>
+     * This method assumes that UUID has correct length and dashes in correct positions
+     * Use {@link #checkDashesAndLength(CharSequence)} to validate that before calling this method.
+     * <p>
+     * Returned bits are in little-endian order.
+     *
+     * @param uuid uuid string
+     * @return low UUID bits
+     * @throws NumericException if UUID is not valid
+     */
+    public static long parseLo(CharSequence uuid) throws NumericException {
+        long lo1;
+        long lo2;
+        lo1 = Numbers.parseHexLong(uuid, THIRD_DASH_POS + 1, FOURTH_DASH_POS);
+        lo2 = Numbers.parseHexLong(uuid, FOURTH_DASH_POS + 1, UUID_LENGTH);
+        return (lo1 << 48) | lo2;
     }
 }

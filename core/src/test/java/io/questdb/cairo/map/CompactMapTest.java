@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -43,13 +42,13 @@ public class CompactMapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             int N = 10;
             try (CompactMap map = new CompactMap(
-                    1024 * 1024,
-                    new SingleColumnType(ColumnType.STRING),
-                    new SingleColumnType(ColumnType.LONG),
-                    N / 2,
-                    0.9,
-                    1,
-                    Integer.MAX_VALUE)) {
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                N / 2,
+                0.9,
+                1,
+                Integer.MAX_VALUE)) {
                 ObjList<String> keys = new ObjList<>();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
@@ -82,10 +81,10 @@ public class CompactMapTest extends AbstractCairoTest {
             int N = 100000;
             int M = 25;
             try (CompactMap map = new CompactMap(
-                    1024 * 1024,
-                    new SingleColumnType(ColumnType.STRING),
-                    new SingleColumnType(ColumnType.LONG),
-                    2 * N, 0.7, 1, Integer.MAX_VALUE)) {
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                2 * N, 0.7, 1, Integer.MAX_VALUE)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(M);
                     MapKey key = map.withKey();
@@ -185,8 +184,8 @@ public class CompactMapTest extends AbstractCairoTest {
             int geohashType = ColumnType.getGeoHashTypeWithBits(precisionBits);
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
                 model
-                        .col("a", ColumnType.LONG)
-                        .col("b", geohashType);
+                    .col("a", ColumnType.LONG)
+                    .col("b", geohashType);
                 CairoTestUtils.create(model);
             }
 
@@ -209,13 +208,13 @@ public class CompactMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
-                        1024 * 1024,
-                        new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().add(ColumnType.LONG)
-                        ,
-                        N,
-                        0.9,
-                        1, Integer.MAX_VALUE)) {
+                    1024 * 1024,
+                    new SymbolAsStrTypes(reader.getMetadata()),
+                    new ArrayColumnTypes().add(ColumnType.LONG)
+                    ,
+                    N,
+                    0.9,
+                    1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
                     RecordCursor cursor = reader.getCursor();
@@ -252,14 +251,14 @@ public class CompactMapTest extends AbstractCairoTest {
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9;
         try (CompactMap map = new CompactMap(
-                1024 * 1024,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                12,
-                loadFactor,
-                MockHash::new,
-                1,
-                Integer.MAX_VALUE)) {
+            1024 * 1024,
+            new SingleColumnType(ColumnType.STRING),
+            new SingleColumnType(ColumnType.LONG),
+            12,
+            loadFactor,
+            MockHash::new,
+            1,
+            Integer.MAX_VALUE)) {
             MapKey key;
             MapValue value;
 
@@ -318,22 +317,22 @@ public class CompactMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(keyReader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
-                        1024 * 1024,
-                        new SymbolAsStrTypes(keyReader.getMetadata()),
-                        new ArrayColumnTypes()
-                                .add(ColumnType.LONG)
-                                .add(ColumnType.INT)
-                                .add(ColumnType.SHORT)
-                                .add(ColumnType.BYTE)
-                                .add(ColumnType.FLOAT)
-                                .add(ColumnType.DOUBLE)
-                                .add(ColumnType.DATE)
-                                .add(ColumnType.TIMESTAMP)
-                                .add(ColumnType.BOOLEAN)
-                        ,
-                        N,
-                        0.9,
-                        1, Integer.MAX_VALUE)) {
+                    1024 * 1024,
+                    new SymbolAsStrTypes(keyReader.getMetadata()),
+                    new ArrayColumnTypes()
+                        .add(ColumnType.LONG)
+                        .add(ColumnType.INT)
+                        .add(ColumnType.SHORT)
+                        .add(ColumnType.BYTE)
+                        .add(ColumnType.FLOAT)
+                        .add(ColumnType.DOUBLE)
+                        .add(ColumnType.DATE)
+                        .add(ColumnType.TIMESTAMP)
+                        .add(ColumnType.BOOLEAN)
+                    ,
+                    N,
+                    0.9,
+                    1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, keyReader.getMetadata(), entityColumnFilter, true);
 
@@ -444,10 +443,10 @@ public class CompactMapTest extends AbstractCairoTest {
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9999999;
         try (CompactMap map = new CompactMap(
-                1024 * 1024,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, mem -> new MockHash(mem), 1, Integer.MAX_VALUE)) {
+            1024 * 1024,
+            new SingleColumnType(ColumnType.STRING),
+            new SingleColumnType(ColumnType.LONG),
+            (long) (N * loadFactor), loadFactor, mem -> new MockHash(mem), 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -477,10 +476,10 @@ public class CompactMapTest extends AbstractCairoTest {
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9999999;
         try (CompactMap map = new CompactMap(
-                1024 * 1024,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, MockHash::new, 1, Integer.MAX_VALUE)) {
+            1024 * 1024,
+            new SingleColumnType(ColumnType.STRING),
+            new SingleColumnType(ColumnType.LONG),
+            (long) (N * loadFactor), loadFactor, MockHash::new, 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -535,26 +534,26 @@ public class CompactMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
-                        1024 * 1024,
-                        new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes()
-                                .add(ColumnType.LONG)
-                                .add(ColumnType.INT)
-                                .add(ColumnType.SHORT)
-                                .add(ColumnType.BYTE)
-                                .add(ColumnType.FLOAT)
-                                .add(ColumnType.DOUBLE)
-                                .add(ColumnType.DATE)
-                                .add(ColumnType.TIMESTAMP)
-                                .add(ColumnType.BOOLEAN)
-                                .add(ColumnType.getGeoHashTypeWithBits(5))
-                                .add(ColumnType.getGeoHashTypeWithBits(10))
-                                .add(ColumnType.getGeoHashTypeWithBits(20))
-                                .add(ColumnType.getGeoHashTypeWithBits(40))
-                        ,
-                        N,
-                        0.9,
-                        1, Integer.MAX_VALUE)) {
+                    1024 * 1024,
+                    new SymbolAsStrTypes(reader.getMetadata()),
+                    new ArrayColumnTypes()
+                        .add(ColumnType.LONG)
+                        .add(ColumnType.INT)
+                        .add(ColumnType.SHORT)
+                        .add(ColumnType.BYTE)
+                        .add(ColumnType.FLOAT)
+                        .add(ColumnType.DOUBLE)
+                        .add(ColumnType.DATE)
+                        .add(ColumnType.TIMESTAMP)
+                        .add(ColumnType.BOOLEAN)
+                        .add(ColumnType.getGeoHashTypeWithBits(5))
+                        .add(ColumnType.getGeoHashTypeWithBits(10))
+                        .add(ColumnType.getGeoHashTypeWithBits(20))
+                        .add(ColumnType.getGeoHashTypeWithBits(40))
+                    ,
+                    N,
+                    0.9,
+                    1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -609,22 +608,22 @@ public class CompactMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
-                        1024 * 1024,
-                        new SymbolAsIntTypes().of(reader.getMetadata()),
-                        new ArrayColumnTypes()
-                                .add(ColumnType.LONG)
-                                .add(ColumnType.INT)
-                                .add(ColumnType.SHORT)
-                                .add(ColumnType.BYTE)
-                                .add(ColumnType.FLOAT)
-                                .add(ColumnType.DOUBLE)
-                                .add(ColumnType.DATE)
-                                .add(ColumnType.TIMESTAMP)
-                                .add(ColumnType.BOOLEAN)
-                        ,
-                        N,
-                        0.9,
-                        1, Integer.MAX_VALUE)) {
+                    1024 * 1024,
+                    new SymbolAsIntTypes().of(reader.getMetadata()),
+                    new ArrayColumnTypes()
+                        .add(ColumnType.LONG)
+                        .add(ColumnType.INT)
+                        .add(ColumnType.SHORT)
+                        .add(ColumnType.BYTE)
+                        .add(ColumnType.FLOAT)
+                        .add(ColumnType.DOUBLE)
+                        .add(ColumnType.DATE)
+                        .add(ColumnType.TIMESTAMP)
+                        .add(ColumnType.BOOLEAN)
+                    ,
+                    N,
+                    0.9,
+                    1, Integer.MAX_VALUE)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
 
@@ -772,8 +771,8 @@ public class CompactMapTest extends AbstractCairoTest {
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(UuidConstant.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12));
-                Assert.assertEquals(UuidConstant.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12));
+                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12));
+                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12));
             } else {
                 Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12));
                 Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12));

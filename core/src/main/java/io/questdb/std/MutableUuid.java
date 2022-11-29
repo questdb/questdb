@@ -24,12 +24,11 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.str.CharSink;
 
 public final class MutableUuid implements Sinkable {
-    private long hi = UuidConstant.NULL_HI_AND_LO;
-    private long lo = UuidConstant.NULL_HI_AND_LO;
+    private long hi = UuidUtil.NULL_HI_AND_LO;
+    private long lo = UuidUtil.NULL_HI_AND_LO;
 
     public MutableUuid(long hi, long lo) {
         of(hi, lo);
@@ -70,34 +69,14 @@ public final class MutableUuid implements Sinkable {
     }
 
     public void of(CharSequence uuid) throws NumericException {
-        int len = uuid.length();
-        int dash1 = Chars.indexOf(uuid, '-');
-        int dash2 = Chars.indexOf(uuid, dash1 + 1, len, '-');
-        int dash3 = Chars.indexOf(uuid, dash2 + 1, len, '-');
-        int dash4 = Chars.indexOf(uuid, dash3 + 1, len, '-');
-
-        // valid UUIDs have exactly 4 dashes
-        if (dash4 < 0 || dash4 == len - 1 || Chars.indexOf(uuid, dash4 + 1, len, '-') > 0) {
-            throw NumericException.INSTANCE;
-        }
-
-        long hi1;
-        long hi2;
-        long hi3;
-        long lo1;
-        long lo2;
-        hi1 = Numbers.parseHexLong(uuid, 0, dash1);
-        hi2 = Numbers.parseHexLong(uuid, dash1 + 1, dash2);
-        hi3 = Numbers.parseHexLong(uuid, dash2 + 1, dash3);
-        lo1 = Numbers.parseHexLong(uuid, dash3 + 1, dash4);
-        lo2 = Numbers.parseHexLong(uuid, dash4 + 1, len);
-        this.hi = (hi1 << 32) | (hi2 << 16) | hi3;
-        this.lo = (lo1 << 48) | lo2;
+        UuidUtil.checkDashesAndLength(uuid);
+        this.hi = UuidUtil.parseHi(uuid);
+        this.lo = UuidUtil.parseLo(uuid);
     }
 
     public void ofNull() {
-        this.hi = UuidConstant.NULL_HI_AND_LO;
-        this.lo = UuidConstant.NULL_HI_AND_LO;
+        this.hi = UuidUtil.NULL_HI_AND_LO;
+        this.lo = UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override

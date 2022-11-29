@@ -26,7 +26,6 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -153,11 +152,11 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     public long getUuidHi(long offset) {
-        return UuidConstant.NULL_HI_AND_LO;
+        return UuidUtil.NULL_HI_AND_LO;
     }
 
     public long getUuidLo(long offset) {
-        return UuidConstant.NULL_HI_AND_LO;
+        return UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override

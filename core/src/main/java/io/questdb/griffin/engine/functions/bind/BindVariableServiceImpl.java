@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
@@ -501,13 +500,13 @@ public class BindVariableServiceImpl implements BindVariableService {
             function.value.copyFrom(value);
         } else {
             setLong2560(
-                    namedVariables.valueAtQuick(index),
-                    value.getLong0(),
-                    value.getLong1(),
-                    value.getLong2(),
-                    value.getLong3(),
-                    -1,
-                    name
+                namedVariables.valueAtQuick(index),
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3(),
+                -1,
+                name
             );
         }
     }
@@ -524,13 +523,13 @@ public class BindVariableServiceImpl implements BindVariableService {
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
             setLong2560(
-                    function,
-                    l0,
-                    l1,
-                    l2,
-                    l3,
-                    index,
-                    null
+                function,
+                l0,
+                l1,
+                l2,
+                l3,
+                index,
+                null
             );
         } else {
             indexedVariables.setQuick(index, function = long256VarPool.next());
@@ -659,7 +658,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     public void setUuid(int index) throws SqlException {
-        setUuid(index, UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO);
+        setUuid(index, UuidUtil.NULL_HI_AND_LO, UuidUtil.NULL_HI_AND_LO);
     }
 
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
@@ -825,16 +824,16 @@ public class BindVariableServiceImpl implements BindVariableService {
                     ((GeoHashBindVariable) function).value = GeoHashes.widen(value, fromBits, toBits);
                 } else if (name != null) {
                     throw SqlException.$(0, "inconvertible types: ")
-                            .put(ColumnType.nameOf(type))
-                            .put(" -> ")
-                            .put(ColumnType.nameOf(varType))
-                            .put(" [varName=").put(name).put(']');
+                        .put(ColumnType.nameOf(type))
+                        .put(" -> ")
+                        .put(ColumnType.nameOf(varType))
+                        .put(" [varName=").put(name).put(']');
                 } else {
                     throw SqlException.$(0, "inconvertible types: ")
-                            .put(ColumnType.nameOf(type))
-                            .put(" -> ")
-                            .put(ColumnType.nameOf(varType))
-                            .put(" [varIndex=").put(index).put(']');
+                        .put(ColumnType.nameOf(type))
+                        .put(" -> ")
+                        .put(ColumnType.nameOf(varType))
+                        .put(" [varIndex=").put(index).put(']');
                 }
                 break;
             default:
@@ -921,13 +920,13 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setLong2560(
-            Function function,
-            long l0,
-            long l1,
-            long l2,
-            long l3,
-            int index,
-            @Nullable CharSequence name
+        Function function,
+        long l0,
+        long l1,
+        long l2,
+        long l3,
+        int index,
+        @Nullable CharSequence name
     ) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
