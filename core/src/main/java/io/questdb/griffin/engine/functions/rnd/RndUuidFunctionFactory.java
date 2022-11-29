@@ -39,7 +39,7 @@ import io.questdb.std.Rnd;
 public class RndUuidFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_uuid()";
+        return "rnd_uuid4()";
     }
 
     @Override
@@ -48,35 +48,24 @@ public class RndUuidFunctionFactory implements FunctionFactory {
     }
 
     private static class RndFunction extends UuidFunction implements Function {
-        /**
-         * TODO:
-         * This algorithm is incorrect. This is what RFC says about UUIDv4 generation:
-         * <p>
-         * The version 4 UUID is meant for generating UUIDs from truly-random or
-         * pseudo-random numbers.
-         * <p>
-         * The algorithm is as follows:
-         * <p>
-         * o  Set the two most significant bits (bits 6 and 7) of the
-         * clock_seq_hi_and_reserved to zero and one, respectively.
-         * <p>
-         * o  Set the four most significant bits (bits 12 through 15) of the
-         * time_hi_and_version field to the 4-bit version number from
-         * Section 4.1.3.
-         * <p>
-         * o  Set all the other bits to randomly (or pseudo-randomly) chosen
-         * values.
-         */
         private Rnd rnd;
 
         @Override
         public long getUuidHi(Record rec) {
-            return rnd.nextLong();
+            long hi = rnd.nextLong();
+            // set version to 4  
+            hi &= 0xffffffffffff0fffL;
+            hi |= 0x0000000000004000L;
+            return hi;
         }
 
         @Override
         public long getUuidLo(Record rec) {
-            return rnd.nextLong();
+            long lo = rnd.nextLong();
+            // set variant to 1
+            lo &= 0x3fffffffffffffffL;
+            lo |= 0x8000000000000000L;
+            return lo;
         }
 
         @Override
