@@ -39,7 +39,7 @@ public class SuspendEventFactory {
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                // TODO
+                return new PipeEvent(configuration.getKqueueFacade());
             case Os.WINDOWS:
                 // TODO
             default:

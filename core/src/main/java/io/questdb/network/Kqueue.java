@@ -34,6 +34,7 @@ import java.io.Closeable;
 
 public final class Kqueue implements Closeable {
     private static final Log LOG = LogFactory.getLog(Kqueue.class);
+
     private final int bufferSize;
     private final int capacity;
     private final long changeList;
@@ -42,10 +43,6 @@ public final class Kqueue implements Closeable {
     private final KqueueFacade kqf;
     private long readAddress;
     private long writeAddress;
-
-    public Kqueue(int capacity) {
-        this(KqueueFacadeImpl.INSTANCE, capacity);
-    }
 
     public Kqueue(KqueueFacade kqf, int capacity) {
         this.kqf = kqf;

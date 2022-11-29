@@ -34,6 +34,7 @@ import java.io.Closeable;
 
 public final class Epoll implements Closeable {
     private static final Log LOG = LogFactory.getLog(Epoll.class);
+
     private final int capacity;
     private final EpollFacade epf;
     private final long epollFd;

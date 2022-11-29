@@ -39,7 +39,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         this.capacity = configuration.getEventCapacity();
 
         // bind socket
-        this.kqueue = new Kqueue(capacity);
+        this.kqueue = new Kqueue(configuration.getKqueueFacade(), capacity);
         registerListenerFd();
     }
 

@@ -24,7 +24,7 @@
 
 package io.questdb.network;
 
-class KqueueFacadeImpl implements KqueueFacade {
+public class KqueueFacadeImpl implements KqueueFacade {
     public static final KqueueFacade INSTANCE = new KqueueFacadeImpl();
 
     @Override

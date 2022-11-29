@@ -55,6 +55,11 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public KqueueFacade getKqueueFacade() {
+        return KqueueFacadeImpl.INSTANCE;
+    }
+
+    @Override
     public int getLimit() {
         return 64;
     }
