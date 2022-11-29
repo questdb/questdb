@@ -3321,6 +3321,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
         @Override
+        public boolean checkConnection() {
+            return true;
+        }
+
+        @Override
         public int getBufferSize() {
             return circuitBreakerBufferSize;
         }
