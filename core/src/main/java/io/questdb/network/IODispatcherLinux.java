@@ -87,22 +87,24 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             useful = true;
             interestSubSeq.done(cursor);
 
+            final long id = fdid++;
+
             int fd = (int) context.getFd();
             int operation = requestedOperation;
             int epollOp = EpollAccessor.EPOLL_CTL_MOD;
+            LOG.debug().$("processing registration [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
 
             SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
                 // Looks like we need to suspend the original operation.
-                fd = (int) suspendEvent.getFd();
+                fd = suspendEvent.getFd();
                 operation = IOOperation.READ;
                 epollOp = EpollAccessor.EPOLL_CTL_ADD;
+                LOG.debug().$("registering suspend event [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
             }
 
-            final long id = fdid++;
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
-            LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
             epoll.setOffset(offset);
             if (
                 epoll.control(

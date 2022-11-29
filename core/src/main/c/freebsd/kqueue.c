@@ -92,12 +92,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kevent
 
 JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_pipe
         (JNIEnv *e, jclass cl) {
-    int fd[2];
-    int res = pipe2(fd, O_NONBLOCK);
+    int fds[2];
+    int res = pipe2(fds, O_NONBLOCK);
     if (res < 0) {
         return res;
     }
-    return (jlong) fd[0] << 32 | (jlong) fd[1];    
+    return (jlong) fds[0] << 32 | (jlong) fds[1];
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_readPipe
