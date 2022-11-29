@@ -28,6 +28,8 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface SqlExecutionCircuitBreakerConfiguration {
+    boolean checkConnection();
+
     int getBufferSize();
 
     int getCircuitBreakerThrottle();
