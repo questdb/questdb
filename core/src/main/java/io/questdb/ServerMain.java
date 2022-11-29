@@ -115,7 +115,7 @@ public class ServerMain implements Closeable {
                         sharedPool.freeOnExit(walPurgeJob);
 
                         if (!config.getWalApplyPoolConfiguration().isEnabled()) {
-                            WalUtils.setupWorkerPool(sharedPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
+                            WalUtils.setupWorkerPool(sharedPool, engine, getSharedWorkerCount(), ffCache);
                         }
                     }
 

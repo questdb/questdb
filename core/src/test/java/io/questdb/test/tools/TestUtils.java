@@ -871,16 +871,12 @@ public final class TestUtils {
     }
 
     @NotNull
-    public static Rnd generateRandom() {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        return new Rnd(s0, s1);
+    public static Rnd generateRandom(Log log) {
+        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
     }
 
     @NotNull
-    public static Rnd generateRandom(Log log) {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
+    public static Rnd generateRandom(Log log, long s0, long s1) {
         log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
         System.out.printf("random seeds: %dL, %dL%n", s0, s1);
         return new Rnd(s0, s1);
