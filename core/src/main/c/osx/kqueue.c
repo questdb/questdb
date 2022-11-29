@@ -25,6 +25,7 @@
 #include <sys/event.h>
 #include <sys/time.h>
 #include <stddef.h>
+#include <unistd.h>
 #include "jni.h"
 
 JNIEXPORT jshort JNICALL Java_io_questdb_network_KqueueAccessor_getEvfiltRead
@@ -89,5 +90,35 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_kevent
                          &dontBlock);
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_pipe
+        (JNIEnv *e, jclass cl) {
+    int fd[2];
+    int res = pipe2(fd, O_NONBLOCK);
+    if (res < 0) {
+        return res;
+    }
+    return (jlong) fd[0] << 32 | (jlong) fd[1];    
+}
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_readPipe
+        (JNIEnv *e, jclass cl, jint fd) {
+    char buf[1];
+    ssize_t s;
+    s = read((int) fd, buf, sizeof(uint64_t));
+    if (s != 1) {
+        return -1;
+    }
+    return (jint) buf[0];
+}
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_writePipe
+        (JNIEnv *e, jclass cl, jint fd) {
+    char buf[1];
+    ssize_t s;
+    buf[0] = 1;
+    s = write((int) fd, buf, sizeof(uint64_t));
+    if (s != 1) {
+        return -1;
+    }
+    return 0;
+}

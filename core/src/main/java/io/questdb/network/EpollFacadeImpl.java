@@ -50,7 +50,7 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public long eventFd() {
+    public int eventFd() {
         return EpollAccessor.eventFd();
     }
 
@@ -60,12 +60,12 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public long readEventFd(long fd) {
+    public long readEventFd(int fd) {
         return EpollAccessor.readEventFd(fd);
     }
 
     @Override
-    public int writeEventFd(long fd) {
+    public int writeEventFd(int fd) {
         return EpollAccessor.writeEventFd(fd);
     }
 }

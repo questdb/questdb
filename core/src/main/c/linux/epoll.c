@@ -94,13 +94,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlDel
     return EPOLL_CTL_DEL;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_eventFd
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_eventFd
         (JNIEnv *e, jclass cl) {
     return eventfd(0, EFD_NONBLOCK);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_readEventFd
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     uint64_t u;
     ssize_t s;
     s = read((int) fd, &u, sizeof(uint64_t));
@@ -111,7 +111,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_readEventFd
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_writeEventFd
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     uint64_t u;
     ssize_t s;
     u = 1;

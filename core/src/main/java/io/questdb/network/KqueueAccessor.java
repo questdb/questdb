@@ -61,6 +61,12 @@ public class KqueueAccessor {
 
     static native int kqueue();
 
+    static native long pipe();
+
+    static native int readPipe(int fd);
+
+    static native int writePipe(int fd);
+
     static {
         EVFILT_READ = getEvfiltRead();
         EVFILT_WRITE = getEvfiltWrite();
@@ -73,5 +79,4 @@ public class KqueueAccessor {
         EV_ONESHOT = getEvOneshot();
         EV_DELETE = getEvDelete();
     }
-
 }

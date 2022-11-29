@@ -24,7 +24,7 @@
 
 package io.questdb.network;
 
-public class KqueueFacadeImpl implements KqueueFacade {
+class KqueueFacadeImpl implements KqueueFacade {
     public static final KqueueFacade INSTANCE = new KqueueFacadeImpl();
 
     @Override
@@ -40,5 +40,20 @@ public class KqueueFacadeImpl implements KqueueFacade {
     @Override
     public int kqueue() {
         return KqueueAccessor.kqueue();
+    }
+
+    @Override
+    public long pipe() {
+        return KqueueAccessor.pipe();
+    }
+
+    @Override
+    public int readPipe(int fd) {
+        return KqueueAccessor.readPipe(fd);
+    }
+
+    @Override
+    public int writePipe(int fd) {
+        return KqueueAccessor.writePipe(fd);
     }
 }

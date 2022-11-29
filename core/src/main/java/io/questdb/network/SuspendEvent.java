@@ -43,10 +43,14 @@ public interface SuspendEvent extends Closeable {
     @Override
     void close();
 
-    long getFd();
+    /**
+     * Returns fd to be used to listen/wait for the event.
+     */
+    int getFd();
 
     /**
      * Marks the event as received.
+     * TODO consider removing
      */
     void read();
 

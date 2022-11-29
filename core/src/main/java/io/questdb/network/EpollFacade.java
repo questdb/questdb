@@ -33,11 +33,11 @@ public interface EpollFacade {
 
     int errno();
 
-    long eventFd();
+    int eventFd();
 
     NetworkFacade getNetworkFacade();
 
-    long readEventFd(long fd);
+    long readEventFd(int fd);
 
-    int writeEventFd(long fd);
+    int writeEventFd(int fd);
 }
