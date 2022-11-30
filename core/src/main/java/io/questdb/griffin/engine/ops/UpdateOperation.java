@@ -107,7 +107,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public boolean isStructureChange() {
+    public boolean isStructural() {
         return false;
     }
 

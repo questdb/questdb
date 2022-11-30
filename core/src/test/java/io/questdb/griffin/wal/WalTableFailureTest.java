@@ -74,7 +74,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return true;
                     }
                 };
@@ -112,7 +112,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return true;
                     }
 
@@ -189,7 +189,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return true;
                     }
 
@@ -256,7 +256,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return true;
                     }
 
@@ -402,7 +402,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return true;
                     }
                 };
@@ -470,7 +470,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return false;
                     }
                 };
@@ -513,12 +513,12 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public CharSequence getSqlStatement() {
+                    public CharSequence getSqlText() {
                         throw new IndexOutOfBoundsException();
                     }
 
                     @Override
-                    public boolean isStructureChange() {
+                    public boolean isStructural() {
                         return false;
                     }
                 };

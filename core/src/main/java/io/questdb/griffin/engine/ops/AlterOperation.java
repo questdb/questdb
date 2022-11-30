@@ -198,7 +198,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
-    public boolean isStructureChange() {
+    public boolean isStructural() {
         switch (command) {
             case ADD_COLUMN:
             case RENAME_COLUMN:

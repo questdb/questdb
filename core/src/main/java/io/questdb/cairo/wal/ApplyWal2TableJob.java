@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -78,14 +81,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationCompiler operationCompiler
     ) {
-        long txnLastSequencer = -1;
-        long txnLastSeenByWriter = -1;
+        long lastSequencerTxn = -1;
+        long lastWriterTxn = -1;
         do {
             // security context is checked on writing to the WAL and can be ignored here
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getTableId() == tableId;
                 applyOutstandingWalTransactions(writer, engine, operationCompiler);
-                txnLastSeenByWriter = writer.getSeqTxn();
+                lastWriterTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                     LOG.critical().$("unsolicited table lock [table=").$(tableName).$(", lock_reason=").$(tableBusy.getReason()).I$();
@@ -95,17 +98,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 break;
             } catch (CairoException ex) {
                 LOG.critical().$("WAL apply job failed, table suspended [table=").$(tableName)
-                        .$(", error=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
-                        .I$();
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
                 return WAL_APPLY_FAILED;
             }
 
-            txnLastSequencer = engine.getTableSequencerAPI().lastTxn(tableName);
-        } while (txnLastSeenByWriter < txnLastSequencer);
-        assert txnLastSeenByWriter == txnLastSequencer;
+            lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableName);
+        } while (lastWriterTxn < lastSequencerTxn);
+        assert lastWriterTxn == lastSequencerTxn;
 
-        return txnLastSeenByWriter;
+        return lastWriterTxn;
     }
 
     @Override
@@ -167,7 +170,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         boolean hasNext;
                         if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                             Misc.free(structuralChangeCursor);
-                            structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(writer.getTableName(), newStructureVersion - 1);
+                            structuralChangeCursor = tableSequencerAPI.getMetadataChangeLog(writer.getTableName(), newStructureVersion - 1);
                             hasNext = structuralChangeCursor.hasNext();
                         }
 

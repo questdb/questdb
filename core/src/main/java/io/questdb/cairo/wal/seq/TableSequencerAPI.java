@@ -151,7 +151,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
+    public @NotNull TableMetadataChangeLog getMetadataChangeLog(final CharSequence tableName, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             TableMetadataChangeLog metadataChangeLog;
             try {

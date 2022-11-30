@@ -78,7 +78,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final String tableName;
-    private final TableSequencerAPI tableSequencerAPI;
+    private final TableSequencerAPI sequencer;
     private final int walId;
     private final String walName;
     private int columnCount;
@@ -99,7 +99,7 @@ public class WalWriter implements TableWriterAPI {
 
     public WalWriter(CairoConfiguration configuration, String tableName, TableSequencerAPI tableSequencerAPI) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
-        this.tableSequencerAPI = tableSequencerAPI;
+        this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
@@ -141,49 +141,10 @@ public class WalWriter implements TableWriterAPI {
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
         }
-        if (alterOp.isStructureChange()) {
-            long txn;
-            do {
-                boolean retry = true;
-                try {
-                    metaValidatorSvc.startAlterValidation();
-                    alterOp.apply(metaValidatorSvc, true);
-                    if (metaValidatorSvc.structureVersion != metadata.getStructureVersion() + 1) {
-                        retry = false;
-                        throw CairoException.nonCritical()
-                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables [table=").put(tableName)
-                            .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                            .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
-                    }
-                } catch (CairoException e) {
-                    if (retry) {
-                        // Table schema (metadata) changed and this Alter is not valid anymore.
-                        // Try to update WAL metadata to latest and repeat one more time.
-                        goActive();
-                        alterOp.apply(metaValidatorSvc, true);
-                    } else {
-                        throw e;
-                    }
-                }
-
-                txn = tableSequencerAPI.nextStructureTxn(tableName, getStructureVersion(), alterOp);
-                if (txn == NO_TXN) {
-                    applyMetadataChangeLog(Long.MAX_VALUE);
-                }
-            } while (txn == NO_TXN);
-
-            // Apply to itself.
-            try {
-                alterOp.apply(metaWriterSvc, true);
-            } catch (Throwable th) {
-                // Transaction successful, but writing using this WAL writer should not be possible.
-                LOG.error().$("Exception during alter [ex=").$(th).I$();
-                distressed = true;
-            }
-            return txn;
+        if (alterOp.isStructural()) {
+            return applyStructural(alterOp);
         } else {
-            return applyNonStructuralOperation(alterOp);
+            return applyNonStructural(alterOp);
         }
     }
 
@@ -192,7 +153,7 @@ public class WalWriter implements TableWriterAPI {
     public long apply(UpdateOperation operation) {
         // it is guaranteed that there is no join in UPDATE statement
         // because SqlCompiler rejects the UPDATE if it contains join
-        return applyNonStructuralOperation(operation);
+        return applyNonStructural(operation);
 
         // when join is allowed in UPDATE we have 2 options
         // 1. we could write the updated partitions into WAL.
@@ -207,6 +168,27 @@ public class WalWriter implements TableWriterAPI {
         //   put it into the SQL event as a requirement for running the SQL.
         //   when the WAL event is processed we would need to query the exact
         //   versions of each table involved in the join when running the SQL.
+    }
+
+    private void applyMetadataChangeLog(long structureVersionHi) {
+        long nextStructVer = getStructureVersion();
+        try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableName, nextStructVer)) {
+            while (log.hasNext() && nextStructVer < structureVersionHi) {
+                TableMetadataChange chg = log.next();
+                try {
+                    chg.apply(metaWriterSvc, true);
+                } catch (CairoException e) {
+                    distressed = true;
+                    throw e;
+                }
+
+                if (++nextStructVer != getStructureVersion()) {
+                    distressed = true;
+                    throw CairoException.critical(0)
+                        .put("could not apply table definition changes to the current transaction, version unchanged");
+                }
+            }
+        }
     }
 
     @Override
@@ -540,39 +522,61 @@ public class WalWriter implements TableWriterAPI {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    private void applyMetadataChangeLog(long structureVersionHi) {
-        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableName, getStructureVersion())) {
-            long metadataVersion = getStructureVersion();
-            while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
-                TableMetadataChange tableMetadataChange = structureChangeCursor.next();
-                try {
-                    tableMetadataChange.apply(metaWriterSvc, true);
-                } catch (CairoException e) {
-                    distressed = true;
-                    throw e;
-                }
-
-                if (++metadataVersion != getStructureVersion()) {
-                    distressed = true;
-                    throw CairoException.critical(0)
-                            .put("could not apply table definition changes to the current transaction, version unchanged");
-                }
-            }
-        }
-    }
-
-    private long applyNonStructuralOperation(AbstractOperation operation) {
-        if (operation.getSqlExecutionContext() == null) {
+    private long applyNonStructural(AbstractOperation op) {
+        if (op.getSqlExecutionContext() == null) {
             throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
         }
         try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
+            lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
             return getSequencerTxn();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
             throw th;
         }
+    }
+
+    private long applyStructural(AlterOperation alterOp) {
+        long txn;
+        do {
+            boolean retry = true;
+            try {
+                metaValidatorSvc.startAlterValidation();
+                alterOp.apply(metaValidatorSvc, true);
+                if (metaValidatorSvc.structureVersion != metadata.getStructureVersion() + 1) {
+                    retry = false;
+                    throw CairoException.nonCritical()
+                        .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
+                            " are currently not supported for WAL tables [table=").put(tableName)
+                        .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                        .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
+                }
+            } catch (CairoException e) {
+                if (retry) {
+                    // Table schema (metadata) changed and this Alter is not valid anymore.
+                    // Try to update WAL metadata to latest and repeat one more time.
+                    goActive();
+                    alterOp.apply(metaValidatorSvc, true);
+                } else {
+                    throw e;
+                }
+            }
+
+            txn = sequencer.nextStructureTxn(tableName, getStructureVersion(), alterOp);
+            if (txn == NO_TXN) {
+                applyMetadataChangeLog(Long.MAX_VALUE);
+            }
+        } while (txn == NO_TXN);
+
+        // Apply to itself.
+        try {
+            alterOp.apply(metaWriterSvc, true);
+        } catch (Throwable th) {
+            // Transaction successful, but writing using this WAL writer should not be possible.
+            LOG.error().$("Exception during alter [ex=").$(th).I$();
+            distressed = true;
+        }
+        return txn;
     }
 
     private void checkDistressed() {
@@ -862,7 +866,7 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = tableSequencerAPI.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            seqTxn = sequencer.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }

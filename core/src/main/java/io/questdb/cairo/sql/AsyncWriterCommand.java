@@ -36,7 +36,7 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     String getCommandName();
 
-    int getCommandType();
+    int getCmdType();
 
     long getCorrelationId();
 
@@ -48,7 +48,7 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     long getTableVersion();
 
-    boolean isStructureChange();
+    boolean isStructural();
 
     void serialize(TableWriterTask task);
 
