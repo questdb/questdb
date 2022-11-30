@@ -7132,6 +7132,17 @@ create table tab as (
         );
     }
 
+    @Test
+    public void testGssApiRequestClosedGracefully() throws Exception {
+        final String script = ">0000000804d21630\n" +
+            "<4e\n";
+        assertHexScript(
+            NetworkFacadeImpl.INSTANCE,
+            script,
+            getHexPgWireConfig()
+        );
+    }
+
     private void assertHexScript(String script) throws Exception {
         final Rnd rnd = new Rnd();
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration() {
