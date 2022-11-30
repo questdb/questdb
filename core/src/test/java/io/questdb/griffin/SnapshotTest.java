@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.wal.WalPurgeJobTest;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
@@ -608,9 +607,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             compiler.compile("snapshot prepare", sqlExecutionContext);
             Thread controlThread1 = new Thread(() -> {
                 clock.timestamp = interval;
-                while (job.run(0)) {
-                    // run until empty
-                }
+                job.drain(0);
                 Path.clearThreadLocals();
             });
 
@@ -625,9 +622,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             compiler.compile("snapshot complete", sqlExecutionContext);
             Thread controlThread2 = new Thread(() -> {
                 clock.timestamp = 2 * interval;
-                while (job.run(0)) {
-                    // run until empty
-                }
+                job.drain(0);
                 Path.clearThreadLocals();
             });
 
@@ -735,9 +730,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter1.getTableName()), 0);
-                    addColumnC.addColumnToList("C", 8, ColumnType.INT, 0, false, false, 0);
-                    walWriter1.apply(addColumnC.build(), true);
+                    walWriter1.addColumn("C", ColumnType.INT);
                     walWriter1.commit();
 
                     TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));

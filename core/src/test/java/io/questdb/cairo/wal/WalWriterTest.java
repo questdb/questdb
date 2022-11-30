@@ -3045,10 +3045,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.addColumnToList(columnName, 11, columnType, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
+    static void addColumn(WalWriter writer, String columnName, int columnType) {
+        writer.addColumn(columnName, columnType);
     }
 
     static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {

@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -41,13 +40,10 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
-    private final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
     private final MicrosecondClock clock;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final boolean defaultSymbolCacheFlag;
-    private final int defaultSymbolCapacity;
     private final int maxColumnNameLength;
     private final boolean stringToCharCastAllowed;
     private final LineProtoTimestampAdapter timestampAdapter;
@@ -63,9 +59,7 @@ class LineTcpMeasurementEvent implements Closeable {
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
             int maxColumnNameLength,
-            boolean autoCreateNewColumns,
-            int defaultSymbolCapacity,
-            boolean defaultSymbolCacheFlag
+            boolean autoCreateNewColumns
     ) {
         this.maxColumnNameLength = maxColumnNameLength;
         this.autoCreateNewColumns = autoCreateNewColumns;
@@ -74,8 +68,6 @@ class LineTcpMeasurementEvent implements Closeable {
         this.timestampAdapter = timestampAdapter;
         this.defaultColumnTypes = defaultColumnTypes;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
-        this.defaultSymbolCapacity = defaultSymbolCapacity;
-        this.defaultSymbolCacheFlag = defaultSymbolCacheFlag;
     }
 
     @Override
@@ -186,11 +178,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
                         writer.commit();
                         try {
-                            alterOperationBuilder.clear();
-                            alterOperationBuilder
-                                    .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
-                                    .addColumnToList(columnName, 0, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
-                            writer.apply(alterOperationBuilder.build(), true);
+                            writer.addColumn(columnName, colType);
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
                             if (colIndex < 0) {

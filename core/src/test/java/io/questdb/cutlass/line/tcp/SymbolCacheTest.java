@@ -680,6 +680,14 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
+        public void addColumn(CharSequence columnName, int columnType) {
+        }
+
+        @Override
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity) {
+        }
+
+        @Override
         public void close() {
         }
 

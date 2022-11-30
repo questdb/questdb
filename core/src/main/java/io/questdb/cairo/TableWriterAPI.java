@@ -83,4 +83,44 @@ public interface TableWriterAPI extends Closeable {
     void rollback();
 
     void truncate();
+
+    void addColumn(CharSequence columnName, int columnType);
+
+    /**
+     * Adds new column to table, which can be either empty or can have data already. When existing columns
+     * already have data this function will create ".top" file in addition to column files. ".top" file contains
+     * size of partition at the moment of column creation. It must be used to accurately position inside new
+     * column when either appending or reading.
+     *
+     * <b>Failures</b>
+     * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
+     * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
+     * Calling code must close TableWriter instance and open another when problems are rectified. Those problems would be
+     * either with disk or memory or both.
+     * <p>
+     * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
+     * add columns again.
+     *
+     * <b>Transactions</b>
+     * <p>
+     * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
+     * still have committed transaction.
+     *
+     * @param columnName              of column either ASCII or UTF8 encoded.
+     * @param symbolCapacity          when column columnType is SYMBOL this parameter specifies approximate capacity for symbol map.
+     *                                It should be equal to number of unique symbol values stored in the table and getting this
+     *                                value badly wrong will cause performance degradation. Must be power of 2
+     * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
+     * @param columnType              {@link ColumnType}
+     * @param isIndexed               configures column to be indexed or not
+     * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
+     */
+    void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    );
 }

@@ -81,6 +81,7 @@ public class WalWriter implements TableWriterAPI {
     private final TableSequencerAPI sequencer;
     private final int walId;
     private final String walName;
+    private final AlterOperation alterOp = new AlterOperation();
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
@@ -223,6 +224,43 @@ public class WalWriter implements TableWriterAPI {
             throw th;
         }
         return NO_TXN;
+    }
+
+    @Override
+    public void addColumn(CharSequence columnName, int columnType) {
+        addColumn(
+                columnName,
+                columnType,
+                configuration.getDefaultSymbolCapacity(),
+                configuration.getDefaultSymbolCacheFlag(),
+                false,
+                configuration.getIndexValueBlockSize()
+        );
+    }
+
+    @Override
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableName,
+                0,
+                columnName,
+                0,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity
+        );
+        apply(alterOp, true);
     }
 
     public void doClose(boolean truncate) {

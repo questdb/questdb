@@ -369,9 +369,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
     }
 
-    public void addColumn(CharSequence name, int type) {
-        checkColumnName(name);
-        addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
+    @Override
+    public void addColumn(CharSequence columnName, int columnType) {
+        addColumn(
+                columnName,
+                columnType,
+                configuration.getDefaultSymbolCapacity(),
+                configuration.getDefaultSymbolCacheFlag(),
+                false,
+                0,
+                false
+        );
+    }
+
+    @Override
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                false
+        );
     }
 
     /**
@@ -394,20 +422,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param name                    of column either ASCII or UTF8 encoded.
-     * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
+     * @param columnName                    of column either ASCII or UTF8 encoded.
+     * @param symbolCapacity          when column columnType is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param type                    {@link ColumnType}
+     * @param columnType                    {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
-    @Override
     public void addColumn(
-            CharSequence name,
-            int type,
+            CharSequence columnName,
+            int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
@@ -419,41 +446,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
 
         checkDistressed();
-        checkColumnName(name);
+        checkColumnName(columnName);
 
-        if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
-            throw CairoException.duplicateColumn(name);
+        if (getColumnIndexQuiet(metaMem, columnName, columnCount) != -1) {
+            throw CairoException.duplicateColumn(columnName);
         }
 
         commit();
 
         long columnNameTxn = getTxn();
-        LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
+        LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(name, type, isIndexed, indexValueBlockCapacity, isSequential);
+        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential);
 
         // close _meta so we can rename it
         metaMem.close();
 
         // validate new meta
-        validateSwapMeta(name);
+        validateSwapMeta(columnName);
 
         // rename _meta to _meta.prev
-        renameMetaToMetaPrev(name);
+        renameMetaToMetaPrev(columnName);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(name);
+        writeRestoreMetaTodo(columnName);
 
         // rename _meta.swp to _meta
-        renameSwapMetaToMeta(name);
+        renameSwapMetaToMeta(columnName);
 
-        if (ColumnType.isSymbol(type)) {
+        if (ColumnType.isSymbol(columnType)) {
             try {
-                createSymbolMapWriter(name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
             } catch (CairoException e) {
-                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, name, e);
+                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
             }
         } else {
             // maintain sparse list of symbol writers
@@ -461,7 +488,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // add column objects
-        configureColumn(type, isIndexed, columnCount);
+        configureColumn(columnType, isIndexed, columnCount);
         if (isIndexed) {
             populateDenseIndexerList();
         }
@@ -480,9 +507,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
-                openNewColumnFiles(name, isIndexed, indexValueBlockCapacity);
+                openNewColumnFiles(columnName, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
-                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
+                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, columnName, e);
             }
         }
 
@@ -498,9 +525,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity, columnIndex);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex);
 
-        LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
+        LOG.info().$("ADDED column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
     @Override
