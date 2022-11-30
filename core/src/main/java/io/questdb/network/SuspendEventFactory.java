@@ -35,13 +35,13 @@ public class SuspendEventFactory {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new EventFdEvent(configuration.getEpollFacade());
+                return new EventFdSuspendEvent(configuration.getEpollFacade());
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
-                return new PipeEvent(configuration.getKqueueFacade());
+                return new PipeSuspendEvent(configuration.getKqueueFacade());
             case Os.WINDOWS:
-                // TODO
+                return new AtomicSuspendEvent();
             default:
                 throw new RuntimeException();
         }

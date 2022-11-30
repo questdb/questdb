@@ -24,8 +24,6 @@
 
 package io.questdb.network;
 
-import org.jetbrains.annotations.TestOnly;
-
 import java.io.Closeable;
 
 /**
@@ -38,11 +36,11 @@ import java.io.Closeable;
  * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
  */
 public interface SuspendEvent extends Closeable {
+
     /**
-     * @throws NetworkError if the event wasn't triggered.
+     * Returns true if the event was triggered.
      */
-    @TestOnly
-    void checkTriggered();
+    boolean checkTriggered();
 
     /**
      * Event is assumed to be held and then closed by two parties.

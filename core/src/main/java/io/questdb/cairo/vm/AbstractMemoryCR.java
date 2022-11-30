@@ -35,7 +35,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    protected long fd = -1;
+    protected int fd = -1;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -57,7 +57,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return getBin(offset, bsview);
     }
 
-    public long getFd() {
+    public int getFd() {
         return fd;
     }
 

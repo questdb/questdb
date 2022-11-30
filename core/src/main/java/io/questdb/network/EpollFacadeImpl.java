@@ -35,7 +35,7 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public int epollCtl(int epFd, int op, long fd, long eventPtr) {
+    public int epollCtl(int epFd, int op, int fd, long eventPtr) {
         return EpollAccessor.epollCtl(epFd, op, fd, eventPtr);
     }
 

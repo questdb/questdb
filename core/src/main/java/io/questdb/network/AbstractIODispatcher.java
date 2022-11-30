@@ -38,8 +38,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected static final int DISCONNECT_SRC_IDLE = 1;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    // M_XYZ = 3 is defined in the child classes
     protected static final int M_FD = 1;
-    protected static final int M_OP = 3;
+    protected static final int M_OPERATION = 2;
     protected static final int M_TIMESTAMP = 0;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
@@ -58,7 +59,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
-    protected final LongMatrix<C> pending = new LongMatrix<>(5);
+    protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
@@ -66,7 +67,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private final int rcvBufSize;
     private final int sndBufSize;
     protected boolean closed = false;
-    protected long serverFd;
+    protected int serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
     private int port;
@@ -191,14 +192,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         }
     }
 
-    private void addPending(long fd, long timestamp) {
+    private void addPending(int fd, long timestamp) {
         // append pending connection
         // all rows below watermark will be registered with epoll (or similar)
         int r = pending.addRow();
         LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
         pending.set(r, M_TIMESTAMP, timestamp);
         pending.set(r, M_FD, fd);
-        pending.set(r, M_OP, -1);
+        pending.set(r, M_OPERATION, -1);
         pending.set(r, ioContextFactory.newInstance(fd, this));
         pendingAdded(r);
     }
@@ -242,7 +243,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
 
-            long fd = nf.accept(serverFd);
+            int fd = nf.accept(serverFd);
 
             if (fd < 0) {
                 if (nf.errno() != Net.EWOULDBLOCK) {
@@ -295,12 +296,12 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             return;
         }
 
-        final long fd = context.getFd();
+        final int fd = context.getFd();
         LOG.info()
             .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
             .$(", fd=").$(fd)
             .$(", src=").$(DISCONNECT_SOURCES[src])
-            .$(']').$();
+            .I$();
         nf.close(fd, LOG);
         if (closed) {
             Misc.free(context);

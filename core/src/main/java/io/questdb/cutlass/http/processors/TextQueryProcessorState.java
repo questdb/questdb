@@ -94,7 +94,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
-    public long getFd() {
+    public int getFd() {
         return httpConnectionContext.getFd();
     }
 

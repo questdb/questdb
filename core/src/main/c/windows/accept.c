@@ -29,7 +29,7 @@
 #include "errno.h"
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_abortAccept
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     jint r = CloseHandle((HANDLE) fd);
     if (!r) {
         SaveLastError();

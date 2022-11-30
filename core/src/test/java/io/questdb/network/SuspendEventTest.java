@@ -24,9 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Os;
-import org.hamcrest.CoreMatchers;
-import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -35,21 +32,12 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class SuspendEventTest {
 
     @Test
-    public void testCreateAndClose() throws Exception {
+    public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             SuspendEvent event = SuspendEventFactory.newInstance(new DefaultIODispatcherConfiguration());
-            if (Os.type != Os.WINDOWS) {
-                // Read is non-blocking only on Linux, BSD and OS X.
-                // The event is not yet triggered, so read has to fail.
-                try {
-                    event.checkTriggered();
-                    Assert.fail();
-                } catch (NetworkError e) {
-                    MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("read value"));
-                }
-            }
+            Assert.assertFalse(event.checkTriggered());
             event.trigger();
-            event.checkTriggered();
+            Assert.assertTrue(event.checkTriggered());
             // We need to close the event two times as if it's closed by both waiting and sending sides.
             event.close();
             event.close();

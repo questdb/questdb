@@ -58,7 +58,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean compressionComplete;
     private int crc = 0;
     private boolean deflateBeforeSend = false;
-    private long fd;
+    private int fd;
     private boolean headersSent;
     private long total = 0;
     private long totalBytesSent = 0;
@@ -247,9 +247,9 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (n < 0) {
                 // disconnected
                 LOG.error()
-                        .$("disconnected [errno=").$(nf.errno())
-                        .$(", fd=").$(fd)
-                        .$(']').$();
+                    .$("disconnected [errno=").$(nf.errno())
+                    .$(", fd=").$(fd)
+                    .$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
             }
             if (n == 0) {
@@ -278,7 +278,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         return totalBytesSent;
     }
 
-    void of(long fd) {
+    void of(int fd) {
         this.fd = fd;
         if (fd > -1) {
             this.buffer.reopen();

@@ -34,19 +34,19 @@ public interface ColumnIndexer extends QuietCloseable {
     void closeSlider();
 
     void configureFollowerAndWriter(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence name,
-            long columnNameTxn,
-            MemoryMA columnMem,
-            long columnTop
+        CairoConfiguration configuration,
+        Path path,
+        CharSequence name,
+        long columnNameTxn,
+        MemoryMA columnMem,
+        long columnTop
     );
 
     void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);
 
     void distress();
 
-    long getFd();
+    int getFd();
 
     long getSequence();
 

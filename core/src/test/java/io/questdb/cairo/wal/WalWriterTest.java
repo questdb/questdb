@@ -615,10 +615,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Segment 2 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + tableName +
-                            File.separatorChar + walName +
-                            File.separatorChar + "2" +
-                            File.separatorChar + TableUtils.META_FILE_NAME + "]"));
+                        File.separatorChar + tableName +
+                        File.separatorChar + walName +
+                        File.separatorChar + "2" +
+                        File.separatorChar + TableUtils.META_FILE_NAME + "]"));
                 }
             }
         });
@@ -1053,10 +1053,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal()
             ) {
                 createTable(model);
             }
@@ -1119,10 +1119,10 @@ public class WalWriterTest extends AbstractGriffinTest {
             final IntList symbolCounts = new IntList();
             symbolCounts.add(numOfRows);
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal()
             ) {
                 for (Map.Entry<Integer, AtomicInteger> counterEntry : counters.entrySet()) {
                     final int walId = counterEntry.getKey();
@@ -1214,7 +1214,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
                         return -1;
                     }
@@ -1303,9 +1303,9 @@ public class WalWriterTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             // Schema with 8 columns, 8 bytes each = 64 bytes per row
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .timestamp("ts")
-                    .col("a", ColumnType.LONG)
-                    .wal()
+                .timestamp("ts")
+                .col("a", ColumnType.LONG)
+                .wal()
             ) {
                 createTable(model);
             }
@@ -1376,7 +1376,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
@@ -1405,7 +1405,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeFails() throws Exception {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
@@ -1439,7 +1439,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeMissing() throws Exception {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(long fd, long offset) {
+            public long readNonNegativeLong(int fd, long offset) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
@@ -1474,34 +1474,34 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = "testTableAllTypes";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("int", ColumnType.INT)
-                    .col("byte", ColumnType.BYTE)
-                    .col("long", ColumnType.LONG)
-                    .col("long256", ColumnType.LONG256)
-                    .col("double", ColumnType.DOUBLE)
-                    .col("float", ColumnType.FLOAT)
-                    .col("short", ColumnType.SHORT)
-                    .col("timestamp", ColumnType.TIMESTAMP)
-                    .col("char", ColumnType.CHAR)
-                    .col("boolean", ColumnType.BOOLEAN)
-                    .col("date", ColumnType.DATE)
-                    .col("string", ColumnType.STRING)
-                    .col("geoByte", ColumnType.GEOBYTE)
-                    .col("geoInt", ColumnType.GEOINT)
-                    .col("geoShort", ColumnType.GEOSHORT)
-                    .col("geoLong", ColumnType.GEOLONG)
-                    .col("bin", ColumnType.BINARY)
-                    .col("bin2", ColumnType.BINARY)
-                    .col("long256b", ColumnType.LONG256) // putLong256(int columnIndex, Long256 value)
-                    .col("long256c", ColumnType.LONG256) // putLong256(int columnIndex, CharSequence hexString)
-                    .col("long256d", ColumnType.LONG256) // putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end)
-                    .col("timestampb", ColumnType.TIMESTAMP) // putTimestamp(int columnIndex, CharSequence value)
-                    .col("stringb", ColumnType.STRING) // putStr(int columnIndex, char value)
-                    .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
-                    .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
-                    .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
-                    .timestamp("ts")
-                    .wal()
+                .col("int", ColumnType.INT)
+                .col("byte", ColumnType.BYTE)
+                .col("long", ColumnType.LONG)
+                .col("long256", ColumnType.LONG256)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("short", ColumnType.SHORT)
+                .col("timestamp", ColumnType.TIMESTAMP)
+                .col("char", ColumnType.CHAR)
+                .col("boolean", ColumnType.BOOLEAN)
+                .col("date", ColumnType.DATE)
+                .col("string", ColumnType.STRING)
+                .col("geoByte", ColumnType.GEOBYTE)
+                .col("geoInt", ColumnType.GEOINT)
+                .col("geoShort", ColumnType.GEOSHORT)
+                .col("geoLong", ColumnType.GEOLONG)
+                .col("bin", ColumnType.BINARY)
+                .col("bin2", ColumnType.BINARY)
+                .col("long256b", ColumnType.LONG256) // putLong256(int columnIndex, Long256 value)
+                .col("long256c", ColumnType.LONG256) // putLong256(int columnIndex, CharSequence hexString)
+                .col("long256d", ColumnType.LONG256) // putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end)
+                .col("timestampb", ColumnType.TIMESTAMP) // putTimestamp(int columnIndex, CharSequence value)
+                .col("stringb", ColumnType.STRING) // putStr(int columnIndex, char value)
+                .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
+                .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
+                .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
+                .timestamp("ts")
+                .wal()
             ) {
                 createTable(model);
             }
@@ -1761,8 +1761,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.BYTE)
-                    .wal()
+                .col("a", ColumnType.BYTE)
+                .wal()
             ) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
@@ -1884,10 +1884,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Segment 1 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + tableName +
-                            File.separatorChar + walName +
-                            File.separatorChar + "1" +
-                            File.separatorChar + TableUtils.META_FILE_NAME + "]"));
+                        File.separatorChar + tableName +
+                        File.separatorChar + walName +
+                        File.separatorChar + "1" +
+                        File.separatorChar + TableUtils.META_FILE_NAME + "]"));
                 }
             }
         });
@@ -1977,10 +1977,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .col("c", ColumnType.SYMBOL)
-                    .wal()
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .col("c", ColumnType.SYMBOL)
+                .wal()
             ) {
                 createTable(model);
             }
@@ -2011,9 +2011,9 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .col("c", ColumnType.SYMBOL)
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .col("c", ColumnType.SYMBOL)
             ) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, 1)) {
                     assertEquals(3, reader.getColumnCount());
@@ -2069,8 +2069,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.INT)
-                    .col("c", ColumnType.SYMBOL)
+                .col("a", ColumnType.INT)
+                .col("c", ColumnType.SYMBOL)
             ) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, 1)) {
                     assertEquals(3, reader.getColumnCount());
@@ -2212,9 +2212,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.BYTE)
-                    .col("c", ColumnType.STRING)
-                    .wal()
+                .col("a", ColumnType.BYTE)
+                .col("c", ColumnType.STRING)
+                .wal()
             ) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 1, 1)) {
                     assertEquals(2, reader.getColumnCount());
@@ -2659,11 +2659,11 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = "testSymTable";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.BYTE)
-                    .col("b", ColumnType.SYMBOL)
-                    .col("c", ColumnType.SYMBOL)
-                    .col("d", ColumnType.SYMBOL)
-                    .wal()
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SYMBOL)
+                .col("c", ColumnType.SYMBOL)
+                .col("d", ColumnType.SYMBOL)
+                .wal()
             ) {
                 createTable(model);
             }
@@ -2814,10 +2814,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
 
         FilesFacade ff = new FilesFacadeImpl() {
-            long eventFileFd;
+            int eventFileFd;
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 long len = super.length(fd);
                 if (fd == eventFileFd && evenFileLengthCallBack.get() != null) {
                     try {
@@ -2831,7 +2831,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == eventFileFd) {
                     if (evenFileLengthCallBack.get() != null) {
                         try {
@@ -2850,8 +2850,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long openRO(LPSZ path) {
-                long fd = super.openRO(path);
+            public int openRO(LPSZ path) {
+                int fd = super.openRO(path);
                 if (Chars.endsWith(path, EVENT_FILE_NAME)) {
                     eventFileFd = fd;
                 }
@@ -2862,10 +2862,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal()
             ) {
                 createTable(model);
             }
@@ -2887,7 +2887,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             drainWalQueue();
 
             assertSql(tableName, "a\tb\tts\n" +
-                    "1\t\t1970-01-01T00:00:00.000000Z\n");
+                "1\t\t1970-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -2896,9 +2896,9 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts") // not a WAL table
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts") // not a WAL table
             ) {
                 createTable(model);
             }
@@ -2913,8 +2913,8 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
-                ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
-                : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
+            ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
+            : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
     }
 
     private static TableModel defaultModel(String tableName) {
@@ -2924,15 +2924,15 @@ public class WalWriterTest extends AbstractGriffinTest {
     @SuppressWarnings("resource")
     private static TableModel defaultModel(String tableName, boolean withTimestamp) {
         return withTimestamp
-                ? new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.STRING)
-                .timestamp("ts")
-                .wal()
-                : new TableModel(configuration, tableName, PartitionBy.NONE)
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.STRING)
-                .wal();
+            ? new TableModel(configuration, tableName, PartitionBy.HOUR)
+            .col("a", ColumnType.BYTE)
+            .col("b", ColumnType.STRING)
+            .timestamp("ts")
+            .wal()
+            : new TableModel(configuration, tableName, PartitionBy.NONE)
+            .col("a", ColumnType.BYTE)
+            .col("b", ColumnType.STRING)
+            .wal();
     }
 
     private void assertColumnMetadata(TableModel expected, WalReader reader) {
@@ -3059,8 +3059,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             byte expectedByte = expected.byteAt(i);
             byte actualByte = actual.byteAt(i);
             assertEquals("Binary sequences not equals at offset " + i
-                            + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
-                    expectedByte, actualByte);
+                    + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
+                expectedByte, actualByte);
         }
     }
 
@@ -3078,10 +3078,10 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     static void createTable(TableModel model) {
         engine.createTableUnsafe(
-                AllowAllCairoSecurityContext.INSTANCE,
-                model.getMem(),
-                model.getPath(),
-                model
+            AllowAllCairoSecurityContext.INSTANCE,
+            model.getMem(),
+            model.getPath(),
+            model
         );
     }
 

@@ -443,7 +443,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     @Override
-    public PGConnectionContext of(long fd, IODispatcher<PGConnectionContext> dispatcher) {
+    public PGConnectionContext of(int fd, IODispatcher<PGConnectionContext> dispatcher) {
         PGConnectionContext r = super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (fd == -1) {

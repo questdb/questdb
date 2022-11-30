@@ -44,9 +44,9 @@ import org.junit.Test;
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
+        (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+        (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -130,7 +130,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean bindUdp(long fd, int ipv4Address, int port) {
+                public boolean bindUdp(int fd, int ipv4Address, int port) {
                     return false;
                 }
             };
@@ -148,10 +148,9 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean join(long fd, int bindIPv4Address, int groupIPv4Address) {
+                public boolean join(int fd, int bindIPv4Address, int groupIPv4Address) {
                     return false;
                 }
-
             };
             LineUdpReceiverConfiguration receiverCfg = new DefaultLineUdpReceiverConfiguration() {
                 @Override
@@ -168,7 +167,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public long socketUdp() {
+                public int socketUdp() {
                     return -1;
                 }
             };
@@ -185,7 +184,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertCannotSetReceiveBuffer(ReceiverFactory factory) throws Exception {
         NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int setRcvBuf(long fd, int size) {
+            public int setRcvBuf(int fd, int size) {
                 return -1;
             }
         };
@@ -227,25 +226,25 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertReceive(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String expected = "colour\tshape\tsize\ttimestamp\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n";
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, 0, null, null, metrics)) {
                     // create table
                     try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
-                            .col("colour", ColumnType.SYMBOL)
-                            .col("shape", ColumnType.SYMBOL)
-                            .col("size", ColumnType.DOUBLE)
-                            .timestamp()) {
+                        .col("colour", ColumnType.SYMBOL)
+                        .col("shape", ColumnType.SYMBOL)
+                        .col("size", ColumnType.DOUBLE)
+                        .timestamp()) {
                         CairoTestUtils.create(model);
                     }
 
@@ -287,14 +286,14 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface ReceiverFactory {
         AbstractLineProtoUdpReceiver create(
-                io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration configuration,
-                CairoEngine engine,
-                WorkerPool workerPool,
-                boolean isWorkerPoolLocal,
-                int sharedWorkerCount,
-                @Nullable FunctionFactoryCache functionFactoryCache,
-                @Nullable DatabaseSnapshotAgent snapshotAgent,
-                Metrics metrics
+            io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool,
+            boolean isWorkerPoolLocal,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
         );
     }
 }

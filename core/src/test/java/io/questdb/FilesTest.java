@@ -67,7 +67,7 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(5, Files.length(path));
 
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
                 try {
                     Files.allocate(fd, 10);
                     Assert.assertEquals(10, Files.length(path));
@@ -88,7 +88,7 @@ public class FilesTest {
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(5, Files.length(path));
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
 
                 long M50 = 100 * 1024L * 1024L;
                 try {
@@ -170,8 +170,8 @@ public class FilesTest {
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
                 try (
-                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
-                        Path p2 = new Path().of(dst).slash$()
+                    Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
+                    Path p2 = new Path().of(dst).slash$()
                 ) {
                     try {
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
@@ -212,7 +212,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 File f = temporaryFolder.newFile();
-                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
+                int fd = Files.openRW(path.of(f.getAbsolutePath()).$());
                 Assert.assertTrue(Files.exists(fd));
                 Assert.assertTrue(Files.remove(path));
                 Assert.assertFalse(Files.exists(fd));
@@ -228,7 +228,7 @@ public class FilesTest {
             TestUtils.writeStringToFile(temp, "abcde");
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
                 Assert.assertTrue(Files.exists(path));
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
                 Assert.assertEquals(5, Files.length(path));
 
                 try {
@@ -287,8 +287,8 @@ public class FilesTest {
 
                 src.of(temporaryFolder.getRoot().getAbsolutePath());
                 try (
-                        Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
-                        Path p2 = new Path().of(dst).slash$()
+                    Path dst = new Path().of(temporaryFolder.getRoot().getPath()).put("copy").$();
+                    Path p2 = new Path().of(dst).slash$()
                 ) {
                     try {
                         Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
@@ -382,11 +382,11 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
             try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
-                long fd = Files.openCleanRW(path, 1024);
+                int fd = Files.openCleanRW(path, 1024);
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(1024, Files.length(path));
 
-                long fd2 = Files.openCleanRW(path, 2048);
+                int fd2 = Files.openCleanRW(path, 2048);
                 Assert.assertEquals(2048, Files.length(path));
 
                 Files.close(fd);
@@ -415,7 +415,7 @@ public class FilesTest {
                         try {
                             barrier.await();
                             for (int i = 0; i < iteration; i++) {
-                                long fd = Files.openCleanRW(path, fileSize);
+                                int fd = Files.openCleanRW(path, fileSize);
                                 if (fd < 0) {
                                     errors.incrementAndGet();
                                 }
@@ -447,7 +447,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                long fd1 = Files.openRW(path.$());
+                int fd1 = Files.openRW(path.$());
                 long fileSize = 4096;
                 long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
 
@@ -480,7 +480,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                long fd1 = Files.openRW(path.$());
+                int fd1 = Files.openRW(path.$());
                 long size2Gb = (2L << 30) + 4096;
                 long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
 
@@ -531,12 +531,12 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (
-                    Path path1 = new Path().of(temp.getAbsolutePath());
-                    Path path2 = new Path().of(temp.getAbsolutePath())
+                Path path1 = new Path().of(temp.getAbsolutePath());
+                Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                long fd1 = Files.openRW(path1.$());
+                int fd1 = Files.openRW(path1.$());
                 path2.put(".2").$();
-                long fd2 = 0;
+                int fd2 = 0;
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -586,12 +586,12 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (
-                    Path path1 = new Path().of(temp.getAbsolutePath());
-                    Path path2 = new Path().of(temp.getAbsolutePath())
+                Path path1 = new Path().of(temp.getAbsolutePath());
+                Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                long fd1 = Files.openRW(path1.$());
+                int fd1 = Files.openRW(path1.$());
                 path2.put(".2").$();
-                long fd2 = Files.openRW(path2);
+                int fd2 = Files.openRW(path2);
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -654,8 +654,8 @@ public class FilesTest {
             File tmpFolder = temporaryFolder.newFolder("soft");
             String fileName = "いくつかの列.d";
             try (
-                    Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$()
+                Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).$();
+                Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$()
             ) {
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
 
@@ -692,7 +692,7 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(5, Files.length(path));
 
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
                 try {
                     Files.truncate(fd, 3);
                     Assert.assertEquals(3, Files.length(path));
@@ -712,18 +712,18 @@ public class FilesTest {
             File tmpFolder = temporaryFolder.newFolder("unlink");
             final String fileName = "いくつかの列.d";
             final String fileContent = "**unlink** deletes a name from the filesystem." + EOL +
-                    "If the name IS a symbolic link, the link is removed." + EOL +
-                    "If the name is the last link to the file, and no processes have" + EOL +
-                    "the file open, the file is deleted and the space it was using is " + EOL +
-                    "made available for reuse. Otherwise, if any process maintains the" + EOL +
-                    "file open, it will remain in existence until the last file descriptor" + EOL +
-                    "referring to it is closed." + EOL;
+                "If the name IS a symbolic link, the link is removed." + EOL +
+                "If the name is the last link to the file, and no processes have" + EOL +
+                "the file open, the file is deleted and the space it was using is " + EOL +
+                "made available for reuse. Otherwise, if any process maintains the" + EOL +
+                "file open, it will remain in existence until the last file descriptor" + EOL +
+                "referring to it is closed." + EOL;
 
 
             try (
-                    Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
-                    Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
-                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$()
+                Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
+                Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
+                Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$()
             ) {
                 createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
 
@@ -754,7 +754,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                long fd1 = Files.openRW(path.$());
+                int fd1 = Files.openRW(path.$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
@@ -786,8 +786,8 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                long fd1 = Files.openRW(path.$());
-                long fd2 = Files.openRW(path.chop$().put(".2").$());
+                int fd1 = Files.openRW(path.$());
+                int fd2 = Files.openRW(path.chop$().put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;
 
@@ -831,7 +831,7 @@ public class FilesTest {
     private static void assertEqualsFileContent(Path path, String fileContent) {
         final int buffSize = 2048;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        long fd = -1L;
+        int fd = -1;
         try {
             fd = Files.openRO(path);
             Assert.assertTrue(Files.exists(fd));
@@ -841,17 +841,17 @@ public class FilesTest {
             }
             if (size < 0 || size != Files.read(fd, buffPtr, size, 0)) {
                 throw new LogError(String.format(
-                        "Cannot read %s [errno=%d, size=%d]",
-                        path,
-                        Os.errno(),
-                        size
+                    "Cannot read %s [errno=%d, size=%d]",
+                    path,
+                    Os.errno(),
+                    size
                 ));
             }
             StringSink sink = Misc.getThreadLocalBuilder();
             Chars.utf8Decode(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
-            if (fd != -1L) {
+            if (fd != -1) {
                 Files.close(fd);
             }
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -873,10 +873,10 @@ public class FilesTest {
             Unsafe.getUnsafe().putByte(p++, bytes[i]);
         }
         Unsafe.getUnsafe().putByte(p, (byte) 0);
-        long fd = -1L;
+        int fd = -1;
         try {
             fd = Files.openAppend(path.concat(fileName).$());
-            if (fd > -1L) {
+            if (fd > -1) {
                 Files.truncate(fd, 0);
                 Files.append(fd, buffPtr, bytes.length);
                 Files.sync();
@@ -899,25 +899,25 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
             final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
-                    "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
-                    "received signal power S through an analog communication channel subject to" + EOL +
-                    "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
-                    "C = B * log_2(1 + S/N)" + EOL + EOL +
-                    "where" + EOL + EOL +
-                    "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
-                    "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
-                    "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
-                    "signal);" + EOL +
-                    "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
-                    "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
-                    "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
-                    "watts (or volts squared); and" + EOL +
-                    "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
-                    "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
-                    "power ratio, not aslogarithmic decibels)." + EOL;
+                "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
+                "received signal power S through an analog communication channel subject to" + EOL +
+                "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
+                "C = B * log_2(1 + S/N)" + EOL + EOL +
+                "where" + EOL + EOL +
+                "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
+                "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
+                "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
+                "signal);" + EOL +
+                "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
+                "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
+                "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
+                "watts (or volts squared); and" + EOL +
+                "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
+                "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
+                "power ratio, not aslogarithmic decibels)." + EOL;
             try (
-                    Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
-                    Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath()).concat(fileName).put(".1").$()
+                Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
+                Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath()).concat(fileName).put(".1").$()
             ) {
                 createTempFile(srcFilePath, fileName, fileContent);
 
@@ -950,19 +950,19 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("soft");
             final String fileContent = "A soft link is automatically interpreted and followed by the OS as " + EOL +
-                    "a path to another file, or directory, called the 'target'. The soft link is itself a " + EOL +
-                    "file that exists independently of its target. If the soft link is deleted, its target " + EOL +
-                    "remains unaffected. If a soft link points to a target, and the target is moved, renamed, " + EOL +
-                    "or deleted, the soft link is not automatically updated/deleted and continues to point" + EOL +
-                    "to the old target, now a non-existing file, or directory." + EOL +
-                    "Soft links may point to any file, or directory, irrespective of the volumes on which " + EOL +
-                    "both the link and the target reside." + EOL;
+                "a path to another file, or directory, called the 'target'. The soft link is itself a " + EOL +
+                "file that exists independently of its target. If the soft link is deleted, its target " + EOL +
+                "remains unaffected. If a soft link points to a target, and the target is moved, renamed, " + EOL +
+                "or deleted, the soft link is not automatically updated/deleted and continues to point" + EOL +
+                "to the old target, now a non-existing file, or directory." + EOL +
+                "Soft links may point to any file, or directory, irrespective of the volumes on which " + EOL +
+                "both the link and the target reside." + EOL;
 
             try (
-                    Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
-                    Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
-                    Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$()
+                Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
+                Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
+                Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
+                Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$()
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 

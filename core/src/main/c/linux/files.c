@@ -39,7 +39,7 @@
 #include <stdint.h>
 
 static inline jlong _io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     void *orgAddr = (void *) address;
     void *newAddr = mremap(orgAddr, (size_t) previousLen, (size_t) newLen, MREMAP_MAYMOVE);
     if (newAddr == MAP_FAILED) {
@@ -49,12 +49,12 @@ static inline jlong _io_questdb_std_Files_mremap0
 }
 
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
@@ -95,12 +95,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jlong input, jlong output, jlong srcOffset, jlong length) {
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong length) {
     size_t len = length > 0 ? length : SIZE_MAX;
     off_t offset = srcOffset;
 
     while (len > 0) {
-        ssize_t writtenLen = sendfile64((int)output, (int)input, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
+        ssize_t writtenLen = sendfile64((int) destFd, (int) srcFd, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
         if (writtenLen <= 0
             // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
             && errno != EINTR) {
@@ -114,7 +114,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0
-        (JNIEnv *e, jclass cls, jlong fd, jlong offset, jlong len, jint advise) {
+        (JNIEnv *e, jclass cls, jint fd, jlong offset, jlong len, jint advise) {
     return posix_fadvise((int) fd, (off_t) offset, (off_t) len, advise);
 }
 

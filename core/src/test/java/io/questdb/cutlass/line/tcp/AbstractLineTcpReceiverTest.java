@@ -191,9 +191,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     public static LineTcpReceiver createLineTcpReceiver(
-            LineTcpReceiverConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool
+        LineTcpReceiverConfiguration configuration,
+        CairoEngine cairoEngine,
+        WorkerPool workerPool
     ) {
         return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
@@ -238,7 +238,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected Socket newSocket() {
         final int ipv4address = Net.parseIPv4("127.0.0.1");
         final long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        final long fd = Net.socketTcp(true);
+        final int fd = Net.socketTcp(true);
         final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
@@ -330,17 +330,17 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 int rc = Net.send(socket.fd, bufaddr + sent, lineDataBytes.length - sent);
                 if (rc < 0) {
                     LOG.error().$("Data sending failed [rc=").$(rc)
-                            .$(", sent=").$(sent)
-                            .$(", bufferSize=").$(lineDataBytes.length)
-                            .I$();
+                        .$(", sent=").$(sent)
+                        .$(", bufferSize=").$(lineDataBytes.length)
+                        .I$();
                     throw new RuntimeException("Data sending failed [rc=" + rc + "]");
                 }
                 sent += rc;
                 if (sent != lineDataBytes.length) {
                     LOG.info().$("Data sending is in progress [rc=").$(rc)
-                            .$(", sent=").$(sent)
-                            .$(", bufferSize=").$(lineDataBytes.length)
-                            .I$();
+                        .$(", sent=").$(sent)
+                        .$(", bufferSize=").$(lineDataBytes.length)
+                        .I$();
                 }
             }
         } finally {
@@ -363,10 +363,10 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected class Socket implements AutoCloseable {
-        private final long fd;
+        private final int fd;
         private final long sockaddr;
 
-        private Socket(long sockaddr, long fd) {
+        private Socket(long sockaddr, int fd) {
             this.sockaddr = sockaddr;
             this.fd = fd;
         }

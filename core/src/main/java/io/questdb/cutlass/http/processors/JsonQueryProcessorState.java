@@ -96,10 +96,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean timings = false;
 
     public JsonQueryProcessorState(
-            HttpConnectionContext httpConnectionContext,
-            NanosecondClock nanosecondClock,
-            int floatScale,
-            int doubleScale
+        HttpConnectionContext httpConnectionContext,
+        NanosecondClock nanosecondClock,
+        int floatScale,
+        int doubleScale
     ) {
         this.httpConnectionContext = httpConnectionContext;
         resumeActions.extendAndSet(QUERY_PREFIX, this::onQueryPrefix);
@@ -158,10 +158,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void configure(
-            HttpRequestHeader request,
-            DirectByteCharSequence query,
-            long skip,
-            long stop
+        HttpRequestHeader request,
+        DirectByteCharSequence query,
+        long skip,
+        long stop
     ) throws Utf8Exception {
         this.query.clear();
         TextUtil.utf8Decode(query.getLo(), query.getHi(), this.query);
@@ -173,7 +173,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         timings = Chars.equalsNc("true", request.getUrlParam("timings"));
         explain = Chars.equalsNc("true", request.getUrlParam("explain"));
         quoteLargeNum = Chars.equalsNc("true", request.getUrlParam("quoteLargeNum"))
-                || Chars.equalsNc("con", request.getUrlParam("src"));
+            || Chars.equalsNc("con", request.getUrlParam("src"));
     }
 
     public LogRecord critical() {
@@ -238,9 +238,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void logExecuteNew() {
         info().$("execute-new ")
-                .$("[skip: ").$(skip)
-                .$(", stop: ").$(stop)
-                .$(']').$();
+            .$("[skip: ").$(skip)
+            .$(", stop: ").$(stop)
+            .$(']').$();
     }
 
     public void logSqlError(FlyweightMessageContainer container) {
@@ -249,11 +249,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void logTimings() {
         info().$("timings ")
-                .$("[compiler: ").$(compilerNanos)
-                .$(", count: ").$(recordCountNanos)
-                .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
-                .$(", q=`").utf8(query)
-                .$("`]").$();
+            .$("[compiler: ").$(compilerNanos)
+            .$(", count: ").$(recordCountNanos)
+            .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
+            .$(", q=`").utf8(query)
+            .$("`]").$();
     }
 
     public void setCompilerNanos(long compilerNanos) {
@@ -400,18 +400,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private boolean addColumnToOutput(
-            RecordMetadata metadata,
-            CharSequence columnNames,
-            int start,
-            int hi
+        RecordMetadata metadata,
+        CharSequence columnNames,
+        int start,
+        int hi
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
             JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
-                    putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
-                    putQuoted("error").put(':').putQuoted("empty column in list");
+                putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
+                putQuoted("error").put(':').putQuoted("empty column in list");
             socket.put('}');
             socket.sendChunk(true);
             return true;
@@ -423,8 +423,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
             JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
-                    putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
-                    putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'');
+                putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
+                putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'');
             socket.put('}');
             socket.sendChunk(true);
             return true;
@@ -444,8 +444,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doFirstRecordLoop(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (onQuerySetupFirstRecord()) {
             doRecordFetchLoop(socket, columnCount);
@@ -455,8 +455,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doNextRecordLoop(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (doQueryNextRecord()) {
             doRecordFetchLoop(socket, columnCount);
@@ -474,9 +474,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             socket.put('{').
-                    putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
-                    put(',').
-                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
+                putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
+                put(',').
+                putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
             socket.put('}');
         }
     }
@@ -610,8 +610,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doQuerySuffix(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         queryState = QUERY_SUFFIX;
         if (count > -1) {
@@ -640,8 +640,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doRecordFetchLoop(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         do {
             doQueryRecordPrefix(socket);
@@ -651,7 +651,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doQuerySuffix(socket, columnCount);
     }
 
-    private long getFd() {
+    private int getFd() {
         return httpConnectionContext.getFd();
     }
 
@@ -677,16 +677,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void onQueryMetadata(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadata(socket, columnCount);
         onQueryMetadataSuffix(socket, columnCount);
     }
 
     private void onQueryMetadataSuffix(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadataSuffix(socket);
         doFirstRecordLoop(socket, columnCount);
@@ -706,16 +706,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void onQueryRecordPrefix(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryRecordPrefix(socket);
         onQueryRecord(socket, columnCount);
     }
 
     private void onQueryRecordSuffix(
-            HttpChunkedResponseSocket socket,
-            int columnCount
+        HttpChunkedResponseSocket socket,
+        int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryRecordSuffix(socket);
         doNextRecordLoop(socket, columnCount);
@@ -758,9 +758,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     static void prepareExceptionJson(HttpChunkedResponseSocket socket, int position, CharSequence message, CharSequence query) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put('{').
-                putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
-                putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
-                putQuoted("position").put(':').put(position);
+            putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
+            putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
+            putQuoted("position").put(':').put(position);
         socket.put('}');
         socket.sendChunk(true);
     }
@@ -770,12 +770,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         return of(factory, true, sqlExecutionContext);
     }
 
     boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
@@ -797,7 +797,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
                 JsonQueryProcessor.header(socket, "", 400);
                 socket.put('{').
-                        putQuoted("error").put(':').putQuoted("utf8 error in column list");
+                    putQuoted("error").put(':').putQuoted("utf8 error in column list");
                 socket.put('}');
                 socket.sendChunk(true);
                 return false;
@@ -842,8 +842,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @FunctionalInterface
     interface StateResumeAction {
         void onResume(
-                HttpChunkedResponseSocket socket,
-                int columnCount
+            HttpChunkedResponseSocket socket,
+            int columnCount
         ) throws PeerDisconnectedException, PeerIsSlowToReadException;
     }
 }

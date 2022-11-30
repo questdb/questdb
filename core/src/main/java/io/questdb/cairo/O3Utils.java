@@ -41,10 +41,10 @@ public class O3Utils {
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
     public static void setupWorkerPool(
-            WorkerPool workerPool,
-            CairoEngine cairoEngine,
-            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration,
-            @Nullable FunctionFactoryCache functionFactoryCache
+        WorkerPool workerPool,
+        CairoEngine cairoEngine,
+        @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration,
+        @Nullable FunctionFactoryCache functionFactoryCache
     ) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
@@ -67,16 +67,16 @@ public class O3Utils {
             // create job per worker to allow each worker to have
             // own shard walk sequence
             final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                    messageBus,
-                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                    sqlExecutionCircuitBreakerConfiguration
+                messageBus,
+                new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
+                sqlExecutionCircuitBreakerConfiguration
             );
             workerPool.assign(i, pageFrameReduceJob);
             workerPool.freeOnExit(pageFrameReduceJob);
         }
     }
 
-    static void close(FilesFacade ff, long fd) {
+    static void close(FilesFacade ff, int fd) {
         if (fd > 0) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             ff.close(fd);
@@ -84,10 +84,10 @@ public class O3Utils {
     }
 
     static void copyFromTimestampIndex(
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
+        long src,
+        long srcLo,
+        long srcHi,
+        long dstAddr
     ) {
         Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
@@ -101,11 +101,11 @@ public class O3Utils {
     }
 
     static void shiftCopyFixedSizeColumnData(
-            long shift,
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
+        long shift,
+        long src,
+        long srcLo,
+        long srcHi,
+        long dstAddr
     ) {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
@@ -116,7 +116,7 @@ public class O3Utils {
         }
     }
 
-    static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
+    static void unmapAndClose(FilesFacade ff, int dstFixFd, long dstFixAddr, long dstFixSize) {
         unmap(ff, dstFixAddr, dstFixSize);
         close(ff, dstFixFd);
     }

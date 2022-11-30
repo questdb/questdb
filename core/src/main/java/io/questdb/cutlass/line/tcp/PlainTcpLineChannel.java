@@ -32,7 +32,7 @@ import io.questdb.network.NetworkFacade;
 
 public final class PlainTcpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
-    private final long fd;
+    private final int fd;
     private final NetworkFacade nf;
     private final long sockaddr;
 
@@ -48,8 +48,8 @@ public final class PlainTcpLineChannel implements LineChannel {
             nf.close(fd, LOG);
             nf.freeSockAddr(sockaddr);
             throw new LineSenderException("could not connect to host ")
-                    .put("[ip=").appendIPv4(address).put("]")
-                    .errno(errno);
+                .put("[ip=").appendIPv4(address).put("]")
+                .errno(errno);
         }
         configureBuffers(nf, sndBufferSize);
     }
@@ -65,14 +65,14 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (addrInfo == -1) {
             nf.close(fd, LOG);
             throw new LineSenderException("could not resolve host ")
-                    .put("[host=").put(host).put("]");
+                .put("[host=").put(host).put("]");
         }
         if (nf.connectAddrInfo(fd, addrInfo) != 0) {
             int errno = nf.errno();
             nf.close(fd, LOG);
             nf.freeAddrInfo(addrInfo);
             throw new LineSenderException("could not connect to host ")
-                    .put("[host=").put(host).put("]").errno(errno);
+                .put("[host=").put(host).put("]").errno(errno);
         }
         nf.freeAddrInfo(addrInfo);
         configureBuffers(nf, sndBufferSize);

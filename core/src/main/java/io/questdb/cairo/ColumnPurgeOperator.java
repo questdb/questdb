@@ -47,7 +47,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final int updateCompleteColumnWriterIndex;
     private long longBytes;
     private int pathTableLen;
-    private long purgeLogPartitionFd = -1L;
+    private int purgeLogPartitionFd = -1;
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
     private TxReader txReader;
     private TxnScoreboard txnScoreboard;
@@ -145,10 +145,10 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$(task.getTableName())
-                    .$(", txn=").$(updateTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
+                .$(task.getTableName())
+                .$(", txn=").$(updateTxn)
+                .$(", error=").$(ex.getFlyweightMessage())
+                .$(", errno=").$(ex.getErrno()).I$();
             return true;
         }
     }
@@ -157,7 +157,7 @@ public class ColumnPurgeOperator implements Closeable {
         if (purgeLogPartitionFd != -1L) {
             ff.close(purgeLogPartitionFd);
             LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
-            purgeLogPartitionFd = -1L;
+            purgeLogPartitionFd = -1;
         }
     }
 
@@ -190,9 +190,9 @@ public class ColumnPurgeOperator implements Closeable {
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
 
         LOG.info().$("purging [table=").$(task.getTableName())
-                .$(", column=").$(task.getColumnName())
-                .$(", tableId=").$(task.getTableId())
-                .I$();
+            .$(", column=").$(task.getColumnName())
+            .$(", tableId=").$(task.getTableId())
+            .I$();
 
         setTablePath(task.getTableName());
 
@@ -308,7 +308,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private int readTableId(Path path) {
         final int INVALID_TABLE_ID = Integer.MIN_VALUE;
-        long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
+        int fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;
         }
@@ -327,16 +327,16 @@ public class ColumnPurgeOperator implements Closeable {
         path.concat(purgeLogWriter.getTableName());
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForPartition(
-                path,
-                purgeLogWriter.getPartitionBy(),
-                partitionTimestamp,
-                false
+            path,
+            purgeLogWriter.getPartitionBy(),
+            partitionTimestamp,
+            false
         );
         TableUtils.txnPartitionConditionally(path, partitionNameTxn);
         TableUtils.dFile(
-                path,
-                updateCompleteColumnName,
-                purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
+            path,
+            updateCompleteColumnName,
+            purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
         );
         closePurgeLogCompleteFile();
         purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
@@ -367,9 +367,9 @@ public class ColumnPurgeOperator implements Closeable {
                     int errno = ff.errno();
                     long length = ff.length(purgeLogPartitionFd);
                     LOG.error().$("could not mark record as purged [errno=").$(errno)
-                            .$(", writeOffset=").$(offset)
-                            .$(", fd=").$(purgeLogPartitionFd)
-                            .$(", fileSize=").$(length).I$();
+                        .$(", writeOffset=").$(offset)
+                        .$(", fd=").$(purgeLogPartitionFd)
+                        .$(", fileSize=").$(length).I$();
                     // Re-open of the file next run in case something went wrong.
                     purgeLogPartitionTimestamp = -1;
                 }

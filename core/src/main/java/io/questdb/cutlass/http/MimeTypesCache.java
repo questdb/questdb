@@ -31,8 +31,7 @@ import io.questdb.std.str.Path;
 public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
 
     public MimeTypesCache(@Transient FilesFacade ff, @Transient Path path) {
-
-        long fd = ff.openRO(path);
+        final int fd = ff.openRO(path);
         if (fd < 0) {
             throw HttpException.instance("could not open [file=").put(path).put(", errno=").put(ff.errno()).put(']');
         }
@@ -106,7 +105,6 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
                         }
                         break;
                 }
-
             }
         } finally {
             Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_HTTP_CONN);

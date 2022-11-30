@@ -37,7 +37,7 @@ public class FilesFacadeImpl implements FilesFacade {
     private long mapPageSize = 0;
 
     @Override
-    public boolean allocate(long fd, long size) {
+    public boolean allocate(int fd, long size) {
         // do not bother allocating on Windows because mmap() will try to allocate regardless
         if (Os.type != Os.WINDOWS) {
             return Files.allocate(fd, size);
@@ -46,12 +46,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long append(long fd, long buf, int len) {
+    public long append(int fd, long buf, int len) {
         return Files.append(fd, buf, len);
     }
 
     @Override
-    public boolean close(long fd) {
+    public boolean close(int fd) {
         return Files.close(fd) == 0;
     }
 
@@ -61,7 +61,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+    public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
         return Files.copyData(srcFd, destFd, offsetSrc, length);
     }
 
@@ -81,12 +81,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean exists(long fd) {
+    public boolean exists(int fd) {
         return Files.exists(fd);
     }
 
     @Override
-    public void fadvise(long fd, long offset, long len, int advise) {
+    public void fadvise(int fd, long offset, long len, int advise) {
         if (advise > -1) {
             Files.fadvise(fd, offset, len, advise);
         }
@@ -129,7 +129,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int fsync(long fd) {
+    public int fsync(int fd) {
         return Files.fsync(fd);
     }
 
@@ -196,7 +196,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long length(long fd) {
+    public long length(int fd) {
         long r = Files.length(fd);
         if (r < 0) {
             throw CairoException.critical(Os.errno()).put("Checking file size failed");
@@ -210,7 +210,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int lock(long fd) {
+    public int lock(int fd) {
         return Files.lock(fd);
     }
 
@@ -232,12 +232,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+    public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
         return Files.mmap(fd, len, offset, flags, memoryTag);
     }
 
     @Override
-    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+    public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
@@ -252,12 +252,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openAppend(LPSZ name) {
+    public int openAppend(LPSZ name) {
         return Files.openAppend(name);
     }
 
     @Override
-    public long openCleanRW(LPSZ name, long size) {
+    public int openCleanRW(LPSZ name, long size) {
         // Open files and if file exists, try exclusively lock it
         // If exclusive lock worked the file will be cleaned and allocated to the given size
         // Shared lock will be left on the file which will be removed when file descriptor is closed
@@ -266,27 +266,27 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openRO(LPSZ name) {
+    public int openRO(LPSZ name) {
         return Files.openRO(name);
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public int openRW(LPSZ name, long opts) {
         return Files.openRW(name, opts);
     }
 
     @Override
-    public long read(long fd, long buf, long len, long offset) {
+    public long read(int fd, long buf, long len, long offset) {
         return Files.read(fd, buf, len, offset);
     }
 
     @Override
-    public int readNonNegativeInt(long fd, long offset) {
+    public int readNonNegativeInt(int fd, long offset) {
         return Files.readNonNegativeInt(fd, offset);
     }
 
     @Override
-    public long readNonNegativeLong(long fd, long offset) {
+    public long readNonNegativeLong(int fd, long offset) {
         return Files.readNonNegativeLong(fd, offset);
     }
 
@@ -321,7 +321,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean truncate(long fd, long size) {
+    public boolean truncate(int fd, long size) {
         return Files.truncate(fd, size);
     }
 
@@ -354,7 +354,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long write(long fd, long address, long len, long offset) {
+    public long write(int fd, long address, long len, long offset) {
         return Files.write(fd, address, len, offset);
     }
 

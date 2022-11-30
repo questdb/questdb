@@ -70,15 +70,15 @@ public final class SerialCsvFileImporter implements Closeable {
     }
 
     public void of(
-            String tableName,
-            String inputFileName,
-            long importId,
-            byte columnDelimiter,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat,
-            boolean forceHeader,
-            ExecutionCircuitBreaker circuitBreaker,
-            int atomicity
+        String tableName,
+        String inputFileName,
+        long importId,
+        byte columnDelimiter,
+        CharSequence timestampColumn,
+        CharSequence timestampFormat,
+        boolean forceHeader,
+        ExecutionCircuitBreaker circuitBreaker,
+        int atomicity
     ) {
         this.tableName = tableName;
         this.timestampColumn = timestampColumn;
@@ -93,8 +93,8 @@ public final class SerialCsvFileImporter implements Closeable {
 
     public void process() throws TextImportException {
         LOG.info()
-                .$("started [importId=").$hexPadded(importId)
-                .$(", file=`").$(inputFilePath).$('`').I$();
+            .$("started [importId=").$hexPadded(importId)
+            .$(", file=`").$(inputFilePath).$('`').I$();
 
         final long startMs = getCurrentTimeMs();
 
@@ -103,7 +103,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
         final long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
-        long fd = -1;
+        int fd = -1;
         try {
             fd = TableUtils.openRO(ff, inputFilePath, LOG);
             long fileLen = ff.length(fd);
@@ -141,10 +141,10 @@ public final class SerialCsvFileImporter implements Closeable {
 
                 long endMs = getCurrentTimeMs();
                 LOG.info()
-                        .$("import complete [importId=").$hexPadded(importId)
-                        .$(", file=`").$(inputFilePath).$('`')
-                        .$("', time=").$((endMs - startMs) / 1000).$('s')
-                        .I$();
+                    .$("import complete [importId=").$hexPadded(importId)
+                    .$(", file=`").$(inputFilePath).$('`')
+                    .$("', time=").$((endMs - startMs) / 1000).$('s')
+                    .I$();
             }
         } catch (TextException e) {
             throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage());
@@ -177,13 +177,13 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination(
-                tableName,
-                false,
-                false,
-                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
-                PartitionBy.NONE,
-                timestampColumn,
-                timestampFormat
+            tableName,
+            false,
+            false,
+            atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
+            PartitionBy.NONE,
+            timestampColumn,
+            timestampFormat
         );
     }
 }

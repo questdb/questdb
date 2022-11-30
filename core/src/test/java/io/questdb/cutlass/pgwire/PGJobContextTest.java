@@ -5497,7 +5497,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
@@ -5517,7 +5517,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
@@ -5536,7 +5536,7 @@ nodejs code:
             writerAsyncCommandBusyWaitTimeout = 1;
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
@@ -8811,7 +8811,7 @@ create table tab as (
         private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
-        public int send(long fd, long buffer, int bufferLen) {
+        public int send(int fd, long buffer, int bufferLen) {
             if (!delaying.get()) {
                 return super.send(fd, buffer, bufferLen);
             }

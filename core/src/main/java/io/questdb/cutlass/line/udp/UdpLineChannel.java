@@ -32,7 +32,7 @@ import io.questdb.network.NetworkFacade;
 
 public final class UdpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(UdpLineChannel.class);
-    private final long fd;
+    private final int fd;
     private final NetworkFacade nf;
     private final long sockaddr;
 
@@ -47,17 +47,17 @@ public final class UdpLineChannel implements LineChannel {
             final int errno = nf.errno();
             close();
             throw new LineSenderException("could not bind ")
-                    .put("[ip=").appendIPv4(interfaceIPv4Address).put("]")
-                    .errno(errno);
+                .put("[ip=").appendIPv4(interfaceIPv4Address).put("]")
+                .errno(errno);
         }
 
         if (nf.setMulticastTtl(fd, ttl) != 0) {
             final int errno = nf.errno();
             close();
             throw new LineSenderException("could not set ttl ")
-                    .put("[fd=").put(fd)
-                    .put(", ttl=").put(ttl).put("]")
-                    .errno(errno);
+                .put("[fd=").put(fd)
+                .put(", ttl=").put(ttl).put("]")
+                .errno(errno);
         }
     }
 

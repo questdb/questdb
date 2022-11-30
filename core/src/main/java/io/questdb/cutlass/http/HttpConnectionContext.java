@@ -237,7 +237,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     @Override
-    public HttpConnectionContext of(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
+    public HttpConnectionContext of(int fd, IODispatcher<HttpConnectionContext> dispatcher) {
         HttpConnectionContext r = super.of(fd, dispatcher);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
@@ -346,7 +346,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     private boolean consumeMultipart(
-        long fd,
+        int fd,
         HttpRequestProcessor processor,
         long headerEnd,
         int read,
@@ -385,7 +385,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     private boolean continueConsumeMultipart(
-        long fd,
+        int fd,
         long start,
         long buf,
         int bufRemaining,
@@ -535,7 +535,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         boolean busyRecv = true;
         try {
-            final long fd = this.fd;
+            final int fd = this.fd;
             // this is address of where header ended in our receive buffer
             // we need to being processing request content starting from this address
             long headerEnd = recvBuffer;

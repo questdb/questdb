@@ -95,19 +95,19 @@ public class TableSequencerAPI implements QuietCloseable {
                                 // metadata and log concurrently as we read the values. It's ok since we iterate
                                 // through the WAL tables periodically, so eventually we should see the updates.
                                 path.concat(nameSink).concat(SEQ_DIR);
-                                long fdMeta = -1;
-                                long fdTxn = -1;
+                                int metaFd = -1;
+                                int txnFd = -1;
                                 try {
-                                    fdMeta = openFileRO(ff, path, META_FILE_NAME);
-                                    fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-                                    tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
-                                    lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                                    metaFd = openFileRO(ff, path, META_FILE_NAME);
+                                    txnFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                    tableId = ff.readNonNegativeInt(metaFd, SEQ_META_TABLE_ID);
+                                    lastTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                                 } finally {
-                                    if (fdMeta > -1) {
-                                        ff.close(fdMeta);
+                                    if (metaFd > -1) {
+                                        ff.close(metaFd);
                                     }
-                                    if (fdTxn > -1) {
-                                        ff.close(fdTxn);
+                                    if (txnFd > -1) {
+                                        ff.close(txnFd);
                                     }
                                 }
                             } else {
@@ -119,19 +119,19 @@ public class TableSequencerAPI implements QuietCloseable {
                             }
                         } catch (CairoException ex) {
                             LOG.critical().$("could not read WAL table metadata [table=").utf8(nameSink).$(", errno=").$(ex.getErrno())
-                                    .$(", error=").$((Throwable) ex).I$();
+                                .$(", error=").$((Throwable) ex).I$();
                             return;
                         }
                         if (tableId < 0 || lastTxn < 0) {
                             LOG.critical().$("could not read WAL table metadata [table=").utf8(nameSink).$(", tableId=").$(tableId)
-                                    .$(", lastTxn=").$(lastTxn).I$();
+                                .$(", lastTxn=").$(lastTxn).I$();
                             return;
                         }
                         try {
                             callback.onTable(tableId, nameSink, lastTxn);
                         } catch (CairoException ex) {
                             LOG.critical().$("could not process table sequencer [table=").utf8(nameSink).$(", errno=").$(ex.getErrno())
-                                    .$(", error=").$((Throwable) ex).I$();
+                                .$(", error=").$((Throwable) ex).I$();
                         }
                     }
                 }
@@ -244,12 +244,12 @@ public class TableSequencerAPI implements QuietCloseable {
     public void registerTable(int tableId, final TableStructure tableStructure) {
         String tableNameStr = Chars.toString(tableStructure.getTableName());
         try (
-                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableNameStr, SequencerLockType.WRITE, (tableName) -> {
-                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
-                    sequencer.create(tableId, tableStructure);
-                    sequencer.open();
-                    return sequencer;
-                })
+            TableSequencerImpl tableSequencer = getTableSequencerEntry(tableNameStr, SequencerLockType.WRITE, (tableName) -> {
+                TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
+                sequencer.create(tableId, tableStructure);
+                sequencer.open();
+                return sequencer;
+            })
         ) {
             tableSequencer.unlockWrite();
         }
@@ -264,9 +264,9 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void reloadMetadataConditionally(
-            final CharSequence tableName,
-            long expectedStructureVersion,
-            TableRecordMetadataSink sink
+        final CharSequence tableName,
+        long expectedStructureVersion,
+        TableRecordMetadataSink sink
     ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             try {
@@ -310,7 +310,7 @@ public class TableSequencerAPI implements QuietCloseable {
         return isWalTable(tableName, path, ff);
     }
 
-    private static long openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
         final int rootLen = path.length();
         path.concat(fileName).$();
         try {

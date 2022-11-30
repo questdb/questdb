@@ -31,8 +31,8 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
-    private long activeFixFd;
-    private long activeVarFd;
+    private int activeFixFd;
+    private int activeVarFd;
     private long colTopSinkAddr;
     private AtomicInteger columnCounter;
     private int columnIndex;
@@ -63,7 +63,7 @@ public class O3OpenColumnTask {
     private long srcOooMax;
     private long srcOooVarAddr;
     private long srcTimestampAddr;
-    private long srcTimestampFd;
+    private int srcTimestampFd;
     private long srcTimestampSize;
     private long suffixHi;
     private long suffixLo;
@@ -75,11 +75,11 @@ public class O3OpenColumnTask {
     private long timestampMin;
     private long txn;
 
-    public long getActiveFixFd() {
+    public int getActiveFixFd() {
         return activeFixFd;
     }
 
-    public long getActiveVarFd() {
+    public int getActiveVarFd() {
         return activeVarFd;
     }
 
@@ -203,7 +203,7 @@ public class O3OpenColumnTask {
         return srcTimestampAddr;
     }
 
-    public long getSrcTimestampFd() {
+    public int getSrcTimestampFd() {
         return srcTimestampFd;
     }
 
@@ -248,49 +248,49 @@ public class O3OpenColumnTask {
     }
 
     public void of(
-            int openColumnMode,
-            Path pathToTable,
-            CharSequence columnName,
-            AtomicInteger columnCounter,
-            AtomicInteger partCounter,
-            int columnType,
-            long timestampMergeIndexAddr,
-            long timestampMergeIndexSize,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax,
-            long timestampMin,
-            long timestampMax,
-            long oooTimestampLo,
-            long oooTimestampHi,
-            long srcDataTop,
-            long srcDataMax,
-            long srcDataTxn,
-            long txn,
-            int prefixType,
-            long prefixLo,
-            long prefixHi,
-            int mergeType,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeOOOLo,
-            long mergeOOOHi,
-            int suffixType,
-            long suffixLo,
-            long suffixHi,
-            long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            int indexBlockCapacity,
-            long activeFixFd,
-            long activeVarFd,
-            TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
-            long colTopSinkAddr,
-            int columnIndex,
-            long columnNameTxn
+        int openColumnMode,
+        Path pathToTable,
+        CharSequence columnName,
+        AtomicInteger columnCounter,
+        AtomicInteger partCounter,
+        int columnType,
+        long timestampMergeIndexAddr,
+        long timestampMergeIndexSize,
+        long srcOooFixAddr,
+        long srcOooVarAddr,
+        long srcOooLo,
+        long srcOooHi,
+        long srcOooMax,
+        long timestampMin,
+        long timestampMax,
+        long oooTimestampLo,
+        long oooTimestampHi,
+        long srcDataTop,
+        long srcDataMax,
+        long srcDataTxn,
+        long txn,
+        int prefixType,
+        long prefixLo,
+        long prefixHi,
+        int mergeType,
+        long mergeDataLo,
+        long mergeDataHi,
+        long mergeOOOLo,
+        long mergeOOOHi,
+        int suffixType,
+        long suffixLo,
+        long suffixHi,
+        int srcTimestampFd,
+        long srcTimestampAddr,
+        long srcTimestampSize,
+        int indexBlockCapacity,
+        int activeFixFd,
+        int activeVarFd,
+        TableWriter tableWriter,
+        BitmapIndexWriter indexWriter,
+        long colTopSinkAddr,
+        int columnIndex,
+        long columnNameTxn
     ) {
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;

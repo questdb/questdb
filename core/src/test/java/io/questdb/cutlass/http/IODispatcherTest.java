@@ -64,7 +64,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
@@ -214,7 +213,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -281,17 +280,17 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final HttpContextConfiguration httpContextConfiguration = new DefaultHttpContextConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
-                long theFd;
+                int theFd;
 
                 @Override
-                public long accept(long serverFd) {
-                    long fd = super.accept(serverFd);
+                public int accept(int serverFd) {
+                    int fd = super.accept(serverFd);
                     theFd = fd;
                     return fd;
                 }
 
                 @Override
-                public int configureNonBlocking(long fd) {
+                public int configureNonBlocking(int fd) {
                     if (fd == theFd) {
                         return -1;
                     }
@@ -308,7 +307,6 @@ public class IODispatcherTest {
                 },
                 (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
             )) {
-
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
                 SOCountDownLatch dispatcherHaltLatch = new SOCountDownLatch(1);
@@ -325,7 +323,7 @@ public class IODispatcherTest {
 
                 try {
                     long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
-                    long fd = Net.socketTcp(true);
+                    int fd = Net.socketTcp(true);
                     try {
                         TestUtils.assertConnect(fd, socketAddr);
 
@@ -376,7 +374,7 @@ public class IODispatcherTest {
                 new DefaultIODispatcherConfiguration(),
                 new IOContextFactory<HttpConnectionContext>() {
                     @Override
-                    public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                    public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                         connectLatch.countDown();
                         return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                             @Override
@@ -427,7 +425,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -1808,7 +1806,7 @@ public class IODispatcherTest {
                 "--------------------------27d997ca93d2689d--",
             new NetworkFacadeImpl() {
                 @Override
-                public int send(long fd, long buffer, int bufferLen) {
+                public int send(int fd, long buffer, int bufferLen) {
                     // ensure we do not send more than one byte at a time
                     if (bufferLen > 0) {
                         return super.send(fd, buffer, 1);
@@ -1915,7 +1913,7 @@ public class IODispatcherTest {
                     int totalSent = 0;
 
                     @Override
-                    public int send(long fd, long buffer, int bufferLen) {
+                    public int send(int fd, long buffer, int bufferLen) {
                         if (bufferLen > 0) {
                             int result = super.send(fd, buffer, 1);
                             totalSent += result;
@@ -3035,7 +3033,7 @@ public class IODispatcherTest {
                         "\r\n";
 
                     NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = nf.socketTcp(true);
+                    int fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -4699,7 +4697,7 @@ public class IODispatcherTest {
                 });
 
                 final int minClientReceivedBytesBeforeDisconnect = 180;
-                final AtomicLong refClientFd = new AtomicLong(-1);
+                final AtomicInteger refClientFd = new AtomicInteger(-1);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
                     private int nBytesReceived = 0;
 
@@ -4712,7 +4710,7 @@ public class IODispatcherTest {
                         LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
                         nBytesReceived += nBytes;
                         if (nBytesReceived >= minClientReceivedBytesBeforeDisconnect) {
-                            long fd = refClientFd.get();
+                            int fd = refClientFd.get();
                             if (fd != -1) {
                                 refClientFd.set(-1);
                                 nf.close(fd);
@@ -4748,7 +4746,7 @@ public class IODispatcherTest {
                         + "Accept-Encoding: gzip, deflate, br\r\n"
                         + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
-                    long fd = nf.socketTcp(true);
+                    int fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -4971,7 +4969,7 @@ public class IODispatcherTest {
                 new IOContextFactory<HttpConnectionContext>() {
                     @SuppressWarnings("resource")
                     @Override
-                    public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                    public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                         openCount.incrementAndGet();
                         return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                             @Override
@@ -5016,7 +5014,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                LongList openFds = new LongList();
+                IntList openFds = new IntList();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
@@ -5139,7 +5137,7 @@ public class IODispatcherTest {
     @Test
     public void testMissingURL() throws Exception {
         testJsonQuery0(2, engine -> {
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             try {
                 long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
                 try {
@@ -5466,7 +5464,7 @@ public class IODispatcherTest {
                                     "\r\n";
 
                                 for (int j = 0; j < 10; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5496,7 +5494,7 @@ public class IODispatcherTest {
                                     "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
@@ -5508,7 +5506,7 @@ public class IODispatcherTest {
 
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5594,7 +5592,7 @@ public class IODispatcherTest {
 
                         writeRandomFile(path, rnd, 122299092L);
 
-                        long fd = Net.socketTcp(true);
+                        int fd = Net.socketTcp(true);
                         try {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
@@ -5775,7 +5773,7 @@ public class IODispatcherTest {
                                     "\r\n";
 
                                 for (int j = 0; j < 1; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5814,7 +5812,7 @@ public class IODispatcherTest {
                                     "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
@@ -5826,7 +5824,7 @@ public class IODispatcherTest {
 
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5863,7 +5861,7 @@ public class IODispatcherTest {
 
 
                                 for (int i = 0; i < 4; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request3, fd, buffer);
@@ -5876,7 +5874,7 @@ public class IODispatcherTest {
                                 // and few more 304s
 
                                 for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
@@ -5941,7 +5939,7 @@ public class IODispatcherTest {
                 new DefaultIODispatcherConfiguration(),
                 new IOContextFactory<HttpConnectionContext>() {
                     @Override
-                    public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                    public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                         connectLatch.countDown();
                         return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                             @Override
@@ -6009,7 +6007,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6111,7 +6109,7 @@ public class IODispatcherTest {
                 new DefaultIODispatcherConfiguration(),
                 new IOContextFactory<HttpConnectionContext>() {
                     @Override
-                    public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                    public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                         connectLatch.countDown();
                         return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                             @Override
@@ -6184,7 +6182,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6275,7 +6273,7 @@ public class IODispatcherTest {
                 },
                 new IOContextFactory<HttpConnectionContext>() {
                     @Override
-                    public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                    public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                         connectLatch.countDown();
                         return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                             @Override
@@ -6341,7 +6339,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -7145,7 +7143,7 @@ public class IODispatcherTest {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
                                 for (int i = 0; i < N && !finished.get(); i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     try {
                                         TestUtils.assertConnect(fd, sockAddr);
                                         int len = request.length();
@@ -7229,7 +7227,7 @@ public class IODispatcherTest {
     }
 
     private static void assertDownloadResponse(
-        long fd,
+        int fd,
         Rnd rnd,
         long buffer,
         int len,
@@ -7309,7 +7307,7 @@ public class IODispatcherTest {
             .execute(request, response);
     }
 
-    private static void sendRequest(String request, long fd, long buffer) {
+    private static void sendRequest(String request, int fd, long buffer) {
         final int requestLen = request.length();
         Chars.asciiStrCpy(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -7661,7 +7659,7 @@ public class IODispatcherTest {
     private void testMaxConnections0(
         IODispatcher<HttpConnectionContext> dispatcher,
         long sockAddr,
-        LongList openFds,
+        IntList openFds,
         long buf
     ) {
         // Connect sockets that would be consumed by dispatcher plus
@@ -7669,7 +7667,7 @@ public class IODispatcherTest {
         // This is necessary for TCP stack to start rejecting new connections
         openFds.clear();
         for (int i = 0; i < 400; i++) {
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
             TestUtils.assertConnect(fd, sockAddr);
             openFds.add(fd);
@@ -7700,7 +7698,7 @@ public class IODispatcherTest {
         try {
             for (int i = 0; i < 400; i++) {
                 LOG.info().$("Sending request via socket #").$(i).$();
-                long fd = openFds.getQuick(i);
+                int fd = openFds.getQuick(i);
                 Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                 // ensure we have response from server
                 int len = Net.recv(fd, buf, 64);
@@ -7759,8 +7757,8 @@ public class IODispatcherTest {
             final int listenBackLog = configuration.getListenBacklog();
 
             final AtomicInteger nConnected = new AtomicInteger();
-            final LongHashSet serverConnectedFds = new LongHashSet();
-            final LongHashSet clientActiveFds = new LongHashSet();
+            final IntHashSet serverConnectedFds = new IntHashSet();
+            final IntHashSet clientActiveFds = new IntHashSet();
             IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
@@ -7778,7 +7776,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public long getFd() {
+                    public int getFd() {
                         return fd;
                     }
 
@@ -7802,7 +7800,7 @@ public class IODispatcherTest {
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                         IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
-                            long fd = context.getFd();
+                            int fd = context.getFd();
                             int rc;
                             switch (operation) {
                                 case IOOperation.READ:
@@ -7848,7 +7846,7 @@ public class IODispatcherTest {
                 int nClientConnects = 0;
                 int nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    long fd = Net.socketTcp(true);
+                    int fd = Net.socketTcp(true);
                     Assert.assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
@@ -7873,7 +7871,7 @@ public class IODispatcherTest {
 
                 // Close all connections and wait for server to resume listening
                 while (clientActiveFds.size() > 0) {
-                    long fd = clientActiveFds.get(0);
+                    int fd = clientActiveFds.get(0);
                     clientActiveFds.remove(fd);
                     Net.close(fd);
                 }
@@ -7888,7 +7886,7 @@ public class IODispatcherTest {
                 nClientConnects = 0;
                 nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    long fd = Net.socketTcp(true);
+                    int fd = Net.socketTcp(true);
                     Assert.assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
@@ -7913,7 +7911,7 @@ public class IODispatcherTest {
 
                 // Close all remaining client connections
                 for (int n = 0; n < clientActiveFds.size(); n++) {
-                    long fd = clientActiveFds.get(n);
+                    int fd = clientActiveFds.get(n);
                     Net.close(fd);
                 }
                 serverThread.interrupt();
@@ -7933,7 +7931,7 @@ public class IODispatcherTest {
         if (Files.exists(path)) {
             Assert.assertTrue(Files.remove(path));
         }
-        long fd = Files.openAppend(path);
+        int fd = Files.openAppend(path);
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
@@ -7985,9 +7983,9 @@ public class IODispatcherTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
         private final IODispatcher<HelloContext> dispatcher;
-        private final long fd;
+        private final int fd;
 
-        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+        public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             this.fd = fd;
             this.closeLatch = closeLatch;
             this.dispatcher = dispatcher;
@@ -8005,7 +8003,7 @@ public class IODispatcherTest {
         }
 
         @Override
-        public long getFd() {
+        public int getFd() {
             return fd;
         }
 

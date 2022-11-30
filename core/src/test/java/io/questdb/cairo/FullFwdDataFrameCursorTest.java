@@ -54,9 +54,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
-                    col("a", ColumnType.INT).
-                    col("b", ColumnType.INT).
-                    timestamp()
+                col("a", ColumnType.INT).
+                col("b", ColumnType.INT).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -75,9 +75,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     public void testEmptyPartitionSkip() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
-                    col("a", ColumnType.INT).
-                    col("b", ColumnType.INT).
-                    timestamp()
+                col("a", ColumnType.INT).
+                col("b", ColumnType.INT).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -968,21 +968,21 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
             count = assertIndex(
-                    record,
-                    columnIndex,
-                    symbolTable,
-                    count,
-                    frame,
-                    BitmapIndexReader.DIR_BACKWARD
+                record,
+                columnIndex,
+                symbolTable,
+                count,
+                frame,
+                BitmapIndexReader.DIR_BACKWARD
             );
 
             count = assertIndex(
-                    record,
-                    columnIndex,
-                    symbolTable,
-                    count,
-                    frame,
-                    BitmapIndexReader.DIR_FORWARD
+                record,
+                columnIndex,
+                symbolTable,
+                count,
+                frame,
+                BitmapIndexReader.DIR_FORWARD
             );
 
         }
@@ -1099,11 +1099,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd eRnd = new Rnd();
 
             FilesFacade ff = new FilesFacadeImpl() {
-                private long fd = -1;
+                private int fd = -1;
                 private int mapCount = 0;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1115,7 +1115,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     if (fd == this.fd) {
                         if (mapCount == 1) {
                             return -1;
@@ -1126,7 +1126,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
@@ -1259,7 +1259,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
 
             FilesFacade ff = new FilesFacadeImpl() {
-                private long fd = -1;
+                private int fd = -1;
 
                 @Override
                 public long getMapPageSize() {
@@ -1267,7 +1267,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         return -1;
@@ -1276,7 +1276,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
@@ -1432,11 +1432,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd eRnd = new Rnd();
 
             FilesFacade ff = new FilesFacadeImpl() {
-                private long fd = -1;
+                private int fd = -1;
                 private int mapCount = 0;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1448,7 +1448,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1460,7 +1460,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
@@ -1603,11 +1603,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).
+                col("c", ColumnType.SYMBOL).indexed(true, N / 4).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -1679,11 +1679,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).indexed(false, 0).
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).indexed(false, 0).
+                col("c", ColumnType.SYMBOL).indexed(true, N / 4).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -1750,11 +1750,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).
+                col("c", ColumnType.SYMBOL).indexed(true, N / 4).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -1828,11 +1828,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    timestamp().
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4)
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).
+                timestamp().
+                col("c", ColumnType.SYMBOL).indexed(true, N / 4)
             ) {
                 CairoTestUtils.create(model);
             }
@@ -1906,10 +1906,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    timestamp()
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -1937,13 +1937,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                     writer.truncate();
                     writer.addColumn(
-                            "c",
-                            ColumnType.SYMBOL,
-                            Numbers.ceilPow2(N),
-                            true,
-                            true,
-                            Numbers.ceilPow2(N / 4),
-                            false
+                        "c",
+                        ColumnType.SYMBOL,
+                        Numbers.ceilPow2(N),
+                        true,
+                        true,
+                        Numbers.ceilPow2(N / 4),
+                        false
                     );
 
                     Assert.assertTrue(reader.reload());
@@ -2008,11 +2008,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    timestamp().
-                    col("c", ColumnType.SYMBOL).indexed(true, N / 4)
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).
+                timestamp().
+                col("c", ColumnType.SYMBOL).indexed(true, N / 4)
             ) {
                 CairoTestUtils.create(model);
             }
@@ -2086,11 +2086,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.STRING).
-                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
-                    timestamp().
-                    col("c", ColumnType.SYMBOL)
+                col("a", ColumnType.STRING).
+                col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                col("i", ColumnType.INT).
+                timestamp().
+                col("c", ColumnType.SYMBOL)
             ) {
                 CairoTestUtils.create(model);
             }
@@ -2163,8 +2163,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
+                col("a", ColumnType.SYMBOL).indexed(true, N / 4).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -2213,8 +2213,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.SYMBOL).indexed(false, N / 4).
-                    timestamp()
+                col("a", ColumnType.SYMBOL).indexed(false, N / 4).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -2266,8 +2266,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.SYMBOL).indexed(true, N / 4).
-                    timestamp()
+                col("a", ColumnType.SYMBOL).indexed(true, N / 4).
+                timestamp()
             ) {
                 CairoTestUtils.create(model);
             }
@@ -2449,11 +2449,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try (TableModel model = new TableModel(configuration, "ABC", partitionBy)
-                    .col("a", ColumnType.SYMBOL).indexed(true, indexBlockSize)
-                    .col("b", ColumnType.SYMBOL).indexed(true, indexBlockSize)
-                    .col("c", ColumnType.SYMBOL).indexed(true, indexBlockSize)
-                    .col("d", ColumnType.DOUBLE)
-                    .timestamp()) {
+                .col("a", ColumnType.SYMBOL).indexed(true, indexBlockSize)
+                .col("b", ColumnType.SYMBOL).indexed(true, indexBlockSize)
+                .col("c", ColumnType.SYMBOL).indexed(true, indexBlockSize)
+                .col("d", ColumnType.DOUBLE)
+                .timestamp()) {
                 CairoTestUtils.create(model);
             }
         }

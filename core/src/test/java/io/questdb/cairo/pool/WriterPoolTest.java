@@ -141,7 +141,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "z.lock") && count-- > 0) {
                     return -1;
                 }
@@ -636,14 +636,14 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock("x", "testing"));
 
             TableWriter writer = new TableWriter(
-                    configuration,
-                    "x",
-                    messageBus,
-                    null,
-                    false,
-                    DefaultLifecycleManager.INSTANCE,
-                    configuration.getRoot(),
-                    metrics
+                configuration,
+                "x",
+                messageBus,
+                null,
+                false,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                metrics
             );
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -867,7 +867,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "z.lock") && count-- > 0) {
                     return -1;
                 }
@@ -907,7 +907,6 @@ public class WriterPoolTest extends AbstractCairoTest {
         }, configuration);
 
         Assert.assertTrue(ff.wasCalled());
-
     }
 
     @Test

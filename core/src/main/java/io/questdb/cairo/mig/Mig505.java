@@ -36,16 +36,16 @@ final class Mig505 {
         final long mem = migrationContext.getTempMemory(8);
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
-        final long fd = migrationContext.getMetadataFd();
+        final int fd = migrationContext.getMetadataFd();
 
         MigrationActions.LOG.info().$("setting table id in [path=").$(path).I$();
         TableUtils.writeIntOrFail(
-                ff,
-                fd,
-                META_OFFSET_TABLE_ID,
-                migrationContext.getNextTableId(),
-                mem,
-                path
+            ff,
+            fd,
+            META_OFFSET_TABLE_ID,
+            migrationContext.getNextTableId(),
+            mem,
+            path
         );
     }
 }

@@ -27,62 +27,60 @@ package io.questdb.network;
 import io.questdb.std.Unsafe;
 
 /**
- * eventfd(2)-based suspend event object. Used on Linux in combination with epoll.
+ * pipe(2)-based suspend event object. Used on OS X and BSD in combination with kqueue.
  */
-public class EventFdEvent implements SuspendEvent {
+public class PipeSuspendEvent implements SuspendEvent {
 
     private static final long REF_COUNT_OFFSET;
 
-    private final EpollFacade epf;
-    private final int fd;
+    private final KqueueFacade kqf;
+    private final int readEndFd;
+    private final int writeEndFd;
     @SuppressWarnings("unused")
     private volatile int refCount;
 
-    public EventFdEvent(EpollFacade epf) {
-        this.epf = epf;
-        int fd = epf.eventFd();
-        if (fd < 0) {
-            throw NetworkError.instance(epf.errno(), "cannot create eventfd event");
+    public PipeSuspendEvent(KqueueFacade kqf) {
+        this.kqf = kqf;
+        long fds = kqf.pipe();
+        if (fds < 0) {
+            throw NetworkError.instance(kqf.getNetworkFacade().errno(), "cannot create eventfd event");
         }
-        this.fd = fd;
-        epf.getNetworkFacade().bumpFdCount(fd);
+        this.readEndFd = (int) (fds >>> 32);
+        this.writeEndFd = (int) fds;
+        kqf.getNetworkFacade().bumpFdCount(readEndFd);
+        kqf.getNetworkFacade().bumpFdCount(writeEndFd);
         this.refCount = 2;
     }
 
     @Override
-    public void checkTriggered() {
-        long value = epf.readEventFd(fd);
-        if (value != 1) {
-            throw NetworkError.instance(epf.errno())
-                .put("unexpected eventfd read value [value=").put(value)
-                .put(", fd=").put(fd)
-                .put(']');
-        }
+    public boolean checkTriggered() {
+        return kqf.readPipe(readEndFd) == 1;
     }
 
     @Override
     public void close() {
         final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
         if (prevRefCount == 1) {
-            epf.getNetworkFacade().close(fd);
+            kqf.getNetworkFacade().close(readEndFd);
+            kqf.getNetworkFacade().close(writeEndFd);
         }
     }
 
     @Override
     public int getFd() {
-        return fd;
+        return readEndFd;
     }
 
     @Override
     public void trigger() {
-        if (epf.writeEventFd(fd) < 0) {
-            throw NetworkError.instance(epf.errno())
-                .put("could not write to eventfd [fd=").put(fd)
+        if (kqf.writePipe(writeEndFd) < 0) {
+            throw NetworkError.instance(kqf.getNetworkFacade().errno())
+                .put("could not write to pipe [fd=").put(writeEndFd)
                 .put(']');
         }
     }
 
     static {
-        REF_COUNT_OFFSET = Unsafe.getFieldOffset(EventFdEvent.class, "refCount");
+        REF_COUNT_OFFSET = Unsafe.getFieldOffset(PipeSuspendEvent.class, "refCount");
     }
 }

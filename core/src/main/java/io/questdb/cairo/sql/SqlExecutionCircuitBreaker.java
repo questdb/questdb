@@ -33,7 +33,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean checkIfTripped(long millis, long fd) {
+        public boolean checkIfTripped(long millis, int fd) {
             return false;
         }
 
@@ -43,7 +43,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public long getFd() {
+        public int getFd() {
             return -1;
         }
 
@@ -57,7 +57,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void setFd(long fd) {
+        public void setFd(int fd) {
         }
 
         @Override
@@ -73,22 +73,23 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         public void unsetTimer() {
         }
     };
+
     //Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
     //(used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
 
-    boolean checkIfTripped(long millis, long fd);
+    boolean checkIfTripped(long millis, int fd);
 
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
 
-    long getFd();
+    int getFd();
 
     /* Returns true if time was reset/powered up (for current sql command) and false otherwise . */
     boolean isTimerSet();
 
     void resetTimer();
 
-    void setFd(long fd);
+    void setFd(int fd);
 
     /**
      * Uses internal state of the circuit breaker to assert conditions. This method also

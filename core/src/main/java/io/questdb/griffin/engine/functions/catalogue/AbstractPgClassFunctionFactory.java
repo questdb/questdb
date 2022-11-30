@@ -61,34 +61,34 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
     private static final int[] staticRelToastRelId = {0};
     private static final int[] staticRelType = {0};
     private static final int[][] staticIntColumns = {
-            staticOid,
-            null,
-            staticRelNamespace,
-            staticRelType,
-            staticRelOfType,
-            staticRelOwner,
-            staticRelAm,
-            staticRelFileNode,
-            staticRelTablespace,
-            null,
-            null,
-            staticRelAllVisible,
-            staticRelToastRelId,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            staticRelRewrite
+        staticOid,
+        null,
+        staticRelNamespace,
+        staticRelType,
+        staticRelOfType,
+        staticRelOwner,
+        staticRelAm,
+        staticRelFileNode,
+        staticRelTablespace,
+        null,
+        null,
+        staticRelAllVisible,
+        staticRelToastRelId,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        staticRelRewrite
     };
 
     @Override
@@ -99,10 +99,10 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
-                new PgClassCursorFactory(
-                        configuration,
-                        METADATA
-                )
+            new PgClassCursorFactory(
+                configuration,
+                METADATA
+            )
         ) {
             @Override
             public boolean isRuntimeConstant() {
@@ -238,7 +238,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                     path.trimTo(plimit);
                     if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                         // open metadata file and read id
-                        long fd = ff.openRO(path);
+                        int fd = ff.openRO(path);
                         if (fd > -1) {
                             if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
                                 intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);

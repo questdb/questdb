@@ -1656,7 +1656,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testAppendNullTimestamp() throws Exception {
         try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
-                .col("int", ColumnType.INT)
+            .col("int", ColumnType.INT)
 //                .timestamp("t") // cannot insert null as a timestamp on designated columns
         ) {
             CairoTestUtils.createTableWithVersionAndId(model, ColumnType.VERSION, 1);
@@ -1684,9 +1684,9 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(
-                    configuration,
-                    "char_test",
-                    PartitionBy.NONE
+                configuration,
+                "char_test",
+                PartitionBy.NONE
             ).col("cc", ColumnType.STRING)) {
                 CairoTestUtils.create(model);
             }
@@ -1879,8 +1879,8 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             TestUtils.assertEquals("a\n" +
-                    "0x04000000000000000300000000000000020000000000000001\n" +
-                    "0x08000000000000000700000000000000060000000000000005\n", sink);
+                "0x04000000000000000300000000000000020000000000000001\n" +
+                "0x08000000000000000700000000000000060000000000000005\n", sink);
         });
     }
 
@@ -1921,7 +1921,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public long openRO(LPSZ name) {
+                    public int openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return Files.openRO(temp);
                         }
@@ -1957,10 +1957,10 @@ public class TableReaderTest extends AbstractCairoTest {
             try (Path temp = new Path()) {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
                 ff = new FilesFacadeImpl() {
-                    long metaFd = -1;
+                    int metaFd = -1;
 
                     @Override
-                    public long length(long fd) {
+                    public long length(int fd) {
                         if (fd == metaFd) {
                             return Files.length(temp);
                         }
@@ -1976,7 +1976,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long openRO(LPSZ name) {
+                    public int openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return metaFd = Files.openRO(name);
                         }
@@ -2013,15 +2013,15 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("col10", ColumnType.SYMBOL);
                 }
                 try (
-                        Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
-                        MemoryMARW mem = Vm.getMARWInstance(
-                                FilesFacadeImpl.INSTANCE,
-                                path,
-                                -1,
-                                Files.PAGE_SIZE,
-                                MemoryTag.NATIVE_DEFAULT,
-                                configuration.getWriterFileOpenOpts()
-                        )
+                    Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+                    MemoryMARW mem = Vm.getMARWInstance(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        -1,
+                        Files.PAGE_SIZE,
+                        MemoryTag.NATIVE_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
+                    )
                 ) {
                     mem.putLong(TableUtils.META_OFFSET_STRUCTURE_VERSION, 0);
                 }
@@ -2046,7 +2046,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testNullValueRecovery() throws Exception {
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
+            "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
 
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
@@ -2079,7 +2079,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testOver2GFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.LONG)) {
+                .col("a", ColumnType.LONG)) {
                 CairoTestUtils.create(model);
             }
 
@@ -2346,8 +2346,8 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger(0);
 
             try (
-                    TableWriter writer = new TableWriter(configuration, "x", metrics);
-                    TableReader reader = new TableReader(configuration, "x")
+                TableWriter writer = new TableWriter(configuration, "x", metrics);
+                TableReader reader = new TableReader(configuration, "x")
             ) {
                 new Thread(() -> {
                     try {
@@ -2427,40 +2427,40 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReaderReloadWhenColumnAddedBeforeTheData() throws Exception {
         assertMemoryLeak(
-                () -> {
-                    // model table
-                    try (TableModel model = new TableModel(configuration, "w", PartitionBy.HOUR).col("l", ColumnType.LONG).timestamp()) {
-                        CairoTestUtils.create(model);
-                    }
-
-                    try (
-                            TableWriter w = new TableWriter(configuration, "w", metrics);
-                            TableReader r = new TableReader(configuration, "w")
-                    ) {
-                        // Create and cancel row to ensure partition entry and NULL max timestamp
-                        // this used to trigger a problem with very last reload of the reader.
-                        w.newRow(TimestampFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z")).cancel();
-
-                        // before adding any data add column
-                        w.addColumn("xyz", ColumnType.SYMBOL);
-
-                        Assert.assertTrue(r.reload());
-
-                        TableWriter.Row row = w.newRow(TimestampFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z"));
-                        row.append();
-                        w.commit();
-
-                        Assert.assertTrue(r.reload());
-
-                        sink.clear();
-                        TestUtils.printer.print(r.getCursor(), r.getMetadata(), true, sink);
-                        TestUtils.assertEquals(
-                                "l\ttimestamp\txyz\n" +
-                                        "NaN\t2016-03-02T10:00:00.000000Z\t\n",
-                                sink
-                        );
-                    }
+            () -> {
+                // model table
+                try (TableModel model = new TableModel(configuration, "w", PartitionBy.HOUR).col("l", ColumnType.LONG).timestamp()) {
+                    CairoTestUtils.create(model);
                 }
+
+                try (
+                    TableWriter w = new TableWriter(configuration, "w", metrics);
+                    TableReader r = new TableReader(configuration, "w")
+                ) {
+                    // Create and cancel row to ensure partition entry and NULL max timestamp
+                    // this used to trigger a problem with very last reload of the reader.
+                    w.newRow(TimestampFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z")).cancel();
+
+                    // before adding any data add column
+                    w.addColumn("xyz", ColumnType.SYMBOL);
+
+                    Assert.assertTrue(r.reload());
+
+                    TableWriter.Row row = w.newRow(TimestampFormatUtils.parseTimestamp("2016-03-02T10:00:00.000000Z"));
+                    row.append();
+                    w.commit();
+
+                    Assert.assertTrue(r.reload());
+
+                    sink.clear();
+                    TestUtils.printer.print(r.getCursor(), r.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                        "l\ttimestamp\txyz\n" +
+                            "NaN\t2016-03-02T10:00:00.000000Z\t\n",
+                        sink
+                    );
+                }
+            }
         );
     }
 
@@ -2853,9 +2853,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
-                    .col("a", ColumnType.SYMBOL).indexed(true, 2)
-                    .col("b", ColumnType.INT)
-                    .timestamp()) {
+                .col("a", ColumnType.SYMBOL).indexed(true, 2)
+                .col("b", ColumnType.INT)
+                .timestamp()) {
                 CairoTestUtils.create(model);
             }
 
@@ -2992,14 +2992,14 @@ public class TableReaderTest extends AbstractCairoTest {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
+                        (
+                            Chars.endsWith(name, "b.i") ||
+                                Chars.endsWith(name, "b.d") ||
+                                Chars.endsWith(name, "b.o") ||
+                                Chars.endsWith(name, "b.k") ||
+                                Chars.endsWith(name, "b.c") ||
+                                Chars.endsWith(name, "b.v")
+                        )
                     )) {
                         counter--;
                         return false;
@@ -3210,14 +3210,14 @@ public class TableReaderTest extends AbstractCairoTest {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
+                        (
+                            Chars.endsWith(name, "b.i") ||
+                                Chars.endsWith(name, "b.d") ||
+                                Chars.endsWith(name, "b.o") ||
+                                Chars.endsWith(name, "b.k") ||
+                                Chars.endsWith(name, "b.c") ||
+                                Chars.endsWith(name, "b.v")
+                        )
                     )) {
                         counter--;
                         return false;
@@ -3319,14 +3319,14 @@ public class TableReaderTest extends AbstractCairoTest {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
+                        (
+                            Chars.endsWith(name, "b.i") ||
+                                Chars.endsWith(name, "b.d") ||
+                                Chars.endsWith(name, "b.o") ||
+                                Chars.endsWith(name, "b.k") ||
+                                Chars.endsWith(name, "b.c") ||
+                                Chars.endsWith(name, "b.v")
+                        )
                     )) {
                         counter--;
                         return false;
@@ -3424,14 +3424,14 @@ public class TableReaderTest extends AbstractCairoTest {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
+                        (
+                            Chars.endsWith(name, "b.i") ||
+                                Chars.endsWith(name, "b.d") ||
+                                Chars.endsWith(name, "b.o") ||
+                                Chars.endsWith(name, "b.k") ||
+                                Chars.endsWith(name, "b.c") ||
+                                Chars.endsWith(name, "b.v")
+                        )
                     )) {
                         counter--;
                         return false;
@@ -3529,14 +3529,14 @@ public class TableReaderTest extends AbstractCairoTest {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (counter > 0 && (
-                            (
-                                    Chars.endsWith(name, "b.i") ||
-                                            Chars.endsWith(name, "b.d") ||
-                                            Chars.endsWith(name, "b.o") ||
-                                            Chars.endsWith(name, "b.k") ||
-                                            Chars.endsWith(name, "b.c") ||
-                                            Chars.endsWith(name, "b.v")
-                            )
+                        (
+                            Chars.endsWith(name, "b.i") ||
+                                Chars.endsWith(name, "b.d") ||
+                                Chars.endsWith(name, "b.o") ||
+                                Chars.endsWith(name, "b.k") ||
+                                Chars.endsWith(name, "b.c") ||
+                                Chars.endsWith(name, "b.v")
+                        )
                     )) {
                         counter--;
                         return false;
@@ -3864,16 +3864,16 @@ public class TableReaderTest extends AbstractCairoTest {
     private void createTable(String tableName, int partitionBy) {
         try (Path path = new Path()) {
             try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, partitionBy)
+                MemoryMARW mem = Vm.getCMARWInstance();
+                TableModel model = new TableModel(configuration, tableName, partitionBy)
             ) {
                 model.timestamp();
                 TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1
+                    configuration,
+                    mem,
+                    path,
+                    model,
+                    1
                 );
             }
         }
@@ -3918,14 +3918,14 @@ public class TableReaderTest extends AbstractCairoTest {
             boolean called = false;
 
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 fds.remove(fd);
                 return super.close(fd);
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
+            public int openRO(LPSZ name) {
+                int fd = super.openRO(name);
                 if (Chars.endsWith(name, dcol) || Chars.endsWith(name, icol)) {
                     fds.add(fd);
                     called = true;
@@ -4066,7 +4066,6 @@ public class TableReaderTest extends AbstractCairoTest {
 
             long blob = allocBlob();
             try {
-
                 // test if reader behaves correctly when table is empty
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
@@ -4077,7 +4076,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
-
                     RecordCursor cursor = reader.getCursor();
                     // this combination of reload/iterate/reload is deliberate
                     // we make sure that reload() behavior is not affected by
@@ -4302,8 +4300,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertTrue(
-                            // active partition
-                            writer.removePartition(fmt.parse(partitionNameToDelete, null))
+                        // active partition
+                        writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
 
                     // check writer
@@ -4441,7 +4439,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertTrue(
-                            writer.removePartition(fmt.parse(partitionNameToDelete, null))
+                        writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
 
                     Assert.assertEquals(N * (N_PARTITIONS - 1), writer.size());

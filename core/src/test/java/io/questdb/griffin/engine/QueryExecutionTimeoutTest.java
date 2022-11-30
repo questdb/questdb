@@ -67,14 +67,13 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
             @Override
-            protected boolean testConnection(long fd) {
+            protected boolean testConnection(int fd) {
                 return false;
             }
 
             {
-                setTimeout(-100);//trigger timeout on first check
+                setTimeout(-100); // trigger timeout on first check
             }
-
         };
         AbstractGriffinTest.setUpStatic();
     }
@@ -139,43 +138,43 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     @Test
     public void testTimeoutInInsertAsSelect() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double ) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)");
+            "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInInsertAsSelectBatchedAndOrderedByTs() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
+            "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInInsertAsSelectBatchedAndOrderedByTsAsString() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)");
+            "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInInsertAsSelectOrderedByTs() throws Exception {
         assertTimeout("create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
+            "insert into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)");
     }
 
     @Test
     public void testTimeoutInLatestByAll() throws Exception {
         assertTimeout("create table xx(value long256, ts timestamp) timestamp(ts)",
-                "insert into xx values(null, 0)",
-                "select * from xx latest on ts partition by value");
+            "insert into xx values(null, 0)",
+            "select * from xx latest on ts partition by value");
     }
 
     @Test
     public void testTimeoutInLatestByAllFiltered() throws Exception {
         assertTimeout("create table x as " +
-                        "(select  rnd_double(0)*100 a, " +
-                        "rnd_str(2,4,4) b, " +
-                        "timestamp_sequence(0, 100000000000) k " +
-                        "from long_sequence(20)) " +
-                        "timestamp(k) partition by DAY",
-                "select * from x latest by b where b = 'HNR'");
+                "(select  rnd_double(0)*100 a, " +
+                "rnd_str(2,4,4) b, " +
+                "timestamp_sequence(0, 100000000000) k " +
+                "from long_sequence(20)) " +
+                "timestamp(k) partition by DAY",
+            "select * from x latest by b where b = 'HNR'");
     }
 
     @Test
@@ -186,131 +185,131 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     @Test
     public void testTimeoutInLatestByValue() throws Exception {
         assertTimeout("create table x as " +
-                        "(select  rnd_double(0)*100 a, " +
-                        "rnd_symbol(5,4,4,1) b, " +
-                        "timestamp_sequence(0, 100000000000) k " +
-                        "from long_sequence(20)) " +
-                        "timestamp(k) partition by DAY",
-                "select * from x where b = 'RXGZ' latest on k partition by b");
+                "(select  rnd_double(0)*100 a, " +
+                "rnd_symbol(5,4,4,1) b, " +
+                "timestamp_sequence(0, 100000000000) k " +
+                "from long_sequence(20)) " +
+                "timestamp(k) partition by DAY",
+            "select * from x where b = 'RXGZ' latest on k partition by b");
     }
 
     @Test
     public void testTimeoutInLatestByValueFiltered() throws Exception {
         assertTimeout("CREATE table trades(symbol symbol, side symbol, ts timestamp) timestamp(ts)",
-                "insert into trades " +
-                        "select 'BTC' || x, 'buy' || x, dateadd( 's', x::int, now() ) " +
-                        "from long_sequence(10000)",
-                "SELECT * FROM trades " +
-                        "WHERE symbol in ('BTC1') " +
-                        "AND side in 'buy1' " +
-                        "LATEST ON ts " +
-                        "PARTITION BY symbol;");
+            "insert into trades " +
+                "select 'BTC' || x, 'buy' || x, dateadd( 's', x::int, now() ) " +
+                "from long_sequence(10000)",
+            "SELECT * FROM trades " +
+                "WHERE symbol in ('BTC1') " +
+                "AND side in 'buy1' " +
+                "LATEST ON ts " +
+                "PARTITION BY symbol;");
     }
 
     @Test
     public void testTimeoutInLatestByValueIndexed() throws Exception {
         assertTimeout("create table x as " +
-                        "(select rnd_double(0)*100 a, " +
-                        "rnd_symbol(5,4,4,1) b, " +
-                        "timestamp_sequence(0, 100000000000) k " +
-                        "from long_sequence(200)), " +
-                        "index(b) timestamp(k) partition by DAY",
-                "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b");
+                "(select rnd_double(0)*100 a, " +
+                "rnd_symbol(5,4,4,1) b, " +
+                "timestamp_sequence(0, 100000000000) k " +
+                "from long_sequence(200)), " +
+                "index(b) timestamp(k) partition by DAY",
+            "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b");
     }
 
     @Test
     public void testTimeoutInLatestByValueList() throws Exception {
         assertTimeout("create table t as (" +
-                        "select " +
-                        "x, " +
-                        "rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
-                        "from long_sequence(49)" +
-                        ") timestamp(ts) Partition by DAY",
-                "select ts, x, s from t latest on ts partition by s");
+                "select " +
+                "x, " +
+                "rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
+                "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                "from long_sequence(49)" +
+                ") timestamp(ts) Partition by DAY",
+            "select ts, x, s from t latest on ts partition by s");
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindAllDistinctSymbolsAndFilter() throws Exception {
         assertTimeout("create table t as (" +
-                        "select " +
-                        "x, " +
-                        "rnd_symbol('a', 'b', null) s, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
-                        "from long_sequence(49)" +
-                        ") timestamp(ts) Partition by DAY",
-                "selecT * from t where x%2 = 1 latest on ts partition by s");
+                "select " +
+                "x, " +
+                "rnd_symbol('a', 'b', null) s, " +
+                "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                "from long_sequence(49)" +
+                ") timestamp(ts) Partition by DAY",
+            "selecT * from t where x%2 = 1 latest on ts partition by s");
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindAllDistinctSymbolsAndNoFilter() throws Exception {
         assertTimeout("create table t as (" +
-                        "select " +
-                        "x, " +
-                        "rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
-                        "from long_sequence(49)" +
-                        ") timestamp(ts) Partition by DAY",
-                "select ts, x, s from t latest on ts partition by s");
+                "select " +
+                "x, " +
+                "rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
+                "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                "from long_sequence(49)" +
+                ") timestamp(ts) Partition by DAY",
+            "select ts, x, s from t latest on ts partition by s");
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindSelectedSymbolsAndFilter() throws Exception {
         assertTimeout("create table t as (" +
-                        "select " +
-                        "x, " +
-                        "rnd_symbol('a', 'b', null) s, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
-                        "from long_sequence(49)" +
-                        ") timestamp(ts) Partition by DAY",
-                "select * from t " +
-                        "where s in ('a', 'b') and x%2 = 0 " +
-                        "latest on ts partition by s");
+                "select " +
+                "x, " +
+                "rnd_symbol('a', 'b', null) s, " +
+                "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                "from long_sequence(49)" +
+                ") timestamp(ts) Partition by DAY",
+            "select * from t " +
+                "where s in ('a', 'b') and x%2 = 0 " +
+                "latest on ts partition by s");
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindSelectedSymbolsAndNoFilter() throws Exception {
         assertTimeout("create table t as (" +
-                        "select " +
-                        "x, " +
-                        "rnd_symbol('a', 'b', null) s, " +
-                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
-                        "from long_sequence(49)" +
-                        ") timestamp(ts) Partition by DAY",
-                "select * from t where s in ('a', null) latest on ts partition by s");
+                "select " +
+                "x, " +
+                "rnd_symbol('a', 'b', null) s, " +
+                "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                "from long_sequence(49)" +
+                ") timestamp(ts) Partition by DAY",
+            "select * from t where s in ('a', null) latest on ts partition by s");
     }
 
     @Test
     public void testTimeoutInLatestByValues() throws Exception {
         assertTimeout("create table x as " +
-                        "(select rnd_double(0)*100 a, " +
-                        "rnd_symbol(5,4,4,1) b, " +
-                        "timestamp_sequence(0, 100000000000) k " +
-                        "from long_sequence(20)) " +
-                        "timestamp(k) partition by DAY",
-                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b");
+                "(select rnd_double(0)*100 a, " +
+                "rnd_symbol(5,4,4,1) b, " +
+                "timestamp_sequence(0, 100000000000) k " +
+                "from long_sequence(20)) " +
+                "timestamp(k) partition by DAY",
+            "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b");
     }
 
     @Test
     public void testTimeoutInLatestByValuesFiltered() throws Exception {
         assertTimeout("create table x as " +
-                        "(select rnd_double(0)*100 a, " +
-                        "rnd_symbol(5,4,4,1) b, " +
-                        "timestamp_sequence(0, 100000000000) k " +
-                        "from long_sequence(20)) " +
-                        "timestamp(k) partition by DAY",
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) and a > 12 and a < 50 and test_match() latest on k partition by b");
+                "(select rnd_double(0)*100 a, " +
+                "rnd_symbol(5,4,4,1) b, " +
+                "timestamp_sequence(0, 100000000000) k " +
+                "from long_sequence(20)) " +
+                "timestamp(k) partition by DAY",
+            "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) and a > 12 and a < 50 and test_match() latest on k partition by b");
     }
 
     @Test
     public void testTimeoutInLatestByValuesIndexed() throws Exception {
         assertTimeout("create table x as " +
-                        "(select rnd_double(0)*100 a, " +
-                        "rnd_symbol(5,4,4,1) b, " +
-                        "timestamp_sequence(0, 10000000000) k " +
-                        "from long_sequence(300)), " +
-                        "index(b) timestamp(k) partition by DAY",
-                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b");
+                "(select rnd_double(0)*100 a, " +
+                "rnd_symbol(5,4,4,1) b, " +
+                "timestamp_sequence(0, 10000000000) k " +
+                "from long_sequence(300)), " +
+                "index(b) timestamp(k) partition by DAY",
+            "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b");
     }
 
     @Test
@@ -318,14 +317,14 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
         ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(1);
         try {
             assertTimeout("create table grouptest as " +
-                            "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
-                    "select * from \n" +
-                            "(\n" +
-                            "  select * \n" +
-                            "  from grouptest gt1\n" +
-                            "  join grouptest gt2 on i\n" +
-                            ")\n" +
-                            "join grouptest gt3 on i");
+                    "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
+                "select * from \n" +
+                    "(\n" +
+                    "  select * \n" +
+                    "  from grouptest gt1\n" +
+                    "  join grouptest gt2 on i\n" +
+                    ")\n" +
+                    "join grouptest gt3 on i");
         } finally {
             resetTimeout();
         }
@@ -334,36 +333,36 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     @Test
     public void testTimeoutInNonVectorizedKeyedGroupBy() throws Exception {
         assertTimeout("create table grouptest as (select x as i, x as l from long_sequence(10000) );",
-                "select i, avg(l), max(l) \n" +
-                        "from grouptest \n" +
-                        "group by i");
+            "select i, avg(l), max(l) \n" +
+                "from grouptest \n" +
+                "group by i");
     }
 
     @Test
     public void testTimeoutInNonVectorizedNonKeyedGroupBy() throws Exception {
         assertTimeout("create table grouptest as (select x as i, x as l from long_sequence(10000) );",
-                "select avg(cast(l as int)), max(l) \n" +
-                        "from grouptest \n");
+            "select avg(cast(l as int)), max(l) \n" +
+                "from grouptest \n");
     }
 
     @Test
     public void testTimeoutInOrderedRowNumber() throws Exception {
         assertTimeout("create table rntest as (select x as key from long_sequence(1000));\n",
-                "select row_number() over (partition by key%1000 order by key ), key  \n" +
-                        "from rntest");
+            "select row_number() over (partition by key%1000 order by key ), key  \n" +
+                "from rntest");
     }
 
     @Test
     public void testTimeoutInRowNumber() throws Exception {
         assertTimeout("create table rntest as (select x as key from long_sequence(1000));\n",
-                "select row_number() over (partition by key%1000 ), key  \n" +
-                        "from rntest");
+            "select row_number() over (partition by key%1000 ), key  \n" +
+                "from rntest");
     }
 
     @Test
     public void testTimeoutInUpdateTable() throws Exception {
         assertTimeout("create table updtest as (select rnd_int() i, rnd_long() l, rnd_double() d from long_sequence(10000))",
-                "update updtest  set i = rnd_int(), l = i * l, d = d/7 *31", null);
+            "update updtest  set i = rnd_int(), l = i * l, d = d/7 *31", null);
     }
 
     @Test
@@ -486,17 +485,17 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     }
 
     private void executeWithPool(
-            int workerCount,
-            int queueSize,
-            CustomisableRunnable runnable) throws Exception {
+        int workerCount,
+        int queueSize,
+        CustomisableRunnable runnable) throws Exception {
         executeWithPool(workerCount, queueSize, RostiAllocFacadeImpl.INSTANCE, runnable);
     }
 
     private void executeWithPool(
-            int workerCount,
-            int queueSize,
-            RostiAllocFacade rostiAllocFacade,
-            CustomisableRunnable runnable
+        int workerCount,
+        int queueSize,
+        RostiAllocFacade rostiAllocFacade,
+        CustomisableRunnable runnable
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
@@ -548,30 +547,30 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         assertTimeout("create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
-                compiler, sqlExecutionContext);
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY",
+            "select * from (select a,k,b from x latest on k partition by b) where a > 40",
+            compiler, sqlExecutionContext);
     }
 
     private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
-                "select i, avg(l), max(l) \n" +
-                        "from grouptest \n" +
-                        "group by i", compiler, sqlExecutionContext);
+            "select i, avg(l), max(l) \n" +
+                "from grouptest \n" +
+                "group by i", compiler, sqlExecutionContext);
     }
 
     private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
-                "select avg(l), max(l) from grouptest", compiler, sqlExecutionContext);
+            "select avg(l), max(l) from grouptest", compiler, sqlExecutionContext);
     }
 
     private void unsetTimeout() {
@@ -579,9 +578,9 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     }
 
     protected static void execute(
-            @Nullable WorkerPool pool,
-            CustomisableRunnable runnable,
-            CairoConfiguration configuration
+        @Nullable WorkerPool pool,
+        CustomisableRunnable runnable,
+        CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
 

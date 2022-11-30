@@ -35,7 +35,7 @@ public interface IOContext extends Closeable {
 
     IODispatcher<?> getDispatcher();
 
-    long getFd();
+    int getFd();
 
     default SuspendEvent getSuspendEvent() {
         return null;

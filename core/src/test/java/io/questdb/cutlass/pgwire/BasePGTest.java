@@ -53,12 +53,12 @@ import static io.questdb.std.Numbers.hexDigits;
 public abstract class BasePGTest extends AbstractGriffinTest {
 
     public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            PGWireServer.PGConnectionContextFactory contextFactory
+        PGWireConfiguration configuration,
+        CairoEngine cairoEngine,
+        WorkerPool workerPool,
+        FunctionFactoryCache functionFactoryCache,
+        DatabaseSnapshotAgent snapshotAgent,
+        PGWireServer.PGConnectionContextFactory contextFactory
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -68,27 +68,27 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     }
 
     public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+        PGWireConfiguration configuration,
+        CairoEngine cairoEngine,
+        WorkerPool workerPool,
+        FunctionFactoryCache functionFactoryCache,
+        DatabaseSnapshotAgent snapshotAgent
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
         return new PGWireServer(
-                configuration,
+            configuration,
+            cairoEngine,
+            workerPool,
+            functionFactoryCache,
+            snapshotAgent,
+            new PGWireServer.PGConnectionContextFactory(
                 cairoEngine,
-                workerPool,
-                functionFactoryCache,
-                snapshotAgent,
-                new PGWireServer.PGConnectionContextFactory(
-                        cairoEngine,
-                        configuration,
-                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                )
+                configuration,
+                () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+            )
         );
     }
 
@@ -239,11 +239,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
         return createPGWireServer(
-                configuration,
-                engine,
-                new TestWorkerPool(configuration.getWorkerCount(), metrics),
-                compiler.getFunctionFactoryCache(),
-                snapshotAgent
+            configuration,
+            engine,
+            new TestWorkerPool(configuration.getWorkerCount(), metrics),
+            compiler.getFunctionFactoryCache(),
+            snapshotAgent
         );
     }
 
@@ -347,7 +347,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     protected NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
             @Override
-            public int send(long fd, long buffer, int bufferLen) {
+            public int send(int fd, long buffer, int bufferLen) {
                 int total = 0;
                 for (int i = 0; i < bufferLen; i++) {
                     int n = super.send(fd, buffer + i, 1);

@@ -73,21 +73,21 @@ public class Mig620 {
         final FilesFacade ff = migrationContext.getFf();
 
         try (MemoryMARW cvMemory = Vm.getCMARWInstance(
-                ff,
-                path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
-                Files.PAGE_SIZE,
-                COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
-                MemoryTag.NATIVE_MIG_MMAP,
-                CairoConfiguration.O_NONE
+            ff,
+            path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
+            Files.PAGE_SIZE,
+            COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
+            MemoryTag.NATIVE_MIG_MMAP,
+            CairoConfiguration.O_NONE
         )) {
             cvMemory.extend(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
             cvMemory.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
             cvMemory.zero();
 
             try (MemoryMARW metaMem = openFileSafe(
-                    ff,
-                    path.trimTo(pathLen).concat(META_FILE_NAME_MIG).$(),
-                    META_OFFSET_COLUMN_TYPES_MIG
+                ff,
+                path.trimTo(pathLen).concat(META_FILE_NAME_MIG).$(),
+                META_OFFSET_COLUMN_TYPES_MIG
             )) {
                 int partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY_MIG);
                 ObjList<String> columnNames = readColumNames(metaMem);
@@ -146,8 +146,8 @@ public class Mig620 {
         return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
     }
 
-    private static long openRO(FilesFacade ff, LPSZ path) {
-        final long fd = ff.openRO(path);
+    private static int openRO(FilesFacade ff, LPSZ path) {
+        final int fd = ff.openRO(path);
         if (fd > -1) {
             Mig620.LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
@@ -179,7 +179,7 @@ public class Mig620 {
     private static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen) {
         try {
             if (ff.exists(topFile(path.chop$(), name))) {
-                final long fd = openRO(ff, path);
+                final int fd = openRO(ff, path);
                 try {
                     long n;
                     if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {

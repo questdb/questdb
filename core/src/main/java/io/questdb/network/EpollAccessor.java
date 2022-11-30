@@ -38,7 +38,7 @@ public class EpollAccessor {
 
     static native int epollCreate();
 
-    static native int epollCtl(int epfd, int op, long fd, long eventPtr);
+    static native int epollCtl(int epfd, int op, int fd, long eventPtr);
 
     static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
 

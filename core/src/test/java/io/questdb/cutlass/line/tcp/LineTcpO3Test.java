@@ -73,7 +73,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+            {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
@@ -187,15 +187,15 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String ilpResourceName) throws Exception {
         assertMemoryLeak(() -> {
-            long clientFd = Net.socketTcp(true);
+            int clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
 
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics.health());
             try (
-                    LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool);
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {

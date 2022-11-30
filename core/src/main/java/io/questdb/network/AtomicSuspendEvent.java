@@ -24,20 +24,33 @@
 
 package io.questdb.network;
 
-public interface EpollFacade {
-    int epollCreate();
+/**
+ * Atomic flag-based suspend event object. Used on Windows. Then events are checked
+ * by {@link IODispatcherWindows} in a loop, so O(n), but that fine with we already
+ * use an O(n) method (select) to check socket statuses.
+ */
+public class AtomicSuspendEvent implements SuspendEvent {
 
-    int epollCtl(int epfd, int op, int fd, long eventPtr);
+    private volatile boolean flag;
 
-    int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+    @Override
+    public boolean checkTriggered() {
+        return flag;
+    }
 
-    int errno();
+    @Override
+    public void close() {
+        // no-op
+    }
 
-    int eventFd();
+    @Override
+    public int getFd() {
+        // no-op
+        return -1;
+    }
 
-    NetworkFacade getNetworkFacade();
-
-    long readEventFd(int fd);
-
-    int writeEventFd(int fd);
+    @Override
+    public void trigger() {
+        flag = true;
+    }
 }

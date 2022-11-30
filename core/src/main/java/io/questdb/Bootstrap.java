@@ -54,11 +54,11 @@ public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String BANNER =
-            "     ___                  _   ____  ____\n" +
-                    "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
-                    "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
-                    "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
-                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
+        "     ___                  _   ____  ____\n" +
+            "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
+            "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
+            "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
+            "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
     private static final String CONFIG_FILE = "/server.conf";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
@@ -254,7 +254,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        long fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
+        int fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -373,8 +373,8 @@ public class Bootstrap {
     static void logWebConsoleUrls(PropServerConfiguration config, Log log, String banner) {
         if (config.getHttpServerConfiguration().isEnabled()) {
             final LogRecord r = log.infoW().$('\n')
-                    .$(banner)
-                    .$("Web Console URL(s):").$("\n\n");
+                .$(banner)
+                .$("Web Console URL(s):").$("\n\n");
 
             final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
@@ -432,8 +432,8 @@ public class Bootstrap {
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         NativeLPSZ name = new NativeLPSZ();
         try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
+            Path path = new Path().of(dbRoot).slash$();
+            Path other = new Path().of(dbRoot).slash$()
         ) {
             int plen = path.length();
             AtomicInteger counter = new AtomicInteger(0);
@@ -454,11 +454,11 @@ public class Bootstrap {
                             log.criticalW().$("found crash file [path=").$(other).I$();
                         } else {
                             log.criticalW().
-                                    $("could not rename crash file [path=").$(path)
-                                    .$(", errno=").$(ff.errno())
-                                    .$(", index=").$(counter.get())
-                                    .$(", max=").$(maxFiles)
-                                    .I$();
+                                $("could not rename crash file [path=").$(path)
+                                .$(", errno=").$(ff.errno())
+                                .$(", index=").$(counter.get())
+                                .$(", max=").$(maxFiles)
+                                .I$();
                         }
                     }
                 }

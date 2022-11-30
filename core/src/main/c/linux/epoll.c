@@ -35,7 +35,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCtl
-        (JNIEnv *e, jclass cl, jint epfd, jint op, jlong fd, jlong event) {
+        (JNIEnv *e, jclass cl, jint epfd, jint op, jint fd, jlong event) {
     return epoll_ctl((int) epfd, op, (int) fd, (struct epoll_event *) event);
 }
 

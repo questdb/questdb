@@ -36,7 +36,7 @@ import io.questdb.std.str.LPSZ;
 //paged mapped appendable readable 
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
-    private long fd = -1;
+    private int fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
     private int mappedPage;
@@ -67,7 +67,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         close(true);
     }
 
-    public long getFd() {
+    public int getFd() {
         return fd;
     }
 
@@ -115,7 +115,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void switchTo(long fd, long offset, byte truncateMode) {
+    public void switchTo(int fd, long offset, byte truncateMode) {
         close(true, truncateMode);
         this.fd = fd;
         jumpTo(offset);

@@ -38,16 +38,16 @@ class MigrationContext {
     private final long tempMemory;
     private final int tempMemoryLen;
     private final MemoryARW tempVirtualMem;
-    private long metadataFd;
+    private int metadataFd;
     private Path tablePath;
     private Path tablePath2;
 
     public MigrationContext(
-            CairoEngine engine,
-            long mem,
-            int tempMemSize,
-            MemoryARW tempVirtualMem,
-            MemoryMARW rwMemory
+        CairoEngine engine,
+        long mem,
+        int tempMemSize,
+        MemoryARW tempVirtualMem,
+        MemoryMARW rwMemory
     ) {
         this.engine = engine;
         this.tempMemory = mem;
@@ -71,7 +71,7 @@ class MigrationContext {
         return getConfiguration().getFilesFacade();
     }
 
-    public long getMetadataFd() {
+    public int getMetadataFd() {
         return metadataFd;
     }
 
@@ -100,17 +100,17 @@ class MigrationContext {
             return tempMemory;
         }
         throw new UnsupportedOperationException("No temp memory of size "
-                + size
-                + " is allocate. Only "
-                + tempMemoryLen
-                + " is available");
+            + size
+            + " is allocate. Only "
+            + tempMemoryLen
+            + " is available");
     }
 
     public MemoryARW getTempVirtualMem() {
         return tempVirtualMem;
     }
 
-    public void of(Path path, Path pathCopy, long metadataFd) {
+    public void of(Path path, Path pathCopy, int metadataFd) {
         this.tablePath = path;
         this.tablePath2 = pathCopy;
         this.metadataFd = metadataFd;

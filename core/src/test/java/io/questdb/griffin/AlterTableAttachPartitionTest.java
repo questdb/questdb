@@ -79,26 +79,26 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // create table
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName,
-                        2
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts"),
+                    10000,
+                    partitionName,
+                    2
                 ); // -> creates partitions 2022-10-17 and 2022-10-18 with 5K rows each
             }
             txn++;
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
             // detach partition
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n"); // 2022-10-17 is gone
+                "min\tmax\tcount\n" +
+                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n"); // 2022-10-17 is gone
 
             // attach partition via soft link
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "S3");
@@ -112,15 +112,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
-                    "l\ti\tts\n" +
-                            "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
-                            "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
-                            "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
-                            "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
-                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
+                "l\ti\tts\n" +
+                    "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
+                    "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
+                    "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
+                    "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
+                    "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
             );
 
             // insert a row at the end of the partition
@@ -129,8 +129,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // update a row toward the end of the partition
             executeOperation(
-                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
-                    CompiledQuery.UPDATE
+                "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
+                CompiledQuery.UPDATE
             );
             txn++;
 
@@ -154,30 +154,30 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // update a row toward the beginning of the partition
             executeOperation(
-                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
-                    CompiledQuery.UPDATE
+                "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
+                CompiledQuery.UPDATE
             );
 
             // verify content
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
-                    "l\ti\tts\n" +
-                            "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
-                            "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
-                            "13\t4999\t2022-10-17T23:59:42.220100Z\n" +
-                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n" +
-                            "0\t0\t2022-10-17T23:59:59.500001Z\n" // <-- the new row at the end
+                "l\ti\tts\n" +
+                    "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
+                    "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
+                    "13\t4999\t2022-10-17T23:59:42.220100Z\n" +
+                    "5000\t5000\t2022-10-17T23:59:59.500000Z\n" +
+                    "0\t0\t2022-10-17T23:59:59.500001Z\n" // <-- the new row at the end
             );
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
-                    "l\ti\tts\n" +
-                            "-1\t-1\t2022-10-17T00:00:00.100005Z\n" + // <-- the new row at the beginning
-                            "1\t1\t2022-10-17T00:00:17.279900Z\n" +
-                            "13\t2\t2022-10-17T00:00:34.559800Z\n" +
-                            "3\t3\t2022-10-17T00:00:51.839700Z\n" +
-                            "4\t4\t2022-10-17T00:01:09.119600Z\n"
+                "l\ti\tts\n" +
+                    "-1\t-1\t2022-10-17T00:00:00.100005Z\n" + // <-- the new row at the beginning
+                    "1\t1\t2022-10-17T00:00:17.279900Z\n" +
+                    "13\t2\t2022-10-17T00:00:34.559800Z\n" +
+                    "3\t3\t2022-10-17T00:00:51.839700Z\n" +
+                    "4\t4\t2022-10-17T00:01:09.119600Z\n"
             );
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:00.100005Z\t2022-10-18T23:59:59.000000Z\t10002\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:00.100005Z\t2022-10-18T23:59:59.000000Z\t10002\n");
         });
     }
 
@@ -192,13 +192,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName,
-                        2
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts"),
+                    10000,
+                    partitionName,
+                    2
                 );
             }
 
@@ -206,14 +206,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "SNOW");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
             // detach the partition which was attached via soft link will result in the link being removed
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
             // verify cold storage folder exists
             Assert.assertTrue(Files.exists(otherPath));
             AtomicInteger fileCount = new AtomicInteger();
@@ -221,30 +221,30 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             Assert.assertTrue(fileCount.get() > 0);
             // verify the link was removed
             otherPath.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(configuration.getAttachPartitionSuffix())
-                    .$();
+                .concat(tableName)
+                .concat(partitionName)
+                .put(configuration.getAttachPartitionSuffix())
+                .$();
             Assert.assertFalse(ff.exists(otherPath));
             // verify no copy was produced to hot space
             path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(TableUtils.DETACHED_DIR_MARKER)
-                    .$();
+                .concat(tableName)
+                .concat(partitionName)
+                .put(TableUtils.DETACHED_DIR_MARKER)
+                .$();
             Assert.assertFalse(ff.exists(path));
 
             // insert a row at the end of the partition, the only row, which will create the partition
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n");
 
             // drop the partition
             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
         });
     }
 
@@ -259,13 +259,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName,
-                        2
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts"),
+                    10000,
+                    partitionName,
+                    2
                 );
             }
 
@@ -273,14 +273,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "IGLU");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
             // drop the partition which was attached via soft link
             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
             // verify cold storage folder exists
             Assert.assertTrue(Files.exists(otherPath));
             AtomicInteger fileCount = new AtomicInteger();
@@ -288,10 +288,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             Assert.assertTrue(fileCount.get() > 0);
 
             path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(".2")
-                    .$();
+                .concat(tableName)
+                .concat(partitionName)
+                .put(".2")
+                .$();
             Assert.assertFalse(ff.exists(path));
         });
     }
@@ -307,13 +307,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName,
-                        2
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts"),
+                    10000,
+                    partitionName,
+                    2
                 );
             }
 
@@ -321,24 +321,24 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "FINLAND");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-11-04T00:00:17.279900Z\t2022-11-05T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-11-04T00:00:17.279900Z\t2022-11-05T23:59:59.000000Z\t10000\n");
 
             try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 // drop the partition which was attached via soft link
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
                 // there is a reader, cannot unlink, thus the link will still exist
                 path.of(configuration.getRoot()) // <-- soft link path
-                        .concat(tableName)
-                        .concat(partitionName)
-                        .put(".2")
-                        .$();
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(".2")
+                    .$();
                 Assert.assertTrue(Files.exists(path));
             }
             engine.releaseAllReaders();
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-11-05T00:00:16.779900Z\t2022-11-05T23:59:59.000000Z\t5000\n");
+                "min\tmax\tcount\n" +
+                    "2022-11-05T00:00:16.779900Z\t2022-11-05T23:59:59.000000Z\t5000\n");
 
             // purge old partitions
             engine.releaseAllReaders();
@@ -370,19 +370,19 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName,
-                        2
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts"),
+                    10000,
+                    partitionName,
+                    2
                 );
             }
             txn++;
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
@@ -391,15 +391,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             txn++;
 
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
-                    "l\ti\tts\n" +
-                            "1\t1\t2022-10-17T00:00:17.279900Z\n" +
-                            "2\t2\t2022-10-17T00:00:34.559800Z\n" +
-                            "3\t3\t2022-10-17T00:00:51.839700Z\n" +
-                            "4\t4\t2022-10-17T00:01:09.119600Z\n" +
-                            "5\t5\t2022-10-17T00:01:26.399500Z\n"
+                "l\ti\tts\n" +
+                    "1\t1\t2022-10-17T00:00:17.279900Z\n" +
+                    "2\t2\t2022-10-17T00:00:34.559800Z\n" +
+                    "3\t3\t2022-10-17T00:00:51.839700Z\n" +
+                    "4\t4\t2022-10-17T00:01:09.119600Z\n" +
+                    "5\t5\t2022-10-17T00:01:26.399500Z\n"
             );
 
             // collect last modified timestamps for files in cold storage
@@ -413,26 +413,26 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // execute an update directly on the cold storage partition
             executeOperation(
-                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
-                    CompiledQuery.UPDATE
+                "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
+                CompiledQuery.UPDATE
             );
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                    "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                "min\tmax\tcount\n" +
+                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
-                    "l\ti\tts\n" +
-                            "13\t1\t2022-10-17T00:00:17.279900Z\n" +
-                            "2\t2\t2022-10-17T00:00:34.559800Z\n" +
-                            "3\t3\t2022-10-17T00:00:51.839700Z\n" +
-                            "4\t4\t2022-10-17T00:01:09.119600Z\n" +
-                            "5\t5\t2022-10-17T00:01:26.399500Z\n"
+                "l\ti\tts\n" +
+                    "13\t1\t2022-10-17T00:00:17.279900Z\n" +
+                    "2\t2\t2022-10-17T00:00:34.559800Z\n" +
+                    "3\t3\t2022-10-17T00:00:51.839700Z\n" +
+                    "4\t4\t2022-10-17T00:01:09.119600Z\n" +
+                    "5\t5\t2022-10-17T00:01:26.399500Z\n"
             );
 
             // verify that no new partition folder has been created in the table data space (hot)
             // but rather the files in cold storage have been modified
             path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName);
+                .concat(tableName)
+                .concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
             Assert.assertTrue(Files.isSoftLink(path));
@@ -462,17 +462,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel src = new TableModel(configuration, "src1", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst1", PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2020-01-01",
-                        12);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2020-01-01",
+                    12);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 attachFromSrcIntoDst(src, dst, "2020-01-09", "2020-01-10");
             }
@@ -486,17 +486,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst2", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2020-01-01",
-                        12);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2020-01-01",
+                    12);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 attachFromSrcIntoDst(src, dst, "2020-01-10");
                 attachFromSrcIntoDst(src, dst, "2020-01-09");
@@ -511,17 +511,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst3", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2020-01-01",
-                        12);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2020-01-01",
+                    12);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 // 3 partitions unordered
                 attachFromSrcIntoDst(src, dst, "2020-01-09", "2020-01-10", "2020-01-01");
@@ -536,17 +536,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst4", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2020-01-01",
-                        11);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2020-01-01",
+                    11);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 attachFromSrcIntoDst(src, dst, "2020-01-10");
             }
@@ -559,8 +559,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel dst = new TableModel(configuration, "dst5", PartitionBy.MONTH)) {
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '202A-01'";
                 try {
@@ -579,8 +579,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel dst = new TableModel(configuration, "dst6", PartitionBy.YEAR)) {
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
                 try {
@@ -599,8 +599,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel dst = new TableModel(configuration, "dst7", PartitionBy.MONTH)) {
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
                 try {
@@ -619,8 +619,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel dst = new TableModel(configuration, "dst8", PartitionBy.MONTH)) {
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01'.'2020-02'";
                 try {
@@ -638,8 +638,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst9", PartitionBy.DAY)) {
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
                 try {
@@ -657,8 +657,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst10", PartitionBy.DAY)) {
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
 
@@ -676,23 +676,23 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionInWrongDirectoryName() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    TableModel src = new TableModel(configuration, "src11", PartitionBy.DAY);
-                    TableModel dst = new TableModel(configuration, "dst11", PartitionBy.DAY)
+                TableModel src = new TableModel(configuration, "src11", PartitionBy.DAY);
+                TableModel dst = new TableModel(configuration, "dst11", PartitionBy.DAY)
             ) {
 
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .timestamp("ts"),
-                        10000,
-                        "2020-01-01",
-                        1);
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts"),
+                    10000,
+                    "2020-01-01",
+                    1);
 
                 CairoTestUtils.create(
-                        dst.col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .timestamp("ts"));
+                    dst.col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .timestamp("ts"));
 
                 copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "COCONUTS");
 
@@ -710,18 +710,18 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionStringColIndexMessedNotInOrder() throws Exception {
         assertMemoryLeak(() -> {
             AddColumn src = s -> s.col("l", ColumnType.LONG)
-                    .col("i", ColumnType.INT)
-                    .timestamp("ts")
-                    .col("str", ColumnType.STRING);
+                .col("i", ColumnType.INT)
+                .timestamp("ts")
+                .col("str", ColumnType.STRING);
 
             assertSchemaMismatch(
-                    "src26",
-                    src,
-                    "dst26",
-                    dst -> {
-                    },
-                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", 0L, 16L),
-                    "Variable size column has invalid data address value"
+                "src26",
+                src,
+                "dst26",
+                dst -> {
+                },
+                s -> writeToStrIndexFile(s, "2022-08-01", "str.i", 0L, 16L),
+                "Variable size column has invalid data address value"
             );
         });
     }
@@ -730,28 +730,28 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionStringColIndexMessedOffsetOutsideFileBounds() throws Exception {
         assertMemoryLeak(() -> {
             AddColumn src = s -> s.col("i", ColumnType.INT)
-                    .col("l", ColumnType.LONG)
-                    .timestamp("ts")
-                    .col("str", ColumnType.STRING);
+                .col("l", ColumnType.LONG)
+                .timestamp("ts")
+                .col("str", ColumnType.STRING);
 
             assertSchemaMismatch(
-                    "src27",
-                    src,
-                    "dst27",
-                    dst -> {
-                    },
-                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", Long.MAX_VALUE, 256L),
-                    "dataAddress=" + Long.MAX_VALUE
+                "src27",
+                src,
+                "dst27",
+                dst -> {
+                },
+                s -> writeToStrIndexFile(s, "2022-08-01", "str.i", Long.MAX_VALUE, 256L),
+                "dataAddress=" + Long.MAX_VALUE
             );
 
             assertSchemaMismatch(
-                    "src28",
-                    src,
-                    "dst28",
-                    dst -> {
-                    },
-                    s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
-                    "dataAddress=" + -1L
+                "src28",
+                src,
+                "dst28",
+                dst -> {
+                },
+                s -> writeToStrIndexFile(s, "2022-08-01", "str.i", -1L, 256L),
+                "dataAddress=" + -1L
             );
         });
     }
@@ -760,24 +760,24 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionStringIndexFileTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             AddColumn src = s -> s.col("i", ColumnType.INT)
-                    .col("l", ColumnType.LONG)
-                    .timestamp("ts")
-                    .col("sh", ColumnType.STRING);
+                .col("l", ColumnType.LONG)
+                .timestamp("ts")
+                .col("sh", ColumnType.STRING);
 
             assertSchemaMismatch(
-                    "src30",
-                    src,
-                    "dst30",
-                    dst -> {
-                    },
-                    s -> {
-                        engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.i").$();
-                        long fd = Files.openRW(path);
-                        Files.truncate(fd, Files.length(fd) / 4);
-                        Files.close(fd);
-                    },
-                    "Column file is too small"
+                "src30",
+                src,
+                "dst30",
+                dst -> {
+                },
+                s -> {
+                    engine.clear();
+                    path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.i").$();
+                    int fd = Files.openRW(path);
+                    Files.truncate(fd, Files.length(fd) / 4);
+                    Files.close(fd);
+                },
+                "Column file is too small"
             );
         });
     }
@@ -787,27 +787,27 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src31", PartitionBy.DAY)) {
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("l", ColumnType.LONG)
-                                .col("sym", ColumnType.SYMBOL)
-                                .col("i", ColumnType.INT),
-                        10000,
-                        "2022-08-01",
-                        3);
+                    1,
+                    src.timestamp("ts")
+                        .col("l", ColumnType.LONG)
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("i", ColumnType.INT),
+                    10000,
+                    "2022-08-01",
+                    3);
 
                 writeToStrIndexFile(src, "2022-08-02", "sym.d", -1L, 4L);
 
                 try (TableModel dst = new TableModel(configuration, "dst31", PartitionBy.DAY)) {
                     createPopulateTable(
-                            1,
-                            dst.timestamp("ts")
-                                    .col("l", ColumnType.LONG)
-                                    .col("sym", ColumnType.SYMBOL)
-                                    .col("i", ColumnType.INT),
-                            10000,
-                            "2022-08-01",
-                            1);
+                        1,
+                        dst.timestamp("ts")
+                            .col("l", ColumnType.LONG)
+                            .col("sym", ColumnType.SYMBOL)
+                            .col("i", ColumnType.INT),
+                        10000,
+                        "2022-08-01",
+                        1);
 
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-02");
@@ -825,25 +825,25 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
 
             AddColumn src = s -> s.col("i", ColumnType.INT)
-                    .col("l", ColumnType.LONG)
-                    .timestamp("ts")
-                    .col("sh", ColumnType.SYMBOL);
+                .col("l", ColumnType.LONG)
+                .timestamp("ts")
+                .col("sh", ColumnType.SYMBOL);
 
             assertSchemaMismatch(
-                    "src32",
-                    src,
-                    "dst32",
-                    dst -> {
-                    },
-                    s -> {
-                        // .v file
-                        engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.v").$();
-                        long fd = Files.openRW(path);
-                        Files.truncate(fd, Files.length(fd) / 2);
-                        Files.close(fd);
-                    },
-                    "Symbol file does not match symbol column"
+                "src32",
+                src,
+                "dst32",
+                dst -> {
+                },
+                s -> {
+                    // .v file
+                    engine.clear();
+                    path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.v").$();
+                    int fd = Files.openRW(path);
+                    Files.truncate(fd, Files.length(fd) / 2);
+                    Files.close(fd);
+                },
+                "Symbol file does not match symbol column"
             );
         });
     }
@@ -855,27 +855,27 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst33", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 CairoTestUtils.create(dst.timestamp("ts1")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-01");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "could not open read-only"
+                        "could not open read-only"
                     );
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "ts1.d"
+                        "ts1.d"
                     );
                 }
             }
@@ -903,25 +903,25 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionWrongFixedColumn() throws Exception {
         assertMemoryLeak(() -> {
             AddColumn src = s -> s.col("l", ColumnType.LONG)
-                    .col("i", ColumnType.INT)
-                    .timestamp("ts")
-                    .col("sh", ColumnType.SHORT);
+                .col("i", ColumnType.INT)
+                .timestamp("ts")
+                .col("sh", ColumnType.SHORT);
 
             assertSchemaMismatch(
-                    "src34",
-                    src,
-                    "dst34",
-                    dst -> {
-                    },
-                    s -> {
-                        // .d file
-                        engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.d").$();
-                        long fd = Files.openRW(path);
-                        Files.truncate(fd, Files.length(fd) / 10);
-                        Files.close(fd);
-                    },
-                    "Column file is too small"
+                "src34",
+                src,
+                "dst34",
+                dst -> {
+                },
+                s -> {
+                    // .d file
+                    engine.clear();
+                    path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.d").$();
+                    int fd = Files.openRW(path);
+                    Files.truncate(fd, Files.length(fd) / 10);
+                    Files.close(fd);
+                },
+                "Column file is too small"
             );
         });
     }
@@ -933,15 +933,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, testName.getMethodName() + "_dst", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 128)
-                                .col("str", ColumnType.STRING),
-                        8,
-                        "2022-08-01",
-                        4);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                        .col("str", ColumnType.STRING),
+                    8,
+                    "2022-08-01",
+                    4);
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
                     writer.removeColumn("s");
                     writer.removeColumn("str");
@@ -949,10 +949,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 }
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s", ColumnType.SYMBOL).indexed(true, 128)
-                        .col("str", ColumnType.STRING)
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG)
+                    .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                    .col("str", ColumnType.STRING)
                 );
 
                 copyPartitionToAttachable(src.getName(), "2022-08-02", dst.getName(), "2022-08-02");
@@ -960,15 +960,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 engine.clear();
                 assertQuery(
-                        "ts\ti\tl\ts\tstr\n" +
-                                "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\n" +
-                                "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\n",
-                        dst.getName(),
-                        null,
-                        "ts",
-                        true,
-                        false,
-                        true
+                    "ts\ti\tl\ts\tstr\n" +
+                        "2022-08-02T11:59:59.625000Z\tNaN\t3\t\t\n" +
+                        "2022-08-02T23:59:59.500000Z\tNaN\t4\t\t\n",
+                    dst.getName(),
+                    null,
+                    "ts",
+                    true,
+                    false,
+                    true
                 );
             }
         });
@@ -982,18 +982,18 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 int partitionRowCount = 11;
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 128),
-                        partitionRowCount,
-                        "2022-08-01",
-                        4);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 128),
+                    partitionRowCount,
+                    "2022-08-01",
+                    4);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 copyPartitionToAttachable(src.getName(), "2022-08-01", dst.getName(), "2022-08-01");
 
@@ -1015,15 +1015,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 engine.clear();
                 assertQuery(
-                        "ts\ti\tl\n" +
-                                "2022-08-01T08:43:38.090909Z\t1\t1\n" +
-                                "2022-08-01T17:27:16.181818Z\t2\t2\n",
-                        dst.getName(),
-                        null,
-                        "ts",
-                        true,
-                        false,
-                        true
+                    "ts\ti\tl\n" +
+                        "2022-08-01T08:43:38.090909Z\t1\t1\n" +
+                        "2022-08-01T17:27:16.181818Z\t2\t2\n",
+                    dst.getName(),
+                    null,
+                    "ts",
+                    true,
+                    false,
+                    true
                 );
             }
         });
@@ -1036,17 +1036,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst35", PartitionBy.NONE)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-01");
@@ -1066,17 +1066,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 int partitionRowCount = 111;
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        partitionRowCount,
-                        "2022-08-01",
-                        1);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    partitionRowCount,
+                    "2022-08-01",
+                    1);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 copyPartitionToAttachable(src.getName(), "2022-08-01", dst.getName(), "2022-08-01");
 
@@ -1108,27 +1108,27 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst37", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(false, 4096),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .col("s", ColumnType.SYMBOL).indexed(false, 4096),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 // Make sure nulls are included in the partition to be attached
                 assertSql("select count() from " + src.getName() + " where ts in '2022-08-09' and s = null", "count\n302\n");
 
                 createPopulateTable(
-                        1,
-                        dst.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("s", ColumnType.SYMBOL).indexed(false, 4096),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .col("s", ColumnType.SYMBOL).indexed(false, 4096),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
@@ -1144,19 +1144,19 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst38", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("s2", ColumnType.SYMBOL)
-                                .col("l", ColumnType.LONG),
-                        20,
-                        "2022-08-01",
-                        3);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("s2", ColumnType.SYMBOL)
+                        .col("l", ColumnType.LONG),
+                    20,
+                    "2022-08-01",
+                    3);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("l", ColumnType.LONG));
 
                 attachFromSrcIntoDst(src, dst, "2022-08-01", "2022-08-02");
 
@@ -1174,27 +1174,27 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst39", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+                        .timestamp("ts"),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 // Make sure nulls are included in the partition to be attached
                 assertSql("select count() from " + src.getName() + " where ts in '2022-08-09' and s = null", "count\n302\n");
 
                 createPopulateTable(
-                        1,
-                        dst.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    dst.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+                        .timestamp("ts"),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
@@ -1210,23 +1210,23 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst40", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+                        .timestamp("ts"),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 createPopulateTable(
-                        1,
-                        dst.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 4096)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    dst.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 4096)
+                        .timestamp("ts"),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
@@ -1235,7 +1235,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "Symbol index value file does not exist"
+                        "Symbol index value file does not exist"
                     );
                 }
             }
@@ -1249,31 +1249,31 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst41", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 4096)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 4096)
+                        .timestamp("ts"),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 createPopulateTable(
-                        1,
-                        dst.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 4096)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    dst.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 4096)
+                        .timestamp("ts"),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                 // remove .k
                 engine.clear();
                 Assert.assertTrue(Files.remove(
-                        path.of(configuration.getRoot()).concat(src.getName()).concat("2022-08-09").concat("s.k").$()
+                    path.of(configuration.getRoot()).concat(src.getName()).concat("2022-08-09").concat("s.k").$()
                 ));
 
                 try {
@@ -1293,17 +1293,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                  TableModel dst = new TableModel(configuration, "dst42", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10000,
-                        "2022-08-01",
-                        10);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 attachFromSrcIntoDst(src, dst, "2022-08-09");
 
@@ -1323,10 +1323,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
-            private long tsdFd;
+            private int tsdFd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (tsdFd != fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -1335,8 +1335,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
+            public int openRO(LPSZ name) {
+                int fd = super.openRO(name);
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.tsdFd = fd;
                 }
@@ -1352,7 +1352,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1368,7 +1368,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1400,7 +1400,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "dst" + testName.getMethodName()) && Chars.contains(name, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1424,24 +1424,24 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 int partitionRowCount = 5;
                 createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("str", ColumnType.STRING)
-                                .timestamp("ts"),
-                        partitionRowCount,
-                        "2020-01-09",
-                        2);
+                    1,
+                    src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("str", ColumnType.STRING)
+                        .timestamp("ts"),
+                    partitionRowCount,
+                    "2020-01-09",
+                    2);
 
                 createPopulateTable(
-                        1,
-                        dst.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("str", ColumnType.STRING)
-                                .timestamp("ts"),
-                        partitionRowCount - 3,
-                        "2020-01-09",
-                        2);
+                    1,
+                    dst.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("str", ColumnType.STRING)
+                        .timestamp("ts"),
+                    partitionRowCount - 3,
+                    "2020-01-09",
+                    2);
 
                 try (TableReader dstReader = new TableReader(configuration, dst.getTableName())) {
                     dstReader.openPartition(0);
@@ -1460,22 +1460,22 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.assertTrue(dstReader.reload());
                     try (TableReader srcReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getTableName())) {
                         String expected =
-                                "l\ti\tstr\tts\n" +
-                                        "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
-                                        "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
-                                        "3\t3\t3\t2020-01-10T04:47:59.400000Z\n" +
-                                        "4\t4\t4\t2020-01-10T14:23:59.200000Z\n" +
-                                        "5\t5\t5\t2020-01-10T23:59:59.000000Z\n";
+                            "l\ti\tstr\tts\n" +
+                                "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
+                                "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
+                                "3\t3\t3\t2020-01-10T04:47:59.400000Z\n" +
+                                "4\t4\t4\t2020-01-10T14:23:59.200000Z\n" +
+                                "5\t5\t5\t2020-01-10T23:59:59.000000Z\n";
                         assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
 
                         // Check that first 2 lines of partition 2020-01-09 match for src and dst tables
                         assertCursor("l\ti\tstr\tts\n" +
-                                        "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
-                                        "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
-                                        "2\t2\t2\t2020-01-10T23:59:59.000000Z\n",
-                                dstReader.getCursor(),
-                                dstReader.getMetadata(),
-                                true);
+                                "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
+                                "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
+                                "2\t2\t2\t2020-01-10T23:59:59.000000Z\n",
+                            dstReader.getCursor(),
+                            dstReader.getMetadata(),
+                            true);
                     }
                 }
             }
@@ -1490,19 +1490,19 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try (TableModel src = new TableModel(configuration, "srcCM" + idx, PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dstCM" + idx, PartitionBy.DAY)) {
                 src.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts");
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts");
                 tm.add(src);
 
                 createPopulateTable(
-                        src,
-                        10000,
-                        "2022-08-01",
-                        10);
+                    src,
+                    10000,
+                    "2022-08-01",
+                    10);
 
                 dst.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts");
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts");
                 tm.add(dst);
 
                 CairoTestUtils.create(dst);
@@ -1515,24 +1515,24 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertSchemaMismatch(
-            String srcTableName,
-            AddColumn srcTransform,
-            String dstTableName,
-            AddColumn dstTransform,
-            AddColumn afterCreateSrc,
-            String errorMessage
+        String srcTableName,
+        AddColumn srcTransform,
+        String dstTableName,
+        AddColumn dstTransform,
+        AddColumn afterCreateSrc,
+        String errorMessage
     ) throws Exception {
         try (
-                TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
-                TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY)
+            TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
+            TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY)
         ) {
             srcTransform.add(src);
             createPopulateTable(
-                    1,
-                    src,
-                    45000,
-                    "2022-08-01",
-                    10
+                1,
+                src,
+                45000,
+                "2022-08-01",
+                10
             );
 
             if (afterCreateSrc != null) {
@@ -1598,9 +1598,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         long timestamp = 0;
         for (String s : partitionList) {
             long ts = TimestampFormatUtils.parseTimestamp(s
-                    + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
-                    + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
-                    + "T23:59:59.999z");
+                + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
+                + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
+                + "T23:59:59.999z");
             if (ts > timestamp) {
                 timestamp = ts;
             }
@@ -1617,21 +1617,21 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void copyPartitionAndMetadata(
-            CharSequence srcRoot,
-            String srcTableName,
-            String srcPartitionName,
-            CharSequence dstRoot,
-            String dstTableName,
-            String dstPartitionName,
-            String dstPartitionNameSuffix
+        CharSequence srcRoot,
+        String srcTableName,
+        String srcPartitionName,
+        CharSequence dstRoot,
+        String dstTableName,
+        String dstPartitionName,
+        String dstPartitionNameSuffix
     ) {
         path.of(srcRoot)
-                .concat(srcTableName)
-                .concat(srcPartitionName)
-                .slash$();
+            .concat(srcTableName)
+            .concat(srcPartitionName)
+            .slash$();
         otherPath.of(dstRoot)
-                .concat(dstTableName)
-                .concat(dstPartitionName);
+            .concat(dstTableName)
+            .concat(dstPartitionName);
 
         if (!Chars.isBlank(dstPartitionNameSuffix)) {
             otherPath.put(dstPartitionNameSuffix);
@@ -1642,35 +1642,35 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         // copy _meta
         Files.copy(
-                path.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
-                otherPath.parent().concat(TableUtils.META_FILE_NAME).$()
+            path.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
+            otherPath.parent().concat(TableUtils.META_FILE_NAME).$()
         );
         // copy _cv
         Files.copy(
-                path.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                otherPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+            path.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
+            otherPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
         );
         // copy _txn
         Files.copy(
-                path.parent().concat(TableUtils.TXN_FILE_NAME).$(),
-                otherPath.parent().concat(TableUtils.TXN_FILE_NAME).$()
+            path.parent().concat(TableUtils.TXN_FILE_NAME).$(),
+            otherPath.parent().concat(TableUtils.TXN_FILE_NAME).$()
         );
     }
 
     private void copyPartitionToAttachable(
-            String srcTableName,
-            String srcPartitionName,
-            String dstTableName,
-            String dstPartitionName
+        String srcTableName,
+        String srcPartitionName,
+        String dstTableName,
+        String dstPartitionName
     ) {
         copyPartitionAndMetadata(
-                configuration.getRoot(),
-                srcTableName,
-                srcPartitionName,
-                configuration.getRoot(),
-                dstTableName,
-                dstPartitionName,
-                configuration.getAttachPartitionSuffix()
+            configuration.getRoot(),
+            srcTableName,
+            srcPartitionName,
+            configuration.getRoot(),
+            dstTableName,
+            dstPartitionName,
+            configuration.getAttachPartitionSuffix()
         );
     }
 
@@ -1683,31 +1683,31 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         final CharSequence s3Buckets = temp.newFolder(otherLocation).getAbsolutePath();
         final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
         copyPartitionAndMetadata( // this creates s3Buckets
-                configuration.getRoot(),
-                tableName,
-                detachedPartitionName,
-                s3Buckets,
-                tableName,
-                detachedPartitionName,
-                null
+            configuration.getRoot(),
+            tableName,
+            detachedPartitionName,
+            s3Buckets,
+            tableName,
+            detachedPartitionName,
+            null
         );
         Files.rmdir(path.of(configuration.getRoot())
-                .concat(tableName)
-                .concat(detachedPartitionName)
-                .$());
+            .concat(tableName)
+            .concat(detachedPartitionName)
+            .$());
         Assert.assertFalse(ff.exists(path));
 
         // create the .attachable link in the table's data folder
         // with target the .detached folder in the different location
         otherPath.of(s3Buckets) // <-- the copy of the now lost .detached folder
-                .concat(tableName)
-                .concat(detachedPartitionName)
-                .$();
+            .concat(tableName)
+            .concat(detachedPartitionName)
+            .$();
         path.of(configuration.getRoot()) // <-- soft link path
-                .concat(tableName)
-                .concat(partitionName)
-                .put(configuration.getAttachPartitionSuffix())
-                .$();
+            .concat(tableName)
+            .concat(partitionName)
+            .put(configuration.getAttachPartitionSuffix())
+            .$();
         Assert.assertEquals(0, ff.softLink(otherPath, path));
         Assert.assertFalse(ff.isSoftLink(otherPath));
         Assert.assertTrue(Os.type == Os.WINDOWS || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
@@ -1730,30 +1730,30 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void testSqlFailedOnFsOperation(
-            FilesFacadeImpl ff,
-            String srcTableName,
-            String dstTableName,
-            boolean catchAll,
-            String... errorContains
+        FilesFacadeImpl ff,
+        String srcTableName,
+        String dstTableName,
+        boolean catchAll,
+        String... errorContains
     ) throws Exception {
         assertMemoryLeak(ff, () -> {
             try (
-                    TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
-                    TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY)
+                TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
+                TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY)
             ) {
 
                 createPopulateTable(
-                        1,
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        100,
-                        "2020-01-01",
-                        3);
+                    1,
+                    src.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                    100,
+                    "2020-01-01",
+                    3);
 
                 CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
 
                 try {
                     attachFromSrcIntoDst(src, dst, "2020-01-01");
@@ -1780,7 +1780,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        long fd = -1;
+        int fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             // .i file

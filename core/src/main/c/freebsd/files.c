@@ -42,7 +42,7 @@
 #endif
 
 static inline jlong _io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     int prot = 0;
 
     if (flags == com_questdb_std_Files_MAP_RO) {
@@ -63,12 +63,12 @@ static inline jlong _io_questdb_std_Files_mremap0
 }
 
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
@@ -125,8 +125,8 @@ size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
-    return copyData0((int)srcFd, (int)dstFd, srcOffset, length);
+        (JNIEnv *e, jclass cls, jint srcFd, jint dstFd, jlong srcOffset, jlong length) {
+    return copyData0((int) srcFd, (int) dstFd, srcOffset, length);
 }
 
 #if defined(__APPLE__)

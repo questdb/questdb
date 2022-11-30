@@ -47,7 +47,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
         };
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_HTTP_CONN) {
             @Override
-            public boolean checkIfTripped(long millis, long fd) {
+            public boolean checkIfTripped(long millis, int fd) {
                 return breakConnection == 0 || --breakConnection == 0;
             }
 

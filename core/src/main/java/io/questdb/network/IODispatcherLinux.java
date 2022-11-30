@@ -25,7 +25,7 @@
 package io.questdb.network;
 
 public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher<C> {
-    private static final int M_ID = 2;
+    private static final int M_ID = 3;
     private final Epoll epoll;
     private long fdid = 1;
 
@@ -51,7 +51,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
             final int fd = (int) pending.get(i, M_FD);
             final long id = pending.get(i, M_ID);
-            int operation = (int) pending.get(i, M_OP);
+            int operation = (int) pending.get(i, M_OPERATION);
             int epollOp = EpollAccessor.EPOLL_CTL_MOD;
             if (operation < 0) {
                 // This is a new connection.
@@ -125,7 +125,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             pending.set(r, M_TIMESTAMP, timestamp);
             pending.set(r, M_FD, fd);
             pending.set(r, M_ID, id);
-            pending.set(r, M_OP, requestedOperation);
+            pending.set(r, M_OPERATION, requestedOperation);
             pending.set(r, context);
         }
 
@@ -183,7 +183,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
                     final C context = pending.get(row);
                     useful |= !context.isLowPriority();
-                    final int operation = (int) pending.get(row, M_OP);
+                    final int operation = (int) pending.get(row, M_OPERATION);
                     final SuspendEvent suspendEvent = context.getSuspendEvent();
                     if (suspendEvent != null) {
                         // The original operation was suspended, so let's resume it.
@@ -191,7 +191,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         int newRow = pending.addRow();
                         pending.set(newRow, M_TIMESTAMP, timestamp);
                         pending.set(newRow, M_FD, context.getFd());
-                        pending.set(newRow, M_OP, operation);
+                        pending.set(newRow, M_OPERATION, operation);
                         pending.set(newRow, context);
                         pendingAdded(newRow);
                         context.clearSuspendEvent();

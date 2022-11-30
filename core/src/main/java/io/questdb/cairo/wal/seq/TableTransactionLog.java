@@ -79,7 +79,7 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
-    private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+    private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
         final int rootLen = path.length();
         path.concat(fileName).$();
         try {
@@ -227,10 +227,10 @@ public class TableTransactionLog implements Closeable {
         }
 
         public void of(
-                FilesFacade ff,
-                long structureVersionLo,
-                MemorySerializer serializer,
-                @Transient final Path path
+            FilesFacade ff,
+            long structureVersionLo,
+            MemorySerializer serializer,
+            @Transient final Path path
         ) {
 
             // deallocates current state
@@ -239,24 +239,24 @@ public class TableTransactionLog implements Closeable {
             this.ff = ff;
             this.serializer = serializer;
 
-            long fdTxn = -1;
-            long fdTxnMeta = -1;
-            long fdTxnMetaIndex = -1;
+            int txnFd = -1;
+            int txnMetaFd = -1;
+            int txnMetaIndexFd = -1;
             try {
-                fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-                fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
-                fdTxnMetaIndex = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
+                txnFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                txnMetaFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
+                txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
 
-                txnMetaOffset = ff.readNonNegativeLong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
+                txnMetaOffset = ff.readNonNegativeLong(txnMetaIndexFd, structureVersionLo * Long.BYTES);
                 if (txnMetaOffset > -1L) {
-                    txnMetaOffsetHi = ff.readNonNegativeLong(fdTxn, TXN_META_SIZE_OFFSET);
+                    txnMetaOffsetHi = ff.readNonNegativeLong(txnFd, TXN_META_SIZE_OFFSET);
                     if (txnMetaOffsetHi > txnMetaOffset) {
                         txnMetaAddress = ff.mmap(
-                                fdTxnMeta,
-                                txnMetaOffsetHi,
-                                0L,
-                                Files.MAP_RO,
-                                MemoryTag.MMAP_TX_LOG_CURSOR
+                            txnMetaFd,
+                            txnMetaOffsetHi,
+                            0L,
+                            Files.MAP_RO,
+                            MemoryTag.MMAP_TX_LOG_CURSOR
                         );
                         if (txnMetaAddress < 0) {
                             txnMetaAddress = 0;
@@ -270,14 +270,14 @@ public class TableTransactionLog implements Closeable {
                     throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
                 }
             } finally {
-                if (fdTxn > -1) {
-                    ff.close(fdTxn);
+                if (txnFd > -1) {
+                    ff.close(txnFd);
                 }
-                if (fdTxnMeta > -1) {
-                    ff.close(fdTxnMeta);
+                if (txnMetaFd > -1) {
+                    ff.close(txnMetaFd);
                 }
-                if (fdTxnMetaIndex > -1) {
-                    ff.close(fdTxnMetaIndex);
+                if (txnMetaIndexFd > -1) {
+                    ff.close(txnMetaIndexFd);
                 }
             }
             // Set empty. This is not an error, it just means that there are no changes.
@@ -290,7 +290,7 @@ public class TableTransactionLog implements Closeable {
         private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
         private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Integer.BYTES;
         private long address;
-        private long fd;
+        private int fd;
         private FilesFacade ff;
         private long txn;
         private long txnCount;

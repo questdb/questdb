@@ -130,7 +130,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         return fd;
     }
 
@@ -156,7 +156,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag) {
         close();
         assert fd > 0;
         this.ff = ff;
@@ -167,7 +167,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
@@ -189,7 +189,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(long fd, long offset, byte truncateMode) {
+    public void switchTo(int fd, long offset, byte truncateMode) {
         close(true, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);
@@ -212,13 +212,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 // we are remapping file to make it smaller, should not need
                 // to allocate space; we already have it
                 this.pageAddress = TableUtils.mremap(
-                        ff,
-                        fd,
-                        this.pageAddress,
-                        this.size,
-                        sz,
-                        Files.MAP_RW,
-                        memoryTag);
+                    ff,
+                    fd,
+                    this.pageAddress,
+                    this.size,
+                    sz,
+                    Files.MAP_RW,
+                    memoryTag);
             } catch (Throwable e) {
                 appendAddress = pageAddress;
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
@@ -275,13 +275,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         TableUtils.allocateDiskSpace(ff, fd, newSize);
         try {
             this.pageAddress = TableUtils.mremap(
-                    ff,
-                    fd,
-                    this.pageAddress,
-                    previousSize,
-                    newSize,
-                    Files.MAP_RW,
-                    memoryTag
+                ff,
+                fd,
+                this.pageAddress,
+                previousSize,
+                newSize,
+                Files.MAP_RW,
+                memoryTag
             );
             ff.madvise(pageAddress, newSize, madviseOpts);
         } catch (Throwable e) {

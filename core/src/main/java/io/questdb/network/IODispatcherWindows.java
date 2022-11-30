@@ -24,16 +24,13 @@
 
 package io.questdb.network;
 
-import io.questdb.std.LongIntHashMap;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
-    private static final int M_OPERATION = 2;
     private final LongIntHashMap fds = new LongIntHashMap();
     private final FDSet readFdSet;
     private final SelectFacade sf;
+    private final IntObjHashMap<SuspendEvent> suspendEvents;
     private final FDSet writeFdSet;
     private boolean listenerRegistered;
 
@@ -42,9 +39,10 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
+        this.suspendEvents = new IntObjHashMap<>();
+        this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
-        this.sf = configuration.getSelectFacade();
         readFdSet.add(serverFd);
         readFdSet.setCount(1);
         writeFdSet.setCount(0);
@@ -80,6 +78,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     }
 
     private void queryFdSets(long timestamp) {
+        // collect reads into hash map
         for (int i = 0, n = readFdSet.getCount(); i < n; i++) {
             long fd = readFdSet.get(i);
 
@@ -148,7 +147,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         long deadline = timestamp - idleConnectionTimeout;
         for (int i = 0, n = pending.size(); i < n; ) {
             final long ts = pending.get(i, M_TIMESTAMP);
-            final long fd = pending.get(i, M_FD);
+            final int fd = (int) pending.get(i, M_FD);
+            suspendEvents.get(fd);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 

@@ -44,11 +44,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length + 10,
-                5,
-                "Index flag is only supported for SYMBOL at [6]" //failed validation on garbage flags value
+            names,
+            types,
+            names.length + 10,
+            5,
+            "Index flag is only supported for SYMBOL at [6]" //failed validation on garbage flags value
         );
     }
 
@@ -58,13 +58,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length + 1000,
-                5,
-                "File is too small, column types are missing 4096",
-                4096,
-                4096
+            names,
+            types,
+            names.length + 1000,
+            5,
+            "File is too small, column types are missing 4096",
+            4096,
+            4096
         );
     }
 
@@ -74,11 +74,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "Duplicate"
+            names,
+            types,
+            names.length,
+            5,
+            "Duplicate"
         );
     }
 
@@ -88,13 +88,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length + 10,
-                5,
-                "File is too small",
-                4906,
-                1
+            names,
+            types,
+            names.length + 10,
+            5,
+            "File is too small",
+            4906,
+            1
         );
     }
 
@@ -104,13 +104,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "File is too small, size=341, required=342",
-                4906,
-                341
+            names,
+            types,
+            names.length,
+            5,
+            "File is too small, size=341, required=342",
+            4906,
+            341
         );
     }
 
@@ -120,13 +120,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length - 1,
-                -1,
-                "String length of 0 is invalid at offset 308",
-                4906,
-                342
+            names,
+            types,
+            names.length - 1,
+            -1,
+            "String length of 0 is invalid at offset 308",
+            4906,
+            342
         );
     }
 
@@ -136,13 +136,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length + 10,
-                5,
-                "File is too small, column types are missing",
-                4906,
-                128
+            names,
+            types,
+            names.length + 10,
+            5,
+            "File is too small, column types are missing",
+            4906,
+            128
         );
     }
 
@@ -152,11 +152,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.DATE};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                23,
-                "Timestamp"
+            names,
+            types,
+            names.length,
+            23,
+            "Timestamp"
         );
     }
 
@@ -166,11 +166,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.DATE};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                -2,
-                "Timestamp"
+            names,
+            types,
+            names.length,
+            -2,
+            "Timestamp"
         );
     }
 
@@ -182,11 +182,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         int timestampIndex = 2; // this is incorrect because column is of type STRING
         Assert.assertEquals(ColumnType.STRING, types[timestampIndex]);
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                timestampIndex,
-                "STRING"
+            names,
+            types,
+            names.length,
+            timestampIndex,
+            "STRING"
         );
     }
 
@@ -196,11 +196,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, 566, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "Invalid column type"
+            names,
+            types,
+            names.length,
+            5,
+            "Invalid column type"
         );
     }
 
@@ -210,11 +210,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "NULL column"
+            names,
+            types,
+            names.length,
+            5,
+            "NULL column"
         );
     }
 
@@ -251,11 +251,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                 try (MemoryMA mem = Vm.getMAInstance()) {
                     mem.of(
-                            FilesFacadeImpl.INSTANCE,
-                            path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(),
-                            pageSize,
-                            MemoryTag.MMAP_DEFAULT,
-                            CairoConfiguration.O_NONE
+                        FilesFacadeImpl.INSTANCE,
+                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(),
+                        pageSize,
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_NONE
                     );
 
                     mem.putInt(columnCount);
@@ -278,7 +278,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 if (trimSize > -1) {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    long fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
+                    int fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
                     assert fd > -1;
                     ff.truncate(fd, trimSize);
                     ff.close(fd);

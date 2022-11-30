@@ -62,7 +62,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         integerDefaultColumnType = ColumnType.LONG;
         lineTcpConfiguration = createReceiverConfiguration(true, new LineTcpNetworkFacade() {
             @Override
-            public int send(long fd, long buffer, int bufferLen) {
+            public int send(int fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
                 if (null != sentBytes) {
                     return 0;
@@ -162,7 +162,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -179,7 +179,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -196,7 +196,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -213,7 +213,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -230,7 +230,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -247,7 +247,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -264,7 +264,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -290,7 +290,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -300,13 +300,13 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         runInAuthContext(() -> {
             try {
                 boolean authSequenceCompleted = authenticate(
-                        AUTH_KEY_ID1,
-                        AUTH_PRIVATE_KEY1,
-                        false,
-                        false,
-                        false,
-                        true,
-                        null);
+                    AUTH_KEY_ID1,
+                    AUTH_PRIVATE_KEY1,
+                    false,
+                    false,
+                    false,
+                    true,
+                    null);
                 Assert.assertTrue(authSequenceCompleted);
             } catch (RuntimeException ex) {
                 // Expected that Java 8 does not have SHA256withECDSAinP1363
@@ -322,7 +322,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -332,7 +332,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         runInAuthContext(() -> {
             try {
                 boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1,
-                        "weather,location=us-midwest temperature=82 1465839830100400200\n");
+                    "weather,location=us-midwest temperature=82 1465839830100400200\n");
                 Assert.assertTrue(authSequenceCompleted);
             } catch (RuntimeException ex) {
                 // Expected that Java 8 does not have SHA256withECDSAinP1363
@@ -344,7 +344,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
     }
@@ -383,7 +383,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     public void testJunkSignature() throws Exception {
         runInAuthContext(() -> {
             int[] junkSignatureInt = {186, 55, 135, 152, 129, 156, 1, 143, 221, 100, 197, 198, 98, 49, 222, 50, 83, 106, 199, 57, 202, 41, 47, 17, 14, 71, 80, 85, 44, 33, 56, 167, 30,
-                    70, 13, 227, 59, 178, 39, 212, 84, 79, 243, 230, 112, 48, 226, 187, 190, 59, 79, 152, 31, 188, 239, 80, 158, 202, 219, 235, 44, 196, 214, 209, 32};
+                70, 13, 227, 59, 178, 39, 212, 84, 79, 243, 230, 112, 48, 226, 187, 190, 59, 79, 152, 31, 188, 239, 80, 158, 202, 219, 235, 44, 196, 214, 209, 32};
             byte[] junkSignature = new byte[junkSignatureInt.length];
             for (int n = 0; n < junkSignatureInt.length; n++) {
                 junkSignature[n] = (byte) junkSignatureInt[n];
@@ -415,14 +415,14 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
 
     private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, String extraData) {
         return authenticate(
-                authKeyId,
-                authPrivateKey,
-                false,
-                false,
-                false,
-                false,
-                null,
-                extraData);
+            authKeyId,
+            authPrivateKey,
+            false,
+            false,
+            false,
+            false,
+            null,
+            extraData);
     }
 
     private boolean authenticate(String authKeyId,
@@ -452,7 +452,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             byte[] rawSignature;
             if (null == junkSignature) {
                 Signature sig = useP1363Encoding ?
-                        Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+                    Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
                 sig.initSign(authPrivateKey);
                 sig.update(challengeBytes, 0, challengeBytes.length - 1);
                 rawSignature = sig.sign();
