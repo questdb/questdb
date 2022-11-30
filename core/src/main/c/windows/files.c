@@ -565,7 +565,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getStdOutFd
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
-        (JNIEnv *e, jclass cl, jlong handle, jlong size) {
+        (JNIEnv *e, jclass cl, jint handle, jlong size) {
     if (set_file_pos((HANDLE) handle, size) && SetEndOfFile((HANDLE) handle)) {
         return TRUE;
     }
@@ -574,7 +574,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jlong handle, jlong size) {
+        (JNIEnv *e, jclass cl, jint handle, jlong size) {
     /* On Windows truncate does the allocation */
     return Java_io_questdb_std_Files_truncate(e, cl, handle, size);
 }
@@ -781,7 +781,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
     return -1;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         (JNIEnv *e, jclass cl, jlong lpszName, jlong size) {
     OVERLAPPED sOverlapped;
     sOverlapped.Offset = 0;
