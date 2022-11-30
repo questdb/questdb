@@ -29,18 +29,18 @@
 #include <stddef.h>
 
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
         (JNIEnv *e, jclass cl) {
     return epoll_create1(0);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCtl
-        (JNIEnv *e, jclass cl, jlong epfd, jint op, jlong fd, jlong event) {
+        (JNIEnv *e, jclass cl, jint epfd, jint op, jlong fd, jlong event) {
     return epoll_ctl((int) epfd, op, (int) fd, (struct epoll_event *) event);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollWait
-        (JNIEnv *e, jclass cl, jlong epfd, jlong eventPtr, jint eventCount, jint timeout) {
+        (JNIEnv *e, jclass cl, jint epfd, jlong eventPtr, jint eventCount, jint timeout) {
     return epoll_wait((int) epfd, (struct epoll_event *) eventPtr, eventCount, timeout);
 }
 

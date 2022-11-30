@@ -36,11 +36,11 @@ public class EpollAccessor {
     static final int EPOLLONESHOT;
     static final short EVENTS_OFFSET;
 
-    static native long epollCreate();
+    static native int epollCreate();
 
-    static native int epollCtl(long epfd, int op, long fd, long eventPtr);
+    static native int epollCtl(int epfd, int op, long fd, long eventPtr);
 
-    static native int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
+    static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
 
     static native int eventFd();
 

@@ -25,11 +25,11 @@
 package io.questdb.network;
 
 public interface EpollFacade {
-    long epollCreate();
+    int epollCreate();
 
-    int epollCtl(long epfd, int op, long fd, long eventPtr);
+    int epollCtl(int epfd, int op, long fd, long eventPtr);
 
-    int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
+    int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
 
     int errno();
 

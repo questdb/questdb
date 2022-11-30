@@ -50,6 +50,7 @@ public class SuspendEventTest {
             }
             event.trigger();
             event.checkTriggered();
+            // We need to close the event two times as if it's closed by both waiting and sending sides.
             event.close();
             event.close();
         });

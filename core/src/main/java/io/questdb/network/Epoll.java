@@ -37,7 +37,7 @@ public final class Epoll implements Closeable {
 
     private final int capacity;
     private final EpollFacade epf;
-    private final long epollFd;
+    private final int epollFd;
     private final long events;
     private long _rPtr;
     private boolean closed = false;
