@@ -154,7 +154,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     protected boolean testConnection(long fd) {
-        assert fd != -1;
+        if (!configuration.checkConnection()) {
+            return false;
+        }
+
+        if (fd == -1) {
+            return true;
+        }
+
         final int nRead = nf.peek(fd, buffer, bufferSize);
 
         if (nRead == 0) {
