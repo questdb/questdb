@@ -396,7 +396,7 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    public void rollUncommittedToNewSegment() {
+    public void moveUncommittedRowsToNewSegment() {
         final long uncommittedRows = getUncommittedRowCount();
         final int newSegmentId = segmentId + 1;
 
@@ -1552,9 +1552,15 @@ public class WalWriter implements TableWriterAPI {
                 long uncommittedRows = getUncommittedRowCount();
                 if (currentTxnStartRowNum > 0) {
                     // Roll last transaction to new segment
-                    rollUncommittedToNewSegment();
+                    moveUncommittedRowsToNewSegment();
                 }
 
+                // we proceed with column add only in three cases:
+                // 1. segment is empty, so that there is no transaction we can interfere with
+                // 2. all rows in the WAL segment have been committed
+                // 3. ALL rows in the WAL segment remain uncommitted
+                // in other words, mix of committed and uncommitted rows is disallowed. If this is the case it
+                // means that "move" failed
                 if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                     long segmentRowCount = getUncommittedRowCount();
                     metadata.addColumn(columnName, columnType);
@@ -1581,17 +1587,26 @@ public class WalWriter implements TableWriterAPI {
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("ADDED [path=").utf8(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
                 } else {
-                    throw CairoException.critical(0).put("column '").put(columnName)
-                            .put("' was added, cannot apply commit because of concurrent table definition change");
+                    // "moveUncommittedRowsToNewSegment()" is buggy and did not handle rows correctly
+                    // this should technically not happen, unless code regresses
+                    LOG.critical()
+                            .$("segment is in inconsistent state [segmentId=").$(segmentId)
+                            .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
+                            .$(", segmentRowCount=").$(segmentRowCount)
+                            .I$();
+                    
+                    throw CairoException.nonCritical().put("could not apply concurrent column add [column=").put(columnName).put(']');
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    // TODO: this should be some kind of warning probably that different wals adding the same column concurrently
-                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+                    LOG.info().$("already added [path=").$(path).$(", columnName=").utf8(columnName).I$();
                 } else {
-                    throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
+                    throw CairoException.nonCritical()
+                            .put("column name already exists [columnName=").put(columnName)
+                            .put(", type=").put(ColumnType.nameOf(metadata.getColumnType(columnIndex)))
+                            .put(", requiredType=").put(ColumnType.nameOf(columnType));
                 }
             }
         }
@@ -1614,7 +1629,7 @@ public class WalWriter implements TableWriterAPI {
                 if (type > 0) {
                     if (currentTxnStartRowNum > 0) {
                         // Roll last transaction to new segment
-                        rollUncommittedToNewSegment();
+                        moveUncommittedRowsToNewSegment();
                     }
 
                     if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
@@ -1656,7 +1671,7 @@ public class WalWriter implements TableWriterAPI {
                 if (columnType > 0) {
                     if (currentTxnStartRowNum > 0) {
                         // Roll last transaction to new segment
-                        rollUncommittedToNewSegment();
+                        moveUncommittedRowsToNewSegment();
                     }
 
                     if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
