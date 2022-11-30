@@ -53,6 +53,17 @@ public class PipeEvent implements SuspendEvent {
     }
 
     @Override
+    public void checkTriggered() {
+        long value = kqf.readPipe(readEndFd);
+        if (value != 1) {
+            throw NetworkError.instance(kqf.getNetworkFacade().errno())
+                .put("unexpected pipe read value [value=").put(value)
+                .put(", fd=").put(readEndFd)
+                .put(']');
+        }
+    }
+
+    @Override
     public void close() {
         final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
         if (prevRefCount == 1) {
@@ -67,18 +78,7 @@ public class PipeEvent implements SuspendEvent {
     }
 
     @Override
-    public void read() {
-        long value = kqf.readPipe(readEndFd);
-        if (value != 1) {
-            throw NetworkError.instance(kqf.getNetworkFacade().errno())
-                .put("unexpected pipe read value [value=").put(value)
-                .put(", fd=").put(readEndFd)
-                .put(']');
-        }
-    }
-
-    @Override
-    public void write() {
+    public void trigger() {
         if (kqf.writePipe(writeEndFd) < 0) {
             throw NetworkError.instance(kqf.getNetworkFacade().errno())
                 .put("could not write to pipe [fd=").put(writeEndFd)

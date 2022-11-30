@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+#include <fcntl.h>
 #include <sys/event.h>
 #include <sys/time.h>
 #include <stddef.h>
@@ -97,6 +98,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_pipe
     if (res < 0) {
         return res;
     }
+    res = fcntl(fd, F_SETFL, O_NONBLOCK);
+    if (res < 0) {
+        return res;
+    }
     return (jlong) fds[0] << 32 | (jlong) fds[1];
 }
 
@@ -104,7 +109,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_readPipe
         (JNIEnv *e, jclass cl, jint fd) {
     char buf[1];
     ssize_t s;
-    s = read((int) fd, buf, sizeof(uint64_t));
+    s = read((int) fd, buf, 1;
     if (s != 1) {
         return -1;
     }
@@ -116,7 +121,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_writePipe
     char buf[1];
     ssize_t s;
     buf[0] = 1;
-    s = write((int) fd, buf, sizeof(uint64_t));
+    s = write((int) fd, buf, 1);
     if (s != 1) {
         return -1;
     }

@@ -5018,7 +5018,7 @@ nodejs code:
                             if (event != null) {
                                 Os.sleep(1);
                                 try {
-                                    event.write();
+                                    event.trigger();
                                     event.close();
                                     totalEvents.incrementAndGet();
                                 } catch (Exception e) {
@@ -5069,7 +5069,7 @@ nodejs code:
 
                     final AtomicInteger totalEvents = new AtomicInteger();
                     TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                        event.write();
+                        event.trigger();
                         event.close();
                         totalEvents.incrementAndGet();
                     };
@@ -5129,7 +5129,7 @@ nodejs code:
 
                     final AtomicInteger totalEvents = new AtomicInteger();
                     TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                        event.write();
+                        event.trigger();
                         event.close();
                         totalEvents.incrementAndGet();
                     };

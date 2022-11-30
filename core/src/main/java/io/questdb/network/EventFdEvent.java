@@ -50,6 +50,17 @@ public class EventFdEvent implements SuspendEvent {
     }
 
     @Override
+    public void checkTriggered() {
+        long value = epf.readEventFd(fd);
+        if (value != 1) {
+            throw NetworkError.instance(epf.errno())
+                .put("unexpected eventfd read value [value=").put(value)
+                .put(", fd=").put(fd)
+                .put(']');
+        }
+    }
+
+    @Override
     public void close() {
         final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
         if (prevRefCount == 1) {
@@ -63,18 +74,7 @@ public class EventFdEvent implements SuspendEvent {
     }
 
     @Override
-    public void read() {
-        long value = epf.readEventFd(fd);
-        if (value != 1) {
-            throw NetworkError.instance(epf.errno())
-                .put("unexpected eventfd read value [value=").put(value)
-                .put(", fd=").put(fd)
-                .put(']');
-        }
-    }
-
-    @Override
-    public void write() {
+    public void trigger() {
         if (epf.writeEventFd(fd) < 0) {
             throw NetworkError.instance(epf.errno())
                 .put("could not write to eventfd [fd=").put(fd)

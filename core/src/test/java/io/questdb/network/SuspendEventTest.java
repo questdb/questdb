@@ -38,18 +38,18 @@ public class SuspendEventTest {
     public void testCreateAndClose() throws Exception {
         assertMemoryLeak(() -> {
             SuspendEvent event = SuspendEventFactory.newInstance(new DefaultIODispatcherConfiguration());
-            if (Os.isLinux()) {
-                // Read is non-blocking only on Linux.
+            if (Os.type != Os.WINDOWS) {
+                // Read is non-blocking only on Linux, BSD and OS X.
                 // The event is not yet triggered, so read has to fail.
                 try {
-                    event.read();
+                    event.checkTriggered();
                     Assert.fail();
                 } catch (NetworkError e) {
                     MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("read value"));
                 }
             }
-            event.write();
-            event.read();
+            event.trigger();
+            event.checkTriggered();
             event.close();
             event.close();
         });

@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import org.jetbrains.annotations.TestOnly;
+
 import java.io.Closeable;
 
 /**
@@ -37,6 +39,12 @@ import java.io.Closeable;
  */
 public interface SuspendEvent extends Closeable {
     /**
+     * @throws NetworkError if the event wasn't triggered.
+     */
+    @TestOnly
+    void checkTriggered();
+
+    /**
      * Event is assumed to be held and then closed by two parties.
      * The underlying OS resources are freed on the second close call.
      */
@@ -49,13 +57,7 @@ public interface SuspendEvent extends Closeable {
     int getFd();
 
     /**
-     * Marks the event as received.
-     * TODO consider removing
-     */
-    void read();
-
-    /**
      * Sends the event to the receiving side.
      */
-    void write();
+    void trigger();
 }

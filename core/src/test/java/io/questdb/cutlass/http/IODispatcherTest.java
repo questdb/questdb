@@ -5273,7 +5273,7 @@ public class IODispatcherTest {
 
                 final AtomicInteger totalEvents = new AtomicInteger();
                 TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    event.write();
+                    event.trigger();
                     event.close();
                     totalEvents.incrementAndGet();
                 };
@@ -5314,7 +5314,7 @@ public class IODispatcherTest {
                         if (event != null) {
                             Os.sleep(1);
                             try {
-                                event.write();
+                                event.trigger();
                                 event.close();
                                 totalEvents.incrementAndGet();
                             } catch (Exception e) {
@@ -5358,7 +5358,7 @@ public class IODispatcherTest {
 
                 final AtomicInteger totalEvents = new AtomicInteger();
                 TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    event.write();
+                    event.trigger();
                     event.close();
                     totalEvents.incrementAndGet();
                 };
@@ -6470,7 +6470,7 @@ public class IODispatcherTest {
                         if (event != null) {
                             Os.sleep(1);
                             try {
-                                event.write();
+                                event.trigger();
                                 event.close();
                                 totalEvents.incrementAndGet();
                             } catch (Exception e) {
@@ -6526,7 +6526,7 @@ public class IODispatcherTest {
 
                 final AtomicInteger totalEvents = new AtomicInteger();
                 TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    event.write();
+                    event.trigger();
                     event.close();
                     totalEvents.incrementAndGet();
                 };

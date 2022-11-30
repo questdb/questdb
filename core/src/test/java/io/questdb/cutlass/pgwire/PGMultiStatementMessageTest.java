@@ -982,7 +982,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 final AtomicInteger totalEvents = new AtomicInteger();
                 TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    event.write();
+                    event.trigger();
                     event.close();
                     totalEvents.incrementAndGet();
                 };
