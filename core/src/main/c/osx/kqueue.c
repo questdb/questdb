@@ -98,7 +98,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_KqueueAccessor_pipe
     if (res < 0) {
         return res;
     }
-    res = fcntl(fd, F_SETFL, O_NONBLOCK);
+    res = fcntl(fds[0], F_SETFL, O_NONBLOCK);
     if (res < 0) {
         return res;
     }
