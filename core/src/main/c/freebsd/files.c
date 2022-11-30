@@ -137,8 +137,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
     struct statfs buf;
     if (statfs((const char *) lpszPath, &buf) == 0) {
-        uint64_t k = buf.f_bavail * buf.f_bsize;
-        return (jlong) k;
+        return (jlong)buf.f_bavail * (jlong)buf.f_bsize;
     }
     return -1;
 }
@@ -146,7 +145,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct timeval t[2];
-    gettimeofday(t, NULL);
+    gettimeofday(&t[0], NULL);
     t[1].tv_sec = millis / 1000;
 #ifdef __APPLE__    
     t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);

@@ -374,7 +374,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct timeval t[2];
-    gettimeofday(t, NULL);
+    gettimeofday(&t[0], NULL);
     t[1].tv_sec = millis / 1000;
     t[1].tv_usec = ((millis % 1000) * 1000);
     return (jboolean) (utimes((const char *) lpszName, t) == 0);
@@ -383,8 +383,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
     struct statvfs buf;
     if (statvfs((const char *) lpszPath, &buf) == 0) {
-        unsigned long long k = ((unsigned long long) buf.f_bavail) * buf.f_bsize;
-        return (jlong) k;
+        return (jlong) buf.f_bavail * (jlong )buf.f_bsize;
     }
     return -1;
 }
