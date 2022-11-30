@@ -185,7 +185,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void syncToDisk() {
-        metaMem.sync(true);
+        metaMem.sync(false);
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
