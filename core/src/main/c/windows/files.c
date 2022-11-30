@@ -84,11 +84,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         hi = fromOffset + length;
     }
 
-    if (!set_file_pos((HANDLE) srcFd, fromOffset)){
+    if (!set_file_pos((HANDLE) ((uintptr_t) srcFd), fromOffset)) {
         return -1;
     }
 
-    while (ReadFile((HANDLE) srcFd, &buf, sizeof buf, &read_sz, NULL) &&
+    while (ReadFile((HANDLE) ((uintptr_t) srcFd), &buf, sizeof buf, &read_sz, NULL) &&
            read_sz > 0) {
         char *out_ptr = buf;
         if (rd_off + read_sz > hi) {
@@ -97,7 +97,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
 
         DWORD write_sz;
         do {
-            if (!WriteFile((HANDLE) destFd, &buf, read_sz, &write_sz, NULL)){
+            if (!WriteFile((HANDLE) ((uintptr_t) destFd), &buf, read_sz, &write_sz, NULL)){
                 SaveLastError();
                 return rd_off - fromOffset;
             }
@@ -133,7 +133,7 @@ HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD 
         wchar_t buf[len];
         MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
 
-        HANDLE fd = CreateFileW(
+        HANDLE handle = CreateFileW(
                 buf,
                 dwDesiredAccess,
                 dwShareMode,
@@ -143,11 +143,11 @@ HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD 
                 NULL
         );
 
-        if (fd == INVALID_HANDLE_VALUE) {
+        if (handle == INVALID_HANDLE_VALUE) {
             SaveLastError();
         }
 
-        return fd;
+        return handle;
     }
     return INVALID_HANDLE_VALUE;
 }
@@ -159,7 +159,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         // To align with other platforms
         return -1;
     }
-    if (set_file_pos((HANDLE) fd, offset) && WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
+    HANDLE handle = (HANDLE) ((uintptr_t) fd);
+    if (set_file_pos(handle, offset)
+            && WriteFile(handle, (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
@@ -175,8 +177,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     }
 
     DWORD count;
-    if (set_file_pos((HANDLE) fd, offset) &&
-        ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL)) {
+    HANDLE handle = (HANDLE) ((uintptr_t) fd);
+    if (set_file_pos(handle, offset)
+            && ReadFile(handle, (LPVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
@@ -187,8 +190,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     DWORD count;
     jint result;
-    if (set_file_pos((HANDLE) fd, offset) &&
-        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+    HANDLE handle = (HANDLE) ((uintptr_t) fd);
+    if (set_file_pos(handle, offset)
+            && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
         if (count != 4) {
             return -1;
         }
@@ -202,8 +206,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     DWORD count;
     jlong result;
-    if (set_file_pos((HANDLE) fd, offset) &&
-        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
+    HANDLE handle = (HANDLE) ((uintptr_t) fd);
+    if (set_file_pos(handle, offset)
+            && ReadFile(handle, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
         if (count != 8) {
             return -1;
         }
@@ -336,7 +341,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     return -1;
 }
 
-
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
 
     int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
@@ -353,7 +357,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclas
                     FILE_ATTRIBUTE_READONLY | FILE_FLAG_OPEN_REPARSE_POINT,
                     NULL
         );
-
 
         if (handle == INVALID_HANDLE_VALUE) {
             SaveLastError();
@@ -386,12 +389,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     wchar_t bufSrc[lenSrc];
     MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
 
-
     size_t lenSoftLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
     if (lenSoftLink < 1) {
         return -1;
     }
-
 
     wchar_t bufSoftLink[lenSoftLink];
     MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, bufSoftLink, (int) lenSoftLink);
@@ -401,7 +402,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     }
 
     SaveLastError();
-
 
     return -1;
 }
@@ -452,8 +452,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
                 &MaxComponentLength,
                 &fileSystemFlags,
                 fileSystemName,
-                MAX_PATH
-                )) {
+                MAX_PATH)) {
             if ((fileSystemFlags & FILE_SUPPORTS_TRANSACTIONS) != 0) {
                 // windows share (CIFS) reports filesystem as NTFS
                 // local disks support transactions, but CIFS does not
@@ -471,17 +470,17 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {
-    return (jint) openUtf8(
+    return (jint) ((uintptr_t) openUtf8(
             lpszName,
             GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_EXISTING
-    );
+    ));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
         (JNIEnv *e, jclass cl, jint fd) {
-    jint r = CloseHandle((HANDLE) fd);
+    jint r = CloseHandle((HANDLE) ((uintptr_t) fd));
     if (!r) {
         SaveLastError();
         return -1;
@@ -491,45 +490,45 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    return (jint) openUtf8(
+    return (jint) ((uintptr_t) openUtf8(
             lpszName,
             GENERIC_WRITE | GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_ALWAYS
-    );
+    ));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
         (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
     // consider using FILE_FLAG_WRITE_THROUGH
-    return (jint) openUtf8(
+    return (jint) ((uintptr_t) openUtf8(
             lpszName,
             GENERIC_WRITE | GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_ALWAYS
-    );
+    ));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    HANDLE h = openUtf8(
+    HANDLE handle = openUtf8(
             lpszName,
             FILE_APPEND_DATA,
             FILE_SHARE_READ | FILE_SHARE_DELETE,
             OPEN_ALWAYS
     );
 
-    if (h > INVALID_HANDLE_VALUE) {
-        SetFilePointer(h, 0, NULL, FILE_END);
+    if (handle != INVALID_HANDLE_VALUE) {
+        SetFilePointer(handle, 0, NULL, FILE_END);
     }
 
-    return (jint) h;
+    return (jint) ((uintptr_t) handle);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len) {
     DWORD count;
-    if (WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
+    if (WriteFile((HANDLE) ((uintptr_t) fd), (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
 
@@ -540,7 +539,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
         (JNIEnv *e, jclass cl, jint fd) {
     DWORD high;
-    DWORD low = GetFileSize((HANDLE) fd, &high);
+    DWORD low = GetFileSize((HANDLE) ((uintptr_t) fd), &high);
     if (low != INVALID_FILE_SIZE) {
         return low | (__int64) high << 32;
     } else {
@@ -553,7 +552,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists
         (JNIEnv *e, jclass cl, jint fd) {
 
     FILE_STANDARD_INFO info;
-    if (GetFileInformationByHandleEx((HANDLE) fd, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
+    if (GetFileInformationByHandleEx((HANDLE) ((uintptr_t) fd), FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
         return (jboolean) !info.DeletePending;
     }
     return FALSE;
@@ -565,8 +564,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getStdOutFd
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
-        (JNIEnv *e, jclass cl, jint handle, jlong size) {
-    if (set_file_pos((HANDLE) handle, size) && SetEndOfFile((HANDLE) handle)) {
+        (JNIEnv *e, jclass cl, jint fd, jlong size) {
+    HANDLE handle = (HANDLE) ((uintptr_t) fd);
+    if (set_file_pos(handle, size) && SetEndOfFile(handle)) {
         return TRUE;
     }
     SaveLastError();
@@ -604,8 +604,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         dwDesiredAccess = FILE_MAP_READ;
     }
 
-    HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect | SEC_RESERVE, (DWORD) (maxsize >> 32),
-                                        (DWORD) maxsize, NULL);
+    HANDLE hMapping = CreateFileMapping(
+        (HANDLE) ((uintptr_t) fd),
+        NULL,
+        flProtect | SEC_RESERVE,
+        (DWORD) (maxsize >> 32),
+        (DWORD) maxsize,
+        NULL
+    );
     if (hMapping == NULL) {
         SaveLastError();
         return -1;
@@ -773,7 +779,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jint fd) {
-    if (LockFile((HANDLE) fd, 0, 0, 1, 0)) {
+    if (LockFile((HANDLE) ((uintptr_t) fd), 0, 0, 1, 0)) {
         return 0;
     }
 
@@ -794,7 +800,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         return fd;
     }
 
-    HANDLE handle = (HANDLE) fd;
+    HANDLE handle = (HANDLE) ((uintptr_t) fd);
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
     if (fileSize > 0) {
