@@ -95,76 +95,74 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
         long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
         runInContext((server) -> {
+            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
+            final AtomicBoolean keepSending = new AtomicBoolean(true);
+            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
+            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+            final SOCountDownLatch partitionDropperHalted = new SOCountDownLatch(1);
 
-                    final AtomicLong ilpProducerWatts = new AtomicLong(0L);
-                    final AtomicBoolean keepSending = new AtomicBoolean(true);
-                    final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
-                    final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
-
-                    final Thread ilpProducer = new Thread(() -> {
-                        String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
+            final Thread ilpProducer = new Thread(() -> {
+                String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
+                try {
+                    while (keepSending.get()) {
                         try {
-                            while (keepSending.get()) {
-                                try {
-                                    long watts = ilpProducerWatts.getAndIncrement();
-                                    long day = (watts + 1) % 4 == 0 ? day1 : day2;
-                                    String lineData = String.format(lineTpt, watts, day);
-                                    send(server, lineData);
-                                    LOG.info().$("sent: ").$(lineData).$();
-                                } catch (Throwable unexpected) {
-                                    ilpProducerProblem.set(unexpected);
-                                    keepSending.set(false);
-                                    break;
-                                }
-                            }
-                        } finally {
-                            ilpProducerHalted.countDown();
-                            LOG.info().$("sender is finished").$();
-                        }
-                    }, "ilp-producer");
-                    ilpProducer.start();
-
-
-                    final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
-
-                    final Thread partitionDropper = new Thread(() -> {
-                        while (ilpProducerWatts.get() < 20) {
-                            Os.pause();
-                        }
-                        LOG.info().$("ABOUT TO DROP PARTITIONS").$();
-                        try (SqlCompiler compiler = new SqlCompiler(engine);
-                             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                                     .with(
-                                             AllowAllCairoSecurityContext.INSTANCE,
-                                             new BindVariableServiceImpl(configuration),
-                                             null,
-                                             -1,
-                                             null
-                                     )
-                        ) {
-                            CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
-                            try (OperationFuture result = cc.execute(scSequence)) {
-                                result.await();
-                                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
-                            }
-                        } catch (SqlException e) {
-                            partitionDropperProblem.set(e);
-                        } finally {
-                            // a few rows may have made it into the active partition,
-                            // as dropping it is concurrent with inserting
+                            long watts = ilpProducerWatts.getAndIncrement();
+                            long day = (watts + 1) % 4 == 0 ? day1 : day2;
+                            String lineData = String.format(lineTpt, watts, day);
+                            send(server, lineData);
+                            LOG.info().$("sent: ").$(lineData).$();
+                        } catch (Throwable unexpected) {
+                            ilpProducerProblem.set(unexpected);
                             keepSending.set(false);
-                            Path.clearThreadLocals();
+                            break;
                         }
+                    }
+                } finally {
+                    LOG.info().$("sender has finished").$();
+                    ilpProducerHalted.countDown();
+                }
+            }, "ilp-producer");
+            ilpProducer.start();
 
-                    }, "partition-dropper");
-                    partitionDropper.start();
+            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
 
-                    ilpProducerHalted.await();
-                    Assert.assertNull(ilpProducerProblem.get());
-                    Assert.assertNull(partitionDropperProblem.get());
-                },
-                true, 50L
-        );
+            final Thread partitionDropper = new Thread(() -> {
+                while (ilpProducerWatts.get() < 20) {
+                    Os.pause();
+                }
+                LOG.info().$("ABOUT TO DROP PARTITIONS").$();
+                try (SqlCompiler compiler = new SqlCompiler(engine);
+                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                             .with(
+                                     AllowAllCairoSecurityContext.INSTANCE,
+                                     new BindVariableServiceImpl(configuration),
+                                     null,
+                                     -1,
+                                     null
+                             )
+                ) {
+                    CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
+                    try (OperationFuture result = cc.execute(scSequence)) {
+                        result.await();
+                        Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
+                    }
+                } catch (SqlException e) {
+                    partitionDropperProblem.set(e);
+                } finally {
+                    // a few rows may have made it into the active partition,
+                    // as dropping it is concurrent with inserting
+                    keepSending.set(false);
+                    Path.clearThreadLocals();
+                    partitionDropperHalted.countDown();
+                }
+            }, "partition-dropper");
+            partitionDropper.start();
+
+            ilpProducerHalted.await();
+            Assert.assertNull(ilpProducerProblem.get());
+            Assert.assertNull(partitionDropperProblem.get());
+            partitionDropperHalted.await();
+        }, true, 50L);
     }
 
     @Test
@@ -281,34 +279,32 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         long day1 = 0;
         long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
         runInContext((server) -> {
-                    String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-                    send(server, lineData);
-                    lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
+            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
+            send(server, lineData);
+            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
 
-                    for (int i = 0; i < 10; i++) {
-                        SqlException exception = sendWithAlterStatement(
-                                server,
-                                lineData,
-                                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                                "ALTER TABLE plug add column col" + i + " int");
-                        Assert.assertNull(exception);
-                    }
-                    String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
-                            "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
-                    assertTable(expected);
-                },
-                true, 250
-        );
+            for (int i = 0; i < 10; i++) {
+                SqlException exception = sendWithAlterStatement(
+                        server,
+                        lineData,
+                        WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                        "ALTER TABLE plug add column col" + i + " int");
+                Assert.assertNull(exception);
+            }
+            String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
+                    "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
+            assertTable(expected);
+        }, true, 250);
     }
 
     @Test

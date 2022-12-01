@@ -331,7 +331,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short integerDefaultColumnType;
     private boolean interruptOnClosedConnection;
     private final boolean isReadOnlyInstance;
-    private boolean isStringAsTagSupported;
     private int jsonCacheLimit;
     private int jsonCacheSize;
     private int jsonQueryConnectionCheckFrequency;
@@ -421,6 +420,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int rollBufferLimit;
     private int rollBufferSize;
     private int sendBufferSize;
+    private boolean stringAsTagSupported;
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
@@ -1002,7 +1002,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR, true);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
                 this.symbolAsFieldSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED, false);
-                this.isStringAsTagSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED, false);
+                this.stringAsTagSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED, false);
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
@@ -2856,7 +2856,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean isStringAsTagSupported() {
-            return isStringAsTagSupported;
+            return stringAsTagSupported;
         }
 
         @Override
@@ -3345,6 +3345,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
         @Override
+        public boolean checkConnection() {
+            return true;
+        }
+
+        @Override
         public int getBufferSize() {
             return circuitBreakerBufferSize;
         }
@@ -3687,4 +3692,3 @@ public class PropServerConfiguration implements ServerConfiguration {
                 PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
     }
 }
-

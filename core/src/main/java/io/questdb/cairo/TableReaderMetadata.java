@@ -282,14 +282,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     public void load(Path path) {
-        load0(path, ColumnType.VERSION);
-    }
-
-    public void load0(Path path, int expectedVersion) {
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
             this.columnNameIndexMap.clear();
-            TableUtils.validateMeta(metaMem, this.columnNameIndexMap, expectedVersion);
+            TableUtils.validateMeta(metaMem, this.columnNameIndexMap, ColumnType.VERSION);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);

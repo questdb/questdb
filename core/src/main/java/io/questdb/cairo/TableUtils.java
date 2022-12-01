@@ -707,6 +707,7 @@ public final class TableUtils {
      * @return read-only memory address
      */
     public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        assert fd != -1;
         assert offset % ff.getPageSize() == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
@@ -739,6 +740,7 @@ public final class TableUtils {
      * @return read-write memory address
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        assert fd != -1;
         assert offset % ff.getPageSize() == 0;
         allocateDiskSpace(ff, fd, size + offset);
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);

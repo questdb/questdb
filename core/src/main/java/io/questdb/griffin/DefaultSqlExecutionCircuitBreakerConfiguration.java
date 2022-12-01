@@ -32,6 +32,11 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
     @Override
+    public boolean checkConnection() {
+        return true;
+    }
+
+    @Override
     public int getBufferSize() {
         return 64;
     }

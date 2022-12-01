@@ -39,16 +39,17 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        // do not bother allocating on Windows because mmap() will try to allocate regardless
-        if (Os.type != Os.WINDOWS) {
-            return Files.allocate(fd, size);
-        }
-        return true;
+        return Files.allocate(fd, size);
     }
 
     @Override
     public long append(long fd, long buf, int len) {
         return Files.append(fd, buf, len);
+    }
+
+    @Override
+    public long getDiskSize(LPSZ path) {
+        return Files.getDiskSize(path);
     }
 
     @Override

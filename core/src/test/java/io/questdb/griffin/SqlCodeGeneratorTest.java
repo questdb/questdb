@@ -7333,8 +7333,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         try {
             assertQuery("avg\tsum\n" +
-                            "0.50035043\t834470.437288\n",
-                    "select round(avg(c), 9) avg, round(sum(c), 6) sum from x",
+                            "0.5003504\t834470.437288\n",
+                    "select round(avg(c), 7) avg, round(sum(c), 6) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
                     null,
                     false,

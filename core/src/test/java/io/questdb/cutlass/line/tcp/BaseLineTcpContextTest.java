@@ -95,6 +95,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected int nWriterThreads;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
+    protected boolean stringAsTagSupported;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
     protected WorkerPool workerPool;
@@ -227,6 +228,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public long getWriterIdleTimeout() {
                 return 150;
+            }
+
+            @Override
+            public boolean isStringAsTagSupported() {
+                return stringAsTagSupported;
             }
 
             @Override
