@@ -91,7 +91,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         rootLen = path.length();
         testFilesFacade.errorOnSync = false;
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(Long.MAX_VALUE);
+        circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
 
     @After
@@ -237,7 +237,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             try {
                 t.start();
                 latch2.await();
-                ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
+                circuitBreaker.setTimeout(-100);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {

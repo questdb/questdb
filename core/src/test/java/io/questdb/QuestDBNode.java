@@ -107,6 +107,10 @@ public class QuestDBNode {
         cairo = new Cairo(dbRootName, overrides);
     }
 
+    public void initGriffin() {
+        initGriffin(null);
+    }
+
     public void initGriffin(SqlExecutionCircuitBreaker circuitBreaker) {
         if (cairo == null) {
             throw new IllegalStateException("Cairo is not initialised yet");

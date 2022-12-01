@@ -40,10 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -53,7 +50,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     private final static double EPSILON = 0.000001;
     private static final LongList rows = new LongList();
     protected static BindVariableService bindVariableService;
-    protected static SqlExecutionCircuitBreaker circuitBreaker;
+    protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlCompiler compiler;
     protected static SqlExecutionContext sqlExecutionContext;
     protected final SCSequence eventSubSequence = new SCSequence();
@@ -284,6 +281,13 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         forEachNode(QuestDBNode::setUpGriffin);
+    }
+
+    @Override
+    @After
+    public void tearDown() {
+        super.tearDown();
+        forEachNode(QuestDBNode::tearDownGriffin);
     }
 
     private static void assertQueryNoVerify(

@@ -33,8 +33,8 @@ public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         AbstractGriffinTest.setUpStatic();
         final QuestDBNode node2 = newNode(2);
-        node2.initGriffin(circuitBreaker);
+        node2.initGriffin();
         final QuestDBNode node3 = newNode(3);
-        node3.initGriffin(circuitBreaker);
+        node3.initGriffin();
     }
 }
