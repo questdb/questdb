@@ -45,7 +45,7 @@ public final class LongLongHashSet implements Mutable {
 
     public LongLongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
+            throw new IllegalArgumentException("0 < load factor < 1");
         }
         this.noEntryKeyValue = noKeyValue;
         this.loadFactor = loadFactor;
@@ -69,14 +69,11 @@ public final class LongLongHashSet implements Mutable {
         if (size == threshold) {
             rehash();
         }
-//        printDistribution();
-//        assert size == capacity - longGetFreeSlotsSlow();
         return true;
     }
 
     public void addAt(int index, long key1, long key2) {
-        keys[index * 2] = key1;
-        keys[index * 2 + 1] = key2;
+        setAt(index, key1, key2);
         size++;
     }
 
@@ -93,15 +90,6 @@ public final class LongLongHashSet implements Mutable {
     public int keyIndex(long key1, long key2) {
         int hash = Hash.hash(key1, key2);
         int index = (hash & mask);
-
-        if (keys[index * 2] == noEntryKeyValue && keys[index * 2 + 1] == noEntryKeyValue) {
-            return index;
-        }
-
-        if (key1 == keys[index * 2] && key2 == keys[index * 2 + 1]) {
-            return -index - 1;
-        }
-
         return probe(key1, key2, index);
     }
 
@@ -109,15 +97,23 @@ public final class LongLongHashSet implements Mutable {
         return size;
     }
 
+    private static long getFirstValueAt(long[] slots, int index) {
+        return slots[index * 2];
+    }
+
+    private long getSecondValueAt(long[] slots, int index) {
+        return slots[index * 2 + 1];
+    }
+
     private int probe(long key1, long key2, int index) {
         do {
-            index = (index + 1) & mask;
-            if (keys[index * 2] == noEntryKeyValue && keys[index * 2 + 1] == noEntryKeyValue) {
+            if (getFirstValueAt(keys, index) == noEntryKeyValue && getSecondValueAt(keys, index) == noEntryKeyValue) {
                 return index;
             }
-            if (key1 == keys[index * 2] && key2 == keys[index * 2 + 1]) {
+            if (getFirstValueAt(keys, index) == key1 && getSecondValueAt(keys, index) == key2) {
                 return -index - 1;
             }
+            index = (index + 1) & mask;
         } while (true);
     }
 
@@ -131,14 +127,18 @@ public final class LongLongHashSet implements Mutable {
         long[] oldKeys = keys;
         keys = newKeys;
         for (int i = 0; i < capacity; i++) {
-            long key1 = oldKeys[i * 2];
-            long key2 = oldKeys[i * 2 + 1];
+            long key1 = getFirstValueAt(oldKeys, i);
+            long key2 = getSecondValueAt(oldKeys, i);
             if (key1 != noEntryKeyValue || key2 != noEntryKeyValue) {
                 int index = keyIndex(key1, key2);
-                keys[index * 2] = key1;
-                keys[index * 2 + 1] = key2;
+                setAt(index, key1, key2);
             }
         }
         capacity = newCapacity;
+    }
+
+    private void setAt(int index, long key1, long key2) {
+        keys[index * 2] = key1;
+        keys[index * 2 + 1] = key2;
     }
 }

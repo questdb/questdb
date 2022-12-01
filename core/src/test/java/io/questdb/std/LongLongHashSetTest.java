@@ -98,6 +98,37 @@ public class LongLongHashSetTest {
         assertTrue(set.contains(1, 0));
     }
 
+    @Test
+    public void testInvalidLoadFactor() {
+        try {
+            new LongLongHashSet(10, 0.0, Long.MIN_VALUE);
+            fail();
+        } catch (IllegalArgumentException e) {
+            TestUtils.assertContains(e.getMessage(), "load factor");
+        }
+
+        try {
+            new LongLongHashSet(10, 1.0, Long.MIN_VALUE);
+            fail();
+        } catch (IllegalArgumentException e) {
+            TestUtils.assertContains(e.getMessage(), "load factor");
+        }
+    }
+
+    @Test
+    public void testOnlyFirstMatching() {
+        LongLongHashSet set = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE);
+        set.add(1, 1);
+        assertFalse(set.contains(1, 2));
+    }
+
+    @Test
+    public void testOnlySecondMatching() {
+        LongLongHashSet set = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE);
+        set.add(1, 1);
+        assertFalse(set.contains(2, 1));
+    }
+
     private static void assertContainsSameKeysAndSize(LongLongHashSet longSet, Set<TwoLongs> jdkSet) {
         assertEquals(jdkSet.size(), longSet.size());
         for (TwoLongs twoLongs : jdkSet) {

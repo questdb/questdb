@@ -65,6 +65,7 @@ public final class Hash {
 
     /**
      * Hash function based on Knuth's multiplicative method.
+     * It provides good distribution even for a sequence of keys.
      *
      * @param k the long for which the hash will be calculated
      * @return the hash
@@ -157,7 +158,7 @@ public final class Hash {
             } while (p <= lim);
 
             h64 = Long.rotateLeft(v1, 1) + Long.rotateLeft(v2, 7)
-                    + Long.rotateLeft(v3, 12) + Long.rotateLeft(v4, 18);
+                + Long.rotateLeft(v3, 12) + Long.rotateLeft(v4, 18);
 
             v1 *= XXH_PRIME64_2;
             v1 = Long.rotateLeft(v1, 31);
