@@ -286,7 +286,7 @@ public class GenericLexerTest {
         Assert.assertEquals(6, ts.getTokenHi());
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ClassCastException.class)
     public void testImmutablePairOf2() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("orange");
@@ -294,13 +294,13 @@ public class GenericLexerTest {
         ts.immutablePairOf(cs, cs);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ClassCastException.class)
     public void testImmutablePairOf3() {
         GenericLexer ts = new GenericLexer(64);
         ts.immutablePairOf("", "");
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ClassCastException.class)
     public void testImmutablePairOf4() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("geohash 31b");

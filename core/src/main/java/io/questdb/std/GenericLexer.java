@@ -177,9 +177,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
-        if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
-            throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
-        }
         FloatingSequencePair seqPair = csPairPool.next();
         seqPair.cs0 = (FloatingSequence) value0;
         seqPair.cs1 = (FloatingSequence) immutableOf(value1);
