@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TxReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
@@ -35,6 +32,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
+    private final TableSequencerAPI.RegisteredTable checkNotifyOutstandingTxnInWal;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -43,7 +41,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private Path threadLocalPath;
-    private final TableSequencerAPI.RegisteredTable checkNotifyOutstandingTxnInWal;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
@@ -60,20 +57,20 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableSequencerAPI().forAllWalTables(checkNotifyOutstandingTxnInWal);
     }
 
-    public void checkNotifyOutstandingTxnInWal(int tableId, String systemTableName, long txn) {
-        threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
+    public void checkNotifyOutstandingTxnInWal(int tableId, TableToken tableToken, long txn) {
+        threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
         if (ff.exists(threadLocalPath)) {
-            threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$();
+            threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
             try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                 if (txReader2.getSeqTxn() < txn) {
                     // table name should be immutable when in the notification message
-                    engine.notifyWalTxnCommitted(tableId, systemTableName, txn);
+                    engine.notifyWalTxnCommitted(tableId, tableToken, txn);
                 }
             }
         } else {
             // table is dropped, notify the JOB to delete the data
-            engine.notifyWalTxnCommitted(tableId, systemTableName, Long.MAX_VALUE);
+            engine.notifyWalTxnCommitted(tableId, tableToken, Long.MAX_VALUE);
         }
     }
 

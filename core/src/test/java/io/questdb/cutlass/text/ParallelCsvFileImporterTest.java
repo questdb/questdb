@@ -719,12 +719,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
         String tab41 = "tab41";
-        String systemTableName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        String privateTableName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
 
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, File.separator + systemTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
+                if (Chars.contains(path, File.separator + privateTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -774,8 +774,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateTableDirectoryExistAndCantBeDeleted() throws Exception {
         String tab34 = "tab34";
-        CharSequence systemTableName = tab34 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        String tab34_0 = Chars.toString(systemTableName) + "_0";
+        String tab34_0 = tab34 + "_0";
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
@@ -810,8 +809,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateTableDirectoryIsMangled() throws Exception {
         String tab33 = "tab33";
-        CharSequence systemTableName = tab33 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        CharSequence fakeExists = systemTableName + "_0";
+        CharSequence fakeExists = tab33 + "_0";
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
@@ -822,14 +820,14 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, tab33, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=" + systemTableName + "_0]`]");
+        testImportThrowsException(ff, tab33, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`name is reserved [tableName=" + tab33 + "_0]`]");
     }
 
     @Test
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
         String tabex3 = "tabex3";
-        CharSequence systemTableName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(systemTableName).slash$()) {
+        CharSequence privateTableName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(privateTableName).slash$()) {
             TestFilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
 
@@ -898,8 +896,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
-        CharSequence systemTableName = "tab34" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        String mangledPartDir = systemTableName + "_0";
+        CharSequence privateTableName = "tab34";
+        String mangledPartDir = privateTableName + "_0";
         FilesFacade ff = new TestFilesFacadeImpl() {
 
             @Override
@@ -2520,8 +2518,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         }
 
-        CharSequence systemTableName = engine.getSystemTableName("tableName");
-        ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, Chars.toString(systemTableName)));
+        TableToken tableToken = engine.getTableToken("tableName");
+        ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot, tableToken.getPrivateTableName()));
         Assert.assertEquals(list(expectedChunks), actualChunks);
     }
 
@@ -2718,7 +2716,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         );
     }
 
-    private void testStatusLogCleanup(int daysToKeep) throws SqlException, IOException {
+    private void testStatusLogCleanup(int daysToKeep) throws SqlException {
         String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         compiler.compile("create table " + backlogTableName + " as " +
                 "(" +

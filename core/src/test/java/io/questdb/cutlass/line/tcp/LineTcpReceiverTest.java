@@ -145,8 +145,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (Chars.startsWith(name, tableName)
-                            && name.equals(engine.getSystemTableName(tableName))) {
+                    if (Chars.equalsNc(name.getLoggingName(), tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -446,8 +446,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (Chars.startsWith(name, tableName)
-                            && name.equals(engine.getSystemTableName(tableName))) {
+                    if (Chars.equalsNc(name.getLoggingName(), tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
                     }
                 }

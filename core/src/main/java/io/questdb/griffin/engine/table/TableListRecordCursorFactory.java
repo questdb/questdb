@@ -60,7 +60,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
         private CairoEngine engine;
-        private Iterator<CharSequence> systemNames;
+        private Iterator<TableToken> systemNames;
         private String tableName = null;
 
         @Override
@@ -80,7 +80,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             if (systemNames == null) {
-                systemNames = engine.getTableSystemNames().iterator();
+                systemNames = engine.getTableTokens().iterator();
             }
 
             do {

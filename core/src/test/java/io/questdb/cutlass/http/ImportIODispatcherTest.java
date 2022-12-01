@@ -306,7 +306,7 @@ public class ImportIODispatcherTest {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getLoggingName())) {
                             waitForData.countDown();
                         }
                     });
@@ -386,7 +386,9 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms", "syms")) {
+
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(2, meta.getTimestampIndex());
@@ -554,9 +556,9 @@ public class ImportIODispatcherTest {
                 .run((engine) -> {
                     AtomicBoolean locked = new AtomicBoolean(false);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name, tableName)) {
+                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getLoggingName(), tableName)) {
                             try (Path path = new Path()) {
-                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -589,7 +591,7 @@ public class ImportIODispatcherTest {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getLoggingName())) {
                             waitForData.countDown();
                         }
                     });
@@ -668,7 +670,9 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms", "syms")) {
+
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
@@ -813,9 +817,9 @@ public class ImportIODispatcherTest {
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     CairoConfiguration configuration = engine.getConfiguration();
-                    CharSequence systemTableName = engine.getSystemTableName("xyz");
+                    TableToken tableToken = engine.getTableToken("xyz");
                     try (
-                            Path path = new Path().concat(configuration.getRoot()).concat(systemTableName);
+                            Path path = new Path().concat(configuration.getRoot()).concat(tableToken);
                             TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
                     ) {
                         Assert.assertEquals(2, txnScoreboard.getMin());

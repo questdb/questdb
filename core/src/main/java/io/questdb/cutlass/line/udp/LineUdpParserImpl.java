@@ -431,7 +431,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
-                LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
+                LOG.error().$("mismatched column and value types [table=").utf8(writer.getTableToken().getLoggingName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
@@ -449,11 +449,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 geoHashBitsSizeByColIdx.add(0);
             } else if (!autoCreateNewColumns) {
                 throw CairoException.nonCritical()
-                        .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableName())
+                        .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableToken().getLoggingName())
                         .put(", columnName=").put(colNameAsChars)
                         .put(']');
             } else {
-                LOG.error().$("invalid column name [table=").$(writer.getTableName())
+                LOG.error().$("invalid column name [table=").utf8(writer.getTableToken().getLoggingName())
                         .$(", columnName=").$(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
@@ -496,7 +496,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
-                commitList.put(e.writer.getTableName(), e.writer);
+                if (Chars.equals(tableName, e.writer.getTableToken().getLoggingName())) {
+                    commitList.put(e.writer.getTableToken().getLoggingName(), e.writer);
+                } else {
+                    // Cannot happen except with WAL table rename and out of date TableWriter.tableToken.
+                    commitList.put(Chars.toString(tableName), e.writer);
+                }
             }
         }
 

@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
@@ -137,21 +138,21 @@ public class TableTransactionLog implements Closeable {
         return maxTxn.get();
     }
 
-    TransactionLogCursor getCursor(String tableName, long txnLo) {
+    TransactionLogCursor getCursor(long txnLo) {
         final Path path = Path.PATH.get().of(rootPath);
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, tableName, txnLo, path);
+            cursor = new TransactionLogCursorImpl(ff, txnLo, path);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
-        return cursor.of(ff, tableName, txnLo, path);
+        return cursor.of(ff, txnLo, path);
     }
 
     @NotNull
-    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer, String tableName) {
+    TableMetadataChangeLog getTableMetadataChangeLog(TableToken tableToken, long structureVersionLo, MemorySerializer serializer) {
         final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, structureVersionLo, serializer, tableName, Path.getThreadLocal(rootPath));
+        cursor.of(ff, tableToken, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
         return cursor;
     }
 
@@ -195,7 +196,7 @@ public class TableTransactionLog implements Closeable {
         private final MemoryFCRImpl txnMetaMem = new MemoryFCRImpl();
         private FilesFacade ff;
         private MemorySerializer serializer;
-        private String tableName;
+        private TableToken tableToken;
         private long txnMetaAddress;
         private long txnMetaOffset;
         private long txnMetaOffsetHi;
@@ -208,10 +209,6 @@ public class TableTransactionLog implements Closeable {
             }
             txnMetaOffset = 0;
             txnMetaOffsetHi = 0;
-        }
-
-        public String getTableName() {
-            return tableName;
         }
 
         @Override
@@ -231,20 +228,25 @@ public class TableTransactionLog implements Closeable {
             return tableMetadataChange;
         }
 
+        @Override
+        public TableToken getTableToken() {
+            return tableToken;
+        }
+
         public void of(
                 FilesFacade ff,
+                TableToken tableToken,
                 long structureVersionLo,
                 MemorySerializer serializer,
-                String tableName,
                 @Transient final Path path
         ) {
+            this.tableToken = tableToken;
 
             // deallocates current state
             close();
 
             this.ff = ff;
             this.serializer = serializer;
-            this.tableName = tableName;
 
             long fdTxn = -1;
             long fdTxnMeta = -1;
@@ -301,13 +303,12 @@ public class TableTransactionLog implements Closeable {
         private long address;
         private long fd;
         private FilesFacade ff;
-        private String tableName;
         private long txn;
         private long txnCount;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, String tableName, long txnLo, final Path path) {
-            of(ff, tableName, txnLo, path);
+        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
+            of(ff, txnLo, path);
         }
 
         @Override
@@ -326,11 +327,6 @@ public class TableTransactionLog implements Closeable {
         @Override
         public long getSegmentTxn() {
             return Unsafe.getUnsafe().getLong(address + txnOffset + SEGMENT_TXN_OFFSET);
-        }
-
-        @Override
-        public String getTableName() {
-            return tableName;
         }
 
         @Override
@@ -375,8 +371,7 @@ public class TableTransactionLog implements Closeable {
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, String tableName, long txnLo, Path path) {
-            this.tableName = tableName;
+        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
             this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);

@@ -25,6 +25,9 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableNameRegistry;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Misc;
 
 import java.util.Map;
@@ -32,8 +35,8 @@ import java.util.Map;
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     protected static final String TABLE_DROPPED_MARKER = "TABLE_DROPPED_MARKER:..";
     protected final TableNameRegistryFileStore tableNameStore;
-    private Map<CharSequence, String> reverseTableNameCache;
-    private Map<CharSequence, TableNameRecord> systemTableNameCache;
+    private Map<CharSequence, TableToken> nameTableTokenMap;
+    private Map<TableToken, String> reverseTableNameTokenMap;
 
     public AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.tableNameStore = new TableNameRegistryFileStore(configuration);
@@ -41,20 +44,14 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
 
     @Override
     public void close() {
-        systemTableNameCache.clear();
-        reverseTableNameCache.clear();
+        nameTableTokenMap.clear();
+        reverseTableNameTokenMap.clear();
         Misc.free(tableNameStore);
     }
 
     @Override
-    public String getSystemName(CharSequence tableName) {
-        TableNameRecord nameRecord = getTableNameRecord(tableName);
-        return nameRecord != null ? nameRecord.systemTableName : null;
-    }
-
-    @Override
-    public String getTableNameBySystemName(CharSequence systemTableName) {
-        String tableName = reverseTableNameCache.get(systemTableName);
+    public String getTableNameByTableToken(TableToken tableToken) {
+        String tableName = reverseTableNameTokenMap.get(tableToken);
 
         //noinspection StringEquality
         if (tableName == TABLE_DROPPED_MARKER) {
@@ -65,34 +62,28 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public TableNameRecord getTableNameRecord(CharSequence tableName) {
-        return systemTableNameCache.get(tableName);
+    public TableToken getTableToken(CharSequence tableName) {
+        return nameTableTokenMap.get(tableName);
     }
 
     @Override
-    public Iterable<CharSequence> getTableSystemNames() {
-        return reverseTableNameCache.keySet();
-    }
-
-    @Override
-    public boolean isWalSystemTableName(CharSequence systemTableName) {
-        String tableName = reverseTableNameCache.get(systemTableName);
-        if (tableName != null) {
-            return isWalTableName(tableName);
+    public TableToken getTableTokenByPrivateTableName(String privateTableName, int tableId) {
+        TableToken token = nameTableTokenMap.get(TableUtils.toTableNameFromPrivateName(privateTableName));
+        if (token != null && token.getTableId() == tableId) {
+            return token;
         }
-        return false;
+        return null;
     }
 
     @Override
-    public boolean isWalTableDropped(CharSequence systemTableName) {
+    public Iterable<TableToken> getTableTokens() {
+        return reverseTableNameTokenMap.keySet();
+    }
+
+    @Override
+    public boolean isTableDropped(TableToken tableToken) {
         //noinspection StringEquality
-        return reverseTableNameCache.get(systemTableName) == TABLE_DROPPED_MARKER;
-    }
-
-    @Override
-    public boolean isWalTableName(CharSequence tableName) {
-        TableNameRecord nameRecord = systemTableNameCache.get(tableName);
-        return nameRecord != null && nameRecord.isWal;
+        return reverseTableNameTokenMap.get(tableToken) == TABLE_DROPPED_MARKER;
     }
 
     @Override
@@ -101,9 +92,9 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     public void setNameMaps(
-            Map<CharSequence, TableNameRecord> systemTableNameCache,
-            Map<CharSequence, String> reverseTableNameCache) {
-        this.systemTableNameCache = systemTableNameCache;
-        this.reverseTableNameCache = reverseTableNameCache;
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<TableToken, String> reverseTableNameTokenMap) {
+        this.nameTableTokenMap = nameTableTokenMap;
+        this.reverseTableNameTokenMap = reverseTableNameTokenMap;
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.str.Path;
@@ -65,8 +66,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             // remove partition
             final String partition = "2020-02";
 
-            CharSequence systemTableName = engine.getSystemTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(systemTableName).concat(partition).$()) {
+            TableToken tableToken = engine.getTableToken("tab");
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition).$()) {
                 Assert.assertEquals(0, Files.rmdir(path));
             }
 
@@ -135,8 +136,8 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
             // remove partition
             final String partition = "2020-02";
 
-            CharSequence systemTableName = engine.getSystemTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(systemTableName).concat(partition).$()) {
+            TableToken tableToken = engine.getTableToken("tab");
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition).$()) {
                 Assert.assertEquals(0, Files.rmdir(path));
             }
 

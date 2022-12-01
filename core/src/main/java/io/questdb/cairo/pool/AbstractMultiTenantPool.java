@@ -27,12 +27,11 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
@@ -48,7 +47,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     private static final int NEXT_OPEN = 0;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long UNLOCKED = -1L;
-    private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<TableToken, Entry<T>> entries = new java.util.concurrent.ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
 
@@ -58,20 +57,20 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
-    public Map<CharSequence, Entry<T>> entries() {
+    public Map<TableToken, Entry<T>> entries() {
         return entries;
     }
 
     @Override
-    public T get(CharSequence tableName) {
+    public T get(TableToken tableToken) {
 
-        Entry<T> e = getEntry(tableName);
+        Entry<T> e = getEntry(tableToken);
 
         long lockOwner = e.lockOwner;
         long thread = Thread.currentThread().getId();
 
         if (lockOwner != UNLOCKED) {
-            LOG.info().$('\'').utf8(tableName).$("' is locked [owner=").$(lockOwner).$(']').$();
+            LOG.info().$('\'').utf8(tableToken.getPrivateTableName()).$("' is locked [owner=").$(lockOwner).$(']').$();
             throw EntryLockedException.instance("unknown");
         }
 
@@ -84,29 +83,29 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                     if (tenant == null) {
                         try {
                             LOG.info()
-                                    .$("open '").utf8(tableName)
+                                    .$("open '").utf8(tableToken.getPrivateTableName())
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            tenant = newTenant(Chars.toString(tableName), e, i);
+                            tenant = newTenant(tableToken, e, i);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
                         }
 
                         e.assignTenant(i, tenant);
-                        notifyListener(thread, tableName, PoolListener.EV_CREATE, e.index, i);
+                        notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         tenant.refresh();
-                        notifyListener(thread, tableName, PoolListener.EV_GET, e.index, i);
+                        notifyListener(thread, tableToken, PoolListener.EV_GET, e.index, i);
                     }
 
                     if (isClosed()) {
                         e.assignTenant(i, null);
                         tenant.goodbye();
-                        LOG.info().$('\'').utf8(tableName).$("' born free").$();
+                        LOG.info().$('\'').utf8(tableToken.getPrivateTableName()).$("' born free").$();
                         return tenant;
                     }
-                    LOG.debug().$('\'').utf8(tableName).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
+                    LOG.debug().$('\'').utf8(tableToken.getPrivateTableName()).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
                     return tenant;
                 }
             }
@@ -122,14 +121,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         } while (e != null && e.index < maxSegments);
 
         // max entries exceeded
-        notifyListener(thread, tableName, PoolListener.EV_FULL, -1, -1);
-        LOG.info().$("could not get, busy [table=`").utf8(tableName).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
+        notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
+        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
         throw EntryUnavailableException.instance("unknown");
     }
 
     public int getBusyCount() {
         int count = 0;
-        for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+        for (Map.Entry<TableToken, Entry<T>> me : entries.entrySet()) {
             Entry<T> e = me.getValue();
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -147,8 +146,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         return maxEntries;
     }
 
-    public boolean lock(CharSequence name) {
-        Entry<T> e = getEntry(name);
+    public boolean lock(TableToken tableToken) {
+        Entry<T> e = getEntry(tableToken);
         final long thread = Thread.currentThread().getId();
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || e.lockOwner == thread) {
             do {
@@ -163,7 +162,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             return false;
                         }
                     } else {
-                        LOG.info().$("could not lock, busy [table=`").utf8(name).$("`, at=").$(e.index).$(':').$(i).$(", owner=").$(e.allocations[i]).$(", thread=").$(thread).$(']').$();
+                        LOG.info().$("could not lock, busy [table=`").utf8(tableToken.getPrivateTableName()).$("`, at=").$(e.index).$(':').$(i).$(", owner=").$(e.allocations[i]).$(", thread=").$(thread).$(']').$();
                         e.lockOwner = -1L;
                         return false;
                     }
@@ -185,36 +184,36 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                 e = e.next;
             } while (e != null);
         } else {
-            LOG.error().$("' already locked [table=`").utf8(name).$("`, owner=").$(e.lockOwner).$(']').$();
-            notifyListener(thread, name, PoolListener.EV_LOCK_BUSY, -1, -1);
+            LOG.error().$("' already locked [table=`").utf8(tableToken.getPrivateTableName()).$("`, owner=").$(e.lockOwner).$(']').$();
+            notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY, -1, -1);
             return false;
         }
-        notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1);
-        LOG.debug().$("locked [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
+        notifyListener(thread, tableToken, PoolListener.EV_LOCK_SUCCESS, -1, -1);
+        LOG.debug().$("locked [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).$(']').$();
         return true;
     }
 
-    public void unlock(CharSequence name) {
-        Entry<T> e = entries.get(name);
+    public void unlock(TableToken tableToken) {
+        Entry<T> e = entries.get(tableToken);
         long thread = Thread.currentThread().getId();
         if (e == null) {
-            LOG.info().$("not found, cannot unlock [table=`").$(name).$("`]").$();
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED, -1, -1);
+            LOG.info().$("not found, cannot unlock [table=`").$(tableToken).$("`]").$();
+            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED, -1, -1);
             return;
         }
 
         if (e.lockOwner == thread) {
-            entries.remove(name);
+            entries.remove(tableToken);
             while (e != null) {
                 e = e.next;
             }
         } else {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.nonCritical().put("Not the lock owner of ").put(name);
+            notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
+            throw CairoException.nonCritical().put("Not the lock owner of ").put(tableToken.getPrivateTableName());
         }
 
-        notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1);
-        LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
+        notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED, -1, -1);
+        LOG.debug().$("unlocked [table=`").utf8(tableToken.getPrivateTableName()).$("`]").$();
     }
 
     private void checkClosed() {
@@ -229,16 +228,16 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         if (tenant != null) {
             tenant.goodbye();
             tenant.close();
-            LOG.info().$("closed '").utf8(tenant.getSystemTableName())
+            LOG.info().$("closed '").utf8(tenant.getTableToken().getPrivateTableName())
                     .$("' [at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();
-            notifyListener(thread, tenant.getSystemTableName(), ev, entry.index, index);
+            notifyListener(thread, tenant.getTableToken(), ev, entry.index, index);
             entry.assignTenant(index, null);
         }
     }
 
-    private Entry<T> getEntry(CharSequence name) {
+    private Entry<T> getEntry(TableToken name) {
         checkClosed();
 
         Entry<T> e = entries.get(name);
@@ -252,7 +251,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         return e;
     }
 
-    private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
+    private void notifyListener(long thread, TableToken name, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(getListenerSrc(), thread, name, event, (short) segment, (short) position);
@@ -271,14 +270,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             return;
         }
 
-        final String tableName = tenant.getSystemTableName();
+        final TableToken tableToken = tenant.getTableToken();
         final long thread = Thread.currentThread().getId();
         final int index = tenant.getIndex();
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 
         if (owner != UNALLOCATED) {
-            LOG.debug().$('\'').utf8(tableName).$("' is expelled [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
-            notifyListener(thread, tableName, PoolListener.EV_OUT_OF_POOL_CLOSE, e.index, index);
+            LOG.debug().$('\'').utf8(tableToken.getPrivateTableName()).$("' is expelled [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            notifyListener(thread, tableToken, PoolListener.EV_OUT_OF_POOL_CLOSE, e.index, index);
             e.assignTenant(index, null);
             Unsafe.cas(e.allocations, index, owner, UNALLOCATED);
         }
@@ -286,7 +285,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
     protected abstract byte getListenerSrc();
 
-    protected abstract T newTenant(String tableName, Entry<T> entry, int index);
+    protected abstract T newTenant(TableToken tableName, Entry<T> entry, int index);
 
     @Override
     protected boolean releaseAll(long deadline) {
@@ -311,7 +310,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
-                                LOG.info().$("shutting down. '").utf8(r.getSystemTableName()).$("' is left behind").$();
+                                LOG.info().$("shutting down. '").utf8(r.getTableToken().getPrivateTableName()).$("' is left behind").$();
                             }
                         }
                     }
@@ -336,14 +335,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             return false;
         }
 
-        final String tableName = tenant.getSystemTableName();
+        final TableToken tableToken = tenant.getTableToken();
         final long thread = Thread.currentThread().getId();
         final int index = tenant.getIndex();
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 
         if (owner != UNALLOCATED) {
-            LOG.debug().$('\'').utf8(tableName).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
-            notifyListener(thread, tableName, PoolListener.EV_RETURN, e.index, index);
+            LOG.debug().$('\'').utf8(tableToken.getPrivateTableName()).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            notifyListener(thread, tableToken, PoolListener.EV_RETURN, e.index, index);
 
             // release the entry for anyone to pick up
             e.releaseOrAcquireTimes[index] = clock.getTicks();
@@ -355,7 +354,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
-        throw CairoException.critical(0).put("double close [table=").put(tableName).put(", index=").put(index).put(']');
+        throw CairoException.critical(0).put("double close [table=").put(tableToken.getPrivateTableName()).put(", index=").put(index).put(']');
     }
 
     public static final class Entry<T> {

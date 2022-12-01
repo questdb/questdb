@@ -62,7 +62,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public static boolean assertCursor(
             CharSequence expected,
             boolean supportsRandomAccess,
-            boolean checkSameStr,
             boolean sizeExpected,
             boolean sizeCanBeVariable,
             RecordCursor cursor,
@@ -555,7 +554,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, false, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, false, sqlExecutionContext);
     }
 
     protected static void assertCursor(
@@ -566,14 +565,13 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws SqlException {
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, sqlExecutionContext);
     }
 
     protected static void assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
             boolean supportsRandomAccess,
-            boolean checkSameStr,
             boolean sizeExpected,
             boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
             SqlExecutionContext sqlExecutionContext
@@ -584,7 +582,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             cursorAsserted = assertCursor(
                     expected,
                     supportsRandomAccess,
-                    checkSameStr,
                     sizeExpected,
                     sizeCanBeVariable,
                     cursor,
@@ -1163,9 +1160,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize,
             boolean sizeCanBeVariable) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, executionContext);
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
         assertVariableColumns(factory, executionContext);
     }
@@ -1420,8 +1417,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
-            path.of(root).concat(systemTableName).concat("wal").put(walId).slash().put(segmentId).$();
+            TableToken tableToken = engine.getTableToken(tableName);
+            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1429,7 +1426,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.getSystemTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
@@ -1438,7 +1435,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertSegmentLockExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.getSystemTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1473,8 +1470,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertWalExistence(boolean expectExists, String tableName, int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
-            path.of(root).concat(systemTableName).concat("wal").put(walId).$();
+            TableToken tableToken = engine.getTableToken(tableName);
+            path.of(root).concat(tableToken).concat("wal").put(walId).$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1482,7 +1479,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertWalLockEngagement(boolean expectLocked, String tableName, int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.getSystemTableName(tableName)).concat("wal").put(walId).put(".lock").$();
+            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Chars.toString(path), expectLocked, !could);
         }
@@ -1491,8 +1488,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertWalLockExistence(boolean expectExists, String tableName, int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
-            path.of(root).concat(systemTableName).concat("wal").put(walId).put(".lock").$();
+            TableToken tableToken = engine.getTableToken(tableName);
+            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
@@ -1513,12 +1510,12 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        CharSequence systemTableName = registerTableName(tableModel.getTableName());
+        TableToken tableToken = registerTableName(tableModel.getTableName());
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
-                Path path = new Path().of(configuration.getRoot()).concat(systemTableName)
+                Path path = new Path().of(configuration.getRoot()).concat(tableToken)
         ) {
-            TableUtils.createTable(configuration, mem, path, tableModel, tableId, systemTableName);
+            TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getPrivateTableName());
             compiler.compile(
                     TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
                     sqlExecutionContext

@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
@@ -33,7 +34,7 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
 public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
-    private String systemTableName;
+    private TableToken tableToken;
 
     public WalSqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         super(cairoEngine, workerCount, sharedWorkerCount);
@@ -43,7 +44,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     public TableRecordMetadata getMetadata(CharSequence tableName) {
         return getCairoEngine().getMetadata(
                 getCairoSecurityContext(),
-                systemTableName
+                tableToken
         );
     }
 
@@ -52,7 +53,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
         final CairoEngine engine = getCairoEngine();
         return engine.getMetadata(
                 getCairoSecurityContext(),
-                systemTableName,
+                tableToken,
                 structureVersion
         );
     }
@@ -61,7 +62,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     public TableReader getReader(CharSequence tableName, int tableId, long version) {
         return getCairoEngine().getReaderBySystemName(
                 getCairoSecurityContext(),
-                systemTableName
+                tableToken
         );
     }
 
@@ -69,7 +70,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     public TableReader getReader(CharSequence tableName) {
         return getCairoEngine().getReaderBySystemName(
                 getCairoSecurityContext(),
-                systemTableName
+                tableToken
         );
     }
 
@@ -79,13 +80,13 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     }
 
     @Override
-    public String getTableNameAsString(CharSequence tableName) {
-        return getCairoEngine().getTableNameBySystemName(systemTableName);
+    public int getStatus(Path path, CharSequence tableName) {
+        return TABLE_EXISTS;
     }
 
     @Override
-    public int getStatus(Path path, CharSequence tableName) {
-        return TABLE_EXISTS;
+    public String getTableNameAsString(CharSequence tableName) {
+        return tableToken.getLoggingName();
     }
 
     @Override
@@ -93,7 +94,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
         return true;
     }
 
-    public void remapTableNameResolutionTo(String systemTableName) {
-        this.systemTableName = systemTableName;
+    public void remapTableNameResolutionTo(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 }

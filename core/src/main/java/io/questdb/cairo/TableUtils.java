@@ -72,7 +72,7 @@ public final class TableUtils {
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
-    public static final long META_OFFSET_WAL_ENABLED = 40; // INT
+    public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final int NULL_LEN = -1;
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -204,9 +204,9 @@ public final class TableUtils {
             Path path,
             TableStructure structure,
             int tableId,
-            CharSequence systemTableName
+            CharSequence privateTableName
     ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, systemTableName);
+        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, privateTableName);
     }
 
     public static void createTable(
@@ -216,12 +216,12 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence systemTableName
+            CharSequence privateTableName
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, systemTableName);
+        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, privateTableName);
     }
 
     public static void createTable(
@@ -233,9 +233,9 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence systemTableName
+            CharSequence privateTableName
     ) {
-        createTable(ff, root, mkDirMode, memory, path, systemTableName, structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, privateTableName, structure, tableVersion, tableId);
     }
 
     public static void createTable(
@@ -547,12 +547,6 @@ public final class TableUtils {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-    public static boolean isSystemNameSameAsTableName(CharSequence systemTableName, CharSequence tableName) {
-        return Chars.startsWith(systemTableName, tableName) && (
-                systemTableName.length() == tableName.length() || systemTableName.charAt(tableName.length()) == SYSTEM_TABLE_NAME_SUFFIX
-        );
-    }
-
     public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
         int l = seq.length();
         if (l > fsFileNameLimit) {
@@ -684,6 +678,23 @@ public final class TableUtils {
 
     public static long lock(FilesFacade ff, Path path) {
         return lock(ff, path, true);
+    }
+
+    public static long lockDirectory(FilesFacade ff, Path path) {
+        long fd = ff.openRO(path);
+        if (fd == -1) {
+            LOG.error().$("cannot open read-only '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+            return -1L;
+        }
+
+        if (ff.lock(fd) != 0) {
+            LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+            ff.close(fd);
+            return -1L;
+        }
+
+        LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+        return fd;
     }
 
     public static void lockName(Path path) {
@@ -954,7 +965,7 @@ public final class TableUtils {
         }
     }
 
-    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
+    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, TableToken tableName, int partitionBy) {
         final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
         while (true) {
             long cursor = seq.next();
@@ -1063,17 +1074,17 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
-    public static String toTableNameFromSystemName(String systemTableName) {
-        int suffixIndex = Chars.indexOf(systemTableName, SYSTEM_TABLE_NAME_SUFFIX);
+    public static String toTableNameFromPrivateName(String privateTableName) {
+        int suffixIndex = Chars.indexOf(privateTableName, SYSTEM_TABLE_NAME_SUFFIX);
         if (suffixIndex == -1) {
-            return systemTableName;
+            return privateTableName;
         }
 
-        if (suffixIndex != systemTableName.length() - 1) {
+        if (suffixIndex != privateTableName.length() - 1) {
             // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
             return null;
         }
-        return systemTableName.substring(0, suffixIndex);
+        return privateTableName.substring(0, suffixIndex);
     }
 
     public static void txnPartition(CharSink path, long txn) {

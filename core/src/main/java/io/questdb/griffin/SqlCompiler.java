@@ -48,7 +48,6 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1400,11 +1399,10 @@ public class SqlCompiler implements Closeable {
 
         try {
             if (!isWalEnabled) {
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
                 writerAPI = writer = new TableWriter(
                         configuration,
-                        tableName,
-                        systemTableName,
+                        tableToken,
                         messageBus,
                         null,
                         false,
@@ -1751,14 +1749,14 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        String systemTableName = engine.getSystemTableName(name.token);
+        TableToken tableToken = engine.getTableToken(name.token);
         try (TableRecordMetadata metadata = engine.getMetadata(
                 executionContext.getCairoSecurityContext(),
-                systemTableName
+                tableToken
         )) {
             final long structureVersion = metadata.getStructureVersion();
-            String tableName = engine.getTableNameBySystemName(systemTableName);
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, tableName, metadata.getSystemTableName(), structureVersion);
+            String tableName = engine.getTableNameBySystemName(tableToken);
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, tableName, metadata.getTableToken(), structureVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();
@@ -2119,8 +2117,8 @@ public class SqlCompiler implements Closeable {
         }
         tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
         CharSequence tableName = tok;
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
-        rebuildIndex.of(path.of(configuration.getRoot()).concat(systemTableName), configuration);
+        TableToken tableToken = engine.getTableToken(tableName);
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableToken.getPrivateTableName()), configuration);
 
         tok = SqlUtil.fetchNext(lexer);
         CharSequence columnName = null;
@@ -2167,8 +2165,8 @@ public class SqlCompiler implements Closeable {
 
     private boolean removeTableDirectory(CreateTableModel model) {
         int errno;
-        CharSequence systemTableName = engine.getSystemTableName(model.getName().token);
-        if ((errno = engine.removeDirectory(path, systemTableName)) == 0) {
+        TableToken tableToken = engine.getTableToken(model.getName().token);
+        if ((errno = engine.removeDirectory(path, tableToken.getPrivateTableName())) == 0) {
             return true;
         }
         LOG.error()
@@ -2374,19 +2372,20 @@ public class SqlCompiler implements Closeable {
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
                 try (TableWriterAPI writer = tableWriters.getQuick(i)) {
                     try {
+                        String publicTableName = engine.getTableNameBySystemName(writer.getTableToken());
                         if (writer.getMetadata().isWalEnabled()) {
                             writer.truncate();
-                        } else if (engine.lockReaders(writer.getTableName())) {
+                        } else if (engine.lockReaders(publicTableName)) {
                             try {
                                 writer.truncate();
                             } finally {
-                                engine.unlockReaders(writer.getTableName());
+                                engine.unlockReaders(publicTableName);
                             }
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(writer.getTableName()).put("'. Try again.");
+                            throw SqlException.$(0, "there is an active query against '").put(publicTableName).put("'. Try again.");
                         }
                     } catch (CairoException | CairoError e) {
-                        LOG.error().$("could not truncate [table=").$(writer.getTableName()).$(", e=").$((Sinkable) e).$(']').$();
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
                         throw e;
                     }
                 }
@@ -2413,7 +2412,7 @@ public class SqlCompiler implements Closeable {
                 try (TableReader rdr = executionContext.getReader(tableName)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getSystemTableName(), partitionBy)) {
+                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableToken(), partitionBy)) {
                             throw SqlException.$(
                                     tableNamePos,
                                     "cannot schedule vacuum action, queue is full, please retry " +
@@ -2712,9 +2711,8 @@ public class SqlCompiler implements Closeable {
     private class DatabaseBackupAgent implements Closeable {
         protected final Path srcPath = new Path();
         private final Path dstPath = new Path();
-        private final StringSink fileNameSink = new StringSink();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
-        private final ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
+        private final ObjHashSet<TableToken> tableNames = new ObjHashSet<>();
         private transient String cachedTmpBackupRoot;
         private transient int changeDirPrefixLen;
         private transient int currDirPrefixLen;
@@ -2729,20 +2727,6 @@ public class SqlCompiler implements Closeable {
             }
         };
         private transient SqlExecutionContext currentExecutionContext;
-        private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
-            if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-                engine.getTableNameBySystemName(fileNameSink);
-                try {
-                    backupTable(fileNameSink, currentExecutionContext);
-                } catch (CairoException e) {
-                    LOG.error()
-                            .$("could not backup [path=").$(fileNameSink)
-                            .$(", e=").$(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .$(']').$();
-                }
-            }
-        };
 
         public void clear() {
             srcPath.trimTo(0);
@@ -2772,8 +2756,8 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
-            LOG.info().$("Starting backup of ").$(tableName).$();
+        private void backupTable(@NotNull TableToken tableToken, @NotNull SqlExecutionContext executionContext) {
+            LOG.info().$("starting backup of ").$(tableToken).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
                     throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
@@ -2783,7 +2767,7 @@ public class SqlCompiler implements Closeable {
             }
 
             int renameRootLen = dstPath.length();
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
+            String tableName = tableToken.getLoggingName();
             try {
                 CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
                 try (TableReader reader = executionContext.getReader(tableName)) {
@@ -2809,9 +2793,9 @@ public class SqlCompiler implements Closeable {
                         backupWriter.commit();
                     }
                 }
-                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(systemTableName).$();
+                srcPath.of(configuration.getBackupRoot()).concat(configuration.getBackupTempDirName()).concat(tableToken.getPrivateTableName()).$();
                 try {
-                    dstPath.trimTo(renameRootLen).concat(systemTableName).$();
+                    dstPath.trimTo(renameRootLen).concat(tableToken.getPrivateTableName()).$();
                     TableUtils.renameOrFail(ff, srcPath, dstPath);
                     LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(dstPath).$(']').$();
                 } finally {
@@ -2824,7 +2808,7 @@ public class SqlCompiler implements Closeable {
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
 
-                srcPath.of(cachedTmpBackupRoot).concat(systemTableName).slash$();
+                srcPath.of(cachedTmpBackupRoot).concat(tableToken.getPrivateTableName()).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
                     LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
@@ -2842,8 +2826,8 @@ public class SqlCompiler implements Closeable {
         }
 
         private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
-            srcPath.of(backupRoot).concat(systemTableName).slash$();
+            TableToken tableToken = engine.getTableToken(tableName);
+            srcPath.of(backupRoot).concat(tableToken.getLoggingName()).slash$();
 
             if (ff.exists(srcPath)) {
                 throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');
@@ -2935,7 +2919,11 @@ public class SqlCompiler implements Closeable {
             try {
                 setupBackupRenamePath();
                 cdDbRenamePath();
-                ff.iterateDir(srcPath.of(configuration.getRoot()).$(), sqlDatabaseBackupOnFind);
+                for (TableToken tableToken : engine.getTableTokens()) {
+                    if (!engine.isTableDropped(tableToken)) {
+                        backupTable(tableToken, executionContext);
+                    }
+                }
                 backupTabIndexFile();
                 cdConfRenamePath();
                 ff.iterateDir(srcPath.of(configuration.getConfRoot()).$(), confFilesBackupOnFind);
@@ -2961,7 +2949,7 @@ public class SqlCompiler implements Closeable {
                     if (status != TableUtils.TABLE_EXISTS) {
                         throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }
-                    tableNames.add(tableName);
+                    tableNames.add(engine.getTableToken(tableName));
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (null == tok || Chars.equals(tok, ';')) {

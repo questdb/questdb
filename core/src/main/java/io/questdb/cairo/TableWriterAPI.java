@@ -61,9 +61,7 @@ public interface TableWriterAPI extends Closeable {
      */
     int getSymbolCountWatermark(int columnIndex);
 
-    String getSystemTableName();
-
-    String getTableName();
+    TableToken getTableToken();
 
     long getUncommittedRowCount();
 

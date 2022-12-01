@@ -42,15 +42,11 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     }
 
     @Override
-    protected MetadataTenant newTenant(String systemTableName, Entry<MetadataTenant> entry, int index) {
-        String tableName = engine.getTableNameBySystemName(systemTableName);
-        if (tableName != null) {
-            if (engine.isWalSystemTableName(systemTableName)) {
-                return new SequencerMetadataTenant(this, entry, index, systemTableName, engine.getTableSequencerAPI());
-            }
-            return new TableReaderMetadataTenant(this, entry, index, tableName, systemTableName);
+    protected MetadataTenant newTenant(TableToken tableToken, Entry<MetadataTenant> entry, int index) {
+        if (tableToken.isWal()) {
+            return new SequencerMetadataTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());
         }
-        throw CairoException.nonCritical().put("table does not exist [systemTableName=").put(systemTableName).put(']');
+        return new TableReaderMetadataTenant(this, entry, index, tableToken);
     }
 
     public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
@@ -58,7 +54,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
         private final int index;
-        private final String systemTableName;
+        private final TableToken tableToken;
         private final TableSequencerAPI tableSequencerAPI;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
         private AbstractMultiTenantPool<MetadataTenant> pool;
@@ -67,15 +63,15 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 AbstractMultiTenantPool<MetadataTenant> pool,
                 Entry<MetadataTenant> entry,
                 int index,
-                String systemTableName,
+                TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI
         ) {
             this.pool = pool;
             this.entry = entry;
             this.index = index;
             this.tableSequencerAPI = tableSequencerAPI;
-            this.systemTableName = systemTableName;
-            tableSequencerAPI.getTableMetadata(systemTableName, this);
+            this.tableToken = tableToken;
+            tableSequencerAPI.getTableMetadata(tableToken, this);
         }
 
         @Override
@@ -106,7 +102,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
         @Override
         public void refresh() {
-            tableSequencerAPI.reloadMetadataConditionally(systemTableName, getStructureVersion(), this);
+            tableSequencerAPI.reloadMetadataConditionally(tableToken, getStructureVersion(), this);
         }
     }
 
@@ -119,10 +115,9 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 AbstractMultiTenantPool<MetadataTenant> pool,
                 AbstractMultiTenantPool.Entry<MetadataTenant> entry,
                 int index,
-                String tableName,
-                String systemTableName
+                TableToken tableToken
         ) {
-            super(pool.getConfiguration(), tableName, systemTableName);
+            super(pool.getConfiguration(), tableToken);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

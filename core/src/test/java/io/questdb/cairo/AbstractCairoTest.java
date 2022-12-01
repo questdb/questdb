@@ -611,7 +611,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getLoggingName(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
@@ -689,21 +689,21 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, Chars.toString(tableName), engine.getSystemTableName(tableName));
+        return new TableReader(configuration, engine.getTableToken(tableName));
     }
 
     protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), metrics);
+        return new TableWriter(configuration, engine.getTableToken(tableName), metrics);
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
-        WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
-        snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
-        //noinspection StatementWithEmptyBody
-        while (job.run(0)) {
-            // run until empty
+        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+            //noinspection StatementWithEmptyBody
+            while (job.run(0)) {
+                // run until empty
+            }
         }
-        job.close();
     }
 
     protected static void runWalPurgeJob() {
@@ -725,11 +725,15 @@ public abstract class AbstractCairoTest {
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
-        return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
+        return new TableWriter(configuration, engine.getTableToken(tableName), messageBus, metrics);
     }
 
-    protected String registerTableName(CharSequence tableName) {
-        return engine.registerTableName(tableName, false);
+    protected TableToken registerTableName(CharSequence tableName) {
+        TableToken token = engine.lockTableName(tableName, false);
+        if (token != null) {
+            engine.registerTableToken(token);
+        }
+        return token;
     }
 
     protected enum StringAsTagMode {

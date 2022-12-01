@@ -52,33 +52,31 @@ public class TableSequencerImpl implements TableSequencer {
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
-    private final String systemTableName;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed;
-    private volatile String tableName;
+    private TableToken tableToken;
 
-    TableSequencerImpl(CairoEngine engine, String systemTableName, String tableName) {
+    TableSequencerImpl(CairoEngine engine, TableToken tableToken) {
         this.engine = engine;
-        this.systemTableName = systemTableName;
-        this.tableName = tableName;
+        this.tableToken = tableToken;
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
-            path.of(configuration.getRoot()).concat(systemTableName).concat(WalUtils.SEQ_DIR);
+            path.of(configuration.getRoot()).concat(tableToken.getPrivateTableName()).concat(WalUtils.SEQ_DIR);
             rootLen = path.length();
             this.ff = ff;
             this.mkDirMode = configuration.getMkDirMode();
 
             metadata = new SequencerMetadata(ff);
-            sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, systemTableName);
+            sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             tableTransactionLog = new TableTransactionLog(ff);
         } catch (Throwable th) {
-            LOG.critical().$("could not create sequencer [name=").utf8(systemTableName)
+            LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getPrivateTableName())
                     .$(", error=").$(th.getMessage())
                     .I$();
             closeLocked();
@@ -108,7 +106,7 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         tableTransactionLog.addEntry(WalUtils.DROP_TABLE_WALID, 0, 0);
         metadata.dropTable();
-        engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, Integer.MAX_VALUE);
+        engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, Integer.MAX_VALUE);
     }
 
     @Override
@@ -116,9 +114,9 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         if (metadata.getStructureVersion() == structureVersionLo) {
             // Nothing to do.
-            return emptyOperationCursor.of(tableName);
+            return emptyOperationCursor.of(tableToken);
         }
-        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter, tableName);
+        return tableTransactionLog.getTableMetadataChangeLog(tableToken, structureVersionLo, alterCommandWalFormatter);
     }
 
     @Override
@@ -163,7 +161,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         sink.of(
-                systemTableName,
+                tableToken,
                 metadata.getTableId(),
                 timestampIndex,
                 compressedTimestampIndex,
@@ -175,14 +173,14 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.lastTxn();
     }
 
-    public String getTableName() {
-        return systemTableName;
+    public TableToken getTableName() {
+        return tableToken;
     }
 
     @Override
     public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
         checkDropped();
-        return tableTransactionLog.getCursor(tableName, seqTxn);
+        return tableTransactionLog.getCursor(seqTxn);
     }
 
     public boolean isClosed() {
@@ -220,7 +218,7 @@ public class TableSequencerImpl implements TableSequencer {
                 applyToMetadata(change);
                 if (metadata.getStructureVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
-                            .put("applying structure change to WAL table failed [table=").put(systemTableName)
+                            .put("applying structure change to WAL table failed [table=").put(tableToken.getPrivateTableName())
                             .put(", oldVersion: ").put(expectedStructureVersion)
                             .put(", newVersion: ").put(metadata.getStructureVersion())
                             .put(']');
@@ -231,14 +229,14 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
-            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").utf8(systemTableName)
+            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").utf8(tableToken.getPrivateTableName())
                     .$(", error=").$(th.getMessage())
                     .I$();
             throw th;
         }
 
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, txn);
+            engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
         }
         return txn;
     }
@@ -257,14 +255,14 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
-            LOG.critical().$("could not apply transaction to WAL table sequencer [table=").utf8(systemTableName)
+            LOG.critical().$("could not apply transaction to WAL table sequencer [table=").utf8(tableToken.getPrivateTableName())
                     .$(", error=").$(th.getMessage())
                     .I$();
             throw th;
         }
 
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, txn);
+            engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
         }
         return txn;
     }
@@ -275,7 +273,7 @@ public class TableSequencerImpl implements TableSequencer {
             metadata.open(path, rootLen);
             tableTransactionLog.open(path);
         } catch (Throwable th) {
-            LOG.critical().$("could not open sequencer [name=").utf8(systemTableName)
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getPrivateTableName())
                     .$(", path=").$(path)
                     .$(", error=").$(th.getMessage())
                     .I$();
@@ -285,12 +283,12 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long rename(String newTableName) {
+    public long rename(TableToken newTableToken) {
         checkDropped();
-        tableName = newTableName;
+        tableToken = newTableToken;
         long txn = tableTransactionLog.addEntry(RENAME_TABLE_WALID, 0, 0);
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, txn);
+            engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
         }
         return txn;
     }
@@ -312,7 +310,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void checkDropped() {
         if (metadata.isDropped()) {
-            throw CairoException.nonCritical().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
+            throw CairoException.nonCritical().put("table is dropped [privateTableName=").put(tableToken.getPrivateTableName()).put(']');
         }
     }
 
@@ -345,7 +343,7 @@ public class TableSequencerImpl implements TableSequencer {
         schemaLock.writeLock().lock();
         try {
             createSequencerDir(ff, mkDirMode);
-            metadata.create(model, systemTableName, path, rootLen, tableId);
+            metadata.create(model, tableToken, path, rootLen, tableId);
         } finally {
             schemaLock.writeLock().unlock();
         }

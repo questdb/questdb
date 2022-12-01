@@ -25,6 +25,7 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -120,11 +121,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         assertWalExistence(true, tableName, 1);
 
         // A test FilesFacade that hides the "wal2" directory.
-        String systemTableNamePath = Files.SEPARATOR + Chars.toString(engine.getSystemTableName(tableName));
+        String privateTableNamePath = Files.SEPARATOR + Chars.toString(engine.getTableToken(tableName).getPrivateTableName());
         FilesFacade testFF = new TestFilesFacadeImpl() {
             @Override
             public void iterateDir(LPSZ path, FindVisitor func) {
-                if (Chars.endsWith(path, systemTableNamePath)) {
+                if (Chars.endsWith(path, privateTableNamePath)) {
                     final NativeLPSZ name = new NativeLPSZ();
                     super.iterateDir(path, (long pUtf8NameZ, int type) -> {
                         name.of(pUtf8NameZ);
@@ -440,7 +441,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             CharSequence root = engine.getConfiguration().getRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                path.of(root).concat(engine.getSystemTableName(tableName)).concat("wal1").concat("stuff").$();
+                path.of(root).concat(engine.getTableToken(tableName)).concat("wal1").concat("stuff").$();
                 ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
@@ -565,10 +566,10 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             CharSequence root = engine.getConfiguration().getRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.of(root).concat(systemTableName).$();
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.of(root).concat(tableToken).$();
                 Assert.assertTrue(path.toString(), ff.exists(path));
-                path.of(root).concat(systemTableName).concat("waldo").$();
+                path.of(root).concat(tableToken).concat("waldo").$();
                 ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
@@ -582,7 +583,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     Assert.assertTrue(path.toString(), ff.exists(path));
                 }
 
-                path.of(root).concat(systemTableName).concat("wal1000").$();
+                path.of(root).concat(tableToken).concat("wal1000").$();
                 ff.mkdir(path, configuration.getMkDirMode());
                 Assert.assertTrue(path.toString(), ff.exists(path));
 
@@ -625,9 +626,9 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), clock)) {
 
                 SimpleWaitingLock lock = job.getRunLock();
-                //noinspection StatementWithEmptyBody
                 try {
                     lock.lock();
+                    //noinspection StatementWithEmptyBody
                     while (job.run(0)) {
                         // run until empty
                     }
@@ -638,6 +639,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 }
 
                 clock.timestamp += 2 * interval;
+                //noinspection StatementWithEmptyBody
                 while (job.run(0)) {
                     // run until empty
                 }
@@ -681,7 +683,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     static void addColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getLoggingName(), 0);
         addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }

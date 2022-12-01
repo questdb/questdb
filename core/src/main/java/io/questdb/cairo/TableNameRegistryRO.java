@@ -22,89 +22,88 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.cairo.wal.AbstractTableNameRegistry;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.HashMap;
 
 
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
-    private static final Log LOG = LogFactory.getLog(TableNameRegistryRO.class);
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
     private volatile long lastReloadTimestampMs = 0;
-    private HashMap<CharSequence, String> reverseTableNameCache = new HashMap<>();
-    private HashMap<CharSequence, String> reverseTableNameCache2 = new HashMap<>();
-    private HashMap<CharSequence, TableNameRecord> systemTableNameCache = new HashMap<>();
-    private HashMap<CharSequence, TableNameRecord> systemTableNameCache2 = new HashMap<>();
+    private HashMap<CharSequence, TableToken> nameTableTokenMap = new HashMap<>();
+    private HashMap<CharSequence, TableToken> nameTableTokenMap2 = new HashMap<>();
+    private HashMap<TableToken, String> reverseTableNameTokenMap = new HashMap<>();
+    private HashMap<TableToken, String> reverseTableNameTokenMap2 = new HashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration) {
         super(configuration);
         this.clockMs = configuration.getMillisecondClock();
         long timeout = configuration.getTableRegistryAutoReloadTimeout();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;
-        setNameMaps(systemTableNameCache, reverseTableNameCache);
+        setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
     }
 
     @Override
-    public void deleteNonWalName(CharSequence tableName, String systemTableName) {
-        throw CairoException.critical(0).put("instance is read only");
-    }
-
-    @Override
-    public TableNameRecord getTableNameRecord(CharSequence tableName) {
-        TableNameRecord record = systemTableNameCache.get(tableName);
+    public TableToken getTableToken(CharSequence tableName) {
+        TableToken record = nameTableTokenMap.get(tableName);
         if (record == null && clockMs.getTicks() - lastReloadTimestampMs > autoReloadTimeout) {
             reloadTableNameCache();
-            record = systemTableNameCache.get(tableName);
+            record = nameTableTokenMap.get(tableName);
         }
         return record;
     }
 
     @Override
-    public String registerName(String tableName, String systemTableName, boolean isWal) {
+    public TableToken lockTableName(String tableName, String privateTableName, int tableId, boolean isWal) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
+    public void registerName(TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
     }
 
     @Override
     public synchronized void reloadTableNameCache() {
-        LOG.info().$("reloading table to system name mappings").$();
-
-        systemTableNameCache2.clear();
-        reverseTableNameCache2.clear();
-        tableNameStore.reload(systemTableNameCache2, reverseTableNameCache2, TABLE_DROPPED_MARKER);
+        nameTableTokenMap2.clear();
+        reverseTableNameTokenMap2.clear();
+        tableNameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2, TABLE_DROPPED_MARKER);
 
         // Swap the maps
-        setNameMaps(systemTableNameCache2, reverseTableNameCache2);
+        setNameMaps(nameTableTokenMap2, reverseTableNameTokenMap2);
 
-        HashMap<CharSequence, TableNameRecord> tmp = systemTableNameCache2;
-        systemTableNameCache2 = systemTableNameCache;
-        systemTableNameCache = tmp;
+        HashMap<CharSequence, TableToken> tmp = nameTableTokenMap2;
+        nameTableTokenMap2 = nameTableTokenMap;
+        nameTableTokenMap = tmp;
 
-        HashMap<CharSequence, String> tmp2 = reverseTableNameCache2;
-        reverseTableNameCache2 = reverseTableNameCache;
-        reverseTableNameCache = tmp2;
+        HashMap<TableToken, String> tmp2 = reverseTableNameTokenMap2;
+        reverseTableNameTokenMap2 = reverseTableNameTokenMap;
+        reverseTableNameTokenMap = tmp2;
 
         lastReloadTimestampMs = clockMs.getTicks();
     }
 
     @Override
-    public void removeTableSystemName(CharSequence systemTableName) {
+    public boolean removeTableName(CharSequence tableName, TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
     }
 
     @Override
-    public boolean removeWalTableName(CharSequence tableName, String systemTableName) {
+    public void removeTableToken(TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
     }
 
     @Override
-    public String rename(CharSequence oldName, CharSequence newName, String systemTableName) {
+    public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
+    public void unlockTableName(TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
     }
 }

@@ -2608,7 +2608,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testExpressionSyntaxError() throws Exception {
         assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
 
-        // when AST cache is not cleared below query will pickup "garbage" and will misrepresent error
+        // when AST cache is not cleared below query will pick up "garbage" and will misrepresent error
         assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
@@ -6990,8 +6990,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
+                        TableToken tableToken = engine.getTableToken(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -7012,8 +7012,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            String systemTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, systemTableName, "testing");
+            String privateTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            TableToken tableToken = new TableToken("tab", privateTableName, 1, false);
+            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
@@ -7031,8 +7032,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        CharSequence systemTableName1 = engine.getSystemTableName(tableModel.getName());
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName1).slash$();
+                        TableToken tableToken1 = engine.getTableToken(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
                         configuration.getFilesFacade().rmdir(path);
                         tableModel.close();
                     }
@@ -7046,8 +7047,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
-            String systemTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            configuration.getFilesFacade().touch(path.of(root).concat(systemTableName).$());
+            String privateTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            configuration.getFilesFacade().touch(path.of(root).concat(privateTableName).$());
         }
 
         assertSyntaxError(

@@ -30,7 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
-    private final String systemTableName;
+    private final TableToken tableToken;
     private int maxUncommittedRows;
     private long o3MaxLag;
     private long structureVersion;
@@ -39,8 +39,8 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     private int version;
     private boolean walEnabled;
 
-    public TableWriterMetadata(String systemTableName, MemoryMR metaMem) {
-        this.systemTableName = systemTableName;
+    public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
+        this.tableToken = tableToken;
         reload(metaMem);
     }
 
@@ -69,8 +69,8 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public String getSystemTableName() {
-        return systemTableName;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override

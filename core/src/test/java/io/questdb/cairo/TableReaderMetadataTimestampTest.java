@@ -164,7 +164,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName, engine.getSystemTableName(tableName))) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
                 metadata.load();
                 Assert.assertEquals(12, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -211,7 +211,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName, engine.getSystemTableName(tableName))) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
                 metadata.load();
                 Assert.assertEquals(12, metadata.getColumnCount());
                 Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());

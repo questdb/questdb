@@ -81,7 +81,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         "s\tt\n",
                         factory,
                         true,
-                        true,
                         false,
                         false,
                         sqlExecutionContext
@@ -103,7 +102,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                                 "C\t1970-01-02T03:46:40.800000Z\n" +
                                 "D\t1970-01-02T03:46:40.900000Z\n",
                         factory,
-                        true,
                         true,
                         false,
                         false,
@@ -534,7 +532,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     "s\tt\n",
                     factory,
                     true,
-                    true,
                     false,
                     false,
                     sqlExecutionContext
@@ -556,7 +553,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                             "C\t1970-01-01T00:16:40.800000Z\n" +
                             "D\t1970-01-01T00:16:40.900000Z\n",
                     factory,
-                    true,
                     true,
                     false,
                     false,

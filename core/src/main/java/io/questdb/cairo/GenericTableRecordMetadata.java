@@ -29,8 +29,8 @@ import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 
 public class GenericTableRecordMetadata extends GenericRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
     private long structureVersion;
-    private String systemTableName;
     private int tableId;
+    private TableToken tableToken;
 
     @Override
     public void addColumn(
@@ -66,13 +66,13 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public String getSystemTableName() {
-        return systemTableName;
+    public int getTableId() {
+        return tableId;
     }
 
     @Override
-    public int getTableId() {
-        return tableId;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override
@@ -82,8 +82,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public void of(String systemTableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.systemTableName = systemTableName;
+    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = compressedTimestampIndex;
         // todo: suspended

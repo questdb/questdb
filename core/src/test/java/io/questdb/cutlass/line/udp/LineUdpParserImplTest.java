@@ -363,13 +363,13 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testCannotCreateTable() throws Exception {
-        CharSequence systemTableName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        CharSequence privateTableName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         TestFilesFacade ff = new TestFilesFacade() {
             boolean called = false;
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.endsWith(path, Chars.toString(systemTableName) + Files.SEPARATOR)) {
+                if (Chars.endsWith(path, Chars.toString(privateTableName) + Files.SEPARATOR)) {
                     called = true;
                     return -1;
                 }
@@ -778,10 +778,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            CharSequence systemTableName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            Files.mkdirs(path.of(root).concat(systemTableName).slash$(), configuration.getMkDirMode());
+            CharSequence privateTableName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            Files.mkdirs(path.of(root).concat(privateTableName).slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
-            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, systemTableName));
+            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, privateTableName));
         }
     }
 

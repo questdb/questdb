@@ -280,13 +280,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
-            String systemTableName,
+            TableToken tableToken,
             TxnScoreboard txnScoreboard,
             TxReader txReader,
             int partitionBy) {
 
-        LOG.info().$("processing [table=").utf8(systemTableName).I$();
-        Path path = Path.getThreadLocal(root).concat(systemTableName).slash$();
+        LOG.info().$("processing [table=").utf8(tableToken.getPrivateTableName()).I$();
+        Path path = Path.getThreadLocal(root).concat(tableToken).slash$();
 
         sink.clear();
         partitionList.clear();
@@ -304,7 +304,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                             fileNameSink.clear();
                             Chars.utf8DecodeZ(fileName, fileNameSink);
                         }
-                        parsePartitionDateVersion(fileNameSink, partitionList, systemTableName, partitionByFormat);
+                        parsePartitionDateVersion(fileNameSink, partitionList, tableToken.getPrivateTableName(), partitionByFormat);
                     }
                 } while (ff.findNext(p) > 0);
             } finally {
@@ -320,7 +320,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int lo = 0;
         int n = (int) partitionList.size();
 
-        path.of(root).concat(systemTableName);
+        path.of(root).concat(tableToken);
 
         int tableRootLen = path.length();
         try {
@@ -369,7 +369,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // It is possible that table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
-                    .$("could not purge partition open [table=`").utf8(systemTableName)
+                    .$("could not purge partition open [table=`").utf8(tableToken.getPrivateTableName())
                     .$("`, ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
@@ -378,7 +378,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txReader.clear();
             txnScoreboard.clear();
         }
-        LOG.info().$("processed [table=").$(systemTableName).I$();
+        LOG.info().$("processed [table=").$(tableToken).I$();
     }
 
     @Override
@@ -390,7 +390,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 fileNameSinks[workerId],
                 partitionList.get(workerId),
                 configuration.getRoot(),
-                task.getTableName(),
+                task.getTableToken(),
                 txnScoreboards.get(workerId),
                 txnReaders.get(workerId),
                 task.getPartitionBy()

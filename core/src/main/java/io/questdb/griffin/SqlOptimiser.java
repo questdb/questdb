@@ -3625,7 +3625,7 @@ class SqlOptimiser {
             }
 
             // Save update table name as a String to not re-create string later on from CharSequence
-            String tableName = engine.getTableNameBySystemName(metadata.getSystemTableName());
+            String tableName = engine.getTableNameBySystemName(metadata.getTableToken());
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableName, updateQueryModel.getTableName().token)) {
                 // Table renamed
                 throw ReaderOutOfDateException.of(updateQueryModel.getTableName().token);

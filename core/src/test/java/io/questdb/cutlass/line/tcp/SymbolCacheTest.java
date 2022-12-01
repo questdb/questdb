@@ -100,15 +100,15 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
             Thread readerThread = new Thread(() -> {
                 ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (Path path = new Path();
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
-                             path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
+                             path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                              PartitionBy.DAY
                      );
                      TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)
                 ) {
-                    path.of(configuration.getRoot()).concat(systemTableName);
+                    path.of(configuration.getRoot()).concat(tableToken);
                     start.await();
                     int colAdded = 0, newColsAdded;
                     while (colAdded < totalColAddCount) {
@@ -184,11 +184,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -198,7 +198,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             configuration,
                             writer,
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(systemTableName),
+                            path.of(configuration.getRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -244,16 +244,16 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             FilesFacade ff = new TestFilesFacadeImpl();
 
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-            CharSequence systemTableName = engine.getSystemTableName("x");
+            TableToken tableToken = engine.getTableToken("x");
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path();
                     TxReader txReader = new TxReader(ff).ofRO(
-                            path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
+                            path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                             PartitionBy.DAY
                     )
             ) {
-                path.of(configuration.getRoot()).concat(systemTableName);
+                path.of(configuration.getRoot()).concat(tableToken);
                 symbolCache.of(configuration, new TestTableWriterAPI(), 1, path, "b", 1, txReader, -1);
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -349,12 +349,12 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -374,7 +374,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             configuration,
                             new TestTableWriterAPI(),
                             symColIndex2,
-                            path.of(configuration.getRoot()).concat(systemTableName),
+                            path.of(configuration.getRoot()).concat(tableToken),
                             "symCol2",
                             symColIndex2,
                             txReader,
@@ -456,7 +456,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.removeColumn("symCol1");
                     cache.close();
                     txMem.close();
-                    path.of(configuration.getRoot()).concat(systemTableName);
+                    path.of(configuration.getRoot()).concat(tableToken);
 
                     cache.of(
                             configuration,
@@ -504,12 +504,12 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
-                String systemTableName = engine.getSystemTableName(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -536,7 +536,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             configuration,
                             new TestTableWriterAPI(1),
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(systemTableName),
+                            path.of(configuration.getRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -583,12 +583,12 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
-                String systemTableName = engine.getSystemTableName(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (
                         TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(systemTableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -615,7 +615,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             configuration,
                             new TestTableWriterAPI(0),
                             symColIndex,
-                            path.of(configuration.getRoot()).concat(systemTableName),
+                            path.of(configuration.getRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -697,12 +697,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public String getSystemTableName() {
-            return null;
-        }
-
-        @Override
-        public String getTableName() {
+        public TableToken getTableToken() {
             return null;
         }
 

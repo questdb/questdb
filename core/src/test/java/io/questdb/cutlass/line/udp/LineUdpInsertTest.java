@@ -31,7 +31,6 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -74,8 +73,8 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && Chars.startsWith(name, tableName)
-                            && name.equals(engine.getSystemTableName(tableName))) {
+                    if (event == PoolListener.EV_RETURN && name.getLoggingName().equals(tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         waitForData.countDown();
                     }
                 });

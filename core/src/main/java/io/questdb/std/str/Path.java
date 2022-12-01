@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -131,6 +132,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path concat(CharSequence str) {
         return concat(str, 0, str.length());
+    }
+
+    public Path concat(TableToken token) {
+        return concat(token.getPrivateTableName());
     }
 
     public Path concat(long pUtf8NameZ) {

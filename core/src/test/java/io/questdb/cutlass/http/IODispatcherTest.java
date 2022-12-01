@@ -136,7 +136,7 @@ public class IODispatcherTest {
             CairoTestUtils.create(model, engine);
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), "y", engine.getSystemTableName("y"), metrics)) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -7032,7 +7032,8 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
-        try (TableReader reader = new TableReader(configuration, "telemetry", "telemetry")) {
+        TableToken tememetryTableName = new TableToken("telemetry", "telemetry", 0, false);
+        try (TableReader reader = new TableReader(configuration, tememetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
@@ -7053,7 +7054,9 @@ public class IODispatcherTest {
     ) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
-        try (TableReader reader = new TableReader(configuration, tableName, tableName)) {
+
+        TableToken telemetryTableName = new TableToken(tableName, tableName, 1, false);
+        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());

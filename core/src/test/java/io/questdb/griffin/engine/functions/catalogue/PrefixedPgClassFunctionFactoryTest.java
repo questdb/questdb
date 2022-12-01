@@ -335,8 +335,8 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     );
 
                     try (Path path = new Path()) {
-                        CharSequence systemTableName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-                        path.of(configuration.getRoot()).concat(systemTableName).$();
+                        CharSequence privateTableName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+                        path.of(configuration.getRoot()).concat(privateTableName).$();
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 

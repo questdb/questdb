@@ -301,12 +301,12 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
 
                 String tableName = "all";
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.of(root).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
 
                 long len = TestFilesFacadeImpl.INSTANCE.length(path);
 
-                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName, engine.getSystemTableName(tableName))) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
                     metadata.load();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         mem.smallFile(TestFilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);

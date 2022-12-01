@@ -26,18 +26,16 @@ package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     private final MessageBus messageBus;
-    private final CairoEngine engine;
 
-    public ReaderPool(CairoConfiguration configuration, CairoEngine engine) {
+    public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
         super(configuration);
-        this.messageBus = engine.getMessageBus();
-        this.engine = engine;
+        this.messageBus = messageBus;
     }
 
     @Override
@@ -46,8 +44,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newTenant(String systemTableName, Entry<R> entry, int index) {
-        return new R(this, entry, index, engine.getTableNameBySystemName(systemTableName), systemTableName, messageBus);
+    protected R newTenant(TableToken tableName, Entry<R> entry, int index) {
+        return new R(this, entry, index, tableName, messageBus);
     }
 
     public static class R extends TableReader implements PoolTenant {
@@ -55,8 +53,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
 
-        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, String name, String systemName, MessageBus messageBus) {
-            super(pool.getConfiguration(), name, systemName, messageBus);
+        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, TableToken systemName, MessageBus messageBus) {
+            super(pool.getConfiguration(), systemName, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

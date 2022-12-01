@@ -51,8 +51,8 @@ public class TableListFunctionFactory implements FunctionFactory {
     private static final int nameColumn;
     private static final int o3MaxLagColumn;
     private static final int partitionByColumn;
-    private static final int writeModeColumn;
     private static final int systemNameColumn;
+    private static final int writeModeColumn;
 
     @Override
     public String getSignature() {
@@ -117,9 +117,8 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private Iterator<CharSequence> systemNames;
-            private CharSequence systemTableName;
-            private String tableName;
+            private Iterator<TableToken> systemNames;
+            private TableToken tableToken;
 
             @Override
             public void close() {
@@ -139,7 +138,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() {
                 if (systemNames == null) {
-                    systemNames = engine.getTableSystemNames().iterator();
+                    systemNames = engine.getTableTokens().iterator();
                 }
 
                 do {
@@ -147,10 +146,10 @@ public class TableListFunctionFactory implements FunctionFactory {
                     if (!hasNext) {
                         systemNames = null;
                     } else {
-                        systemTableName = systemNames.next();
-                        tableName = record.open(systemTableName) ? engine.getTableNameBySystemName(systemTableName) : null;
+                        tableToken = systemNames.next();
+                        tableToken = !engine.isTableDropped(tableToken) && record.open(tableToken) ? tableToken : null;
                     }
-                } while (systemNames != null && tableName == null);
+                } while (systemNames != null && tableToken == null);
 
                 return systemNames != null;
             }
@@ -206,7 +205,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return tableName;
+                        return tableToken.getLoggingName();
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -217,7 +216,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         }
                     }
                     if (col == systemNameColumn) {
-                        return systemTableName;
+                        return tableToken.getPrivateTableName();
                     }
                     return null;
                 }
@@ -232,17 +231,17 @@ public class TableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(CharSequence systemTableName) {
+                public boolean open(TableToken tableToken) {
 
-                    if (hideTelemetryTables && (TableUtils.isSystemNameSameAsTableName(systemTableName, TelemetryJob.tableName)
-                            || TableUtils.isSystemNameSameAsTableName(systemTableName, TelemetryJob.configTableName)
-                            || Chars.startsWith(systemTableName, sysTablePrefix))) {
+                    if (hideTelemetryTables && (Chars.equals(tableToken.getLoggingName(), TelemetryJob.tableName)
+                            || Chars.equals(tableToken.getLoggingName(), TelemetryJob.configTableName)
+                            || Chars.startsWith(tableToken.getLoggingName(), sysTablePrefix))) {
                         return false;
                     }
 
                     int pathLen = path.length();
                     try {
-                        path.chop$().concat(systemTableName).concat(META_FILE_NAME).$();
+                        path.chop$().concat(tableToken).concat(META_FILE_NAME).$();
                         tableReaderMetadata.load(path.$());
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
@@ -254,7 +253,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         // perhaps this folder is not a table
                         // remove it from the result set
                         LOG.info()
-                                .$("cannot query table metadata [table=").$(systemTableName)
+                                .$("cannot query table metadata [table=").$(tableToken)
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();

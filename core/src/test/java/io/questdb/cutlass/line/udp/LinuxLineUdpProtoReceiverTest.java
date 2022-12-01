@@ -35,7 +35,6 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -265,7 +264,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(configuration, Chars.toString(tableName), engine.getSystemTableName(tableName))) {
+                    try (TableReader reader = new TableReader(configuration, engine.getTableToken(tableName))) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {

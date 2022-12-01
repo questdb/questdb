@@ -3560,7 +3560,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                             "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                                     factory,
                                     true,
-                                    true,
                                     false,
                                     false,
                                     // we need to pass the engine here, so the global test context won't do

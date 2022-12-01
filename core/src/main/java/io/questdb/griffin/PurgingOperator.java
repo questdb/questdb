@@ -130,7 +130,7 @@ public abstract class PurgingOperator {
                 // if anything not purged, schedule async purge
                 if (cleanupColumnVersionsAsync.size() > 0) {
                     purgeColumnVersionAsync(
-                            tableWriter.getSystemTableName(),
+                            tableWriter.getTableToken(),
                             columnName,
                             tableMetadata.getTableId(),
                             (int) tableWriter.getTruncateVersion(),
@@ -139,12 +139,12 @@ public abstract class PurgingOperator {
                             updateTxn,
                             cleanupColumnVersionsAsync
                     );
-                    log.info().$("column purge scheduled [table=").$(tableWriter.getTableName())
+                    log.info().$("column purge scheduled [table=").$(tableWriter.getTableToken().getLoggingName())
                             .$(", column=").$(columnName)
                             .$(", updateTxn=").$(updateTxn)
                             .I$();
                 } else {
-                    log.info().$("columns purged locally [table=").$(tableWriter.getTableName())
+                    log.info().$("columns purged locally [table=").$(tableWriter.getTableToken().getLoggingName())
                             .$(", column=").$(columnName)
                             .$(", newColumnVersion=").$(updateTxn - 1).I$();
                 }
@@ -155,7 +155,7 @@ public abstract class PurgingOperator {
     }
 
     private void purgeColumnVersionAsync(
-            String tableName,
+            TableToken tableName,
             CharSequence columnName,
             int tableId,
             int tableTruncateVersion,

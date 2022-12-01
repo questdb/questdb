@@ -70,7 +70,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
                     count++;
                 }
             }
@@ -173,7 +173,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
                     if (event == PoolListener.EV_EXPIRE) {
                         count++;
                     }
@@ -209,7 +209,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 createX(engine);
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
-                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, engine.getSystemTableName("x"), "testing"));
+                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("x"), "testing"));
                     assertReader(engine, "x");
                     assertWriter(engine, "x");
                 }

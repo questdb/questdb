@@ -24,20 +24,22 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.TableToken;
+
 public class O3PartitionPurgeTask {
     private int partitionBy;
-    private String tableName;
+    private TableToken tableToken;
 
     public int getPartitionBy() {
         return partitionBy;
     }
 
-    public String getTableName() {
-        return tableName;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
-    public void of(String tableName, int partitionBy) {
-        this.tableName = tableName;
+    public void of(TableToken tableToken, int partitionBy) {
+        this.tableToken = tableToken;
         this.partitionBy = partitionBy;
     }
 }

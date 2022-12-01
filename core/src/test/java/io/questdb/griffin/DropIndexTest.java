@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -85,8 +88,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                         null,
                         -1,
                         null);
-        CharSequence systemTableName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        path = new Path().put(configuration.getRoot()).concat(systemTableName);
+        CharSequence privateTableName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        path = new Path().put(configuration.getRoot()).concat(privateTableName);
         tablePathLen = path.length();
     }
 
@@ -296,8 +299,8 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
             final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
-            try (Path path2 = new Path().put(configuration.getRoot()).concat(systemTableName)) {
+            TableToken tableToken = engine.getTableToken(tableName);
+            try (Path path2 = new Path().put(configuration.getRoot()).concat(tableToken)) {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
                         try (RecordCursor ignored = factory.getCursor(sqlExecutionContext2)) {
@@ -554,10 +557,10 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        TableToken tableToken = engine.getTableToken(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
                 (String) configuration.getRoot(),
-                Chars.toString(systemTableName)
+                tableToken.getPrivateTableName()
         );
         try (Stream<?> stream = Files.find(
                 tablePath,

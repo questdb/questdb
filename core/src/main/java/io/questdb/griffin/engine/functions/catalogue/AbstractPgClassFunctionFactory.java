@@ -153,7 +153,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         private final long tempMem;
         private CairoEngine engine;
         private int fixedRelPos = -1;
-        private Iterator<CharSequence> systemNames;
+        private Iterator<TableToken> systemNames;
         private String tableName;
 
         public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
@@ -204,7 +204,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
             record.of(diskReadingRecord);
             if (systemNames == null) {
-                systemNames = engine.getTableSystemNames().iterator();
+                systemNames = engine.getTableTokens().iterator();
             }
 
             do {
@@ -212,11 +212,11 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                 if (!hasNext) {
                     systemNames = null;
                 } else {
-                    CharSequence systemTableName = systemNames.next();
-                    tableName = engine.getTableNameBySystemName(systemTableName);
+                    TableToken tableToken = systemNames.next();
+                    tableName = tableToken.getLoggingName();
 
-                    if (tableName != null
-                            && ff.exists(path.trimTo(plimit).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$())) {
+                    if (!engine.isTableDropped(tableToken)
+                            && ff.exists(path.trimTo(plimit).concat(tableToken).concat(TableUtils.META_FILE_NAME).$())) {
 
                         // open metadata file and read id
                         long fd = ff.openRO(path);

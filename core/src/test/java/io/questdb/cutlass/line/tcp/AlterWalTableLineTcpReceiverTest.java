@@ -173,98 +173,6 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     }
 
     @Test
-    public void testAlterCommandTruncateTable() throws Exception {
-        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
-        runInContext((server) -> {
-            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
-            final AtomicBoolean keepSending = new AtomicBoolean(true);
-            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
-            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
-            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
-
-            try (SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                         .with(
-                                 AllowAllCairoSecurityContext.INSTANCE,
-                                 new BindVariableServiceImpl(configuration),
-                                 null,
-                                 -1,
-                                 null
-                         )
-            ) {
-
-                compiler.compile("CREATE TABLE plug as " +
-                        " (select cast(x as symbol) room, rnd_long() as watts, timestamp_sequence('2023-02-27', 1000) timestamp from long_sequence(100)) " +
-                        "timestamp(timestamp) partition by DAY WAL ", sqlExecutionContext);
-
-                drainWalQueue();
-                engine.releaseInactive();
-
-                final Thread ilpProducer = new Thread(() -> {
-                    String lineTpt = "plug,room=%d watts=%di %d%n";
-                    try {
-                        while (keepSending.get()) {
-                            try {
-                                long watts = ilpProducerWatts.getAndIncrement();
-                                long day = (watts + 1) % 4 == 0 ? day1 : day2;
-                                long room = watts % 20;
-                                String lineData = String.format(lineTpt, room, watts, day);
-                                send(lineData);
-                                LOG.info().$("sent: ").$(lineData).$();
-                            } catch (Throwable unexpected) {
-                                ilpProducerProblem.set(unexpected);
-                                keepSending.set(false);
-                                break;
-                            }
-                        }
-                    } finally {
-                        LOG.info().$("sender finished").$();
-                        Path.clearThreadLocals();
-                        ilpProducerHalted.countDown();
-                    }
-                }, "ilp-producer");
-                ilpProducer.start();
-
-
-                final Thread partitionDropper = new Thread(() -> {
-                    while (ilpProducerWatts.get() < 20) {
-                        Os.pause();
-                    }
-                    LOG.info().$("ABOUT TO TRUNCATE TABLE").$();
-                    try {
-                        CompiledQuery cc = compiler.compile("TRUNCATE TABLE plug", sqlExecutionContext);
-                        try (OperationFuture result = cc.execute(scSequence)) {
-                            result.await();
-                            Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
-                        }
-                        Os.sleep(100);
-                    } catch (SqlException e) {
-                        partitionDropperProblem.set(e);
-                    } finally {
-                        Path.clearThreadLocals();
-                        // a few rows may have made it into the active partition,
-                        // as dropping it is concurrent with inserting
-                        keepSending.set(false);
-                    }
-
-                }, "partition-dropper");
-                partitionDropper.start();
-
-                ilpProducerHalted.await();
-                drainWalQueue();
-
-                Assert.assertNull(ilpProducerProblem.get());
-                Assert.assertNull(partitionDropperProblem.get());
-
-                // Check can read data without exceptions.
-                // Data can be random, no invariant to check.
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from plug", sink);
-            }
-        }, true, 50L);
-    }
-
-    @Test
     public void testAlterCommandDropLastPartition() throws Exception {
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
@@ -471,6 +379,98 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 Assert.assertFalse(reader.getSymbolMapReader(meta.getColumnIndex("label")).isCached());
             }
         });
+    }
+
+    @Test
+    public void testAlterCommandTruncateTable() throws Exception {
+        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
+        runInContext((server) -> {
+            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
+            final AtomicBoolean keepSending = new AtomicBoolean(true);
+            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
+            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
+
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null
+                         )
+            ) {
+
+                compiler.compile("CREATE TABLE plug as " +
+                        " (select cast(x as symbol) room, rnd_long() as watts, timestamp_sequence('2023-02-27', 1000) timestamp from long_sequence(100)) " +
+                        "timestamp(timestamp) partition by DAY WAL ", sqlExecutionContext);
+
+                drainWalQueue();
+                engine.releaseInactive();
+
+                final Thread ilpProducer = new Thread(() -> {
+                    String lineTpt = "plug,room=%d watts=%di %d%n";
+                    try {
+                        while (keepSending.get()) {
+                            try {
+                                long watts = ilpProducerWatts.getAndIncrement();
+                                long day = (watts + 1) % 4 == 0 ? day1 : day2;
+                                long room = watts % 20;
+                                String lineData = String.format(lineTpt, room, watts, day);
+                                send(lineData);
+                                LOG.info().$("sent: ").$(lineData).$();
+                            } catch (Throwable unexpected) {
+                                ilpProducerProblem.set(unexpected);
+                                keepSending.set(false);
+                                break;
+                            }
+                        }
+                    } finally {
+                        LOG.info().$("sender finished").$();
+                        Path.clearThreadLocals();
+                        ilpProducerHalted.countDown();
+                    }
+                }, "ilp-producer");
+                ilpProducer.start();
+
+
+                final Thread partitionDropper = new Thread(() -> {
+                    while (ilpProducerWatts.get() < 20) {
+                        Os.pause();
+                    }
+                    LOG.info().$("ABOUT TO TRUNCATE TABLE").$();
+                    try {
+                        CompiledQuery cc = compiler.compile("TRUNCATE TABLE plug", sqlExecutionContext);
+                        try (OperationFuture result = cc.execute(scSequence)) {
+                            result.await();
+                            Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
+                        }
+                        Os.sleep(100);
+                    } catch (SqlException e) {
+                        partitionDropperProblem.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                        // a few rows may have made it into the active partition,
+                        // as dropping it is concurrent with inserting
+                        keepSending.set(false);
+                    }
+
+                }, "partition-dropper");
+                partitionDropper.start();
+
+                ilpProducerHalted.await();
+                drainWalQueue();
+
+                Assert.assertNull(ilpProducerProblem.get());
+                Assert.assertNull(partitionDropperProblem.get());
+
+                // Check can read data without exceptions.
+                // Data can be random, no invariant to check.
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from plug", sink);
+            }
+        }, true, 50L);
     }
 
     @Test
@@ -759,7 +759,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch getFirstLatch = new SOCountDownLatch(1);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc(engine.getSystemTableName("plug"), name)) {
+            if (Chars.equalsNc("plug", name.getLoggingName())) {
                 if (factoryType == PoolListener.SRC_WRITER) {
                     if (event == PoolListener.EV_GET) {
                         LOG.info().$("EV_GET ").$(name).$();
@@ -838,7 +838,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             if (factoryType == PoolListener.SRC_WRITER
                     && (event == PoolListener.EV_RETURN)
-                    && Chars.equalsNc(engine.getSystemTableName("plug"), name)) {
+                    && Chars.equalsNc("plug", name.getLoggingName())) {
                 LOG.info().$("EV_RETURN ").$(name).$();
                 releaseLatch.countDown();
             }

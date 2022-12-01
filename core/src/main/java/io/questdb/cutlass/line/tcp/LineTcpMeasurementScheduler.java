@@ -202,7 +202,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             pubSeq[writerWorkerId].done(seq);
                             if (listener != null) {
                                 // table going idle
-                                listener.onEvent(tableNameUtf16, 1);
+                                listener.onEvent(tab.getTableToken(), 1);
                             }
                             LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
                         }

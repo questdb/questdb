@@ -640,8 +640,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            CharSequence xxx = engine.getSystemTableName("xxx");
-            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx;
+            TableToken xxx = engine.getTableToken("xxx");
+            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getPrivateTableName();
             changeTable.run(tablePath);
 
             indexBuilder.clear();

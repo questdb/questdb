@@ -1417,7 +1417,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "sum(l256) from tab group by i )", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1429,7 +1429,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }

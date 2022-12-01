@@ -44,6 +44,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Iterator;
+
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
@@ -124,7 +126,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final NetworkFacade nf;
     private final Path path = new Path();
-    private final CharSequenceObjHashMap<TableWriterAPI> pendingWriters;
+    private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final IntList selectColumnTypes = new IntList();
@@ -212,7 +214,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
+        this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
@@ -313,9 +315,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     public void clearWriters() {
-        for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-            Misc.free(pendingWriters.valueQuick(i));
-        }
+        closePendingWriters(false);
         pendingWriters.clear();
     }
 
@@ -335,8 +335,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     @Override
     public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, CharSequence name, String lockReason) {
-        String systemTableName = engine.getSystemTableName(name);
-        final int index = pendingWriters.keyIndex(systemTableName);
+        TableToken tableToken = engine.getTableToken(name);
+        final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
@@ -1068,6 +1068,19 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void closePendingWriters(boolean commit) {
+        Iterator<ObjObjHashMap.Entry<TableToken, TableWriterAPI>> iterator = pendingWriters.iterator();
+        while (iterator.hasNext()) {
+            final TableWriterAPI m = iterator.next().value;
+            if (commit) {
+                m.commit();
+            } else {
+                m.rollback();
+            }
+            Misc.free(m);
+        }
+    }
+
     private boolean compileQuery(@Transient SqlCompiler compiler) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
 
@@ -1246,7 +1259,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     try {
                         rowCount = m.execute();
                         writer = m.popWriter();
-                        pendingWriters.put(writer.getSystemTableName(), writer);
+                        pendingWriters.put(writer.getTableToken(), writer);
                     } catch (Throwable e) {
                         Misc.free(m);
                         throw e;
@@ -1283,11 +1296,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         switch (transactionState) {
             case COMMIT_TRANSACTION:
                 try {
-                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriterAPI m = pendingWriters.valueQuick(i);
-                        m.commit();
-                        Misc.free(m);
-                    }
+                    closePendingWriters(true);
                 } finally {
                     pendingWriters.clear();
                     transactionState = NO_TRANSACTION;
@@ -1295,11 +1304,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 break;
             case ROLLING_BACK_TRANSACTION:
                 try {
-                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriterAPI m = pendingWriters.valueQuick(i);
-                        m.rollback();
-                        Misc.free(m);
-                    }
+                    closePendingWriters(false);
                 } finally {
                     pendingWriters.clear();
                     transactionState = NO_TRANSACTION;
@@ -1349,8 +1354,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
         String tableName = op.getTableName();
-        String systemTableName = engine.getSystemTableName(tableName);
-        final int index = pendingWriters.keyIndex(systemTableName);
+        TableToken tableToken = engine.getTableToken(tableName);
+        final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             op.withContext(sqlExecutionContext);
             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);

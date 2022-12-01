@@ -64,11 +64,13 @@ public interface SqlExecutionContext extends Closeable {
 
     BindVariableService getBindVariableService();
 
-    @NotNull CairoEngine getCairoEngine();
+    @NotNull
+    CairoEngine getCairoEngine();
 
     CairoSecurityContext getCairoSecurityContext();
 
-    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
+    @NotNull
+    SqlExecutionCircuitBreaker getCircuitBreaker();
 
     boolean getCloneSymbolTables();
 
@@ -82,7 +84,7 @@ public interface SqlExecutionContext extends Closeable {
         final CairoEngine engine = getCairoEngine();
         return engine.getMetadata(
                 getCairoSecurityContext(),
-                engine.getSystemTableName(tableName)
+                engine.getTableToken(tableName)
         );
     }
 
@@ -90,7 +92,7 @@ public interface SqlExecutionContext extends Closeable {
         final CairoEngine engine = getCairoEngine();
         return engine.getMetadata(
                 getCairoSecurityContext(),
-                engine.getSystemTableName(tableName),
+                engine.getTableToken(tableName),
                 structureVersion
         );
     }
@@ -124,7 +126,7 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     default String getTableNameAsString(CharSequence tableName) {
-        String tableSystemName = getCairoEngine().getSystemTableName(tableName);
+        TableToken tableSystemName = getCairoEngine().getTableToken(tableName);
         return getCairoEngine().getTableNameBySystemName(tableSystemName);
     }
 

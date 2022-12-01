@@ -621,7 +621,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
                 }
                 drainWalQueue();
-                assertFalse(engine.getTableSequencerAPI().isSuspended(engine.getSystemTableName(tableName)));
+                assertFalse(engine.getTableSequencerAPI().isSuspended(engine.getTableToken(tableName)));
 
                 try {
                     executeOperation("UPDATE " + tableCopyName + " SET INT=systimestamp()", CompiledQuery.UPDATE);

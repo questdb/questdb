@@ -25,6 +25,7 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
@@ -58,9 +59,9 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             try (Path path = new Path(); Path other = new Path()) {
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.of(configuration.getRoot()).concat(systemTableName).concat(partition).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(systemTableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
             }
 

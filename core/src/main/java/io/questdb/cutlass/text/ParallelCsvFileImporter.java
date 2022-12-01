@@ -131,9 +131,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
     private final Consumer<TextImportTask> collectIndexStatsRef = this::collectIndexStats;
     private PhaseStatusReporter statusReporter;
-    private CharSequence systemTableName;
     //input params start
     private CharSequence tableName;
+    private TableToken tableToken;
     private boolean targetTableCreated;
     private int targetTableStatus;
     private int taskCount;
@@ -198,17 +198,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final FilesFacade ff,
             int mkDirMode,
             final CharSequence root,
-            final CharSequence systemTableName,
+            final CharSequence privateTableName,
+            final CharSequence publicTableName,
             TableStructure structure,
             int tableId
     ) {
         try (Path path = new Path()) {
-            switch (TableUtils.exists(ff, path, root, systemTableName, 0, systemTableName.length())) {
+            switch (TableUtils.exists(ff, path, root, privateTableName, 0, privateTableName.length())) {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("could not overwrite table [tableName='").utf8(systemTableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
-                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(systemTableName).put("]");
+                        LOG.error().$("could not overwrite table [tableName='").utf8(publicTableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
+                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(publicTableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -218,7 +219,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 mkDirMode,
                                 memory,
                                 path,
-                                systemTableName,
+                                privateTableName,
                                 structure,
                                 ColumnType.VERSION,
                                 tableId
@@ -226,7 +227,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                     break;
                 default:
-                    throw TextException.$("name is reserved [tableName=").put(systemTableName).put(']');
+                    throw TextException.$("name is reserved [tableName=").put(publicTableName).put(']');
             }
         }
     }
@@ -251,7 +252,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         phaseErrors = 0;
         inputFileName = null;
         tableName = null;
-        systemTableName = null;
+        tableToken = null;
         timestampColumn = null;
         timestampIndex = -1;
         partitionBy = -1;
@@ -294,8 +295,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.systemTableName = cairoEngine.getOrCreateSystemTableName(tableName, false);
-        this.importRoot = tmpPath.of(inputWorkRoot).concat(systemTableName).toString();
+        this.tableToken = cairoEngine.lockTableName(tableName, false);
+        if (tableToken == null) {
+            tableToken = cairoEngine.getTableToken(tableName);
+        }
+        this.importRoot = tmpPath.of(inputWorkRoot).concat(tableToken).toString();
         this.inputFileName = inputFileName;
         this.timestampColumn = timestampColumn;
         this.partitionBy = partitionBy;
@@ -489,6 +493,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void cleanUp() {
+        if (tableToken != null) {
+            cairoEngine.unlockTableName(tableToken);
+        }
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
             cairoEngine.drop(securityContext, tmpPath, tableName);
         }
@@ -613,8 +620,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 int lo = taskDistribution.getQuick(i * 3 + 1);
                 int hi = taskDistribution.getQuick(i * 3 + 2);
 
-                final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(systemTableName).put('_').put(index);
-                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(systemTableName);
+                final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put('_').put(index);
+                final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableToken);
 
                 final int srcPlen = srcPath.length();
                 final int dstPlen = dstPath.length();
@@ -916,7 +923,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 configuration,
                                 importRoot,
                                 writer,
-                                systemTableName,
+                                tableToken,
                                 symbolColumnName,
                                 columnIndex,
                                 tmpTableSymbolColumnIndex,
@@ -947,8 +954,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
 
-            CharSequence systemTableName = cairoEngine.getSystemTableName(tableName);
-            tmpPath.of(importRoot).concat(systemTableName).put('_').put(t);
+            tmpPath.of(importRoot).concat(tableToken.getLoggingName()).put('_').put(t);
 
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();
@@ -1358,7 +1364,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         TableWriter writer = null;
 
         try {
-            targetTableStatus = cairoEngine.getStatus(cairoSecurityContext, path, tableName);
+            targetTableStatus = cairoEngine.getStatus(cairoSecurityContext, path, tableToken);
             switch (targetTableStatus) {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     if (partitionBy == PartitionBy.NONE) {
@@ -1373,15 +1379,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                     validate(names, types, null, NO_INDEX);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
-                    int tableId = (int) cairoEngine.getTableIdGenerator().getNextId();
+
                     createTable(
                             ff,
                             configuration.getMkDirMode(),
                             configuration.getRoot(),
-                            cairoEngine.getSystemTableName(tableName),
+                            tableToken.getPrivateTableName(),
+                            targetTableStructure.getTableName(),
                             targetTableStructure,
-                            tableId
+                            tableToken.getTableId()
                     );
+                    cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();

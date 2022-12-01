@@ -104,7 +104,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
-        processTableRecords();
+        processTableRecords(engine);
     }
 
     @Override
@@ -193,7 +193,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
-    private void processTableRecords() {
+    private void processTableRecords(CairoEngine engine) {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
                     "SELECT * FROM \"" + tableName + "\" WHERE completed = null",
@@ -230,8 +230,15 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
                             int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
                             long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
+                            TableToken token = engine.getTableTokenByPrivateTableName(tableName, tableId);
+
+                            if (token == null) {
+                                LOG.debug().$("table deleted, skipping [privateTable=").$(tableName).I$();
+                                continue;
+                            }
+
                             taskRun.of(
-                                    tableName,
+                                    token,
                                     columnName,
                                     tableId,
                                     truncateVersion,
@@ -298,7 +305,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 LongList updatedColumnInfo = cleanTask.getUpdatedColumnInfo();
                 for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
                     TableWriter.Row row = writer.newRow(cleanTask.timestamp);
-                    row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName());
+                    row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName().getPrivateTableName());
                     row.putSym(COLUMN_NAME_COLUMN, cleanTask.getColumnName());
                     row.putInt(TABLE_ID_COLUMN, cleanTask.getTableId());
                     row.putLong(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());
@@ -367,7 +374,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         public void of(
-                String tableName,
+                TableToken tableName,
                 CharSequence columnName,
                 int tableId,
                 long truncateVersion,

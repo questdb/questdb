@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -47,8 +48,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMR roMetaMem;
     private long structureVersion = -1;
     private boolean suspended;
-    private String systemTableName;
     private int tableId;
+    private TableToken tableToken;
 
     public WalWriterMetadata(FilesFacade ff) {
         this(ff, false);
@@ -96,13 +97,13 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public String getSystemTableName() {
-        return systemTableName;
+    public int getTableId() {
+        return tableId;
     }
 
     @Override
-    public int getTableId() {
-        return tableId;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override
@@ -111,8 +112,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(String systemTableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.systemTableName = systemTableName;
+    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
         this.suspended = suspended;
@@ -178,7 +179,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         columnNameIndexMap.clear();
         columnCount = 0;
         timestampIndex = -1;
-        systemTableName = null;
+        tableToken = null;
         tableId = -1;
         suspended = false;
     }

@@ -364,10 +364,10 @@ public class DatabaseSnapshotAgent implements Closeable {
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             path.of(configuration.getRoot());
-                            String systemTableName = engine.getSystemTableName(tableName);
+                            TableToken tableToken = engine.getTableToken(tableName);
                             if (
                                     TableUtils.isValidTableName(tableName, tableName.length())
-                                            && ff.exists(path.concat(systemTableName).concat(TableUtils.META_FILE_NAME).$())
+                                            && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
                             ) {
                                 boolean isWalTable = engine.isWalTableName(tableName);
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
@@ -376,7 +376,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableName);
                                 snapshotReaders.add(reader);
 
-                                path.trimTo(snapshotLen).concat(systemTableName);
+                                path.trimTo(snapshotLen).concat(tableToken);
                                 int rootLen = path.length();
 
                                 if (isWalTable) {
@@ -404,7 +404,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                                 if (isWalTable) {
                                     metadata.clear();
-                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(systemTableName, metadata);
+                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                                     path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                     metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
                                     metadata.close(Vm.TRUNCATE_TO_POINTER);

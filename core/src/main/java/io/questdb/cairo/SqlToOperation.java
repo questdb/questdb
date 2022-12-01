@@ -38,8 +38,8 @@ import java.io.Closeable;
 
 public class SqlToOperation implements Closeable {
     private final BindVariableService bindVariableService;
-    private final WalSqlExecutionContextImpl sqlExecutionContext;
     private final SqlCompiler compiler;
+    private final WalSqlExecutionContextImpl sqlExecutionContext;
 
     public SqlToOperation(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
@@ -68,16 +68,16 @@ public class SqlToOperation implements Closeable {
         return bindVariableService;
     }
 
-    public AlterOperation toAlterOperation(CharSequence alterStatement, String systemTableName) throws SqlException {
-        sqlExecutionContext.remapTableNameResolutionTo(systemTableName);
+    public AlterOperation toAlterOperation(CharSequence alterStatement, TableToken tableToken) throws SqlException {
+        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
         final CompiledQuery compiledQuery = compiler.compile(alterStatement, sqlExecutionContext);
         final AlterOperation alterOperation = compiledQuery.getAlterOperation();
         alterOperation.withContext(sqlExecutionContext);
         return alterOperation;
     }
 
-    public UpdateOperation toUpdateOperation(CharSequence updateStatement, String systemTableName) throws SqlException {
-        sqlExecutionContext.remapTableNameResolutionTo(systemTableName);
+    public UpdateOperation toUpdateOperation(CharSequence updateStatement, TableToken tableToken) throws SqlException {
+        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
         final CompiledQuery compiledQuery = compiler.compile(updateStatement, sqlExecutionContext);
         final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
         updateOperation.withContext(sqlExecutionContext);

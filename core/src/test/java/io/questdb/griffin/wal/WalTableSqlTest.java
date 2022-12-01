@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.wal;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -279,7 +276,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName1 = engine.getTableToken(tableName);
             compile("drop table " + tableName);
 
             compile("create table " + tableName + " as (" +
@@ -289,7 +286,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName2 = engine.getTableToken(tableName);
             MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
 
             engine.releaseInactive();
@@ -359,13 +356,13 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            String sysTableName1;
+            TableToken sysTableName1;
             try (
                     WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
                     WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
                     WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
-                sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+                sysTableName1 = engine.getTableToken(tableName);
                 compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
 
                 compile("drop table " + tableName);
@@ -418,7 +415,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by DAY WAL"
                 );
 
-                String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
+                TableToken sysTableName2 = engine.getTableToken(tableName);
                 MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
 
                 engine.releaseAllReaders();
@@ -535,10 +532,10 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
 
             compile("alter table " + tableName + " drop partition list '2022-02-24'");
-            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken table2SystemName = engine.getTableToken(tableName);
             compile("rename table " + tableName + " to " + newTableName);
 
-            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
+            TableToken newTableSystemName = engine.getTableToken(newTableName);
             Assert.assertEquals(table2SystemName, newTableSystemName);
 
             drainWalQueue();
@@ -633,7 +630,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
 
             drainWalQueue();
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName1 = engine.getTableToken(tableName);
 
             try (TableReader ignore = sqlExecutionContext.getReader(tableName)) {
                 compile("drop table " + tableName);
@@ -677,7 +674,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
             }
 
-            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName + "2"));
+            TableToken table2SystemName = engine.getTableToken(tableName + "2");
             compile("drop table " + tableName + "2");
 
             drainWalQueue();
@@ -711,7 +708,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName1 = engine.getTableToken(tableName);
 
             drainWalQueue();
 
@@ -741,7 +738,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName1 = engine.getTableToken(tableName);
             engine.getTableSequencerAPI().releaseInactive();
             compile("drop table " + tableName);
 
@@ -768,7 +765,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            String sysTableName = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName = engine.getTableToken(tableName);
 
             compile("drop table " + tableName);
             drainWalQueue();
@@ -858,17 +855,17 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken table2SystemName = engine.getTableToken(tableName);
             compile("rename table " + tableName + " to " + newTableName);
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
-            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
+            TableToken newTableSystemName = engine.getTableToken(newTableName);
             Assert.assertEquals(table2SystemName, newTableSystemName);
 
             drainWalQueue();
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, newTableName, "test")) {
-                Assert.assertEquals(newTableName, writer.getTableName());
+                Assert.assertEquals(newTableName, writer.getTableToken().getLoggingName());
             }
 
             assertSql(newTableName, "x\tsym2\tts\n" +
@@ -882,7 +879,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 engine.releaseInactive();
                 refreshTablesInBaseEngine();
 
-                String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
+                TableToken newTableSystemName2 = engine.getTableToken(newTableName);
                 Assert.assertEquals(newTableSystemName, newTableSystemName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
@@ -890,7 +887,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             }
 
             assertSql("select name, systemName from tables() order by name", "name\tsystemName\n" +
-                    newTableName + "\t" + newTableSystemName + "\n");
+                    newTableName + "\t" + newTableSystemName.getPrivateTableName() + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
             assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
@@ -965,7 +962,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    private void checkTableFilesExist(String sysTableName, String partition, String fileName, boolean value) {
+    private void checkTableFilesExist(TableToken sysTableName, String partition, String fileName, boolean value) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
         MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(value));
 
@@ -979,7 +976,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(value));
     }
 
-    private void checkWalFilesRemoved(String sysTableName) {
+    private void checkWalFilesRemoved(TableToken sysTableName) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
         MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
 
@@ -1019,7 +1016,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            TableToken sysTableName1 = engine.getTableToken(tableName);
             compile("drop table " + tableName);
 
             latch.set(true);

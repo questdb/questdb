@@ -612,7 +612,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         if (wait != WAIT_NO_WAIT) {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (Chars.startsWith(name, "plug")) {
+                if (Chars.equalsNc(name.getLoggingName(), "plug")) {
                     if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 || (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
                         if (factoryType == PoolListener.SRC_WRITER) {
                             switch (event) {

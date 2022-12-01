@@ -98,7 +98,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         }
         boolean ok = super.remove(name);
         if (!ok) {
-            LOG.info().$("cannot remove open file: ").utf8(name).$(", errno:").$(errno()).$();
+            LOG.info().$("cannot remove file: ").utf8(name).$(", errno:").$(errno()).$();
         }
         return ok;
     }

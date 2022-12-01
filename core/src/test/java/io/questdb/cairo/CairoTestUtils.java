@@ -37,9 +37,9 @@ public class CairoTestUtils {
     }
 
     public static void create(TableModel model, CairoEngine engine) {
-        int tableId = 1;
-        String systemTableName = engine.registerTableName(model.getTableName(), tableId, false);
-        if (systemTableName == null) {
+        int tableId = (int) engine.getTableIdGenerator().getNextId();
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }
         TableUtils.createTable(
@@ -49,8 +49,9 @@ public class CairoTestUtils {
                 model,
                 ColumnType.VERSION,
                 tableId,
-                systemTableName
+                tableToken.getPrivateTableName()
         );
+        engine.registerTableToken(tableToken);
     }
 
     public static void create(CairoEngine engine, TableModel model) {
@@ -76,7 +77,10 @@ public class CairoTestUtils {
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        String systemTableName = engine.registerTableName(model.getTableName(), tableId, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        if (tableToken == null) {
+            throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
+        }
         TableUtils.createTable(
                 model.getConfiguration(),
                 model.getMem(),
@@ -84,8 +88,9 @@ public class CairoTestUtils {
                 model,
                 version,
                 tableId,
-                systemTableName
+                tableToken.getPrivateTableName()
         );
+        engine.registerTableToken(tableToken);
     }
 
     public static void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
@@ -112,7 +117,7 @@ public class CairoTestUtils {
             }
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
-                try (TableWriter writer = new TableWriter(engine.getConfiguration(), "x", engine.getSystemTableName("x"), Metrics.disabled())) {
+                try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("x"), Metrics.disabled())) {
                     writer.truncate();
                 }
             } else {
@@ -120,7 +125,7 @@ public class CairoTestUtils {
             }
         }
 
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), "x", engine.getSystemTableName("x"), Metrics.disabled())) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("x"), Metrics.disabled())) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

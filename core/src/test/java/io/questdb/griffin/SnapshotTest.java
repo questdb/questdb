@@ -438,10 +438,10 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
-            CharSequence systemTableName = engine.getSystemTableName(tableName);
+            TableToken tableToken = engine.getTableToken(tableName);
 
             engine.releaseInactive();
-            Assert.assertTrue(ff.remove(path.of(root).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$()));
+            Assert.assertTrue(ff.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
@@ -617,6 +617,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             compiler.compile("snapshot prepare", sqlExecutionContext);
             Thread controlThread1 = new Thread(() -> {
                 clock.timestamp = interval;
+                //noinspection StatementWithEmptyBody
                 while (job.run(0)) {
                     // run until empty
                 }
@@ -634,6 +635,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             compiler.compile("snapshot complete", sqlExecutionContext);
             Thread controlThread2 = new Thread(() -> {
                 clock.timestamp = 2 * interval;
+                //noinspection StatementWithEmptyBody
                 while (job.run(0)) {
                     // run until empty
                 }
@@ -744,7 +746,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter1.getTableName()), 0);
+                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, tableName, 0);
                     addColumnC.addColumnToList("C", 8, ColumnType.INT, 0, false, false, 0);
                     walWriter1.apply(addColumnC.build(), true);
                     walWriter1.commit();
@@ -879,8 +881,8 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.concat(systemTableName);
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.concat(tableToken);
                 int tableNameLen = path.length();
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = newTableReader(configuration, "t")) {
@@ -955,6 +957,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
@@ -968,10 +971,10 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.concat(systemTableName);
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.concat(tableToken);
                 int tableNameLen = path.length();
-                copyPath.concat(systemTableName);
+                copyPath.concat(tableToken);
                 int copyTableNameLen = copyPath.length();
 
                 // _meta

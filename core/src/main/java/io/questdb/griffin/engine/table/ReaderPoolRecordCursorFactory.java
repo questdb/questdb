@@ -64,11 +64,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private final CairoEngine cairoEngine;
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
-        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
+        private Iterator<Map.Entry<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
         private long owner;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
-        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
-        private CharSequence tableName;
+        private Map<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
+        private TableToken tableToken;
         private long timestamp;
         private long txn;
 
@@ -95,7 +95,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             return tryAdvance();
         }
 
-        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
+        public void of(Map<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
             this.readerPoolEntries = readerPoolEntries;
             toTop();
         }
@@ -115,7 +115,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             iterator = readerPoolEntries.entrySet().iterator();
             allocationIndex = 0;
             poolEntry = null;
-            tableName = null;
+            tableToken = null;
         }
 
         private boolean selectPoolEntry() {
@@ -127,8 +127,8 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     if (!iterator.hasNext()) {
                         return false;
                     }
-                    Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
-                    tableName = mapEntry.getKey();
+                    Map.Entry<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
+                    tableToken = mapEntry.getKey();
                     poolEntry = mapEntry.getValue();
                     return true;
                 } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {
@@ -180,7 +180,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStr(int col) {
                 assert col == TABLE_COLUMN_INDEX;
-                return cairoEngine.getTableNameBySystemName(tableName);
+                return cairoEngine.getTableNameBySystemName(tableToken);
             }
 
             @Override

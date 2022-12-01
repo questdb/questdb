@@ -388,8 +388,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
-        return new Path().of(root).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
+        TableToken tableToken = engine.getTableToken(tableName);
+        return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
     }
 
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
@@ -412,7 +412,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName, engine.getSystemTableName(tableName))) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
                 metadata.load();
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
@@ -447,7 +447,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             }
 
             // Check that table has same tableId.
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName, engine.getSystemTableName(tableName))) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
                 metadata.load();
                 Assert.assertEquals(tableId, metadata.getTableId());
             }

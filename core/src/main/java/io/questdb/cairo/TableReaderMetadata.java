@@ -35,8 +35,7 @@ import io.questdb.std.str.Path;
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
-    private final String systemTableName;
-    private final String tableName;
+    private final TableToken tableToken;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int maxUncommittedRows;
     private MemoryMR metaMem;
@@ -49,13 +48,12 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private MemoryMR transitionMeta;
     private boolean walEnabled;
 
-    public TableReaderMetadata(CairoConfiguration configuration, String tableName, String systemTableName) {
+    public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        this.systemTableName = systemTableName;
-        this.path = new Path().of(configuration.getRoot()).concat(systemTableName);
+        this.tableToken = tableToken;
+        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getPrivateTableName());
         this.plen = path.length();
-        this.tableName = tableName;
         this.metaMem = Vm.getMRInstance();
     }
 
@@ -63,8 +61,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     public TableReaderMetadata(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        this.tableName = null;
-        this.systemTableName = null;
+        this.tableToken = null;
         this.metaMem = Vm.getMRInstance();
     }
 
@@ -244,13 +241,13 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public String getSystemTableName() {
-        return systemTableName;
+    public int getTableId() {
+        return tableId;
     }
 
     @Override
-    public int getTableId() {
-        return tableId;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     public boolean isWalEnabled() {
@@ -271,12 +268,12 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (!existenceChecked) {
                     path.trimTo(plen).slash$();
                     if (!ff.exists(path)) {
-                        throw CairoException.critical(2).put("table does not exist [table=").put(tableName).put(']');
+                        throw CairoException.critical(2).put("table does not exist [table=").put(tableToken.getLoggingName()).put(']');
                     }
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableName, deadline, ex, millisecondClock, timeout);
+                TableUtils.handleMetadataLoadException(tableToken.getLoggingName(), deadline, ex, millisecondClock, timeout);
             }
         }
     }

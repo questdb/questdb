@@ -757,7 +757,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path().of(configuration.getRoot())) {
-                String systemName = engine.getSystemTableName(tableName);
+                TableToken systemName = engine.getTableToken(tableName);
                 assertWalFileExist(path, systemName, walName, 0, "_meta");
                 assertWalFileExist(path, systemName, walName, 0, "_event");
                 assertWalFileExist(path, systemName, walName, 0, "a.d");
@@ -1031,7 +1031,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         }
 
                         try (Path path = new Path().of(configuration.getRoot())) {
-                            String systemName = engine.getSystemTableName(tableName);
+                            TableToken systemName = engine.getTableToken(tableName);
                             assertWalFileExist(path, systemName, walName, 0, "_meta");
                             assertWalFileExist(path, systemName, walName, 0, "_event");
                             assertWalFileExist(path, systemName, walName, 0, "a.d");
@@ -1178,7 +1178,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         }
 
                         try (Path path = new Path().of(configuration.getRoot())) {
-                            String systemName = engine.getSystemTableName(tableName);
+                            TableToken systemName = engine.getTableToken(tableName);
                             assertWalFileExist(path, systemName, walName, segmentId, "_meta");
                             assertWalFileExist(path, systemName, walName, segmentId, "_event");
                             assertWalFileExist(path, systemName, walName, segmentId, "a.d");
@@ -1519,7 +1519,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 final String walName;
                 final IntList walSymbolCounts = new IntList();
                 try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    assertEquals(tableName, walWriter.getTableName());
+                    assertEquals(tableName, walWriter.getTableToken().getLoggingName());
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
                         stringSink.clear();
@@ -2384,7 +2384,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path().of(configuration.getRoot())) {
-                String systemName = engine.getSystemTableName(tableName);
+                TableToken systemName = engine.getTableToken(tableName);
                 assertWalFileExist(path, systemName, walName, 0, "_meta");
                 assertWalFileExist(path, systemName, walName, 0, "_event");
                 assertWalFileExist(path, systemName, walName, 0, "a.d");
@@ -2793,7 +2793,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path().of(configuration.getRoot())) {
-                String systemName = engine.getSystemTableName(tableName);
+                TableToken systemName = engine.getTableToken(tableName);
                 assertWalFileExist(path, systemName, walName, 0, "_meta");
                 assertWalFileExist(path, systemName, walName, 0, "_event");
                 assertWalFileExist(path, systemName, walName, 0, "a.d");
@@ -2918,7 +2918,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
+    private static Path constructPath(Path path, TableToken tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
                 ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
                 : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
@@ -2966,11 +2966,11 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertWalFileExist(Path path, String tableName, String walName, String fileName) {
+    private void assertWalFileExist(Path path, TableToken tableName, String walName, String fileName) {
         assertWalFileExist(path, tableName, walName, -1, fileName);
     }
 
-    private void assertWalFileExist(Path path, String tableName, String walName, int segment, String fileName) {
+    private void assertWalFileExist(Path path, TableToken tableName, String walName, int segment, String fileName) {
         final int pathLen = path.length();
         try {
             path = constructPath(path, tableName, walName, segment, fileName);
@@ -3095,13 +3095,13 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     static void removeColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
+        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken().getLoggingName(), 0);
         removeColumnOperation.ofDropColumn(columnName);
         writer.apply(removeColumnOperation.build(), true);
     }
 
     static void renameColumn(TableWriterAPI writer) {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
+        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken().getLoggingName(), 0);
         renameColumnC.ofRenameColumn("b", "c");
         writer.apply(renameColumnC.build(), true);
     }

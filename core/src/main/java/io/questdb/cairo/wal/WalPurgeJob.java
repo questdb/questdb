@@ -60,7 +60,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final NativeLPSZ walName = new NativeLPSZ();
     private final IntHashSet walsInUse = new IntHashSet();
     private long last = 0;
-    private String tableName;
+    private TableToken tableName;
     private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
     private int walId;
     private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
@@ -143,7 +143,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void accumDebugState() {
         debugBuffer.clear();
-        debugBuffer.put("table=").put(tableName)
+        debugBuffer.put("table=").put(tableName.getPrivateTableName())
                 .put(", discoveredWalIds=[");
         for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
             final int walId = it.nextInt();
@@ -174,7 +174,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         engine.getTableSequencerAPI().forAllWalTables(broadSweepIter);
     }
 
-    private void broadSweep(int tableId, final String tableName, long lastTxn) {
+    private void broadSweep(int tableId, final TableToken tableName, long lastTxn) {
         try {
             this.tableName = tableName;
             discoveredWalIds.clear();
@@ -182,23 +182,22 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             walInfoDataFrame.clear();
 
             discoverWalDirectories();
-            if (discoveredWalIds.size() == 0) {
-                return;
+            if (discoveredWalIds.size() != 0) {
+
+                populateWalInfoDataFrame();
+                accumDebugState();
+
+                deleteUnreachableSegments();
+
+                // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
+                // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
+                // pending segments that are yet to be applied to the table.
+                // Note that this also handles cases where a wal directory was created shortly before a crash and thus
+                // never recorded and tracked by the sequencer for that table.
+                deleteOutstandingWalDirectories();
             }
 
-            populateWalInfoDataFrame();
-            accumDebugState();
-
-            deleteUnreachableSegments();
-
-            // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
-            // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
-            // pending segments that are yet to be applied to the table.
-            // Note that this also handles cases where a wal directory was created shortly before a crash and thus
-            // never recorded and tracked by the sequencer for that table.
-            deleteOutstandingWalDirectories();
-
-            if (engine.isWalTableDropped(tableName)) {
+            if (engine.isTableDropped(tableName)) {
                 // Delete sequencer files
                 deleteTableSequencerFiles(tableName);
                 engine.removeTableSystemName(tableName);
@@ -261,9 +260,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
+    private void deleteSegmentDirectory(TableToken tableName, int walId, int segmentId) {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL segment directory [table=").utf8(tableName)
+        LOG.info().$("deleting WAL segment directory [table=").utf8(tableName.getPrivateTableName())
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
         if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
@@ -271,9 +270,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteTableSequencerFiles(CharSequence systemTableName) {
-        setTableSequencerPath(systemTableName);
-        LOG.info().$("table is dropped, deleting sequencer files [table=").utf8(systemTableName).$(']').$();
+    private void deleteTableSequencerFiles(TableToken tableToken) {
+        setTableSequencerPath(tableToken);
+        LOG.info().$("table is dropped, deleting sequencer files [table=").utf8(tableToken.getPrivateTableName()).$(']').$();
         recursiveDelete(path);
     }
 
@@ -301,7 +300,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteWalDirectory() {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL directory [table=").utf8(tableName)
+        LOG.info().$("deleting WAL directory [table=").utf8(tableName.getPrivateTableName())
                 .$(", walId=").$(walId).$(']').$();
         if (deleteFile(setWalLockPath(tableName, walId))) {
             recursiveDelete(setWalPath(tableName, walId));
@@ -337,7 +336,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
-        if (!engine.isWalTableDropped(tableName)) {
+        if (!engine.isTableDropped(tableName)) {
             try {
                 txReader.ofRO(path, PartitionBy.NONE);
                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
@@ -376,47 +375,47 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return segmentId < walsLatestSegmentId;
     }
 
-    private Path setSegmentLockPath(CharSequence tableName, int walId, int segmentId) {
+    private Path setSegmentLockPath(TableToken tableName, int walId, int segmentId) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
         TableUtils.lockName(path);
         return path;
     }
 
-    private Path setSegmentPath(CharSequence tableName, int walId, int segmentId) {
+    private Path setSegmentPath(TableToken tableName, int walId, int segmentId) {
         return path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
     }
 
-    private Path setTablePath(CharSequence tableName) {
+    private Path setTablePath(TableToken tableName) {
         return path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).$();
     }
 
-    private void setTableSequencerPath(CharSequence tableName) {
+    private void setTableSequencerPath(TableToken tableName) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat(WalUtils.SEQ_DIR).$();
     }
 
-    private void setTxnPath(CharSequence tableName) {
+    private void setTxnPath(TableToken tableName) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName)
                 .concat(TableUtils.TXN_FILE_NAME).$();
     }
 
-    private Path setWalLockPath(CharSequence tableName, int walId) {
+    private Path setWalLockPath(TableToken tableName, int walId) {
         path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
         TableUtils.lockName(path);
         return path;
     }
 
-    private Path setWalPath(CharSequence tableName, int walId) {
+    private Path setWalPath(TableToken tableName, int walId) {
         return path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 
-    private boolean walIsInUse(CharSequence tableName, int walId) {
+    private boolean walIsInUse(TableToken tableName, int walId) {
         return !couldObtainLock(setWalLockPath(tableName, walId));
     }
 

@@ -47,8 +47,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
     private volatile boolean suspended;
-    private String systemTableName;
     private int tableId;
+    private TableToken tableToken;
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);
@@ -79,9 +79,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         Misc.free(roMetaMem);
     }
 
-    public void copyFrom(TableDescriptor model, String systemTableName, int tableId, long structureVersion, boolean suspended) {
+    public void copyFrom(TableDescriptor model, TableToken tableToken, int tableId, long structureVersion, boolean suspended) {
         reset();
-        this.systemTableName = systemTableName;
+        this.tableToken = tableToken;
         this.timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
         this.suspended = suspended;
@@ -96,8 +96,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
     }
 
-    public void create(TableDescriptor model, String systemTableName, Path path, int pathLen, int tableId) {
-        copyFrom(model, systemTableName, tableId, 0, false);
+    public void create(TableDescriptor model, TableToken tableToken, Path path, int pathLen, int tableId) {
+        copyFrom(model, tableToken, tableId, 0, false);
         switchTo(path, pathLen);
     }
 
@@ -116,13 +116,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public String getSystemTableName() {
-        return systemTableName;
+    public int getTableId() {
+        return tableId;
     }
 
     @Override
-    public int getTableId() {
-        return tableId;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     public boolean isDropped() {
@@ -259,7 +259,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnNameIndexMap.clear();
         columnCount = 0;
         timestampIndex = -1;
-        systemTableName = null;
+        tableToken = null;
         tableId = -1;
         suspended = false;
     }

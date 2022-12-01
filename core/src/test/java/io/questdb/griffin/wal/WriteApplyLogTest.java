@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.wal;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -129,8 +130,8 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                     Path walPath = new Path()
             ) {
-                CharSequence systemTableName = engine.getSystemTableName("wal_all");
-                walPath.of(configuration.getRoot()).concat(systemTableName).concat("default");
+                TableToken tableToken = engine.getTableToken("wal_all");
+                walPath.of(configuration.getRoot()).concat(tableToken).concat("default");
                 long timestampLo = IntervalUtils.parseFloorPartialTimestamp(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
@@ -181,8 +182,8 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                     Path walPath = new Path()
             ) {
-                CharSequence systemTableName = engine.getSystemTableName("wal_all");
-                walPath.of(configuration.getRoot()).concat(systemTableName).concat("default");
+                TableToken tableToken = engine.getTableToken("wal_all");
+                walPath.of(configuration.getRoot()).concat(tableToken).concat("default");
                 long timestampLo = IntervalUtils.parseFloorPartialTimestamp(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 

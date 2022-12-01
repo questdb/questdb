@@ -27,8 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -63,7 +61,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata()) {
                         TestUtils.await(barrier);
 
-                        String systemName = engine.getSystemTableName(tableName);
+                        TableToken systemName = engine.getTableToken(tableName);
                         do {
                             engine.getTableSequencerAPI().getTableMetadata(systemName, metadata);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
@@ -93,17 +91,17 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         TestUtils.await(barrier);
                         int threadIdValue = threadId.getAndIncrement();
                         long sv = 0;
-                        String systemTableName = engine.getSystemTableName(tableName);
+                        TableToken tableToken = engine.getTableToken(tableName);
                         do {
-                            long sv2 = engine.getTableSequencerAPI().lastTxn(systemTableName);
+                            long sv2 = engine.getTableSequencerAPI().lastTxn(tableToken);
                             if (threadIdValue != 0) {
-                                engine.getTableSequencerAPI().setDistressed(systemTableName);
+                                engine.getTableSequencerAPI().setDistressed(tableToken);
                                 if (sv != sv2) {
                                     sv = sv2;
                                     LOG.info().$("destroyed sv ").$(sv).$();
                                 }
                             } else {
-                                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(systemTableName, 0)) {
+                                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
                                     long transactions = 0;
                                     while (cursor.hasNext()) {
                                         transactions++;
@@ -111,7 +109,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                                     MatcherAssert.assertThat(transactions, OrderingComparison.greaterThanOrEqualTo(sv2));
                                 }
                             }
-                        } while (engine.getTableSequencerAPI().lastTxn(systemTableName) < iterations && exception.get() == null);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
@@ -132,7 +130,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 () -> {
                     try {
                         TestUtils.await(barrier);
-                        String systemName = engine.getSystemTableName(tableName);
+                        TableToken systemName = engine.getTableToken(tableName);
                         do {
                             engine.getTableSequencerAPI().lastTxn(systemName);
                         } while (engine.getTableSequencerAPI().lastTxn(systemName) < iterations && exception.get() == null);
@@ -157,7 +155,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 () -> {
                     try {
                         TestUtils.await(barrier);
-                        String systemName = engine.getSystemTableName(tableName);
+                        TableToken systemName = engine.getTableToken(tableName);
                         long lastTxn = 0;
                         do {
                             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(systemName, lastTxn)) {
@@ -221,11 +219,5 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         } catch (Throwable e) {
             exception.set(e);
         }
-    }
-
-    static void addColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, 11, ColumnType.INT, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
     }
 }

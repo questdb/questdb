@@ -500,8 +500,8 @@ public class TableBackupTest {
             // @formatter:on
 
             try (Path path = new Path()) {
-                CharSequence systemTableName = mainEngine.getSystemTableName(tableName);
-                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(systemTableName).slash$();
+                TableToken tableToken = mainEngine.getTableToken(tableName);
+                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableToken).slash$();
                 int rc = TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }

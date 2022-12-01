@@ -315,43 +315,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidNonStructureAlter() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                AlterOperation dodgyAlter = new AlterOperation() {
-                    @Override
-                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean isStructureChange() {
-                        return false;
-                    }
-                };
-
-                try {
-                    twa.apply(dodgyAlter, true);
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "failed to commit ALTER SQL to WAL, sql context is empty ");
-                }
-            }
-
-            drainWalQueue();
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
-
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
-        });
-    }
-
-    @Test
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -593,6 +556,43 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInvalidNonStructureAlter() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                AlterOperation dodgyAlter = new AlterOperation() {
+                    @Override
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isStructureChange() {
+                        return false;
+                    }
+                };
+
+                try {
+                    twa.apply(dodgyAlter, true);
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "failed to commit ALTER SQL to WAL, sql context is empty ");
+                }
+            }
+
+            drainWalQueue();
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+        });
+    }
+
+    @Test
     public void testInvalidNonStructureChangeMakeWalWriterDistressed() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -643,55 +643,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
-        });
-    }
-
-    @Test
-    public void testNonWalTableTransactionNoficationIsIgnored() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            drainWalQueue();
-            engine.notifyWalTxnCommitted(1, tableName, 1);
-
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
-            drainWalQueue();
-
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
-        });
-    }
-
-    @Test
-    public void testRecompileUpdateWithOutOfDateStructure() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            drainWalQueue();
-            //noinspection CatchMayIgnoreException
-            try (WalWriter writer = engine.getWalWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    tableName)
-            ) {
-                writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
-                    @Override
-                    public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
-                    }
-                });
-                Assert.fail();
-            } catch (ReaderOutOfDateException e) {
-            }
-
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
-            drainWalQueue();
-
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
@@ -796,17 +747,52 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
-        String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
-        runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "sym5.c")) {
-                    return -1;
-                }
-                return super.openRW(name, opts);
+    public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableToken ignored = new TableToken(tableName, tableName, 123, false);
+            createStandardWalTable(tableName);
+
+            drainWalQueue();
+            engine.notifyWalTxnCommitted(1, ignored, 1);
+
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+        });
+    }
+
+    @Test
+    public void testRecompileUpdateWithOutOfDateStructure() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            drainWalQueue();
+            //noinspection CatchMayIgnoreException
+            try (WalWriter writer = engine.getWalWriter(
+                    sqlExecutionContext.getCairoSecurityContext(),
+                    tableName)
+            ) {
+                writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
+                    @Override
+                    public SqlExecutionContext getSqlExecutionContext() {
+                        return sqlExecutionContext;
+                    }
+                });
+                Assert.fail();
+            } catch (ReaderOutOfDateException e) {
             }
+
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
         });
     }
 
@@ -909,6 +895,28 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
+        runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "sym5.c")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        });
+    }
+
+    @Test
+    public void testWalTableAttachFailedDoesNotSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " attach partition list '2022-02-25'";
+        runCheckTableNonSuspended(tableName, query);
+    }
+
+    @Test
     public void testWalTableCannotOpenSeqTxnFileToCheckTransactions() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             long fd;
@@ -948,13 +956,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
         });
-    }
-
-    @Test
-    public void testWalTableAttachFailedDoesNotSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
-        String query = "alter table " + tableName + " attach partition list '2022-02-25'";
-        runCheckTableNonSuspended(tableName, query);
     }
 
     @Test
@@ -1180,7 +1181,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.getSystemTableName(tableName)));
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.getTableToken(tableName)));
 
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");

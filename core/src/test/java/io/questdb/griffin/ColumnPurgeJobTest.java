@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.ColumnPurgeJob;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
@@ -145,11 +142,13 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ColumnPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
+                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false);
+                ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
-                ColumnPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
+                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false);
+                ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
                 purgeJob.run(0);
@@ -357,8 +356,8 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
                     runPurgeJob(purgeJob);
                     // Delete failure
-                    CharSequence systemTableName = engine.getSystemTableName("up_part");
-                    path.of(configuration.getRoot()).concat(systemTableName).concat("1970-01-02").concat("str.i").$();
+                    TableToken tableToken = engine.getTableToken("up_part");
+                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-02").concat("str.i").$();
                     Assert.assertTrue(Chars.toString(path), FilesFacadeImpl.INSTANCE.exists(path));
 
                     // Should retry
@@ -820,11 +819,14 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                ColumnPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
+                TableToken tn1 = new TableToken("tbl_name", "tbl_name", 123, false);
+                ColumnPurgeTask task = createTask(tn1, "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialTimestamp("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
-                ColumnPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
+
+                TableToken tn2 = new TableToken("tbl_name2", "tbl_name2", 123, false);
+                ColumnPurgeTask task2 = createTask(tn2, "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
                 purgeJob.run(0);
@@ -863,23 +865,23 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void assertFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
-        CharSequence systemTableName = engine.getSystemTableName(up_part);
-        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("x.d").put(colSuffix).$();
+        TableToken tableToken = engine.getTableToken(up_part);
+        path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("x.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("str.d").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("str.i").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.i").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("sym2.d").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.d").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("sym2.k").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.k").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
 
-        path.of(configuration.getRoot()).concat(systemTableName).concat(partition).concat("sym2.v").put(colSuffix).$();
+        path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.v").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
     }
 
@@ -889,7 +891,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     }
 
     private ColumnPurgeTask createTask(
-            String tblName,
+            TableToken tblName,
             String colName,
             int tableId,
             int columnType,

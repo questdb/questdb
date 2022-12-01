@@ -3640,8 +3640,8 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private static Path getPath(String tableName) {
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
-        return new Path().of(engine.getConfiguration().getRoot()).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
+        TableToken tableToken = engine.getTableToken(tableName);
+        return new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
     }
 
     private static String padHexLong(long value) {

@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -61,8 +62,8 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         } finally {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
+                TableToken tableToken = engine.getTableToken(tableModel.getName());
+                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                 configuration.getFilesFacade().rmdir(path);
                 tableModel.close();
             }
@@ -132,8 +133,8 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
             FilesFacade filesFacade = configuration.getFilesFacade();
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 TableModel tableModel = tableModels[i];
-                CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
+                TableToken tableToken = engine.getTableToken(tableModel.getName());
+                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                 Assert.assertEquals(0, filesFacade.rmdir(path));
                 tableModel.close();
             }
