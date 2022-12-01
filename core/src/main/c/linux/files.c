@@ -32,7 +32,9 @@
 #include <sys/sendfile.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/fcntl.h>
+#include <sys/time.h>
 #include <sys/vfs.h>
 #include <fcntl.h>
 #include "../share/sysutil.h"
@@ -367,4 +369,52 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         }
     }
     return 0;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
+    struct timeval t[2];
+    gettimeofday(&t[0], NULL);
+    t[1].tv_sec = millis / 1000;
+    t[1].tv_usec = ((millis % 1000) * 1000);
+    return (jboolean) (utimes((const char *) lpszName, t) == 0);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
+    struct statvfs buf;
+    if (statvfs((const char *) lpszPath, &buf) == 0) {
+        return (jlong) buf.f_bavail * (jlong )buf.f_bsize;
+    }
+    return -1;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
+    int rc = posix_fallocate(fd, 0, len);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    if (rc == EINVAL) {
+        // Some file systems (such as ZFS) do not support posix_fallocate
+        struct stat st;
+        rc = fstat((int) fd, &st);
+        if (rc != 0) {
+            return JNI_FALSE;
+        }
+        if (st.st_size < len) {
+            rc = ftruncate(fd, len);
+            if (rc != 0) {
+                return JNI_FALSE;
+            }
+        }
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
+        (JNIEnv *e, jclass cl, jlong pchar) {
+    struct stat st;
+    int r = stat((const char *) pchar, &st);
+    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
 }

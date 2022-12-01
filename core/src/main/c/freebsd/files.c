@@ -30,15 +30,20 @@
 #include "../share/sysutil.h"
 
 #if defined(__APPLE__)
+
 #include <copyfile.h>
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
+
 #else
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+#include <sys/time.h>
+#include <sys/stat.h>
 #endif
 
 static inline jlong _io_questdb_std_Files_mremap0
@@ -73,7 +78,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
 }
 
 size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
-    char buf[4096*4]; // 16K
+    char buf[4096 * 4]; // 16K
     size_t read_sz;
     off_t rd_off = fromOffset;
     off_t wrt_off = 0;
@@ -126,21 +131,54 @@ size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
         (JNIEnv *e, jclass cls, jint srcFd, jint dstFd, jlong srcOffset, jlong length) {
-    return copyData0((int) srcFd, (int) dstFd, srcOffset, length);
+    return (jlong) copyData0((int) srcFd, (int) dstFd, srcOffset, length);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
+    struct statfs buf;
+    if (statfs((const char *) lpszPath, &buf) == 0) {
+        return (jlong)buf.f_bavail * (jlong)buf.f_bsize;
+    }
+    return -1;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
+    struct timeval t[2];
+    gettimeofday(&t[0], NULL);
+    t[1].tv_sec = millis / 1000;
+#ifdef __APPLE__    
+    t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
+#else
+    t[1].tv_usec = ((millis % 1000) * 1000);
+#endif    
+    return (jboolean) (utimes((const char *) lpszName, t) == 0);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
+        (JNIEnv *e, jclass cl, jlong pchar) {
+    struct stat st;
+    int r = stat((const char *) pchar, &st);
+#ifdef __APPLE__
+    return r == 0 ? ((1000 * st.st_mtimespec.tv_sec) + (st.st_mtimespec.tv_nsec / 1000000)) : r;
+#else
+    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
+#endif
 }
 
 #if defined(__APPLE__)
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
-    const char* from = (const char *) lpszFrom;
-    const char* to = (const char *) lpszTo;
+    const char *from = (const char *) lpszFrom;
+    const char *to = (const char *) lpszTo;
     const int input = open(from, O_RDONLY);
-    if (-1 ==  (input )) {
+    if (-1 == (input)) {
         return -1;
     }
 
     const int output = creat(to, 0644);
-    if (-1 == (output )) {
+    if (-1 == (output)) {
         close(input);
         return -1;
     }

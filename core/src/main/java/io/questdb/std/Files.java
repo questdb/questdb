@@ -158,6 +158,14 @@ public final class Files {
 
     public static native int fsync(int fd);
 
+    public static long getDiskSize(LPSZ path) {
+        if (path != null) {
+            return getDiskSize(path.address());
+        }
+        // current directory
+        return getDiskSize(0);
+    }
+
     /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.
@@ -424,6 +432,8 @@ public final class Files {
 
     //caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
+
+    private static native long getDiskSize(long lpszPath);
 
     private static native int getFileSystemStatus(long lpszName);
 
