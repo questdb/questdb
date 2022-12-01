@@ -275,6 +275,7 @@ public abstract class AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
         node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
     }
@@ -287,10 +288,12 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setO3MaxLag(o3MaxLag);
     }
 
+    @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
         node1.getConfigurationOverrides().setSqlJoinMetadataMaxResizes(sqlJoinMetadataMaxResizes);
     }
 
+    @SuppressWarnings("SameParameterValue")
     protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
     }
@@ -391,12 +394,16 @@ public abstract class AbstractCairoTest {
 
         final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(tableName).concat(wal).$();
         final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(tableName).concat(wal).$();
-        ff.mkdir(dstWal, mkdirMode);
-        ff.copyRecursive(srcWal, dstWal, mkdirMode);
+        if (ff.exists(dstWal)) {
+            Assert.assertEquals(0, ff.rmdir(dstWal));
+        }
+        Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
+        Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
         final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(tableName).concat(WalUtils.SEQ_DIR).$();
         final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(tableName).concat(WalUtils.SEQ_DIR).$();
-        ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode);
+        Assert.assertEquals(0, ff.rmdir(dstTxnLog));
+        Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
         dstNode.getEngine().getTableSequencerAPI().openSequencer(tableName);
     }
