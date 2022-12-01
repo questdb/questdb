@@ -87,7 +87,7 @@ public abstract class AbstractCairoTest {
     protected static Boolean copyPartitionOnAttach = null;
     protected static long currentMicros = -1;
     protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    protected static CharSequence defaultMapType;
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static int defaultTableWriteMode = -1;
     protected static Boolean enableColumnPreTouch = null;
     protected static Boolean enableParallelFilter = null;
@@ -95,10 +95,7 @@ public abstract class AbstractCairoTest {
     protected static FilesFacade ff;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
-    protected static Boolean ioURingEnabled = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
-    protected static int isO3QuickSortEnabled = 0;
-    protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
     protected static QuestDBNode node1;
@@ -106,17 +103,12 @@ public abstract class AbstractCairoTest {
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
-    protected static int parallelImportStatusLogKeepNDays = -1;
     protected static int queryCacheEventQueueCapacity = -1;
-    protected static int rndFunctionMemoryMaxPages = -1;
-    protected static int rndFunctionMemoryPageSize = -1;
     protected static CharSequence root;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static int sqlCopyBufferSize = 1024 * 1024;
-    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    protected static long walSegmentRolloverRowCount = -1;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
@@ -275,9 +267,22 @@ public abstract class AbstractCairoTest {
         });
     }
 
+    protected static void configOverrideDefaultMapType(CharSequence defaultMapType) {
+        node1.getConfigurationOverrides().setDefaultMapType(defaultMapType);
+    }
+
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
         node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideIoURingEnabled(Boolean ioURingEnabled) {
+        node1.getConfigurationOverrides().setIoURingEnabled(ioURingEnabled);
+    }
+
+    protected static void configOverrideJitMode(int jitMode) {
+        node1.getConfigurationOverrides().setJitMode(jitMode);
     }
 
     protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
@@ -286,6 +291,32 @@ public abstract class AbstractCairoTest {
 
     protected static void configOverrideO3MaxLag(int o3MaxLag) {
         node1.getConfigurationOverrides().setO3MaxLag(o3MaxLag);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
+        node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
+    }
+
+    protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
+        node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
+    }
+
+    protected static void configOverrideRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
+        node1.getConfigurationOverrides().setRndFunctionMemoryMaxPages(rndFunctionMemoryMaxPages);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
+        node1.getConfigurationOverrides().setRndFunctionMemoryPageSize(rndFunctionMemoryPageSize);
+    }
+
+    protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
+        node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
+    }
+
+    protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
+        node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -298,12 +329,9 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
     }
 
-    protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
-        node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
-    }
-
-    protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
-        node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
+        node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
     }
 
     protected static void configureForBackups() throws IOException {

@@ -393,7 +393,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
-        ioURingEnabled = false;
+        configOverrideIoURingEnabled(false);
 
         CopyRunnable stmt = () -> runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);

@@ -55,7 +55,7 @@ public class Overrides implements ConfigurationOverrides {
     private String inputRoot = null;
     private String inputWorkRoot = null;
     private Boolean ioURingEnabled = null;
-    private int isO3QuickSortEnabled = 0;
+    private boolean o3QuickSortEnabled = false;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private int maxUncommittedRows = -1;
     private long o3MaxLag = -1;
@@ -178,8 +178,8 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public int getIsO3QuickSortEnabled() {
-        return isO3QuickSortEnabled;
+    public boolean isO3QuickSortEnabled() {
+        return o3QuickSortEnabled;
     }
 
     @Override
@@ -359,7 +359,7 @@ public class Overrides implements ConfigurationOverrides {
         attachableDirSuffix = null;
         ff = null;
         dataAppendPageSize = -1;
-        isO3QuickSortEnabled = 0;
+        o3QuickSortEnabled = false;
         walSegmentRolloverRowCount = -1;
     }
 
@@ -469,8 +469,8 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setIsO3QuickSortEnabled(int isO3QuickSortEnabled) {
-        this.isO3QuickSortEnabled = isO3QuickSortEnabled;
+    public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
+        this.o3QuickSortEnabled = o3QuickSortEnabled;
     }
 
     @Override

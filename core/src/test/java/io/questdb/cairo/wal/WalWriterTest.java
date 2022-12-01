@@ -1050,7 +1050,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final int numOfRows = 4000;
             final int maxRowCount = 500;
-            walSegmentRolloverRowCount = maxRowCount;
+            configOverrideWalSegmentRolloverRowCount(maxRowCount);
             Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;

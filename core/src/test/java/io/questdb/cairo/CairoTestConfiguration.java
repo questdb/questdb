@@ -286,7 +286,7 @@ public class CairoTestConfiguration extends DefaultCairoConfiguration {
 
     @Override
     public boolean isO3QuickSortEnabled() {
-        return overrides.getIsO3QuickSortEnabled() > 0 || (overrides.getIsO3QuickSortEnabled() == 0 && super.isO3QuickSortEnabled());
+        return overrides.isO3QuickSortEnabled();
     }
 
     @Override

@@ -30,6 +30,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
+@SuppressWarnings("unused")
 public interface ConfigurationOverrides {
     String getAttachableDirSuffix();
 
@@ -69,7 +70,7 @@ public interface ConfigurationOverrides {
 
     String getInputWorkRoot();
 
-    int getIsO3QuickSortEnabled();
+    boolean isO3QuickSortEnabled();
 
     int getJitMode();
 
@@ -171,7 +172,7 @@ public interface ConfigurationOverrides {
 
     void setIoURingEnabled(Boolean ioURingEnabled);
 
-    void setIsO3QuickSortEnabled(int isO3QuickSortEnabled);
+    void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
 
     void setJitMode(int jitMode);
 

@@ -123,13 +123,13 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     @Test
     public void testAsyncOffloadTimeoutWithJitEnabled() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        jitMode = SqlJitMode.JIT_MODE_ENABLED;
+        configOverrideJitMode(SqlJitMode.JIT_MODE_ENABLED);
         testAsyncOffloadTimeout();
     }
 
     @Test
     public void testAsyncOffloadTimeoutWithoutJit() throws Exception {
-        jitMode = SqlJitMode.JIT_MODE_DISABLED;
+        configOverrideJitMode(SqlJitMode.JIT_MODE_DISABLED);
         testAsyncOffloadTimeout();
     }
 
@@ -413,7 +413,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
-        AbstractCairoTest.jitMode = jitMode;
+        configOverrideJitMode(jitMode);
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
 

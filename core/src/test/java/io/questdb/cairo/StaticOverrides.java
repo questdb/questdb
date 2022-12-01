@@ -92,11 +92,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public CharSequence getDefaultMapType() {
-        return AbstractCairoTest.defaultMapType;
-    }
-
-    @Override
     public int getDefaultTableWriteMode() {
         return AbstractCairoTest.defaultTableWriteMode;
     }
@@ -127,16 +122,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getIsO3QuickSortEnabled() {
-        return AbstractCairoTest.isO3QuickSortEnabled;
-    }
-
-    @Override
-    public int getJitMode() {
-        return AbstractCairoTest.jitMode;
-    }
-
-    @Override
     public int getPageFrameMaxRows() {
         return AbstractCairoTest.pageFrameMaxRows;
     }
@@ -152,11 +137,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getParallelImportStatusLogKeepNDays() {
-        return AbstractCairoTest.parallelImportStatusLogKeepNDays;
-    }
-
-    @Override
     public int getQueryCacheEventQueueCapacity() {
         return AbstractCairoTest.queryCacheEventQueueCapacity;
     }
@@ -164,16 +144,6 @@ class StaticOverrides extends Overrides {
     @Override
     public int getRecreateDistressedSequencerAttempts() {
         return AbstractCairoTest.recreateDistressedSequencerAttempts;
-    }
-
-    @Override
-    public int getRndFunctionMemoryMaxPages() {
-        return AbstractCairoTest.rndFunctionMemoryMaxPages;
-    }
-
-    @Override
-    public int getRndFunctionMemoryPageSize() {
-        return AbstractCairoTest.rndFunctionMemoryPageSize;
     }
 
     @Override
@@ -202,11 +172,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public long getWalSegmentRolloverRowCount() {
-        return AbstractCairoTest.walSegmentRolloverRowCount;
-    }
-
-    @Override
     public int getWalTxnNotificationQueueCapacity() {
         return AbstractCairoTest.walTxnNotificationQueueCapacity;
     }
@@ -232,23 +197,14 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public Boolean isIoURingEnabled() {
-        return AbstractCairoTest.ioURingEnabled;
-    }
-
-    @Override
     public void reset() {
         super.reset();
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
-        AbstractCairoTest.defaultMapType = null;
         AbstractCairoTest.writerAsyncCommandBusyWaitTimeout = -1;
         AbstractCairoTest.writerAsyncCommandMaxTimeout = -1;
         AbstractCairoTest.pageFrameMaxRows = -1;
-        AbstractCairoTest.jitMode = SqlJitMode.JIT_MODE_ENABLED;
-        AbstractCairoTest.rndFunctionMemoryPageSize = -1;
-        AbstractCairoTest.rndFunctionMemoryMaxPages = -1;
         AbstractCairoTest.spinLockTimeout = -1;
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
         AbstractCairoTest.snapshotInstanceId = null;
@@ -262,15 +218,11 @@ class StaticOverrides extends Overrides {
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
         AbstractCairoTest.columnVersionTaskPoolCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
-        AbstractCairoTest.ioURingEnabled = null;
-        AbstractCairoTest.parallelImportStatusLogKeepNDays = -1;
         AbstractCairoTest.defaultTableWriteMode = -1;
         AbstractCairoTest.copyPartitionOnAttach = null;
         AbstractCairoTest.attachableDirSuffix = null;
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
-        AbstractCairoTest.isO3QuickSortEnabled = 0;
-        AbstractCairoTest.walSegmentRolloverRowCount = -1;
     }
 
     @Override
@@ -334,11 +286,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setDefaultMapType(CharSequence defaultMapType) {
-        AbstractCairoTest.defaultMapType = defaultMapType;
-    }
-
-    @Override
     public void setDefaultTableWriteMode(int defaultTableWriteMode) {
         AbstractCairoTest.defaultTableWriteMode = defaultTableWriteMode;
     }
@@ -369,21 +316,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setIoURingEnabled(Boolean ioURingEnabled) {
-        AbstractCairoTest.ioURingEnabled = ioURingEnabled;
-    }
-
-    @Override
-    public void setIsO3QuickSortEnabled(int isO3QuickSortEnabled) {
-        AbstractCairoTest.isO3QuickSortEnabled = isO3QuickSortEnabled;
-    }
-
-    @Override
-    public void setJitMode(int jitMode) {
-        AbstractCairoTest.jitMode = jitMode;
-    }
-
-    @Override
     public void setPageFrameMaxRows(int pageFrameMaxRows) {
         AbstractCairoTest.pageFrameMaxRows = pageFrameMaxRows;
     }
@@ -399,11 +331,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
-        AbstractCairoTest.parallelImportStatusLogKeepNDays = parallelImportStatusLogKeepNDays;
-    }
-
-    @Override
     public void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity) {
         AbstractCairoTest.queryCacheEventQueueCapacity = queryCacheEventQueueCapacity;
     }
@@ -411,16 +338,6 @@ class StaticOverrides extends Overrides {
     @Override
     public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
         AbstractCairoTest.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
-    }
-
-    @Override
-    public void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
-        AbstractCairoTest.rndFunctionMemoryMaxPages = rndFunctionMemoryMaxPages;
-    }
-
-    @Override
-    public void setRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
-        AbstractCairoTest.rndFunctionMemoryPageSize = rndFunctionMemoryPageSize;
     }
 
     @Override
@@ -446,11 +363,6 @@ class StaticOverrides extends Overrides {
     @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         AbstractCairoTest.testMicrosClock = testMicrosClock;
-    }
-
-    @Override
-    public void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
-        AbstractCairoTest.walSegmentRolloverRowCount = walSegmentRolloverRowCount;
     }
 
     @Override
