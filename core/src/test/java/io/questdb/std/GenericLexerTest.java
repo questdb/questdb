@@ -169,14 +169,14 @@ public class GenericLexerTest {
             sink.put(tok).put('\n');
         }
         TestUtils.assertEquals("insert\n" +
-                "into\n" +
-                "data\n" +
-                "values\n" +
-                "(\n" +
-                "'{ title: \\\"Title\\\"}'\n" +
-                ")\n" +
-                ";\n",
-            sink
+                        "into\n" +
+                        "data\n" +
+                        "values\n" +
+                        "(\n" +
+                        "'{ title: \\\"Title\\\"}'\n" +
+                        ")\n" +
+                        ";\n",
+                sink
         );
     }
 
@@ -212,13 +212,13 @@ public class GenericLexerTest {
             sink.put(tok).put('\n');
         }
         TestUtils.assertEquals("INSERT\n" +
-                "INTO\n" +
-                "\"t\"\"ab\"\n" +
-                "VALUES\n" +
-                "(\n" +
-                "'obrian'\n" +
-                ")\n;\n",
-            sink
+                        "INTO\n" +
+                        "\"t\"\"ab\"\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'obrian'\n" +
+                        ")\n;\n",
+                sink
         );
     }
 
@@ -236,13 +236,13 @@ public class GenericLexerTest {
             sink.put(tok).put('\n');
         }
         TestUtils.assertEquals("INSERT\n" +
-                "INTO\n" +
-                "tab\n" +
-                "VALUES\n" +
-                "(\n" +
-                "'o''brian'\n" +
-                ")\n;\n",
-            sink
+                        "INTO\n" +
+                        "tab\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'o''brian'\n" +
+                        ")\n;\n",
+                sink
         );
     }
 
@@ -355,7 +355,7 @@ public class GenericLexerTest {
         lex.next(); // slash
         CharSequence bitsTok = lex.next();
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
-            lex.immutablePairOf(geohashTok, '/', bitsTok);
+                lex.immutablePairOf(geohashTok, '/', bitsTok);
         Assert.assertEquals(culprit, pair.toString());
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < pair.length(); i++) {
