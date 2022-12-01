@@ -401,7 +401,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
-    public TableReader getReaderBySystemName(@SuppressWarnings("unused") CairoSecurityContext securityContext, TableToken tableToken) {
+    public TableReader getReaderByTableToken(@SuppressWarnings("unused") CairoSecurityContext securityContext, TableToken tableToken) {
         return readerPool.get(tableToken);
     }
 
@@ -472,7 +472,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableIdGenerator;
     }
 
-    public String getTableNameBySystemName(TableToken tableToken) {
+    public String getTableNameAsString(CharSequence tableName) {
+        // In Table Name Registry TableToken has up to date tableName === TableToken.getLoggingName(),
+        // even after rename, Table Name Registry values are updated, that's why it's safe to use
+        // TableToken.getLoggingName() as table name here.
+        return getTableToken(tableName).getLoggingName();
+    }
+
+    public String getTableNameByTableToken(TableToken tableToken) {
         return tableNameRegistry.getTableNameByTableToken(tableToken);
     }
 
@@ -574,7 +581,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
-    public TableWriter getWriterBySystemName(
+    public TableWriter getWriterByTableToken(
             CairoSecurityContext securityContext,
             TableToken tableToken,
             String lockReason
@@ -592,6 +599,10 @@ public class CairoEngine implements Closeable, WriterSource {
         validNameOrThrow(tableName);
         TableToken tableToken = getTableToken(tableName);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
+    }
+
+    public boolean isLiveTable(TableToken tableToken) {
+        return tableToken != TableNameRegistry.LOCKED_TOKEN && !tableNameRegistry.isTableDropped(tableToken);
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -632,7 +643,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.lock(getTableToken(tableName));
     }
 
-    public boolean lockReadersBySystemName(TableToken tableToken) {
+    public boolean lockReadersByTableToken(TableToken tableToken) {
         return readerPool.lock(tableToken);
     }
 
@@ -648,7 +659,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (isWal) {
             privateTableName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             privateTableName += tableId;
-        } else if (configuration.mangleTableSystemNames()) {
+        } else if (configuration.manglePrivateTableNames()) {
             privateTableName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
         return tableNameRegistry.lockTableName(publicTableName, privateTableName, tableId, isWal);
@@ -714,7 +725,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableSequencerAPI.releaseInactive();
     }
 
-    public void releaseReadersBySystemName(TableToken tableToken) {
+    public void releaseReadersByTableToken(TableToken tableToken) {
         readerPool.unlock(tableToken);
     }
 
@@ -729,7 +740,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return ff.rmdir(path.slash$());
     }
 
-    public void removeTableSystemName(TableToken tableName) {
+    public void removeTableToken(TableToken tableName) {
         tableNameRegistry.removeTableToken(tableName);
     }
 

@@ -68,7 +68,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         PRODUCT_FS = PRODUCT;
-        if (configuration.mangleTableSystemNames()) {
+        if (configuration.manglePrivateTableNames()) {
             PRODUCT_FS += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
     }

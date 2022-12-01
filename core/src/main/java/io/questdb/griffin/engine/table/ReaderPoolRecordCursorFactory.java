@@ -180,7 +180,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStr(int col) {
                 assert col == TABLE_COLUMN_INDEX;
-                return cairoEngine.getTableNameBySystemName(tableToken);
+                return cairoEngine.getTableNameByTableToken(tableToken);
             }
 
             @Override

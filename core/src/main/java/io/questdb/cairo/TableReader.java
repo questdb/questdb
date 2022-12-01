@@ -106,7 +106,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").utf8(this.tableToken.getLoggingName())
-                    .$(", systemName=").utf8(this.tableToken.getPrivateTableName())
+                    .$(", privateTableName=").utf8(this.tableToken.getPrivateTableName())
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);

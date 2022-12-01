@@ -863,7 +863,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean mangleTableSystemNames() {
-        return conf.mangleTableSystemNames();
+    public boolean manglePrivateTableNames() {
+        return conf.manglePrivateTableNames();
     }
 }

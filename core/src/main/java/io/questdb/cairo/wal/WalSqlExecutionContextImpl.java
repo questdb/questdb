@@ -60,7 +60,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
 
     @Override
     public TableReader getReader(CharSequence tableName, int tableId, long version) {
-        return getCairoEngine().getReaderBySystemName(
+        return getCairoEngine().getReaderByTableToken(
                 getCairoSecurityContext(),
                 tableToken
         );
@@ -68,7 +68,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
 
     @Override
     public TableReader getReader(CharSequence tableName) {
-        return getCairoEngine().getReaderBySystemName(
+        return getCairoEngine().getReaderByTableToken(
                 getCairoSecurityContext(),
                 tableToken
         );

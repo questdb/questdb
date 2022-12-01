@@ -215,7 +215,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                     TableToken tableToken = systemNames.next();
                     tableName = tableToken.getLoggingName();
 
-                    if (!engine.isTableDropped(tableToken)
+                    if (engine.isLiveTable(tableToken)
                             && ff.exists(path.trimTo(plimit).concat(tableToken).concat(TableUtils.META_FILE_NAME).$())) {
 
                         // open metadata file and read id

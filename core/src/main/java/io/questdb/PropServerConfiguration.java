@@ -128,6 +128,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean ioURingEnabled;
+    private final boolean isReadOnlyInstance;
     private final boolean isWalSupported;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final int latestByQueueCapacity;
@@ -259,6 +260,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWithClauseModelPoolCapacity;
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final String systemTableNamePrefix;
+    private final long tableRegistryAutoReloadTimeout;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
@@ -330,7 +332,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private CharSequence indexFileName;
     private short integerDefaultColumnType;
     private boolean interruptOnClosedConnection;
-    private final boolean isReadOnlyInstance;
     private int jsonCacheLimit;
     private int jsonCacheSize;
     private int jsonQueryConnectionCheckFrequency;
@@ -424,7 +425,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private final long tableRegistryAutoReloadTimeout;
     private int textAnalysisMaxLines;
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
@@ -2290,7 +2290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean mangleTableSystemNames() {
+        public boolean manglePrivateTableNames() {
             return false;
         }
     }

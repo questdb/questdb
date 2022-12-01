@@ -60,8 +60,8 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
         private CairoEngine engine;
-        private Iterator<TableToken> systemNames;
         private String tableName = null;
+        private Iterator<TableToken> tableTokens;
 
         @Override
         public void close() {
@@ -79,20 +79,25 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (systemNames == null) {
-                systemNames = engine.getTableTokens().iterator();
+            if (tableTokens == null) {
+                tableTokens = engine.getTableTokens().iterator();
             }
 
             do {
-                boolean hasNext = systemNames.hasNext();
+                boolean hasNext = tableTokens.hasNext();
                 if (!hasNext) {
-                    systemNames = null;
+                    tableTokens = null;
                 } else {
-                    tableName = engine.getTableNameBySystemName(systemNames.next());
+                    TableToken tableToken = tableTokens.next();
+                    if (engine.isLiveTable(tableToken)) {
+                        tableName = tableToken.getLoggingName();
+                    } else {
+                        tableName = null;
+                    }
                 }
-            } while (systemNames != null && tableName == null);
+            } while (tableTokens != null && tableName == null);
 
-            return systemNames != null;
+            return tableTokens != null;
         }
 
         @Override
@@ -107,7 +112,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            systemNames = null;
+            tableTokens = null;
         }
 
         private TableListRecordCursor of(@NotNull CairoEngine cairoEngine) {

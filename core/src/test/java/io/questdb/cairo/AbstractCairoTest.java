@@ -503,7 +503,7 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public boolean mangleTableSystemNames() {
+            public boolean manglePrivateTableNames() {
                 return mangleTableSystemName;
             }
         };

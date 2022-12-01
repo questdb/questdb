@@ -147,7 +147,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         systemNames = null;
                     } else {
                         tableToken = systemNames.next();
-                        tableToken = !engine.isTableDropped(tableToken) && record.open(tableToken) ? tableToken : null;
+                        tableToken = engine.isLiveTable(tableToken) && record.open(tableToken) ? tableToken : null;
                     }
                 } while (systemNames != null && tableToken == null);
 
@@ -284,7 +284,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         o3MaxLagColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         writeModeColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("systemName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
         systemNameColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }

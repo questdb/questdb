@@ -2052,7 +2052,7 @@ class SqlOptimiser {
                     tableLookupSequence.of(tableName, lo, hi - lo),
                     TableUtils.ANY_TABLE_ID,
                     TableUtils.ANY_TABLE_VERSION
-                )) {
+            )) {
                 enumerateColumns(model, reader.getMetadata());
             } catch (EntryLockedException e) {
                 throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
@@ -3625,7 +3625,7 @@ class SqlOptimiser {
             }
 
             // Save update table name as a String to not re-create string later on from CharSequence
-            String tableName = engine.getTableNameBySystemName(metadata.getTableToken());
+            String tableName = engine.getTableNameByTableToken(metadata.getTableToken());
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableName, updateQueryModel.getTableName().token)) {
                 // Table renamed
                 throw ReaderOutOfDateException.of(updateQueryModel.getTableName().token);

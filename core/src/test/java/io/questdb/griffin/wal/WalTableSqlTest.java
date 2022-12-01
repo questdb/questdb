@@ -532,11 +532,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
 
             compile("alter table " + tableName + " drop partition list '2022-02-24'");
-            TableToken table2SystemName = engine.getTableToken(tableName);
+            TableToken table2directoryName = engine.getTableToken(tableName);
             compile("rename table " + tableName + " to " + newTableName);
 
-            TableToken newTableSystemName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2SystemName, newTableSystemName);
+            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
+            Assert.assertEquals(table2directoryName, newTabledirectoryName);
 
             drainWalQueue();
 
@@ -674,12 +674,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
             }
 
-            TableToken table2SystemName = engine.getTableToken(tableName + "2");
+            TableToken table2directoryName = engine.getTableToken(tableName + "2");
             compile("drop table " + tableName + "2");
 
             drainWalQueue();
 
-            checkTableFilesExist(table2SystemName, "2022-02-24", "x.d", false);
+            checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
         });
     }
 
@@ -855,12 +855,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            TableToken table2SystemName = engine.getTableToken(tableName);
+            TableToken table2directoryName = engine.getTableToken(tableName);
             compile("rename table " + tableName + " to " + newTableName);
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
-            TableToken newTableSystemName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2SystemName, newTableSystemName);
+            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
+            Assert.assertEquals(table2directoryName, newTabledirectoryName);
 
             drainWalQueue();
 
@@ -879,15 +879,15 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 engine.releaseInactive();
                 refreshTablesInBaseEngine();
 
-                TableToken newTableSystemName2 = engine.getTableToken(newTableName);
-                Assert.assertEquals(newTableSystemName, newTableSystemName2);
+                TableToken newTabledirectoryName2 = engine.getTableToken(newTableName);
+                Assert.assertEquals(newTabledirectoryName, newTabledirectoryName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
                         "100\t\t2022-02-25T00:00:00.000000Z\n");
             }
 
-            assertSql("select name, systemName from tables() order by name", "name\tsystemName\n" +
-                    newTableName + "\t" + newTableSystemName.getPrivateTableName() + "\n");
+            assertSql("select name, directoryName from tables() order by name", "name\tdirectoryName\n" +
+                    newTableName + "\t" + newTabledirectoryName.getPrivateTableName() + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
             assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +

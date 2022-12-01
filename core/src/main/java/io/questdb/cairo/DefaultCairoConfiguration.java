@@ -888,7 +888,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean mangleTableSystemNames() {
+    public boolean manglePrivateTableNames() {
         return false;
     }
 }

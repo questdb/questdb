@@ -124,7 +124,7 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public boolean mangleTableSystemNames() {
+                    public boolean manglePrivateTableNames() {
                         return false;
                     }
                 };

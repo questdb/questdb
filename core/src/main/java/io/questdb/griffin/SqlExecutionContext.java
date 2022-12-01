@@ -126,8 +126,7 @@ public interface SqlExecutionContext extends Closeable {
     }
 
     default String getTableNameAsString(CharSequence tableName) {
-        TableToken tableSystemName = getCairoEngine().getTableToken(tableName);
-        return getCairoEngine().getTableNameBySystemName(tableSystemName);
+        return getCairoEngine().getTableNameAsString(tableName);
     }
 
     int getWorkerCount();

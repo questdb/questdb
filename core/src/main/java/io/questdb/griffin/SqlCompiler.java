@@ -1755,7 +1755,7 @@ public class SqlCompiler implements Closeable {
                 tableToken
         )) {
             final long structureVersion = metadata.getStructureVersion();
-            String tableName = engine.getTableNameBySystemName(tableToken);
+            String tableName = engine.getTableNameByTableToken(tableToken);
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, tableName, metadata.getTableToken(), structureVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
@@ -2372,7 +2372,7 @@ public class SqlCompiler implements Closeable {
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
                 try (TableWriterAPI writer = tableWriters.getQuick(i)) {
                     try {
-                        String publicTableName = engine.getTableNameBySystemName(writer.getTableToken());
+                        String publicTableName = engine.getTableNameByTableToken(writer.getTableToken());
                         if (writer.getMetadata().isWalEnabled()) {
                             writer.truncate();
                         } else if (engine.lockReaders(publicTableName)) {
@@ -2920,7 +2920,7 @@ public class SqlCompiler implements Closeable {
                 setupBackupRenamePath();
                 cdDbRenamePath();
                 for (TableToken tableToken : engine.getTableTokens()) {
-                    if (!engine.isTableDropped(tableToken)) {
+                    if (engine.isLiveTable(tableToken)) {
                         backupTable(tableToken, executionContext);
                     }
                 }

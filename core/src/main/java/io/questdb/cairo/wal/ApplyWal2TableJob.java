@@ -93,7 +93,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return 0;
                 }
 
-                try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, tableToken, WAL_2_TABLE_WRITE_REASON)) {
+                try (TableWriter writer = engine.getWriterByTableToken(AllowAllCairoSecurityContext.INSTANCE, tableToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableId;
                     applyOutstandingWalTransactions(tableToken, writer, engine, sqlToOperation, tempPath);
                     lastAppliedSeqTxn = writer.getSeqTxn();
@@ -221,13 +221,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private static void tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
-        if (engine.lockReadersBySystemName(tableToken)) {
+        if (engine.lockReadersByTableToken(tableToken)) {
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
                 if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getPrivateTableName()) == TABLE_EXISTS) {
                     try {
-                        writer = writerToClose = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, tableToken, WAL_2_TABLE_WRITE_REASON);
+                        writer = writerToClose = engine.getWriterByTableToken(AllowAllCairoSecurityContext.INSTANCE, tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (CairoException ex) {
                         // Ignore it, table can be half deleted.
                     }
@@ -243,7 +243,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writerToClose != null) {
                     writerToClose.close();
                 }
-                engine.releaseReadersBySystemName(tableToken);
+                engine.releaseReadersByTableToken(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getPrivateTableName())

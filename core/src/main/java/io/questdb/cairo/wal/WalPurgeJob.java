@@ -200,7 +200,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (engine.isTableDropped(tableName)) {
                 // Delete sequencer files
                 deleteTableSequencerFiles(tableName);
-                engine.removeTableSystemName(tableName);
+                engine.removeTableToken(tableName);
             }
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableName)

@@ -115,22 +115,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
     }
 
-    private CharSequence addTag(LineData line, int tagIndex) {
-        final CharSequence tagName = generateTagName(tagIndex, false);
-        final CharSequence tagValue = generateTagValue(tagIndex);
-        line.addTag(tagName, tagValue);
-        return tagName;
-    }
-
-    private void addNewColumn(LineData line) {
-        if (shouldFuzz(newColumnFactor)) {
-            final int extraColIndex = random.nextInt(colNameBases.length);
-            final CharSequence colNameNew = generateColumnName(extraColIndex, true);
-            final CharSequence colValueNew = generateColumnValue(extraColIndex);
-            line.addColumn(colNameNew, colValueNew);
-        }
-    }
-
     private CharSequence addColumn(LineData line, int colIndex) {
         final CharSequence colName = generateColumnName(colIndex, false);
         final CharSequence colValue = generateColumnValue(colIndex);
@@ -152,25 +136,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }
     }
 
-    private int[] skipColumns(int[] originalColumnIndexes) {
-        if (shouldFuzz(columnSkipFactor)) {
-            // avoid list here and just copy slices of the original array into the new one
-            final List<Integer> indexes = new ArrayList<>();
-            for (int originalColumnIndex : originalColumnIndexes) {
-                indexes.add(originalColumnIndex);
-            }
-            final int numOfSkippedCols = random.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
-            for (int i = 0; i < numOfSkippedCols; i++) {
-                final int skipIndex = random.nextInt(indexes.size());
-                indexes.remove(skipIndex);
-            }
-            final int[] columnIndexes = new int[indexes.size()];
-            for (int i = 0; i < columnIndexes.length; i++) {
-                columnIndexes[i] = indexes.get(i);
-            }
-            return columnIndexes;
+    private void addNewColumn(LineData line) {
+        if (shouldFuzz(newColumnFactor)) {
+            final int extraColIndex = random.nextInt(colNameBases.length);
+            final CharSequence colNameNew = generateColumnName(extraColIndex, true);
+            final CharSequence colValueNew = generateColumnValue(extraColIndex);
+            line.addColumn(colNameNew, colValueNew);
         }
-        return originalColumnIndexes;
     }
 
     private void addNewTag(LineData line) {
@@ -180,6 +152,13 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             final CharSequence tagValueNew = generateTagValue(extraTagIndex);
             line.addTag(tagNameNew, tagValueNew);
         }
+    }
+
+    private CharSequence addTag(LineData line, int tagIndex) {
+        final CharSequence tagName = generateTagName(tagIndex, false);
+        final CharSequence tagValue = generateTagValue(tagIndex);
+        line.addTag(tagName, tagValue);
+        return tagName;
     }
 
     private void assertTable(TableData table) {
@@ -284,6 +263,27 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     private boolean shouldFuzz(int fuzzFactor) {
         return fuzzFactor > 0 && random.nextInt(fuzzFactor) == 0;
+    }
+
+    private int[] skipColumns(int[] originalColumnIndexes) {
+        if (shouldFuzz(columnSkipFactor)) {
+            // avoid list here and just copy slices of the original array into the new one
+            final List<Integer> indexes = new ArrayList<>();
+            for (int originalColumnIndex : originalColumnIndexes) {
+                indexes.add(originalColumnIndex);
+            }
+            final int numOfSkippedCols = random.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
+            for (int i = 0; i < numOfSkippedCols; i++) {
+                final int skipIndex = random.nextInt(indexes.size());
+                indexes.remove(skipIndex);
+            }
+            final int[] columnIndexes = new int[indexes.size()];
+            for (int i = 0; i < columnIndexes.length; i++) {
+                columnIndexes[i] = indexes.get(i);
+            }
+            return columnIndexes;
+        }
+        return originalColumnIndexes;
     }
 
     // return false means data is not in the table yet and should be called again
@@ -397,25 +397,25 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
-            String tableNameBySystemName = engine.getTableNameBySystemName(name);
+            String tableName = engine.getTableNameByTableToken(name);
             if (walEnabled) {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                    handleWriterGetEvent(tableNameBySystemName);
+                    handleWriterGetEvent(tableName);
                 }
                 // There is no locking as such in WAL, so we treat writer return as an unlock event.
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    handleWriterUnlockEvent(tableNameBySystemName);
-                    handleWriterReturnEvent(tableNameBySystemName);
+                    handleWriterUnlockEvent(tableName);
+                    handleWriterReturnEvent(tableName);
                 }
             } else {
                 if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
-                    handleWriterUnlockEvent(tableNameBySystemName);
+                    handleWriterUnlockEvent(tableName);
                 }
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                    handleWriterGetEvent(tableNameBySystemName);
+                    handleWriterGetEvent(tableName);
                 }
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    handleWriterReturnEvent(tableNameBySystemName);
+                    handleWriterReturnEvent(tableName);
                 }
             }
         }, 250);

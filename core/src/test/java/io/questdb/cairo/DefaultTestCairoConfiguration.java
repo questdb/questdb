@@ -33,17 +33,17 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
-        return TestFilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return true;
     }
 
     @Override
-    public boolean mangleTableSystemNames() {
+    public FilesFacade getFilesFacade() {
+        return TestFilesFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public boolean manglePrivateTableNames() {
         return true;
     }
 }

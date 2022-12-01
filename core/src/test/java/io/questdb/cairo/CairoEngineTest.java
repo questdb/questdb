@@ -70,7 +70,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
                     count++;
                 }
             }
@@ -173,7 +173,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
                     if (event == PoolListener.EV_EXPIRE) {
                         count++;
                     }

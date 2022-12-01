@@ -88,7 +88,8 @@ public class TableSequencerAPI implements QuietCloseable {
         Path path = Path.PATH.get();
 
         for (TableToken tableToken : engine.getTableTokens()) {
-            if (tableToken.isWal() || engine.isTableDropped(tableToken)) {
+            if ((engine.isLiveTable(tableToken) && tableToken.isWal())
+                    || engine.isTableDropped(tableToken)) {
                 long lastTxn;
                 int tableId;
 

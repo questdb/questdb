@@ -801,8 +801,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 private final ObjList<TableToken> names = new ObjList<>();
 
                 @Override
-                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
-                    names.add(name);
+                public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
+                    names.add(tableToken);
                     events.add(event);
                 }
             }

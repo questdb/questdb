@@ -582,7 +582,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // One engine hook for all writers
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    tableIndex.get(engine.getTableNameBySystemName(name)).countDown();
+                    tableIndex.get(engine.getTableNameByTableToken(name)).countDown();
                 }
             });
 
@@ -1463,9 +1463,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final Rnd rand = new Rnd();
             final StringBuilder[] expectedSbs = new StringBuilder[tables.size()];
 
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (tables.contains(engine.getTableNameBySystemName(name))) {
+                    if (tables.contains(engine.getTableNameByTableToken(tableToken))) {
                         tablesCreated.countDown();
                     }
                 }

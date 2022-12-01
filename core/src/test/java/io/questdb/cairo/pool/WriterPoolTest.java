@@ -219,7 +219,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
                     this.ev = event;
                 }
             }
@@ -830,7 +830,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
                     this.ev = event;
                 }
             }
@@ -861,7 +861,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, TableToken name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
                     this.ev = event;
                 }
             }
