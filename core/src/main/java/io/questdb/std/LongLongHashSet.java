@@ -28,7 +28,7 @@ import java.util.Arrays;
 
 /**
  * HashSet specialized in storing long tuples.
- *
+ * <p>
  * TODO: Make semantics of load_factor / capacity consistent with other QDB collections.
  * Currently it differs. I could not understand the semantic of the other collections until I implemented this one.
  * Then it clicked :)
@@ -58,7 +58,7 @@ public final class LongLongHashSet implements Mutable {
 
     public boolean add(long key1, long key2) {
         if (key1 == noEntryKeyValue && key2 == noEntryKeyValue) {
-            throw new IllegalArgumentException("keys cannot be NO_ENTRY_KEY");
+            throw new IllegalArgumentException("keys cannot be NO_ENTRY_KEY (" + noEntryKeyValue + ")");
         }
         int index = keyIndex(key1, key2);
         if (index < 0) {

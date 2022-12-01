@@ -24,13 +24,13 @@
 
 package io.questdb.std;
 
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.HashSet;
 import java.util.Set;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class LongLongHashSetTest {
     private final static Rnd rnd = new Rnd();
@@ -59,6 +59,43 @@ public class LongLongHashSetTest {
             maybeAssertContainsSameKeysAndSize(longSet, jdkSet);
         }
         assertContainsSameKeysAndSize(longSet, jdkSet);
+    }
+
+    @Test
+    public void testInsertingNoEntrySentinel() {
+        LongLongHashSet set = new LongLongHashSet(16, 0.5, 0);
+
+        // when both keys are the no_entry_sentinel, we expect add to fail
+        try {
+            set.add(0, 0);
+            fail("adding NO_ENTRY_VALUE sentinel should fail");
+        } catch (IllegalArgumentException e) {
+            TestUtils.assertContains(e.getMessage(), "NO_ENTRY_KEY");
+        }
+
+        // when only one key is the no_entry_sentinel, we expect add to succeed
+        assertFalse(set.contains(0, 1));
+        assertTrue(set.add(0, 1));
+        assertFalse(set.add(0, 1));
+        assertTrue(set.contains(0, 1));
+        assertFalse(set.contains(1, 0));
+        assertTrue(set.add(1, 0));
+        assertFalse(set.add(1, 0));
+        assertTrue(set.contains(1, 0));
+
+        assertEquals(2, set.size());
+        set.clear();
+        assertEquals(0, set.size());
+
+        // try again, after clearing
+        assertFalse(set.contains(0, 1));
+        assertTrue(set.add(0, 1));
+        assertFalse(set.add(0, 1));
+        assertTrue(set.contains(0, 1));
+        assertFalse(set.contains(1, 0));
+        assertTrue(set.add(1, 0));
+        assertFalse(set.add(1, 0));
+        assertTrue(set.contains(1, 0));
     }
 
     private static void assertContainsSameKeysAndSize(LongLongHashSet longSet, Set<TwoLongs> jdkSet) {
