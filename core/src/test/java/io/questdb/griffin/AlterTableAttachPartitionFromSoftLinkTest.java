@@ -172,19 +172,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             createTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            engine.releaseAllReaders();
-                            engine.releaseAllWriters();
-
-                            path.of(configuration.getRoot()).concat(tableName);
-                            int plen = path.length();
-
-                            path.concat(readOnlyPartitionName).$();
-                            System.out.printf("path read-only: %s%n", path);
-                            Assert.assertFalse(Files.exists(path));
-
-                            path.trimTo(plen).concat("2022-10-18").$();
-                            System.out.printf("path read-write: %s%n", path);
-                            Assert.assertTrue(Files.exists(path));
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5",
+                                    "l\ti\ts\tts\n");
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
