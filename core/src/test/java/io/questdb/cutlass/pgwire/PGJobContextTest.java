@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -151,7 +148,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
     }
 

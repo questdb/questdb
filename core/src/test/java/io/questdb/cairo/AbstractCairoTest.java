@@ -78,19 +78,13 @@ public abstract class AbstractCairoTest {
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
     protected static int binaryEncodingMaxLength = -1;
-    protected static int capacity = -1;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
-    protected static int columnVersionTaskPoolCapacity = -1;
     protected static CairoConfiguration configuration;
-    protected static Boolean copyPartitionOnAttach = null;
     protected static long currentMicros = -1;
     protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    protected static int defaultTableWriteMode = -1;
-    protected static Boolean enableColumnPreTouch = null;
-    protected static Boolean enableParallelFilter = null;
     protected static CairoEngine engine;
     protected static FilesFacade ff;
     protected static String inputRoot = null;
@@ -311,8 +305,29 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setRndFunctionMemoryPageSize(rndFunctionMemoryPageSize);
     }
 
+    protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
+        node1.getConfigurationOverrides().setColumnPreTouchEnabled(columnPreTouchEnabled);
+    }
+
+    protected static void configOverrideParallelFilterEnabled(Boolean parallelFilterEnabled) {
+        node1.getConfigurationOverrides().setParallelFilterEnabled(parallelFilterEnabled);
+    }
+
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
+    }
+
+    protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
+        node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
+    }
+
+    protected static void configOverrideCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
+        node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
+        node1.getConfigurationOverrides().setColumnVersionTaskPoolCapacity(columnVersionTaskPoolCapacity);
     }
 
     protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {

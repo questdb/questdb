@@ -432,7 +432,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPreTouchDisabled() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
-            enableColumnPreTouch = false;
+            configOverrideColumnPreTouchEnabled(false);
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
@@ -615,8 +615,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         });
     }
 
-    private void testNoLimit(boolean enableParallelFilter, int jitMode, Class<?> expectedFactoryClass) throws Exception {
-        AbstractCairoTest.enableParallelFilter = enableParallelFilter;
+    private void testNoLimit(boolean parallelFilterEnabled, int jitMode, Class<?> expectedFactoryClass) throws Exception {
+        configOverrideParallelFilterEnabled(parallelFilterEnabled);
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);

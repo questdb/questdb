@@ -296,12 +296,12 @@ public class CairoTestConfiguration extends DefaultCairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
-        return overrides.getEnableParallelFilter() != null ? overrides.getEnableParallelFilter() : super.isSqlParallelFilterEnabled();
+        return overrides.isParallelFilterEnabled() != null ? overrides.isParallelFilterEnabled() : super.isSqlParallelFilterEnabled();
     }
 
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
-        return overrides.getEnableColumnPreTouch() != null ? overrides.getEnableColumnPreTouch() : super.isSqlParallelFilterPreTouchEnabled();
+        return overrides.isColumnPreTouchEnabled() != null ? overrides.isColumnPreTouchEnabled() : super.isSqlParallelFilterPreTouchEnabled();
     }
 
     @Override

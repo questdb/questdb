@@ -196,7 +196,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
-            enableColumnPreTouch = true;
+            configOverrideColumnPreTouchEnabled(true);
 
             compiler.compile("create table t1 as (select " +
                     " x," +
@@ -568,7 +568,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     private void testFilterWithColTops(String query, String expected, int jitMode, boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
-            enableColumnPreTouch = preTouch;
+            configOverrideColumnPreTouchEnabled(preTouch);
 
             compiler.compile("create table t1 as (select " +
                     " x," +
@@ -617,7 +617,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
     private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
-            enableColumnPreTouch = preTouch;
+            configOverrideColumnPreTouchEnabled(preTouch);
 
             final String query = "select * from x where b = true and kk < 10";
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +

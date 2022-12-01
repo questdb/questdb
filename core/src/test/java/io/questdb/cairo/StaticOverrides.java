@@ -52,11 +52,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getCapacity() {
-        return AbstractCairoTest.capacity;
-    }
-
-    @Override
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return AbstractCairoTest.circuitBreakerConfiguration;
     }
@@ -72,16 +67,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public int getColumnVersionTaskPoolCapacity() {
-        return AbstractCairoTest.columnVersionTaskPoolCapacity;
-    }
-
-    @Override
-    public Boolean getCopyPartitionOnAttach() {
-        return AbstractCairoTest.copyPartitionOnAttach;
-    }
-
-    @Override
     public long getCurrentMicros() {
         return AbstractCairoTest.currentMicros;
     }
@@ -89,21 +74,6 @@ class StaticOverrides extends Overrides {
     @Override
     public long getDataAppendPageSize() {
         return AbstractCairoTest.dataAppendPageSize;
-    }
-
-    @Override
-    public int getDefaultTableWriteMode() {
-        return AbstractCairoTest.defaultTableWriteMode;
-    }
-
-    @Override
-    public Boolean getEnableColumnPreTouch() {
-        return AbstractCairoTest.enableColumnPreTouch;
-    }
-
-    @Override
-    public Boolean getEnableParallelFilter() {
-        return AbstractCairoTest.enableParallelFilter;
     }
 
     @Override
@@ -209,17 +179,12 @@ class StaticOverrides extends Overrides {
         AbstractCairoTest.walTxnNotificationQueueCapacity = -1;
         AbstractCairoTest.snapshotInstanceId = null;
         AbstractCairoTest.snapshotRecoveryEnabled = null;
-        AbstractCairoTest.enableParallelFilter = null;
-        AbstractCairoTest.enableColumnPreTouch = null;
         AbstractCairoTest.writerCommandQueueCapacity = 4;
         AbstractCairoTest.queryCacheEventQueueCapacity = -1;
         AbstractCairoTest.pageFrameReduceShardCount = -1;
         AbstractCairoTest.pageFrameReduceQueueCapacity = -1;
         AbstractCairoTest.columnVersionPurgeQueueCapacity = -1;
-        AbstractCairoTest.columnVersionTaskPoolCapacity = -1;
         AbstractCairoTest.sqlCopyBufferSize = 1024 * 1024;
-        AbstractCairoTest.defaultTableWriteMode = -1;
-        AbstractCairoTest.copyPartitionOnAttach = null;
         AbstractCairoTest.attachableDirSuffix = null;
         AbstractCairoTest.ff = null;
         AbstractCairoTest.dataAppendPageSize = -1;
@@ -246,11 +211,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setCapacity(int capacity) {
-        AbstractCairoTest.capacity = capacity;
-    }
-
-    @Override
     public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
         AbstractCairoTest.circuitBreakerConfiguration = circuitBreakerConfiguration;
     }
@@ -266,16 +226,6 @@ class StaticOverrides extends Overrides {
     }
 
     @Override
-    public void setColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
-        AbstractCairoTest.columnVersionTaskPoolCapacity = columnVersionTaskPoolCapacity;
-    }
-
-    @Override
-    public void setCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
-        AbstractCairoTest.copyPartitionOnAttach = copyPartitionOnAttach;
-    }
-
-    @Override
     public void setCurrentMicros(long currentMicros) {
         AbstractCairoTest.currentMicros = currentMicros;
     }
@@ -283,21 +233,6 @@ class StaticOverrides extends Overrides {
     @Override
     public void setDataAppendPageSize(long dataAppendPageSize) {
         AbstractCairoTest.dataAppendPageSize = dataAppendPageSize;
-    }
-
-    @Override
-    public void setDefaultTableWriteMode(int defaultTableWriteMode) {
-        AbstractCairoTest.defaultTableWriteMode = defaultTableWriteMode;
-    }
-
-    @Override
-    public void setEnableColumnPreTouch(Boolean enableColumnPreTouch) {
-        AbstractCairoTest.enableColumnPreTouch = enableColumnPreTouch;
-    }
-
-    @Override
-    public void setEnableParallelFilter(Boolean enableParallelFilter) {
-        AbstractCairoTest.enableParallelFilter = enableParallelFilter;
     }
 
     @Override

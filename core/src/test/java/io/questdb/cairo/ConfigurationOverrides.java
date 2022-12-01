@@ -30,7 +30,6 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-@SuppressWarnings("unused")
 public interface ConfigurationOverrides {
     String getAttachableDirSuffix();
 
@@ -60,9 +59,9 @@ public interface ConfigurationOverrides {
 
     int getDefaultTableWriteMode();
 
-    Boolean getEnableColumnPreTouch();
+    Boolean isColumnPreTouchEnabled();
 
-    Boolean getEnableParallelFilter();
+    Boolean isParallelFilterEnabled();
 
     FilesFacade getFilesFacade();
 
@@ -158,9 +157,9 @@ public interface ConfigurationOverrides {
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
-    void setEnableColumnPreTouch(Boolean enableColumnPreTouch);
+    void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled);
 
-    void setEnableParallelFilter(Boolean enableParallelFilter);
+    void setParallelFilterEnabled(Boolean parallelFilterEnabled);
 
     void setFilesFacade(FilesFacade ff);
 

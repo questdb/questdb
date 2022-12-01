@@ -47,9 +47,9 @@ public class Overrides implements ConfigurationOverrides {
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
-    private int defaultTableWriteMode = -1;
-    private Boolean enableColumnPreTouch = null;
-    private Boolean enableParallelFilter = null;
+    private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
+    private Boolean columnPreTouchEnabled = null;
+    private Boolean parallelFilterEnabled = null;
     private FilesFacade ff;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
@@ -153,13 +153,13 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public Boolean getEnableColumnPreTouch() {
-        return enableColumnPreTouch;
+    public Boolean isColumnPreTouchEnabled() {
+        return columnPreTouchEnabled;
     }
 
     @Override
-    public Boolean getEnableParallelFilter() {
-        return enableParallelFilter;
+    public Boolean isParallelFilterEnabled() {
+        return parallelFilterEnabled;
     }
 
     @Override
@@ -340,8 +340,8 @@ public class Overrides implements ConfigurationOverrides {
         spinLockTimeout = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
-        enableParallelFilter = null;
-        enableColumnPreTouch = null;
+        parallelFilterEnabled = null;
+        columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;
         pageFrameReduceShardCount = -1;
@@ -354,7 +354,7 @@ public class Overrides implements ConfigurationOverrides {
         sqlJoinMetadataMaxResizes = -1;
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
-        defaultTableWriteMode = -1;
+        defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
         copyPartitionOnAttach = null;
         attachableDirSuffix = null;
         ff = null;
@@ -434,13 +434,13 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setEnableColumnPreTouch(Boolean enableColumnPreTouch) {
-        this.enableColumnPreTouch = enableColumnPreTouch;
+    public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
+        this.columnPreTouchEnabled = columnPreTouchEnabled;
     }
 
     @Override
-    public void setEnableParallelFilter(Boolean enableParallelFilter) {
-        this.enableParallelFilter = enableParallelFilter;
+    public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
+        this.parallelFilterEnabled = parallelFilterEnabled;
     }
 
     @Override

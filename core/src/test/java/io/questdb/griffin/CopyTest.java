@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
@@ -77,14 +78,8 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
-    }
-
-    @After
-    public void tearDown() {
-        super.tearDown();
-        defaultTableWriteMode = -1;
     }
 
     @Test
