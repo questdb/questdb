@@ -24,13 +24,15 @@
 
 package io.questdb.network;
 
-import io.questdb.std.*;
+import io.questdb.std.LongIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
     private final FDSet readFdSet;
     private final SelectFacade sf;
-    private final IntObjHashMap<SuspendEvent> suspendEvents;
     private final FDSet writeFdSet;
     private boolean listenerRegistered;
 
@@ -39,7 +41,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
-        this.suspendEvents = new IntObjHashMap<>();
         this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
@@ -80,8 +81,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     private void queryFdSets(long timestamp) {
         // collect reads into hash map
         for (int i = 0, n = readFdSet.getCount(); i < n; i++) {
-            long fd = readFdSet.get(i);
-
+            final long fd = readFdSet.get(i);
             if (fd == serverFd) {
                 accept(timestamp);
             } else {
@@ -137,7 +137,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         }
 
         // process returned fds
-        useful = processRegistrations(timestamp) | useful;
+        useful |= processRegistrations(timestamp);
 
         // re-arm select() fds
         int readFdCount = 0;
@@ -146,9 +146,22 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
         for (int i = 0, n = pending.size(); i < n; ) {
+            final C context = pending.get(i);
+
+            // check if the context is waiting for a suspend event
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                if (suspendEvent.checkTriggered()) {
+                    // the event was triggered, clear it and proceed
+                    context.clearSuspendEvent();
+                } else {
+                    // the event is still pending, skip to the next operation
+                    continue;
+                }
+            }
+
             final long ts = pending.get(i, M_TIMESTAMP);
             final int fd = (int) pending.get(i, M_FD);
-            suspendEvents.get(fd);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 
@@ -173,16 +186,15 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 // this fd just has fired
                 // publish event
                 // and remove from pending
-                final C context = pending.get(i);
                 useful |= !context.isLowPriority();
 
                 if ((newOp & SelectAccessor.FD_READ) > 0) {
                     publishOperation(IOOperation.READ, context);
                 }
-
                 if ((newOp & SelectAccessor.FD_WRITE) > 0) {
                     publishOperation(IOOperation.WRITE, context);
                 }
+
                 pending.deleteRow(i);
                 n--;
             }
