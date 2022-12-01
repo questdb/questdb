@@ -97,8 +97,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         try {
             this.metadata = openMetaFile();
-            this.columnCount = this.metadata.getColumnCount();
-            this.columnCountShl = getColumnBits(columnCount);
             this.partitionBy = this.metadata.getPartitionBy();
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -109,6 +107,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
+            this.columnCount = this.metadata.getColumnCount();
+            this.columnCountShl = getColumnBits(columnCount);
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
