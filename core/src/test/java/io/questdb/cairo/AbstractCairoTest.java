@@ -261,8 +261,26 @@ public abstract class AbstractCairoTest {
         });
     }
 
+    protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
+        node1.getConfigurationOverrides().setColumnPreTouchEnabled(columnPreTouchEnabled);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
+        node1.getConfigurationOverrides().setColumnVersionTaskPoolCapacity(columnVersionTaskPoolCapacity);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
+        node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
+    }
+
     protected static void configOverrideDefaultMapType(CharSequence defaultMapType) {
         node1.getConfigurationOverrides().setDefaultMapType(defaultMapType);
+    }
+
+    protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
+        node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -292,6 +310,10 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
     }
 
+    protected static void configOverrideParallelFilterEnabled(Boolean parallelFilterEnabled) {
+        node1.getConfigurationOverrides().setParallelFilterEnabled(parallelFilterEnabled);
+    }
+
     protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
         node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
     }
@@ -305,29 +327,8 @@ public abstract class AbstractCairoTest {
         node1.getConfigurationOverrides().setRndFunctionMemoryPageSize(rndFunctionMemoryPageSize);
     }
 
-    protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
-        node1.getConfigurationOverrides().setColumnPreTouchEnabled(columnPreTouchEnabled);
-    }
-
-    protected static void configOverrideParallelFilterEnabled(Boolean parallelFilterEnabled) {
-        node1.getConfigurationOverrides().setParallelFilterEnabled(parallelFilterEnabled);
-    }
-
     protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
         node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
-    }
-
-    protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
-        node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
-    }
-
-    protected static void configOverrideCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
-        node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    protected static void configOverrideColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
-        node1.getConfigurationOverrides().setColumnVersionTaskPoolCapacity(columnVersionTaskPoolCapacity);
     }
 
     protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;

@@ -315,8 +315,8 @@ public class WalEventCursor {
     public class SqlInfo {
         private final StringSink sql = new StringSink();
         private int cmdType;
-        private long nowNanos;
         private long nowMicros;
+        private long nowNanos;
 
         public int getCmdType() {
             return cmdType;

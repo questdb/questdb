@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 public final class SqlWalMode {
-    public static final int WAL_NOT_SET = -1;
     public static final int WAL_DISABLED = 0;
     public static final int WAL_ENABLED = 1;
+    public static final int WAL_NOT_SET = -1;
 }

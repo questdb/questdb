@@ -30,6 +30,7 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
+@SuppressWarnings("unused")
 public interface ConfigurationOverrides {
     String getAttachableDirSuffix();
 
@@ -59,17 +60,11 @@ public interface ConfigurationOverrides {
 
     int getDefaultTableWriteMode();
 
-    Boolean isColumnPreTouchEnabled();
-
-    Boolean isParallelFilterEnabled();
-
     FilesFacade getFilesFacade();
 
     String getInputRoot();
 
     String getInputWorkRoot();
-
-    boolean isO3QuickSortEnabled();
 
     int getJitMode();
 
@@ -123,9 +118,15 @@ public interface ConfigurationOverrides {
 
     long getWriterCommandQueueSlotSize();
 
+    Boolean isColumnPreTouchEnabled();
+
     boolean isHidingTelemetryTable();
 
     Boolean isIoURingEnabled();
+
+    boolean isO3QuickSortEnabled();
+
+    Boolean isParallelFilterEnabled();
 
     void reset();
 
@@ -140,6 +141,8 @@ public interface ConfigurationOverrides {
     void setCapacity(int capacity);
 
     void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration);
+
+    void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled);
 
     void setColumnPurgeRetryDelay(long columnPurgeRetryDelay);
 
@@ -157,10 +160,6 @@ public interface ConfigurationOverrides {
 
     void setDefaultTableWriteMode(int defaultTableWriteMode);
 
-    void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled);
-
-    void setParallelFilterEnabled(Boolean parallelFilterEnabled);
-
     void setFilesFacade(FilesFacade ff);
 
     void setHideTelemetryTable(boolean hideTelemetryTable);
@@ -171,19 +170,21 @@ public interface ConfigurationOverrides {
 
     void setIoURingEnabled(Boolean ioURingEnabled);
 
-    void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
-
     void setJitMode(int jitMode);
 
     void setMaxUncommittedRows(int configOverrideMaxUncommittedRows);
 
     void setO3MaxLag(long configOverrideO3MaxLag);
 
+    void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
+
     void setPageFrameMaxRows(int pageFrameMaxRows);
 
     void setPageFrameReduceQueueCapacity(int pageFrameReduceQueueCapacity);
 
     void setPageFrameReduceShardCount(int pageFrameReduceShardCount);
+
+    void setParallelFilterEnabled(Boolean parallelFilterEnabled);
 
     void setParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays);
 

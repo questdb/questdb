@@ -38,6 +38,7 @@ public class Overrides implements ConfigurationOverrides {
     private int binaryEncodingMaxLength = -1;
     private int capacity = -1;
     private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
+    private Boolean columnPreTouchEnabled = null;
     private long columnPurgeRetryDelay = -1;
     private int columnVersionPurgeQueueCapacity = -1;
     private int columnVersionTaskPoolCapacity = -1;
@@ -48,20 +49,19 @@ public class Overrides implements ConfigurationOverrides {
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
-    private Boolean columnPreTouchEnabled = null;
-    private Boolean parallelFilterEnabled = null;
     private FilesFacade ff;
     private boolean hideTelemetryTable = false;
     private String inputRoot = null;
     private String inputWorkRoot = null;
     private Boolean ioURingEnabled = null;
-    private boolean o3QuickSortEnabled = false;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private int maxUncommittedRows = -1;
     private long o3MaxLag = -1;
+    private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
     private int pageFrameReduceShardCount = -1;
+    private Boolean parallelFilterEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
     private int queryCacheEventQueueCapacity = -1;
     private int recreateDistressedSequencerAttempts = 3;
@@ -153,16 +153,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public Boolean isColumnPreTouchEnabled() {
-        return columnPreTouchEnabled;
-    }
-
-    @Override
-    public Boolean isParallelFilterEnabled() {
-        return parallelFilterEnabled;
-    }
-
-    @Override
     public FilesFacade getFilesFacade() {
         return ff;
     }
@@ -175,11 +165,6 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public String getInputWorkRoot() {
         return inputWorkRoot;
-    }
-
-    @Override
-    public boolean isO3QuickSortEnabled() {
-        return o3QuickSortEnabled;
     }
 
     @Override
@@ -313,6 +298,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public Boolean isColumnPreTouchEnabled() {
+        return columnPreTouchEnabled;
+    }
+
+    @Override
     public boolean isHidingTelemetryTable() {
         return hideTelemetryTable;
     }
@@ -320,6 +310,16 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public Boolean isIoURingEnabled() {
         return ioURingEnabled;
+    }
+
+    @Override
+    public boolean isO3QuickSortEnabled() {
+        return o3QuickSortEnabled;
+    }
+
+    @Override
+    public Boolean isParallelFilterEnabled() {
+        return parallelFilterEnabled;
     }
 
     @Override
@@ -394,6 +394,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
+        this.columnPreTouchEnabled = columnPreTouchEnabled;
+    }
+
+    @Override
     public void setColumnPurgeRetryDelay(long columnPurgeRetryDelay) {
         this.columnPurgeRetryDelay = columnPurgeRetryDelay;
     }
@@ -434,16 +439,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
-        this.columnPreTouchEnabled = columnPreTouchEnabled;
-    }
-
-    @Override
-    public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
-        this.parallelFilterEnabled = parallelFilterEnabled;
-    }
-
-    @Override
     public void setFilesFacade(FilesFacade ff) {
         this.ff = ff;
     }
@@ -469,11 +464,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
-        this.o3QuickSortEnabled = o3QuickSortEnabled;
-    }
-
-    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
     }
@@ -489,6 +479,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setO3QuickSortEnabled(boolean o3QuickSortEnabled) {
+        this.o3QuickSortEnabled = o3QuickSortEnabled;
+    }
+
+    @Override
     public void setPageFrameMaxRows(int pageFrameMaxRows) {
         this.pageFrameMaxRows = pageFrameMaxRows;
     }
@@ -501,6 +496,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setPageFrameReduceShardCount(int pageFrameReduceShardCount) {
         this.pageFrameReduceShardCount = pageFrameReduceShardCount;
+    }
+
+    @Override
+    public void setParallelFilterEnabled(Boolean parallelFilterEnabled) {
+        this.parallelFilterEnabled = parallelFilterEnabled;
     }
 
     @Override

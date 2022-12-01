@@ -40,17 +40,17 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
         int workerCount = 4;
         int failInstance = 3;
         configOverrideRostiAllocFacade(
-            new RostiAllocFacadeImpl() {
-                int count = 0;
+                new RostiAllocFacadeImpl() {
+                    int count = 0;
 
-                @Override
-                public long alloc(ColumnTypes types, long capacity) {
-                    if (++count == failInstance) {
-                        return 0;
+                    @Override
+                    public long alloc(ColumnTypes types, long capacity) {
+                        if (++count == failInstance) {
+                            return 0;
+                        }
+                        return super.alloc(types, capacity);
                     }
-                    return super.alloc(types, capacity);
                 }
-            }
         );
 
         // override worker count to allocate multiple Rosti instances

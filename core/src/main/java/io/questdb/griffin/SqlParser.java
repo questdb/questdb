@@ -34,8 +34,8 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.cairo.SqlWalMode.*;
+import static io.questdb.griffin.SqlKeywords.*;
 
 public final class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;

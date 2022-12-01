@@ -1273,13 +1273,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     @Test
     public void testRostiReallocation() throws Exception {
         configOverrideRostiAllocFacade(
-            new RostiAllocFacadeImpl() {
-                @Override
-                public long alloc(ColumnTypes types, long ignore) {
-                    // force resize
-                    return super.alloc(types, 64);
+                new RostiAllocFacadeImpl() {
+                    @Override
+                    public long alloc(ColumnTypes types, long ignore) {
+                        // force resize
+                        return super.alloc(types, 64);
+                    }
                 }
-            }
         );
 
         assertMemoryLeak(() -> {
