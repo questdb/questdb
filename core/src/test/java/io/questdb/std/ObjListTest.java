@@ -38,11 +38,28 @@ public class ObjListTest {
         Assert.assertNotEquals(list("a"), list());
     }
 
+    @Test
+    public void testRemoveFromTo() {
+        Assert.assertEquals(list("a"), remove(list("a", "b", "c"), 1, 2));
+        Assert.assertEquals(list("a", "c"), remove(list("a", "b", "c"), 1, 1));
+        Assert.assertEquals(list("b", "c"), remove(list("a", "b", "c"), 0, 0));
+        Assert.assertEquals(list("c"), remove(list("a", "b", "c"), 0, 1));
+        Assert.assertEquals(list(), remove(list("a", "b", "c"), 0, 2));
+
+        Assert.assertEquals(list(), remove(list("a", "b", "c"), 0, 20));
+        Assert.assertEquals(list(), remove(list("a", "b", "c"), 4, 10));
+    }
+
     private ObjList<String> list(String... values) {
         ObjList<String> result = new ObjList<>();
         for (String value : values) {
             result.add(value);
         }
         return result;
+    }
+
+    private ObjList remove(ObjList o, int from, int to) {
+        o.remove(from, to);
+        return o;
     }
 }
