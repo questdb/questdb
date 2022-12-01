@@ -172,11 +172,19 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             createTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            engine.releaseAllReaders();
+                            engine.releaseAllWriters();
+
                             path.of(configuration.getRoot()).concat(tableName);
                             int plen = path.length();
-                            // in windows if this was a real soft link to a folder, the link would be deleted
-                            Assert.assertFalse(Files.exists(path.concat(readOnlyPartitionName).$()));
-                            Assert.assertTrue(Files.exists(path.trimTo(plen).concat("2022-10-18").$()));
+
+                            path.concat(readOnlyPartitionName).$();
+                            System.out.printf("path read-only: %s%n", path);
+                            Assert.assertFalse(Files.exists(path));
+
+                            path.trimTo(plen).concat("2022-10-18").$();
+                            System.out.printf("path read-write: %s%n", path);
+                            Assert.assertTrue(Files.exists(path));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
