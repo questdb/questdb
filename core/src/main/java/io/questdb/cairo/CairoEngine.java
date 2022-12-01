@@ -187,8 +187,6 @@ public class CairoEngine implements Closeable, WriterSource {
             throw EntryUnavailableException.instance("table exists");
         }
 
-
-        String tableNameStr = null;
         try {
             String lockedReason = lock(securityContext, tableToken, "createTable");
             if (null == lockedReason) {
@@ -198,7 +196,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (status == TableUtils.TABLE_RESERVED) {
                         throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
                     }
-                    tableNameStr = Chars.toString(tableName);
                     createTableUnsafe(
                             securityContext,
                             mem,
@@ -223,8 +220,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         } catch (Throwable th) {
-            if (struct.isWalEnabled() && tableNameStr != null) {
-                tableSequencerAPI.dropTable(tableNameStr, tableToken, true);
+            if (struct.isWalEnabled()) {
+                // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
+                tableSequencerAPI.dropTable(tableToken.getLoggingName(), tableToken, true);
             }
             throw th;
         } finally {
