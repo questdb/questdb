@@ -80,7 +80,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long msb = arg.getUuidHi(record);
         long lsb = arg.getUuidLo(record);
         if (!UuidUtil.isNull(msb, lsb)) {
-            final int index = set.keyIndex(msb, lsb);
+            final int index = set.keySlot(msb, lsb);
             if (index < 0) {
                 return;
             }

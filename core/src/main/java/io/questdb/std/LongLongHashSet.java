@@ -27,118 +27,178 @@ package io.questdb.std;
 import java.util.Arrays;
 
 /**
- * HashSet specialized in storing long tuples.
+ * Open addressing linear probing hash set specialized in storing long tuples.
+ *
  * <p>
- * TODO: Make semantics of load_factor / capacity consistent with other QDB collections.
- * Currently it differs. I could not understand the semantic of the other collections until I implemented this one.
- * Then it clicked :)
+ * Currently, it implements only limited amount of methods. Feel free to add more as you need them.
+ * <p>
+ * <b>Note:</b>
+ * Semantic of <code>capacity</code> differs from collections in the JDK. It says how many elements you
+ * can store in the set without triggering rehashing. This is consistent with other collections
+ * in the QuestDB project.
+ * <p>
+ * <b>Implementation notes:</b>
+ * The whole set is backed by a single long array. It uses a concept of slots: Each slot owns a tuple of two longs
+ * stored along each other for spatial locality.  Hence, when you want to get an index into a backing array you need to
+ * multiply slot by two to get the index of the first long and add one to get the index of the second long.
+ * <p>
+ * This class is not thread safe.
  */
 public final class LongLongHashSet implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
     private final long noEntryKeyValue;
     private int capacity;
-    private long[] keys;
     private int mask;
     private int size;
-    private int threshold;
+    private long[] values;
 
-    public LongLongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
+    /**
+     * Creates a new set with a given capacity, load factor and no entry sentinel value.
+     * <p>
+     * No entry sentinel value is used to indicate that a slot is empty. It means that you cannot store a tuple
+     * where both longs are equal to no entry sentinel value.
+     *
+     * @param initialCapacity initial capacity of the set.
+     * @param loadFactor      load factor of the set.
+     * @param noEntryValue    no entry sentinel value.
+     */
+    public LongLongHashSet(int initialCapacity, double loadFactor, long noEntryValue) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < load factor < 1");
         }
-        this.noEntryKeyValue = noKeyValue;
+        this.noEntryKeyValue = noEntryValue;
         this.loadFactor = loadFactor;
-        this.capacity = Numbers.ceilPow2(Math.max(initialCapacity, MIN_INITIAL_CAPACITY));
-        this.threshold = (int) (capacity * loadFactor);
-        this.keys = new long[capacity * 2];
-        this.mask = capacity - 1;
-        Arrays.fill(keys, noEntryKeyValue);
+        this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
+        int slots = Numbers.ceilPow2((int) (this.capacity / loadFactor));
+        this.values = new long[2 * slots];
+        this.mask = slots - 1;
+        Arrays.fill(values, noEntryKeyValue);
     }
 
+    /**
+     * Adds a tuple to the set.
+     *
+     * @param key1 first long of the tuple
+     * @param key2 second long of the tuple
+     * @return true if the tuple was added, false if it was already in the set
+     */
     public boolean add(long key1, long key2) {
         if (key1 == noEntryKeyValue && key2 == noEntryKeyValue) {
             throw new IllegalArgumentException("keys cannot be NO_ENTRY_KEY (" + noEntryKeyValue + ")");
         }
-        int index = keyIndex(key1, key2);
-        if (index < 0) {
+        int slot = keySlot(key1, key2);
+        if (slot < 0) {
             return false;
         }
 
-        addAt(index, key1, key2);
-        if (size == threshold) {
+        addAt(slot, key1, key2);
+        if (size == capacity) {
             rehash();
         }
         return true;
     }
 
-    public void addAt(int index, long key1, long key2) {
-        setAt(index, key1, key2);
+    /**
+     * Store key1 and key2 at slot. This method does not check if slot is occupied.
+     *
+     * @param slot slot to store key1 and key2 at
+     * @param key1 first key
+     * @param key2 second key
+     */
+    public void addAt(int slot, long key1, long key2) {
+        set(slot, key1, key2);
         size++;
     }
 
+    /**
+     * Clears the set.
+     */
     @Override
     public void clear() {
-        Arrays.fill(keys, noEntryKeyValue);
+        Arrays.fill(values, noEntryKeyValue);
         size = 0;
     }
 
+    /**
+     * Check if the set contains a tuple with the given keys.
+     *
+     * @return true if the set contains the tuple, false otherwise
+     */
     public boolean contains(long key1, long key2) {
-        return keyIndex(key1, key2) < 0;
+        return keySlot(key1, key2) < 0;
     }
 
-    public int keyIndex(long key1, long key2) {
+    /**
+     * Get a slot where a give tuple would be stored.
+     * <p>
+     * If the tuple is already in the set, the slot is negative and the value is the index of the tuple.
+     * If the tuple is not in the set, the slot is positive and the value is the index of the first empty slot.
+     *
+     * @param key1 first key
+     * @param key2 second key
+     * @return slot index
+     */
+    public int keySlot(long key1, long key2) {
         int hash = Hash.hash(key1, key2);
-        int index = (hash & mask);
-        return probe(key1, key2, index);
+        int slot = (hash & mask);
+        return probe(key1, key2, slot);
     }
 
+    /**
+     * Returns the number of elements in the set.
+     *
+     * @return number of elements in the set
+     */
     public int size() {
         return size;
     }
 
-    private static long getFirstValueAt(long[] slots, int index) {
-        return slots[index * 2];
+    private static long firstValue(long[] val, int slot) {
+        return val[slot * 2];
     }
 
-    private long getSecondValueAt(long[] slots, int index) {
-        return slots[index * 2 + 1];
+    private static long secondValue(long[] val, int slot) {
+        return val[slot * 2 + 1];
     }
 
-    private int probe(long key1, long key2, int index) {
+    private int probe(long key1, long key2, int slot) {
         do {
-            if (getFirstValueAt(keys, index) == noEntryKeyValue && getSecondValueAt(keys, index) == noEntryKeyValue) {
-                return index;
+            if (firstValue(values, slot) == noEntryKeyValue && secondValue(values, slot) == noEntryKeyValue) {
+                return slot;
             }
-            if (getFirstValueAt(keys, index) == key1 && getSecondValueAt(keys, index) == key2) {
-                return -index - 1;
+            if (firstValue(values, slot) == key1 && secondValue(values, slot) == key2) {
+                return -slot - 1;
             }
-            index = (index + 1) & mask;
+            slot = (slot + 1) & mask;
         } while (true);
     }
 
     private void rehash() {
         int newCapacity = capacity * 2;
-        threshold = (int) (newCapacity * loadFactor);
-        int slots = newCapacity * 2;
-        long[] newKeys = new long[slots];
-        Arrays.fill(newKeys, noEntryKeyValue);
-        mask = newCapacity - 1;
-        long[] oldKeys = keys;
-        keys = newKeys;
-        for (int i = 0; i < capacity; i++) {
-            long key1 = getFirstValueAt(oldKeys, i);
-            long key2 = getSecondValueAt(oldKeys, i);
+        int slots = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+        if (slots < 0 || slots * 2 < 0) {
+            throw new IllegalStateException("cannot rehash, required capacity is too large. [current-capacity=" + capacity + ", load-factor=" + loadFactor + "]");
+        }
+        long[] newValues = new long[2 * slots];
+        Arrays.fill(newValues, noEntryKeyValue);
+        mask = slots - 1;
+        long[] oldKeys = this.values;
+        this.values = newValues;
+        int oldSlots = oldKeys.length / 2;
+        for (int i = 0; i < oldSlots; i++) {
+            long key1 = firstValue(oldKeys, i);
+            long key2 = secondValue(oldKeys, i);
             if (key1 != noEntryKeyValue || key2 != noEntryKeyValue) {
-                int index = keyIndex(key1, key2);
-                setAt(index, key1, key2);
+                int slot = keySlot(key1, key2);
+                set(slot, key1, key2);
             }
         }
         capacity = newCapacity;
     }
 
-    private void setAt(int index, long key1, long key2) {
-        keys[index * 2] = key1;
-        keys[index * 2 + 1] = key2;
+    private void set(int slot, long key1, long key2) {
+        values[slot * 2] = key1;
+        values[slot * 2 + 1] = key2;
     }
 }
