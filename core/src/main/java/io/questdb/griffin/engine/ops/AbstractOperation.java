@@ -53,13 +53,13 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
-    public String getCommandName() {
-        return cmdName;
+    public int getCmdType() {
+        return cmdType;
     }
 
     @Override
-    public int getCmdType() {
-        return cmdType;
+    public String getCommandName() {
+        return cmdName;
     }
 
     @Override

@@ -36,8 +36,6 @@ public interface FilesFacade {
 
     boolean close(long fd);
 
-    long getDiskSize(LPSZ path);
-
     int copy(LPSZ from, LPSZ to);
 
     long copyData(long srcFd, long destFd, long offsetSrc, long length);
@@ -63,6 +61,8 @@ public interface FilesFacade {
     int findType(long findPtr);
 
     int fsync(long fd);
+
+    long getDiskSize(LPSZ path);
 
     long getLastModified(LPSZ path);
 

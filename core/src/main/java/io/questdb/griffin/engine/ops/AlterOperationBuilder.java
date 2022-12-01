@@ -109,11 +109,11 @@ public class AlterOperationBuilder {
     }
 
     public AlterOperationBuilder ofAddIndex(
-        int tableNamePosition,
-        String tableName,
-        int tableId,
-        CharSequence columnName,
-        int indexValueBlockSize
+            int tableNamePosition,
+            String tableName,
+            int tableId,
+            CharSequence columnName,
+            int indexValueBlockSize
     ) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;

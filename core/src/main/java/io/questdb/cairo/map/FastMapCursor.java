@@ -72,7 +72,6 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        assert record instanceof FastMapRecord;
         ((FastMapRecord) record).of(atRowId);
     }
 

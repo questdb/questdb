@@ -47,11 +47,6 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getDiskSize(LPSZ path) {
-        return Files.getDiskSize(path);
-    }
-
-    @Override
     public boolean close(long fd) {
         return Files.close(fd) == 0;
     }
@@ -132,6 +127,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int fsync(long fd) {
         return Files.fsync(fd);
+    }
+
+    @Override
+    public long getDiskSize(LPSZ path) {
+        return Files.getDiskSize(path);
     }
 
     @Override

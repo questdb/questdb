@@ -39,8 +39,8 @@ import java.io.Closeable;
 
 public class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
-    private final SqlExecutionContext sqlExecutionContext;
     private final SqlCompiler sqlCompiler;
+    private final SqlExecutionContext sqlExecutionContext;
 
     public OperationCompiler(
             CairoEngine engine,
@@ -68,10 +68,6 @@ public class OperationCompiler implements Closeable {
     public void close() {
         Misc.free(sqlCompiler);
         Misc.free(sqlExecutionContext);
-    }
-
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
     }
 
     public AlterOperation compileAlterSql(CharSequence alterSql) {
@@ -102,5 +98,9 @@ public class OperationCompiler implements Closeable {
                     .put(e.getFlyweightMessage())
                     .position(e.getPosition());
         }
+    }
+
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 }

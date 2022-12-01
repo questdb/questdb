@@ -45,11 +45,11 @@ public class TableSequencerImpl implements TableSequencer {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
+    private final SequencerMetadataService metadataSvc;
     private final int mkDirMode;
     private final Path path;
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
-    private final SequencerMetadataService metadataSvc;
     private final String tableName;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;

@@ -62,12 +62,11 @@ public class TableUpdateDetails implements Closeable {
     // multiple threads without synchronisation
     private long eventsProcessedSinceReshuffle = 0;
     private long lastMeasurementMillis = Long.MAX_VALUE;
+    private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
     private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
-    // todo: rename
-    private MetadataService writerSPI;
     private int writerThreadId;
 
     TableUpdateDetails(
@@ -91,21 +90,21 @@ public class TableUpdateDetails implements Closeable {
         TableRecordMetadata tableMetadata = writer.getMetadata();
         this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableNameUtf16 = Chars.toString(writer.getTableName());
-        if (writer instanceof MetadataService) {
-            writerSPI = (MetadataService) writer;
-            writerSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-            this.nextCommitTime = millisecondClock.getTicks() + writerSPI.getCommitInterval();
+        if (writer.getWriterType() == TableWriterAPI.WRITER_METADATA_SERVICE) {
+            metadataService = (MetadataService) writer;
+            metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
+            this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();
         } else {
-            writerSPI = null;
+            metadataService = null;
             this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
         }
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
             this.localDetailsArray[i] = new ThreadLocalDetails(
-                configuration,
-                netIoJobs[i].getUnusedSymbolCaches(),
-                writer.getMetadata().getColumnCount()
+                    configuration,
+                    netIoJobs[i].getUnusedSymbolCaches(),
+                    writer.getMetadata().getColumnCount()
             );
         }
     }
@@ -147,7 +146,7 @@ public class TableUpdateDetails implements Closeable {
                 } finally {
                     // returning to pool rolls back the transaction
                     writerAPI = Misc.free(writerAPI);
-                    writerSPI = null;
+                    metadataService = null;
                 }
             }
             writerThreadId = Integer.MIN_VALUE;
@@ -205,8 +204,8 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void tick() {
-        if (writerSPI != null) {
-            writerSPI.tick();
+        if (metadataService != null) {
+            metadataService.tick();
         }
     }
 
@@ -233,15 +232,15 @@ public class TableUpdateDetails implements Closeable {
     }
 
     private long getCommitInterval() {
-        if (writerSPI != null) {
-            return writerSPI.getCommitInterval();
+        if (metadataService != null) {
+            return metadataService.getCommitInterval();
         }
         return defaultCommitInterval;
     }
 
     private long getMetaMaxUncommittedRows() {
-        if (writerSPI != null) {
-            return writerSPI.getMetaMaxUncommittedRows();
+        if (metadataService != null) {
+            return metadataService.getMetaMaxUncommittedRows();
         }
         return defaultMaxUncommittedRows;
     }
@@ -315,7 +314,7 @@ public class TableUpdateDetails implements Closeable {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
                 writerAPI = Misc.free(writerAPI);
-                writerSPI = null;
+                metadataService = null;
             }
         }
     }

@@ -69,12 +69,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
     }
 
-    @Override
-    public void close() {
-        Misc.free(operationCompiler);
-        Misc.free(walEventReader);
-    }
-
     public long applyWAL(
             CharSequence tableName,
             int tableId,
@@ -98,9 +92,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 break;
             } catch (CairoException ex) {
                 LOG.critical().$("WAL apply job failed, table suspended [table=").$(tableName)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .I$();
+                        .$(", error=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
                 return WAL_APPLY_FAILED;
             }
 
@@ -109,6 +103,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         assert lastWriterTxn == lastSequencerTxn;
 
         return lastWriterTxn;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(operationCompiler);
+        Misc.free(walEventReader);
     }
 
     @Override

@@ -422,12 +422,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param columnName                    of column either ASCII or UTF8 encoded.
+     * @param columnName              of column either ASCII or UTF8 encoded.
      * @param symbolCapacity          when column columnType is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param columnType                    {@link ColumnType}
+     * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
@@ -1198,6 +1198,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             updateOperatorImpl = new UpdateOperatorImpl(configuration, messageBus, this, path, rootLen);
         }
         return updateOperatorImpl;
+    }
+
+    @Override
+    public int getWriterType() {
+        return TableWriterAPI.WRITER_METADATA_SERVICE;
     }
 
     public boolean hasO3() {

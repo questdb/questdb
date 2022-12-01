@@ -54,6 +54,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLog.*;
 public class DatabaseSnapshotAgent implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
+    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -62,7 +63,6 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
-    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {

@@ -670,6 +670,14 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
+        public void addColumn(CharSequence columnName, int columnType) {
+        }
+
+        @Override
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity) {
+        }
+
+        @Override
         public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
             return 0;
         }
@@ -677,14 +685,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         @Override
         public long apply(UpdateOperation operation) {
             return 0;
-        }
-
-        @Override
-        public void addColumn(CharSequence columnName, int columnType) {
-        }
-
-        @Override
-        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity) {
         }
 
         @Override
@@ -719,6 +719,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         @Override
         public long getUncommittedRowCount() {
             return 0;
+        }
+
+        @Override
+        public int getWriterType() {
+            return TableWriterAPI.WRITER_OTHER;
         }
 
         @Override

@@ -59,29 +59,29 @@ public class WalWriter implements TableWriterAPI {
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final Runnable NOOP = () -> {
     };
+    private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
     private final WalWriterEvents events;
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
-    private final WalWriterMetadata metadata;
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
+    private final WalWriterMetadata metadata;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
     private final int rootLen;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
+    private final TableSequencerAPI sequencer;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final String tableName;
-    private final TableSequencerAPI sequencer;
     private final int walId;
     private final String walName;
-    private final AlterOperation alterOp = new AlterOperation();
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
@@ -138,95 +138,6 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        if (inTransaction()) {
-            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
-        }
-        if (alterOp.isStructural()) {
-            return applyStructural(alterOp);
-        } else {
-            return applyNonStructural(alterOp);
-        }
-    }
-
-    // Returns table transaction number
-    @Override
-    public long apply(UpdateOperation operation) {
-        // it is guaranteed that there is no join in UPDATE statement
-        // because SqlCompiler rejects the UPDATE if it contains join
-        return applyNonStructural(operation);
-
-        // when join is allowed in UPDATE we have 2 options
-        // 1. we could write the updated partitions into WAL.
-        //   since we cannot really rely on row ids we should probably create
-        //   a PARTITION_REWRITE event and use it here to replace the updated
-        //   partitions entirely with new ones.
-        // 2. we could still pass the SQL statement if we made sure that all
-        //   tables involved in the join are guaranteed to be on the same
-        //   version (exact same txn number) on each node when the update
-        //   statement is run.
-        //   so we would need to read current txn number for each table and
-        //   put it into the SQL event as a requirement for running the SQL.
-        //   when the WAL event is processed we would need to query the exact
-        //   versions of each table involved in the join when running the SQL.
-    }
-
-    private void applyMetadataChangeLog(long structureVersionHi) {
-        long nextStructVer = getStructureVersion();
-        try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableName, nextStructVer)) {
-            while (log.hasNext() && nextStructVer < structureVersionHi) {
-                TableMetadataChange chg = log.next();
-                try {
-                    chg.apply(metaWriterSvc, true);
-                } catch (CairoException e) {
-                    distressed = true;
-                    throw e;
-                }
-
-                if (++nextStructVer != getStructureVersion()) {
-                    distressed = true;
-                    throw CairoException.critical(0)
-                        .put("could not apply table definition changes to the current transaction, version unchanged");
-                }
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        if (isOpen()) {
-            try {
-                rollback();
-            } finally {
-                doClose(true);
-            }
-        }
-    }
-
-    // Returns sequencer transaction number
-    @Override
-    public long commit() {
-        checkDistressed();
-        try {
-            if (inTransaction()) {
-                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
-                lastSegmentTxn = events.data(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-                final long seqTxn = getSequencerTxn();
-                resetDataTxnProperties();
-                mayRollSegmentOnNextRow();
-                return seqTxn;
-            }
-        } catch (Throwable th) {
-            if (!isDistressed()) {
-                // If distressed, not point to rollback, WalWriter will be not re-used anymore.
-                rollback();
-            }
-            throw th;
-        }
-        return NO_TXN;
-    }
-
-    @Override
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn(
                 columnName,
@@ -261,6 +172,74 @@ public class WalWriter implements TableWriterAPI {
                 indexValueBlockCapacity
         );
         apply(alterOp, true);
+    }
+
+    @Override
+    public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        if (inTransaction()) {
+            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
+        }
+        if (alterOp.isStructural()) {
+            return applyStructural(alterOp);
+        } else {
+            return applyNonStructural(alterOp);
+        }
+    }
+
+    // Returns table transaction number
+    @Override
+    public long apply(UpdateOperation operation) {
+        // it is guaranteed that there is no join in UPDATE statement
+        // because SqlCompiler rejects the UPDATE if it contains join
+        return applyNonStructural(operation);
+
+        // when join is allowed in UPDATE we have 2 options
+        // 1. we could write the updated partitions into WAL.
+        //   since we cannot really rely on row ids we should probably create
+        //   a PARTITION_REWRITE event and use it here to replace the updated
+        //   partitions entirely with new ones.
+        // 2. we could still pass the SQL statement if we made sure that all
+        //   tables involved in the join are guaranteed to be on the same
+        //   version (exact same txn number) on each node when the update
+        //   statement is run.
+        //   so we would need to read current txn number for each table and
+        //   put it into the SQL event as a requirement for running the SQL.
+        //   when the WAL event is processed we would need to query the exact
+        //   versions of each table involved in the join when running the SQL.
+    }
+
+    @Override
+    public void close() {
+        if (isOpen()) {
+            try {
+                rollback();
+            } finally {
+                doClose(true);
+            }
+        }
+    }
+
+    // Returns sequencer transaction number
+    @Override
+    public long commit() {
+        checkDistressed();
+        try {
+            if (inTransaction()) {
+                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
+                lastSegmentTxn = events.data(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                final long seqTxn = getSequencerTxn();
+                resetDataTxnProperties();
+                mayRollSegmentOnNextRow();
+                return seqTxn;
+            }
+        } catch (Throwable th) {
+            if (!isDistressed()) {
+                // If distressed, not point to rollback, WalWriter will be not re-used anymore.
+                rollback();
+            }
+            throw th;
+        }
+        return NO_TXN;
     }
 
     public void doClose(boolean truncate) {
@@ -327,6 +306,11 @@ public class WalWriter implements TableWriterAPI {
         return walName;
     }
 
+    @Override
+    public int getWriterType() {
+        return TableWriterAPI.WRITER_OTHER;
+    }
+
     public void goActive() {
         goActive(Long.MAX_VALUE);
     }
@@ -365,35 +349,6 @@ public class WalWriter implements TableWriterAPI {
 
     public boolean isOpen() {
         return this.open;
-    }
-
-    @Override
-    public TableWriter.Row newRow() {
-        return newRow(0L);
-    }
-
-    @Override
-    public TableWriter.Row newRow(long timestamp) {
-        checkDistressed();
-        try {
-            if (rollSegmentOnNextRow) {
-                rollSegment();
-                rollSegmentOnNextRow = false;
-            }
-
-            final int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex != -1) {
-                //avoid lookups by having a designated field with primaryColumn
-                final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLongLong(timestamp, segmentRowCount);
-                setRowValueNotNull(timestampIndex);
-                row.timestamp = timestamp;
-            }
-            return row;
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        }
     }
 
     public void moveUncommittedRowsToNewSegment() {
@@ -451,6 +406,35 @@ public class WalWriter implements TableWriterAPI {
             currentTxnStartRowNum = 0;
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
+        }
+    }
+
+    @Override
+    public TableWriter.Row newRow() {
+        return newRow(0L);
+    }
+
+    @Override
+    public TableWriter.Row newRow(long timestamp) {
+        checkDistressed();
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+                rollSegmentOnNextRow = false;
+            }
+
+            final int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex != -1) {
+                //avoid lookups by having a designated field with primaryColumn
+                final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
+                primaryColumn.putLongLong(timestamp, segmentRowCount);
+                setRowValueNotNull(timestampIndex);
+                row.timestamp = timestamp;
+            }
+            return row;
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
         }
     }
 
@@ -560,6 +544,27 @@ public class WalWriter implements TableWriterAPI {
         return getPrimaryColumnIndex(index) + 1;
     }
 
+    private void applyMetadataChangeLog(long structureVersionHi) {
+        long nextStructVer = getStructureVersion();
+        try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableName, nextStructVer)) {
+            while (log.hasNext() && nextStructVer < structureVersionHi) {
+                TableMetadataChange chg = log.next();
+                try {
+                    chg.apply(metaWriterSvc, true);
+                } catch (CairoException e) {
+                    distressed = true;
+                    throw e;
+                }
+
+                if (++nextStructVer != getStructureVersion()) {
+                    distressed = true;
+                    throw CairoException.critical(0)
+                            .put("could not apply table definition changes to the current transaction, version unchanged");
+                }
+            }
+        }
+    }
+
     private long applyNonStructural(AbstractOperation op) {
         if (op.getSqlExecutionContext() == null) {
             throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
@@ -584,10 +589,10 @@ public class WalWriter implements TableWriterAPI {
                 if (metaValidatorSvc.structureVersion != metadata.getStructureVersion() + 1) {
                     retry = false;
                     throw CairoException.nonCritical()
-                        .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                            " are currently not supported for WAL tables [table=").put(tableName)
-                        .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                        .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
+                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
+                                    " are currently not supported for WAL tables [table=").put(tableName)
+                            .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                            .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
                 }
             } catch (CairoException e) {
                 if (retry) {
@@ -1278,13 +1283,13 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential
+                CharSequence columnName,
+                int columnType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1337,8 +1342,7 @@ public class WalWriter implements TableWriterAPI {
 
             int columnIndexNew = metadata.getColumnIndexQuiet(newName);
             if (columnIndexNew > -1) {
-                throw CairoException.nonCritical().put("cannot rename column, column with the name already exists [table=").put(tableName)
-                        .put(", newName=").put(newName).put(']');
+                throw CairoException.nonCritical().put("cannot rename column, column with the name already exists [table=").put(tableName).put(", newName=").put(newName).put(']');
             }
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(newName);
@@ -1348,6 +1352,178 @@ public class WalWriter implements TableWriterAPI {
 
         public void startAlterValidation() {
             structureVersion = metadata.getStructureVersion();
+        }
+    }
+
+    private class MetadataWriterService implements MetadataServiceStub {
+
+        @Override
+        public void addColumn(
+                CharSequence columnName,
+                int columnType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential
+        ) {
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+
+            if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
+                long uncommittedRows = getUncommittedRowCount();
+                if (currentTxnStartRowNum > 0) {
+                    // Roll last transaction to new segment
+                    moveUncommittedRowsToNewSegment();
+                }
+
+                // we proceed with column add only in three cases:
+                // 1. segment is empty, so that there is no transaction we can interfere with
+                // 2. all rows in the WAL segment have been committed
+                // 3. ALL rows in the WAL segment remain uncommitted
+                // in other words, mix of committed and uncommitted rows is disallowed. If this is the case it
+                // means that "move" failed
+                if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
+                    long segmentRowCount = getUncommittedRowCount();
+                    metadata.addColumn(columnName, columnType);
+                    columnCount = metadata.getColumnCount();
+                    columnIndex = columnCount - 1;
+                    // create column file
+                    configureColumn(columnIndex, columnType);
+                    if (ColumnType.isSymbol(columnType)) {
+                        configureSymbolMapWriter(columnIndex, columnName, 0, -1);
+                    }
+
+                    if (!rollSegmentOnNextRow) {
+                        // this means we have rolled uncommitted rows to a new segment already
+                        // we should switch metadata to this new segment
+                        path.trimTo(rootLen).slash().put(segmentId);
+                        // this will close old _meta file and create the new one
+                        metadata.switchTo(path, path.length());
+                        openColumnFiles(columnName, columnIndex, path.length());
+                    }
+                    // if we did not have to roll uncommitted rows to a new segment
+                    // it will add the column file and switch metadata file on next row write
+                    // as part of rolling to a new segment
+
+                    if (uncommittedRows > 0) {
+                        setColumnNull(columnType, columnIndex, segmentRowCount);
+                    }
+                    LOG.info().$("ADDED [path=").utf8(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
+                } else {
+                    // "moveUncommittedRowsToNewSegment()" is buggy and did not handle rows correctly
+                    // this should technically not happen, unless code regresses
+                    LOG.critical()
+                            .$("segment is in inconsistent state [segmentId=").$(segmentId)
+                            .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
+                            .$(", segmentRowCount=").$(segmentRowCount)
+                            .I$();
+
+                    throw CairoException.nonCritical().put("could not apply concurrent column add [column=").put(columnName).put(']');
+                }
+            } else {
+                if (metadata.getColumnType(columnIndex) == columnType) {
+                    LOG.info().$("already added [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                } else {
+                    throw CairoException.nonCritical()
+                            .put("column name already exists [columnName=").put(columnName)
+                            .put(", type=").put(ColumnType.nameOf(metadata.getColumnType(columnIndex)))
+                            .put(", requiredType=").put(ColumnType.nameOf(columnType));
+                }
+            }
+        }
+
+        @Override
+        public TableRecordMetadata getMetadata() {
+            return metadata;
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return tableName;
+        }
+
+        @Override
+        public void removeColumn(CharSequence columnName) {
+            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex > -1) {
+                int type = metadata.getColumnType(columnIndex);
+                if (type > 0) {
+                    if (currentTxnStartRowNum > 0) {
+                        // Roll last transaction to new segment
+                        moveUncommittedRowsToNewSegment();
+                    }
+
+                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
+                        int index = metadata.getColumnIndex(columnName);
+                        metadata.removeColumn(columnName);
+                        columnCount = metadata.getColumnCount();
+
+                        if (!rollSegmentOnNextRow) {
+                            // this means we have rolled uncommitted rows to a new segment already
+                            // we should switch metadata to this new segment
+                            path.trimTo(rootLen).slash().put(segmentId);
+                            // this will close old _meta file and create the new one
+                            metadata.switchTo(path, path.length());
+                        }
+                        // if we did not have to roll uncommitted rows to a new segment
+                        // it will switch metadata file on next row write
+                        // as part of rolling to a new segment
+
+                        if (ColumnType.isSymbol(type)) {
+                            removeSymbolMapReader(index);
+                        }
+                        markColumnRemoved(index);
+                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
+                    } else {
+                        throw CairoException.critical(0).put("column '").put(columnName).put("' was removed, cannot apply commit because of concurrent table definition change");
+                    }
+                }
+            } else {
+                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+            }
+        }
+
+        @Override
+        public void renameColumn(CharSequence columnName, CharSequence newColumnName) {
+            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex > -1) {
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType > 0) {
+                    if (currentTxnStartRowNum > 0) {
+                        // Roll last transaction to new segment
+                        moveUncommittedRowsToNewSegment();
+                    }
+
+                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
+                        metadata.renameColumn(columnName, newColumnName);
+                        // We are not going to do any special for symbol readers which point
+                        // to the files in the root of the table.
+                        // We keep the symbol readers open against files with old name.
+                        // Inconsistency between column name and symbol file names in the root
+                        // does not matter, these files are for re-lookup only for the WAL writer
+                        // and should not be serialised to the WAL segment.
+
+                        if (!rollSegmentOnNextRow) {
+                            // this means we have rolled uncommitted rows to a new segment already
+                            // we should switch metadata to this new segment
+                            path.trimTo(rootLen).slash().put(segmentId);
+                            // this will close old _meta file and create the new one
+                            metadata.switchTo(path, path.length());
+                            renameColumnFiles(columnType, columnName, newColumnName);
+                        }
+                        // if we did not have to roll uncommitted rows to a new segment
+                        // it will switch metadata file on next row write
+                        // as part of rolling to a new segment
+
+                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
+                    } else {
+                        throw CairoException.critical(0).put("column '").put(columnName)
+                                .put("' was removed, cannot apply commit because of concurrent table definition change");
+                    }
+                }
+            } else {
+                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+            }
         }
     }
 
@@ -1531,179 +1707,6 @@ public class WalWriter implements TableWriterAPI {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return columns.getQuick(getSecondaryColumnIndex(columnIndex));
-        }
-    }
-
-    private class MetadataWriterService implements MetadataServiceStub {
-
-        @Override
-        public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential
-        ) {
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-
-            if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                long uncommittedRows = getUncommittedRowCount();
-                if (currentTxnStartRowNum > 0) {
-                    // Roll last transaction to new segment
-                    moveUncommittedRowsToNewSegment();
-                }
-
-                // we proceed with column add only in three cases:
-                // 1. segment is empty, so that there is no transaction we can interfere with
-                // 2. all rows in the WAL segment have been committed
-                // 3. ALL rows in the WAL segment remain uncommitted
-                // in other words, mix of committed and uncommitted rows is disallowed. If this is the case it
-                // means that "move" failed
-                if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                    long segmentRowCount = getUncommittedRowCount();
-                    metadata.addColumn(columnName, columnType);
-                    columnCount = metadata.getColumnCount();
-                    columnIndex = columnCount - 1;
-                    // create column file
-                    configureColumn(columnIndex, columnType);
-                    if (ColumnType.isSymbol(columnType)) {
-                        configureSymbolMapWriter(columnIndex, columnName, 0, -1);
-                    }
-
-                    if (!rollSegmentOnNextRow) {
-                        // this means we have rolled uncommitted rows to a new segment already
-                        // we should switch metadata to this new segment
-                        path.trimTo(rootLen).slash().put(segmentId);
-                        // this will close old _meta file and create the new one
-                        metadata.switchTo(path, path.length());
-                        openColumnFiles(columnName, columnIndex, path.length());
-                    }
-                    // if we did not have to roll uncommitted rows to a new segment
-                    // it will add the column file and switch metadata file on next row write
-                    // as part of rolling to a new segment
-
-                    if (uncommittedRows > 0) {
-                        setColumnNull(columnType, columnIndex, segmentRowCount);
-                    }
-                    LOG.info().$("ADDED [path=").utf8(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").utf8(columnName).I$();
-                } else {
-                    // "moveUncommittedRowsToNewSegment()" is buggy and did not handle rows correctly
-                    // this should technically not happen, unless code regresses
-                    LOG.critical()
-                            .$("segment is in inconsistent state [segmentId=").$(segmentId)
-                            .$(", currentTxnStartRowNum=").$(currentTxnStartRowNum)
-                            .$(", segmentRowCount=").$(segmentRowCount)
-                            .I$();
-                    
-                    throw CairoException.nonCritical().put("could not apply concurrent column add [column=").put(columnName).put(']');
-                }
-            } else {
-                if (metadata.getColumnType(columnIndex) == columnType) {
-                    LOG.info().$("already added [path=").$(path).$(", columnName=").utf8(columnName).I$();
-                } else {
-                    throw CairoException.nonCritical()
-                            .put("column name already exists [columnName=").put(columnName)
-                            .put(", type=").put(ColumnType.nameOf(metadata.getColumnType(columnIndex)))
-                            .put(", requiredType=").put(ColumnType.nameOf(columnType));
-                }
-            }
-        }
-
-        @Override
-        public TableRecordMetadata getMetadata() {
-            return metadata;
-        }
-
-        @Override
-        public CharSequence getTableName() {
-            return tableName;
-        }
-
-        @Override
-        public void removeColumn(CharSequence columnName) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex > -1) {
-                int type = metadata.getColumnType(columnIndex);
-                if (type > 0) {
-                    if (currentTxnStartRowNum > 0) {
-                        // Roll last transaction to new segment
-                        moveUncommittedRowsToNewSegment();
-                    }
-
-                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                        int index = metadata.getColumnIndex(columnName);
-                        metadata.removeColumn(columnName);
-                        columnCount = metadata.getColumnCount();
-
-                        if (!rollSegmentOnNextRow) {
-                            // this means we have rolled uncommitted rows to a new segment already
-                            // we should switch metadata to this new segment
-                            path.trimTo(rootLen).slash().put(segmentId);
-                            // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length());
-                        }
-                        // if we did not have to roll uncommitted rows to a new segment
-                        // it will switch metadata file on next row write
-                        // as part of rolling to a new segment
-
-                        if (ColumnType.isSymbol(type)) {
-                            removeSymbolMapReader(index);
-                        }
-                        markColumnRemoved(index);
-                        LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
-                    } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' was removed, cannot apply commit because of concurrent table definition change");
-                    }
-                }
-            } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
-            }
-        }
-
-        @Override
-        public void renameColumn(CharSequence columnName, CharSequence newColumnName) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex > -1) {
-                int columnType = metadata.getColumnType(columnIndex);
-                if (columnType > 0) {
-                    if (currentTxnStartRowNum > 0) {
-                        // Roll last transaction to new segment
-                        moveUncommittedRowsToNewSegment();
-                    }
-
-                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                        metadata.renameColumn(columnName, newColumnName);
-                        // We are not going to do any special for symbol readers which point
-                        // to the files in the root of the table.
-                        // We keep the symbol readers open against files with old name.
-                        // Inconsistency between column name and symbol file names in the root
-                        // does not matter, these files are for re-lookup only for the WAL writer
-                        // and should not be serialised to the WAL segment.
-
-                        if (!rollSegmentOnNextRow) {
-                            // this means we have rolled uncommitted rows to a new segment already
-                            // we should switch metadata to this new segment
-                            path.trimTo(rootLen).slash().put(segmentId);
-                            // this will close old _meta file and create the new one
-                            metadata.switchTo(path, path.length());
-                            renameColumnFiles(columnType, columnName, newColumnName);
-                        }
-                        // if we did not have to roll uncommitted rows to a new segment
-                        // it will switch metadata file on next row write
-                        // as part of rolling to a new segment
-
-                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
-                    } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' was removed, cannot apply commit because of concurrent table definition change");
-                    }
-                }
-            } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
-            }
         }
     }
 }

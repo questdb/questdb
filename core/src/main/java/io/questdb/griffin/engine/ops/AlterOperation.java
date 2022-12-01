@@ -123,8 +123,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 default:
                     LOG.error()
-                        .$("invalid alter table command [code=").$(command)
-                        .$(" ,table=").$(svc.getTableName())
+                            .$("invalid alter table command [code=").$(command)
+                            .$(" ,table=").$(svc.getTableName())
                             .I$();
                     throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
             }
@@ -385,9 +385,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
             LOG.error().$("could not change o3MaxLag [table=").$(tableName)
-                .$(", errno=").$(e.getErrno())
-                .$(", error=").$(e.getFlyweightMessage())
-                .I$();
+                    .$(", errno=").$(e.getErrno())
+                    .$(", error=").$(e.getFlyweightMessage())
+                    .I$();
             throw e;
         }
     }
@@ -416,8 +416,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
         svc.changeCacheFlag(
-            svc.getMetadata().getColumnIndex(columnName),
-            isCacheOn
+                svc.getMetadata().getColumnIndex(columnName),
+                isCacheOn
         );
     }
 

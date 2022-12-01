@@ -177,6 +177,21 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
+    long appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.SQL);
+        eventMem.putInt(cmdType); // byte would be enough probably
+        eventMem.putStr(sqlText);
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        writeIndexedVariables(bindVariableService);
+        writeNamedVariables(bindVariableService);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
+        return txn++;
+    }
+
     long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -211,21 +226,6 @@ class WalWriterEvents implements Closeable {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
         eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
-    }
-
-    long appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.SQL);
-        eventMem.putInt(cmdType); // byte would be enough probably
-        eventMem.putStr(sqlText);
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        writeIndexedVariables(bindVariableService);
-        writeNamedVariables(bindVariableService);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
-        return txn++;
     }
 
     long truncate() {

@@ -50,7 +50,7 @@ public class WalUtils {
             WorkerPool workerPool,
             CairoEngine engine,
             int sharedWorkerCount,
-            @Nullable  FunctionFactoryCache ffCache
+            @Nullable FunctionFactoryCache ffCache
     ) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker

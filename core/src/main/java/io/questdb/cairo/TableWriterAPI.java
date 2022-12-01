@@ -31,58 +31,8 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import java.io.Closeable;
 
 public interface TableWriterAPI extends Closeable {
-    long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
-
-    long apply(UpdateOperation operation);
-
-    @Override
-    void close();
-
-    long commit();
-
-    TableRecordMetadata getMetadata();
-
-    /**
-     * Returns table structure version.
-     * <p>
-     * Implementations must be thread-safe.
-     */
-    long getStructureVersion();
-
-    /**
-     * Returns safe watermark for the symbol count stored in the given column.
-     * The purpose of the watermark is to let ILP I/O threads (SymbolCache) to
-     * use symbol codes when serializing row data to be handled by the writer.
-     * <p>
-     * If the implementation doesn't require symbol count watermarks (e.g.
-     * TableWriter), it should return <code>-1</code>.
-     * <p>
-     * Implementations must be thread-safe.
-     */
-    int getSymbolCountWatermark(int columnIndex);
-
-    String getTableName();
-
-    long getUncommittedRowCount();
-
-    /**
-     * Intermediate commit. It provides the best effort guarantee to commit as much data from the RSS to storage.
-     * However, it also takes into account O3 data overlap from the previous intermediate commits and adjust
-     * the internal "lag" to absorb merges while data is in RSS rather than disk.
-     * <p>
-     * When data is in order and O3 area is empty, ic() equals to commit().
-     */
-    void ic();
-
-    void ic(long o3MaxLag);
-
-    TableWriter.Row newRow();
-
-    TableWriter.Row newRow(long timestamp);
-
-    void rollback();
-
-    void truncate();
+    int WRITER_METADATA_SERVICE = 1;
+    int WRITER_OTHER = 2;
 
     void addColumn(CharSequence columnName, int columnType);
 
@@ -123,4 +73,59 @@ public interface TableWriterAPI extends Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity
     );
+
+    long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
+
+    long apply(UpdateOperation operation);
+
+    @Override
+    void close();
+
+    long commit();
+
+    TableRecordMetadata getMetadata();
+
+    /**
+     * Returns table structure version.
+     * <p>
+     * Implementations must be thread-safe.
+     */
+    long getStructureVersion();
+
+    /**
+     * Returns safe watermark for the symbol count stored in the given column.
+     * The purpose of the watermark is to let ILP I/O threads (SymbolCache) to
+     * use symbol codes when serializing row data to be handled by the writer.
+     * <p>
+     * If the implementation doesn't require symbol count watermarks (e.g.
+     * TableWriter), it should return <code>-1</code>.
+     * <p>
+     * Implementations must be thread-safe.
+     */
+    int getSymbolCountWatermark(int columnIndex);
+
+    String getTableName();
+
+    long getUncommittedRowCount();
+
+    int getWriterType();
+
+    /**
+     * Intermediate commit. It provides the best effort guarantee to commit as much data from the RSS to storage.
+     * However, it also takes into account O3 data overlap from the previous intermediate commits and adjust
+     * the internal "lag" to absorb merges while data is in RSS rather than disk.
+     * <p>
+     * When data is in order and O3 area is empty, ic() equals to commit().
+     */
+    void ic();
+
+    void ic(long o3MaxLag);
+
+    TableWriter.Row newRow();
+
+    TableWriter.Row newRow(long timestamp);
+
+    void rollback();
+
+    void truncate();
 }

@@ -34,9 +34,9 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     AsyncWriterCommand deserialize(TableWriterTask task);
 
-    String getCommandName();
-
     int getCmdType();
+
+    String getCommandName();
 
     long getCorrelationId();
 
