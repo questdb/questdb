@@ -822,7 +822,9 @@ public class CairoEngine implements Closeable, WriterSource {
         TableToken dstTableToken = lockTableName(to, srcTableToken.getTableId(), false);
 
         if (dstTableToken == null || ff.exists(otherPath.of(root).concat(dstTableToken).$())) {
-            tableNameRegistry.unlockTableName(dstTableToken);
+            if (dstTableToken != null) {
+                unlockTableName(dstTableToken);
+            }
             LOG.error().$("rename target exists [from='").utf8(tableName).$("', to='").utf8(otherPath.chop$()).I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }

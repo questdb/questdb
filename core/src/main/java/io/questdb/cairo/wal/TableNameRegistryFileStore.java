@@ -144,10 +144,11 @@ public class TableNameRegistryFileStore implements Closeable {
                 throw CairoException.critical(0).put("table registry is not locked");
             }
         }
-        tableNameMemory.jumpTo(0L);
-        tableNameMemory.close(false);
+        tableNameMemory.close();
 
         final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
+        configuration.getFilesFacade().remove(path);
+
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
     }
 
