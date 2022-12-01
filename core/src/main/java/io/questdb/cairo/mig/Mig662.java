@@ -37,9 +37,10 @@ public class Mig662 {
 
     static void migrate(MigrationContext context) {
         // Update transaction file
-        // Before there where 4 longs per partition entry in the partition table,
+        // Before there were 4 longs per partition entry in the partition table,
         // now there are 8. The 5th is the partition mask, whose 64th bit flags
-        // the partition as RO. Prior to version 427 all partitions were RW
+        // the partition as read-only when set. Prior to version 427 all partitions 
+        // were read-write
 
         final FilesFacade ff = context.getFf();
         final Path path = context.getTablePath();   // preloaded with tha table's path
@@ -67,7 +68,7 @@ public class Mig662 {
             final int partitionSegmentSize = txFile.getInt(partitionSegmentSizeOffset);
             newPartitionSegmentSize = partitionSegmentSize * 2;
 
-            MigrationActions.LOG.info().$("extending partition table on tx file [table=").$(context.getTablePath())
+            MigrationActions.LOG.info().$("extending partition table on tx file [table=").utf8(context.getTablePath())
                     .$(", version=").$(version)
                     .$(", from_size=").$(partitionSegmentSize)
                     .$(", to_size=").$(newPartitionSegmentSize)

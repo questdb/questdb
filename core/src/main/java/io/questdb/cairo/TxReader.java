@@ -464,7 +464,7 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.setPos(hi);
         final long baseOffset = getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES;
         for (int i = lo; i < hi; i++) {
-            attachedPartitions.setQuick(i, getLong(baseOffset + i * Long.BYTES));
+            attachedPartitions.setQuick(i, getLong(baseOffset + 8L * i));
         }
         attachedPartitionsSize = hi;
     }

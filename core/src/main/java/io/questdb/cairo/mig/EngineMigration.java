@@ -141,7 +141,7 @@ public class EngineMigration {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
                             if (currentTableVersion < latestVersion) {
                                 LOG.info()
-                                        .$("upgrading [path=").$(copyPath.$())
+                                        .$("upgrading [path=").utf8(copyPath.$())
                                         .$(", fromVersion=").$(currentTableVersion)
                                         .$(", toVersion=").$(latestVersion)
                                         .I$();
@@ -156,21 +156,22 @@ public class EngineMigration {
                                     final MigrationAction migration = getMigrationToVersion(ver);
                                     if (migration != null) {
                                         try {
-                                            LOG.info().$("upgrading table [path=").$(path).$(", toVersion=").$(ver).I$();
+                                            LOG.info().$("upgrading table [path=").utf8(path)
+                                                    .$(", toVersion=").$(ver)
+                                                    .I$();
                                             migration.migrate(context);
                                             path.trimTo(tablePLen);
                                             copyPath.trimTo(tablePLen);
                                         } catch (Throwable e) {
-                                            LOG.error().$("failed to upgrade table path=")
-                                                    .$(path.trimTo(tablePLen))
-                                                    .$(", exception: ")
-                                                    .$(e).$();
+                                            LOG.error().$("failed to upgrade table [path=").utf8(path.trimTo(tablePLen))
+                                                    .$(", e=").$(e)
+                                                    .I$();
                                             throw e;
                                         }
                                     }
 
                                     path.trimTo(tablePLen).concat(TableUtils.META_FILE_NAME).$();
-                                    LOG.info().$("upgrading table _meta [path=").$(path).$(", toVersion=").$(ver).I$();
+                                    LOG.info().$("upgrading table _meta [path=").utf8(path).$(", toVersion=").$(ver).I$();
                                     TableUtils.writeIntOrFail(ff, fdMeta, META_OFFSET_VERSION, ver, mem, path);
                                     path.trimTo(tablePLen);
                                 }

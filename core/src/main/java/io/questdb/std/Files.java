@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -37,6 +38,8 @@ public final class Files {
 
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
+    public static final int DT_LNK = 10; // soft link
+    public static final int DT_UNKNOWN = 0;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
@@ -202,6 +205,55 @@ public final class Files {
             return notDots(nameSink);
         }
         return false;
+    }
+
+    public static int checkIsDirOrSoftLinkNoDots(Path path, long pUtf8NameZ, long type, StringSink nameSink) {
+        if (notDots(pUtf8NameZ)) {
+            nameSink.clear();
+            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            path.concat(pUtf8NameZ).$();
+
+            if (type == DT_DIR) {
+                return DT_DIR;
+            }
+
+            if (type == DT_LNK) { // TODO: test this in mac
+                return DT_LNK;
+            }
+
+            if (isSoftLink(path)) {
+                return DT_LNK;
+            }
+        }
+        return DT_UNKNOWN;
+    }
+
+    public static int unlinkRemove(FilesFacade ff, Path path, Log LOG) {
+        int checkedType = ff.isSoftLink(path) ? DT_LNK : DT_UNKNOWN;
+        return unlinkRemove(ff, path, checkedType, LOG);
+    }
+
+    public static int unlinkRemove(FilesFacade ff, Path path, int checkedType, Log LOG) {
+        if (checkedType == Files.DT_LNK) {
+            // in windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (ff.unlink(path) == 0) {
+                LOG.info().$("purged by unlink [path=").utf8(path).I$();
+                return 0;
+            } else {
+                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
+            }
+        }
+
+        int errno;
+        if ((errno = ff.rmdir(path)) == 0) {
+            LOG.info().$("removed [path=").utf8(path).I$();
+        } else {
+            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
+        }
+        return errno;
     }
 
     public static boolean isDir(long pUtf8NameZ, long type) {

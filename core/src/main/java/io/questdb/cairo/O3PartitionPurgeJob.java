@@ -74,34 +74,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    private static void deletePartitionDirectory(
-            FilesFacade ff,
-            Path path
-    ) {
-        if (ff.isSoftLink(path)) {
-            // in windows ^ ^ will return false, but that is ok as the behaviour
-            // is to delete the link, not the contents of the target. in *nix
-            // systems we can simply unlink, which deletes the link and leaves
-            // the contents of the target intact
-            if (ff.unlink(path) == 0) {
-                LOG.info().$("purged by unlink [path=").utf8(path).I$();
-                return;
-            } else {
-                LOG.error().$("failed to unlink, will delete [path=").utf8(path).I$();
-            }
-        }
-        long errno;
-        if ((errno = ff.rmdir(path)) == 0) {
-            LOG.info()
-                    .$("purged [path=").utf8(path)
-                    .I$();
-        } else {
-            LOG.info()
-                    .$("partition purge failed [path=").utf8(path)
-                    .$(", errno=").$(errno)
-                    .I$();
-        }
-    }
 
     private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
         int index = Chars.lastIndexOf(fileNameSink, '.');
@@ -170,10 +142,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
                 LOG.info().$("purging dropped partition directory [path=").utf8(path).I$();
-                deletePartitionDirectory(
-                        ff,
-                        path
-                );
+                Files.unlinkRemove(ff, path, LOG);
                 lastTxn = nameTxn;
             } else {
                 LOG.info().$("cannot purge partition directory, locked for reading [path=").utf8(path).I$();
@@ -259,10 +228,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
                     LOG.info().$("purging overwritten partition directory [path=").utf8(path).I$();
-                    deletePartitionDirectory(
-                            ff,
-                            path
-                    );
+                    Files.unlinkRemove(ff, path, LOG);
                 } else {
                     LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").utf8(path).I$();
                 }

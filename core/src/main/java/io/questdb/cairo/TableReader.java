@@ -1269,8 +1269,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         for (int i = 0, n = Math.max(columnCount, this.columnCount); i < n; i++) {
-            final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * Long.BYTES);
-            final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * Long.BYTES + Integer.BYTES);
+            final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
+            final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
 
             if (action == -1) {
                 // deleted

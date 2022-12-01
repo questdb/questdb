@@ -164,7 +164,7 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$(task.getTableName())
+                    .utf8(task.getTableName())
                     .$(", txn=").$(updateTxn)
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno()).I$();
@@ -208,8 +208,8 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
 
-        LOG.info().$("purging [table=").$(task.getTableName())
-                .$(", column=").$(task.getColumnName())
+        LOG.info().$("purging [table=").utf8(task.getTableName())
+                .$(", column=").utf8(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
                 .I$();
 
@@ -229,9 +229,8 @@ public class ColumnPurgeOperator implements Closeable {
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
 
                 if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                    // partition is read only
-                    LOG.info().$("skipping purge of RO partition [table=").$(task.getTableName())
-                            .$(", column=").$(task.getColumnName())
+                    LOG.info().$("skipping purge of read-only partition [table=").utf8(task.getTableName())
+                            .$(", column=").utf8(task.getColumnName())
                             .$(", tableId=").$(task.getTableId())
                             .I$();
                     completedRowIds.add(updateRowId);

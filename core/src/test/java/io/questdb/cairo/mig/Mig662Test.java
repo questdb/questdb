@@ -52,7 +52,7 @@ public class Mig662Test {
 
     @Test
     public void testMigrate() throws IOException {
-        // tests migration from metadata file at version 426 to 427
+        // tests migration from _meta file version 426 to 427
 
         final String dbRoot = temp.newFolder("Mig662").getAbsolutePath();
         final FilesFacade ff = FilesFacadeImpl.INSTANCE;

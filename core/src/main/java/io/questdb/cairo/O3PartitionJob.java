@@ -99,10 +99,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             if (!last) {
                 try {
-                    LOG.debug().$("would create [path=").$(path.slash$()).I$();
+                    LOG.debug().$("would create [path=").utf8(path.slash$()).I$();
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
-                    LOG.error().$("process new partition error [table=").$(tableWriter.getTableName())
+                    LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
                     tableWriter.o3BumpErrorCount();

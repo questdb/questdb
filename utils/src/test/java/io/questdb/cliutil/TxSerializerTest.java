@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -140,7 +141,8 @@ public class TxSerializerTest {
         compiler.compile(createTableSql, sqlExecutionContext);
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root + "/" + "xxx/_txn";
+        char sep = Os.isWindows() ? '\\' : '/';
+        String txPath = root.toString() + sep + "xxx" + sep + "_txn";
         String json = serializer.toJson(txPath);
         Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 0"));
 

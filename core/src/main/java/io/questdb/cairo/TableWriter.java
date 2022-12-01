@@ -41,7 +41,6 @@ import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -679,7 +678,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             if (ff.exists(detachedPath)) {
 
-                isSoftLink = ff.isSoftLink(detachedPath);
+                isSoftLink = ff.isSoftLink(detachedPath); // returns false regardless in windows
 
                 // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
@@ -821,7 +820,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @TestOnly
-    public boolean commitPartitionReadOnly(long partitionTimestamp, boolean isRO) {
+    public boolean commitSetPartitionReadOnly(long partitionTimestamp, boolean isRO) {
         // the read-only flag is only set when a partition is attached from soft link
         // this method exists for testing purposes only.
         boolean changed = txWriter.setPartitionReadOnly(partitionTimestamp, isRO);
@@ -1227,15 +1226,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     @Override
     public Row newRow(long timestamp) {
 
-        // check partition RO flag
-        if (txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
-            throw CairoException.nonCritical()
-                    .put("cannot insert into read-only partition [table=").put(tableName)
-                    .put(", partitionIndex=").put(txWriter.getPartitionIndex(timestamp))
-                    .put(", partitionTs=").ts(partitionFloorMethod.floor(timestamp))
-                    .put(']');
-        }
-
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
 
@@ -1539,15 +1529,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-        
-        // check RO flag
-        if (txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
-            throw CairoException.nonCritical()
-                .put("cannot drop read-only partition [table=").put(tableName)
-                .put(", partitionIndex=").put(txWriter.getPartitionIndex(timestamp))
-                .put(", partitionTs=").ts(partitionFloorMethod.floor(timestamp))
-                .put(']');            
-        }
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
@@ -3883,24 +3864,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
-                    if (ff.isSoftLink(other)) {
-                        // in windows ^ ^ will return false, but that is ok as the behaviour
-                        // is to delete the link, not the contents of the target. in *nix
-                        // systems we can simply unlink, which deletes the link and leaves
-                        // the contents of the target intact
-                        if (ff.unlink(other) == 0) {
-                            LOG.info().$("purged by unlink [path=").$(other).I$();
-                            return;
-                        } else {
-                            LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
-                        }
-                    }
                     if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
-                        long errno = ff.rmdir(other);
-                        if (errno == 0 || errno == -1) {
-                            // Successfully deleted or async purge has already swept it up
-                            LOG.info().$("purged [path=").$(other).I$();
-                        } else {
+                        int errno = Files.unlinkRemove(ff, other, LOG);
+                        if (!(errno == 0 || errno == -1)) {
                             LOG.info()
                                     .$("could not purge partition version, async purge will be scheduled [path=")
                                     .$(other)
@@ -4509,6 +4475,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                     final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
 
+                    if (txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                        throw CairoException.nonCritical()
+                                .put("cannot insert into read-only partition [table=").put(tableName)
+                                .put(", partitionTs=").ts(partitionTimestamp)
+                                .put(']');
+                    }
+
                     // This partition is the last partition.
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
 
@@ -5082,13 +5055,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestamp(i);
-                if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                    long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                    removeColumnFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
-                }
+                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                removeColumnFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
             }
             if (!PartitionBy.isPartitioned(partitionBy)) {
-                // non partitioned tables do not have RO partitions
                 removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp(), -1L);
             }
 
@@ -5208,94 +5178,52 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removePartitionDirectories0(long pUtf8NameZ, int type) {
-        path.trimTo(rootLen);
-        path.concat(pUtf8NameZ).$();
-        boolean isSoftLink = false;
-        if (Files.isDir(pUtf8NameZ, type) || (isSoftLink = ff.isSoftLink(path))) {
-
-            if (isSoftLink) {
-                // in windows ^ ^ will return false, but that is ok as the behaviour
-                // is to delete the link, not the contents of the target. in *nix
-                // systems we can simply unlink, which deletes the link and leaves
-                // the contents of the target intact
-                if (ff.unlink(path) == 0) {
-                    LOG.info().$("purged by unlink [path=").$(path).I$();
-                    return;
-                } else {
-                    LOG.error().$("failed to unlink, will delete [path=").$(path).I$();
-                }
+        try {
+            int checkedType = Files.checkIsDirOrSoftLinkNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
+            if (checkedType != Files.DT_UNKNOWN &&
+                    !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
+                    !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
+                    !Chars.startsWith(fileNameSink, SEQ_DIR)) {
+                Files.unlinkRemove(ff, path, checkedType, LOG);
             }
-
-            if (!Chars.endsWith(path, DETACHED_DIR_MARKER) &&
-                    !Chars.endsWith(path, SEQ_DIR) && !Chars.equals(path, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
-                fileNameSink.clear();
-                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
-                int p = fileNameSink.length() - 1;
-                while (p > 0 && fileNameSink.charAt(p) != '.') {
-                    p--;
-                }
-                if (p > 0) {
-                    fileNameSink.clear(p);
-                }
-                try {
-                    long timestamp = IntervalUtils.parseFloorPartialTimestamp(fileNameSink);
-                    if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionFloorMethod.floor(timestamp))) {
-                        if (ff.rmdir(path) != 0) {
-                            LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
-                        }
-                    }
-                } catch (NumericException unexpected) {
-                    if (ff.rmdir(path) != 0) {
-                        LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
-                    }
-                }
-            }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
-        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-
-            if (
-                    Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
-                            || Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
-                            || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
-                            || Chars.startsWith(fileNameSink, SEQ_DIR)
-            ) {
-                // Do not remove detached partitions, wal and sequencer directories
-                // They are probably about to be attached.
-                return;
-            }
-
-            try {
-                long txn = 0;
-                int txnSep = Chars.indexOf(fileNameSink, '.');
-                if (txnSep < 0) {
-                    txnSep = fileNameSink.length();
-                } else {
-                    txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.length());
-                }
-                long dirTimestamp = partitionDirFmt.parse(fileNameSink, 0, txnSep, null);
-                if (txn <= txWriter.txn &&
-                        (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
+        try {
+            int checkedType = Files.checkIsDirOrSoftLinkNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
+            // Do not remove detached partitions, wal and sequencer directories
+            // They are probably about to be attached.
+            if (checkedType != Files.DT_UNKNOWN &&
+                    !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
+                    !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
+                    !Chars.startsWith(fileNameSink, SEQ_DIR) &&
+                    !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())) {
+                try {
+                    long txn = 0;
+                    int txnSep = Chars.indexOf(fileNameSink, '.');
+                    if (txnSep < 0) {
+                        txnSep = fileNameSink.length();
+                    } else {
+                        txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.length());
+                    }
+                    long dirTimestamp = partitionDirFmt.parse(fileNameSink, 0, txnSep, null);
+                    if (txn <= txWriter.txn &&
+                            (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
+                        return;
+                    }
+                } catch (NumericException ignore) {
+                    // not a date?
+                    // ignore exception and leave the directory
+                    LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
                     return;
                 }
-            } catch (NumericException ignore) {
-                // not a date?
-                // ignore exception and leave the directory
-                path.trimTo(rootLen);
-                path.concat(pUtf8NameZ).$();
-                LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
-                return;
+                Files.unlinkRemove(ff, path, checkedType, LOG);
             }
+        } finally {
             path.trimTo(rootLen);
-            path.concat(pUtf8NameZ).$();
-            int errno;
-            if ((errno = ff.rmdir(path)) == 0) {
-                LOG.info().$("removed partition dir: ").$(path).$();
-            } else {
-                LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(errno).I$();
-            }
         }
     }
 
