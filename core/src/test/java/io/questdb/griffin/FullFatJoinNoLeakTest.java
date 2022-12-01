@@ -83,8 +83,8 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
     }
 
     private void testJoinThrowsLimitOverflowException(String sql) throws Exception {
-        sqlJoinMetadataPageSize = 10;
-        sqlJoinMetadataMaxResizes = 0;
+        configOverrideSqlJoinMetadataPageSize(10);
+        configOverrideSqlJoinMetadataMaxResizes(0);
 
         assertMemoryLeak(() -> {
             try (

@@ -315,16 +315,15 @@ public class WalEventCursor {
     public class SqlInfo {
         private final StringSink sql = new StringSink();
         private int cmdType;
-        private long now;
-        private long rndSeed0;
-        private long rndSeed1;
+        private long nowNanos;
+        private long nowMicros;
 
         public int getCmdType() {
             return cmdType;
         }
 
         public long getNow() {
-            return now;
+            return nowMicros;
         }
 
         public CharSequence getSql() {
@@ -342,7 +341,7 @@ public class WalEventCursor {
         }
 
         public void resetRnd(Rnd rnd) {
-            rnd.reset(rndSeed0, rndSeed1);
+            rnd.reset(nowNanos, nowMicros);
         }
 
         private void populateIndexedVariables(BindVariableService bindVariableService) throws SqlException {
@@ -461,9 +460,8 @@ public class WalEventCursor {
             cmdType = readInt();
             sql.clear();
             sql.put(readStr());
-            rndSeed0 = readLong();
-            rndSeed1 = readLong();
-            now = readLong();
+            nowNanos = readLong();
+            nowMicros = readLong();
         }
     }
 }

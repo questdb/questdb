@@ -147,6 +147,10 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public void resetNowAndClock() {
+            }
+
+            @Override
             public void setCloneSymbolTables(boolean cloneSymbolTables) {
             }
 

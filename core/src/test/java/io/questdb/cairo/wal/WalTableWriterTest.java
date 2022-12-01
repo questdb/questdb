@@ -713,6 +713,10 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
 
     @Test
     public void testUpdateViaWal_SysTimestamp() throws Exception {
+        // regardless of randomised clocks tables on each node should be identical
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        forEachNode(node -> node.getConfigurationOverrides().setCurrentMicros(rnd.nextPositiveLong()));
+
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
@@ -722,7 +726,6 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
-            Rnd rnd = TestUtils.generateRandom(LOG);
 
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {

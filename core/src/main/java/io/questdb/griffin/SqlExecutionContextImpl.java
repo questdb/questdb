@@ -211,6 +211,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void resetNowAndClock() {
+        now = 0;
+        clock = cairoConfiguration.getMicrosecondClock();
+    }
+
+    @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
     }

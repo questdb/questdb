@@ -913,6 +913,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public void resetNowAndClock() {
+            sqlExecutionContext.resetNowAndClock();
+        }
+
+        @Override
         public void setCloneSymbolTables(boolean cloneSymbolTables) {
             sqlExecutionContext.setCloneSymbolTables(cloneSymbolTables);
         }

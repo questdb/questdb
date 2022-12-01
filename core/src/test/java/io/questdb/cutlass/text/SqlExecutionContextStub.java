@@ -148,6 +148,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void resetNowAndClock() {
+    }
+
+    @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
     }
 

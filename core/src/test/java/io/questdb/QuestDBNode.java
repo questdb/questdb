@@ -24,9 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -66,6 +64,10 @@ public class QuestDBNode {
         return cairo.configuration;
     }
 
+    public ConfigurationOverrides getConfigurationOverrides() {
+        return cairo.overrides;
+    }
+
     public CairoEngine getEngine() {
         return cairo.engine;
     }
@@ -98,11 +100,11 @@ public class QuestDBNode {
         return griffin.sqlExecutionContext;
     }
 
-    public void initCairo(String dbRootName) {
+    public void initCairo(String dbRootName, ConfigurationOverrides overrides) {
         if (dbRootName == null || dbRootName.isEmpty()) {
             throw new IllegalArgumentException("must specify dbRoot");
         }
-        cairo = new Cairo(dbRootName);
+        cairo = new Cairo(dbRootName, overrides);
     }
 
     public void initGriffin(SqlExecutionCircuitBreaker circuitBreaker) {
@@ -132,25 +134,27 @@ public class QuestDBNode {
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
         private final Metrics metrics;
+        private final ConfigurationOverrides overrides;
         private final CharSequence root;
         private CairoEngine engine;
         private DatabaseSnapshotAgent snapshotAgent;
 
-        private Cairo(String dbRootName) {
+        private Cairo(String dbRootName, ConfigurationOverrides overrides) {
             try {
                 root = AbstractCairoTest.temp.newFolder(dbRootName).getAbsolutePath();
             } catch (IOException e) {
                 throw new ExceptionInInitializerError();
             }
 
+            this.overrides = overrides;
             final TelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration() {
                 @Override
                 public boolean hideTables() {
-                    return AbstractCairoTest.hideTelemetryTable;
+                    return overrides.isHidingTelemetryTable();
                 }
             };
 
-            configuration = new AbstractCairoTest.CairoTestConfiguration(root, telemetryConfiguration);
+            configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
             metrics = Metrics.enabled();
             engine = new CairoEngine(configuration, metrics, 2);
             snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -170,6 +174,7 @@ public class QuestDBNode {
             if (removeDir) {
                 TestUtils.removeTestPath(root);
             }
+            overrides.reset();
         }
 
         private void close() {

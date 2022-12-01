@@ -252,6 +252,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 throw e;
             }
         } finally {
+            sqlToOperation.resetNowAndClock();
             if (operation != null) {
                 operation.close();
             }

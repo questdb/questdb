@@ -1272,13 +1272,15 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testRostiReallocation() throws Exception {
-        rostiAllocFacade = new RostiAllocFacadeImpl() {
-            @Override
-            public long alloc(ColumnTypes types, long ignore) {
-                // force resize
-                return super.alloc(types, 64);
+        configOverrideRostiAllocFacade(
+            new RostiAllocFacadeImpl() {
+                @Override
+                public long alloc(ColumnTypes types, long ignore) {
+                    // force resize
+                    return super.alloc(types, 64);
+                }
             }
-        };
+        );
 
         assertMemoryLeak(() -> {
             String ddl = "create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1500))";

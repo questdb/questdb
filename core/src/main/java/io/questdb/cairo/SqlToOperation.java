@@ -72,6 +72,10 @@ public class SqlToOperation implements Closeable {
         return rnd;
     }
 
+    public void resetNowAndClock() {
+        sqlExecutionContext.resetNowAndClock();
+    }
+
     public void setNowAndFixClock(long now) {
         sqlExecutionContext.setNowAndFixClock(now);
     }
