@@ -680,23 +680,6 @@ public final class TableUtils {
         return lock(ff, path, true);
     }
 
-    public static long lockDirectory(FilesFacade ff, Path path) {
-        long fd = ff.openRO(path);
-        if (fd == -1) {
-            LOG.error().$("cannot open read-only '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
-            return -1L;
-        }
-
-        if (ff.lock(fd) != 0) {
-            LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
-            ff.close(fd);
-            return -1L;
-        }
-
-        LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
-        return fd;
-    }
-
     public static void lockName(Path path) {
         path.put(".lock").$();
     }

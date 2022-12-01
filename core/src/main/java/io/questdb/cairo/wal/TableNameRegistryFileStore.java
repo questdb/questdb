@@ -80,9 +80,14 @@ public class TableNameRegistryFileStore implements Closeable {
         if (lockFd != -1) {
             throw CairoException.critical(0).put("table registry already locked");
         }
-        // Lock root directory.
-        Path path = Path.getThreadLocal(configuration.getRoot()).put(Files.SEPARATOR).$();
-        lockFd = TableUtils.lockDirectory(configuration.getFilesFacade(), path);
+
+        // Windows does not allow to lock directories, so we lock a special lock file
+        FilesFacade ff = configuration.getFilesFacade();
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".lock").$();
+        if (ff.exists(path)) {
+            ff.touch(path);
+        }
+        lockFd = TableUtils.lock(ff, path);
         return lockFd != -1;
     }
 
