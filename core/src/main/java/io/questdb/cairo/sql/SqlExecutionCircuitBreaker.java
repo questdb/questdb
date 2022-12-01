@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import org.jetbrains.annotations.Nullable;
+
 public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
@@ -66,7 +68,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
         @Override
         public void statefulThrowExceptionIfTrippedNoThrottle() {
-
         }
 
         @Override
@@ -74,12 +75,13 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
     };
 
-    //Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
-    //(used mainly for testing)
+    // Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
+    // (used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
 
     boolean checkIfTripped(long millis, int fd);
 
+    @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
 
     int getFd();
@@ -98,11 +100,13 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void statefulThrowExceptionIfTripped();
 
     /**
-     * Same as statefulThrowExceptionIfTripped() but doesn't throttle checks .
+     * Same as statefulThrowExceptionIfTripped() but doesn't throttle checks.
      * It is meant to be used in more coarse-grained processing, e.g. before native operation on whole page frame.
      */
     void statefulThrowExceptionIfTrippedNoThrottle();
 
-    /* Unsets timer reset/power-up time so it won't time out on any check (unless resetTimer() is called)  */
+    /**
+     * Unsets timer reset/power-up time, so it won't time out on any check (unless resetTimer() is called).
+     */
     void unsetTimer();
 }

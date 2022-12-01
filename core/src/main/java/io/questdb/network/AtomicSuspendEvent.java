@@ -29,7 +29,7 @@ package io.questdb.network;
  * by {@link IODispatcherWindows} in a loop, so O(n), but that fine with we already
  * use an O(n) method (select) to check socket statuses.
  */
-public class AtomicSuspendEvent implements SuspendEvent {
+public class AtomicSuspendEvent extends SuspendEvent {
 
     private volatile boolean flag;
 

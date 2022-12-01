@@ -35,27 +35,51 @@ import java.io.Closeable;
  * <p>
  * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
  */
-public interface SuspendEvent extends Closeable {
+public abstract class SuspendEvent implements Closeable {
+
+    private long deadline = -1;
 
     /**
      * Returns true if the event was triggered.
      */
-    boolean checkTriggered();
+    public abstract boolean checkTriggered();
 
     /**
      * Event is assumed to be held and then closed by two parties.
      * The underlying OS resources are freed on the second close call.
      */
     @Override
-    void close();
+    public abstract void close();
+
+    /**
+     * Returns a deadline (epoch millis) for the event or -1 if the deadline is not set.
+     */
+    public long getDeadline() {
+        return deadline;
+    }
 
     /**
      * Returns fd to be used to listen/wait for the event.
      */
-    int getFd();
+    public abstract int getFd();
+
+    /**
+     * Returns true if the deadline was set to an older value than the given timestamp,
+     * false - otherwise.
+     */
+    public boolean isDeadlineMet(long timestamp) {
+        return deadline > 0 && deadline <= timestamp;
+    }
+
+    /**
+     * Sets a deadline (epoch millis) for the event.
+     */
+    public void setDeadline(long deadline) {
+        this.deadline = deadline;
+    }
 
     /**
      * Sends the event to the receiving side.
      */
-    void trigger();
+    public abstract void trigger();
 }

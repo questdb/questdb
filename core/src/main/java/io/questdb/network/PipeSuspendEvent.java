@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 /**
  * pipe(2)-based suspend event object. Used on OS X and BSD in combination with kqueue.
  */
-public class PipeSuspendEvent implements SuspendEvent {
+public class PipeSuspendEvent extends SuspendEvent {
 
     private static final long REF_COUNT_OFFSET;
 

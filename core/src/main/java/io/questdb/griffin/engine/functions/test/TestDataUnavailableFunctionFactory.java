@@ -57,7 +57,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);
-        return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount));
+        return new CursorFunction(new DataUnavailableRecordCursorFactory(totalRows, backoffCount, sqlExecutionContext.getCircuitBreaker()));
     }
 
     @FunctionalInterface
@@ -70,14 +70,16 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         private static final IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration();
 
         private final long backoffCount;
+        private final SqlExecutionCircuitBreaker circuitBreaker;
         private final LongConstRecord record = new LongConstRecord();
         private final long totalRows;
         private long attempts;
         private long rows;
 
-        public DataUnavailableRecordCursor(long totalRows, long backoffCount) {
+        public DataUnavailableRecordCursor(long totalRows, long backoffCount, SqlExecutionCircuitBreaker circuitBreaker) {
             this.totalRows = totalRows;
             this.backoffCount = backoffCount;
+            this.circuitBreaker = circuitBreaker;
         }
 
         @Override
@@ -91,6 +93,7 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             if (rows >= totalRows) {
                 return false;
             }
@@ -128,9 +131,9 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         private static final RecordMetadata METADATA;
         private final DataUnavailableRecordCursor cursor;
 
-        public DataUnavailableRecordCursorFactory(long totalRows, long backoffCount) {
+        public DataUnavailableRecordCursorFactory(long totalRows, long backoffCount, SqlExecutionCircuitBreaker circuitBreaker) {
             super(METADATA);
-            cursor = new DataUnavailableRecordCursor(totalRows, backoffCount);
+            cursor = new DataUnavailableRecordCursor(totalRows, backoffCount, circuitBreaker);
         }
 
         @Override

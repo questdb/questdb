@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 /**
  * eventfd(2)-based suspend event object. Used on Linux in combination with epoll.
  */
-public class EventFdSuspendEvent implements SuspendEvent {
+public class EventFdSuspendEvent extends SuspendEvent {
 
     private static final long REF_COUNT_OFFSET;
 

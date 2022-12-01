@@ -2358,6 +2358,17 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testGssApiRequestClosedGracefully() throws Exception {
+        final String script = ">0000000804d21630\n" +
+            "<4e\n";
+        assertHexScript(
+            NetworkFacadeImpl.INSTANCE,
+            script,
+            getHexPgWireConfig()
+        );
+    }
+
+    @Test
     public void testHappyPathForIntParameterWithoutExplicitParameterTypeHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
             "<520000000800000003\n" +
@@ -4994,7 +5005,37 @@ nodejs code:
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventFiredAfterDelay() throws Exception {
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                final PGWireServer server = createPGServer(1, 100);
+                final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                    };
+
+                    String query = "select * from test_data_unavailable(1, 10)";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                        "1,1,1\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         // This test doesn't use tables.
         Assume.assumeFalse(walEnabled);
 
@@ -5053,7 +5094,7 @@ nodejs code:
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventFiredImmediately() throws Exception {
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         // This test doesn't use tables.
         Assume.assumeFalse(walEnabled);
 
@@ -6980,6 +7021,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -7027,10 +7072,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -7298,17 +7339,6 @@ create table tab as (
         testQuery(
             "rnd_double(4) расход, ",
             "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n"
-        );
-    }
-
-    @Test
-    public void testGssApiRequestClosedGracefully() throws Exception {
-        final String script = ">0000000804d21630\n" +
-            "<4e\n";
-        assertHexScript(
-            NetworkFacadeImpl.INSTANCE,
-            script,
-            getHexPgWireConfig()
         );
     }
 

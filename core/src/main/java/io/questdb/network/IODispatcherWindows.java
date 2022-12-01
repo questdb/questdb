@@ -151,8 +151,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             // check if the context is waiting for a suspend event
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
-                if (suspendEvent.checkTriggered()) {
-                    // the event was triggered, clear it and proceed
+                if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
+                    // the event has been triggered or expired already, clear it and proceed
                     context.clearSuspendEvent();
                 } else {
                     // the event is still pending, skip to the next operation

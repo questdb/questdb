@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.ThreadLocal;
 
 public class QueryPausedException extends Exception {
@@ -31,8 +33,16 @@ public class QueryPausedException extends Exception {
 
     private SuspendEvent event;
 
-    public static QueryPausedException instance(SuspendEvent event) {
+    public static QueryPausedException instance(SuspendEvent event, SqlExecutionCircuitBreaker circuitBreaker) {
         QueryPausedException ex = tlException.get();
+        SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = circuitBreaker.getConfiguration();
+        if (circuitBreakerConfiguration != null) {
+            long timeout = circuitBreakerConfiguration.getTimeout();
+            if (timeout != Long.MAX_VALUE) {
+                long deadline = circuitBreakerConfiguration.getClock().getTicks() + timeout;
+                event.setDeadline(deadline);
+            }
+        }
         ex.event = event;
         return ex;
     }

@@ -73,8 +73,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int INIT_CANCEL_REQUEST = 80877102;
-    private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_GSS_REQUEST = 80877104;
+    private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
@@ -1697,6 +1697,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         characterStore.clear();
     }
 
+    private void prepareGssResponse() {
+        responseAsciiSink.put('N');
+    }
+
     private void prepareLoginOk() {
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
@@ -1786,10 +1790,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void prepareSslResponse() {
-        responseAsciiSink.put('N');
-    }
-
-    private void prepareGssResponse() {
         responseAsciiSink.put('N');
     }
 
@@ -2490,6 +2490,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         int columnCount,
         PGResumeProcessor commandCompleteResumeProcessor
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+
         try {
             while (currentCursor.hasNext()) {
                 try {
@@ -2512,7 +2516,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         } catch (DataUnavailableException e) {
             isPausedQuery = true;
             responseAsciiSink.resetToBookmark();
-            throw QueryPausedException.instance(e.getEvent());
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
 
         completed = maxRows <= 0 || rowCount < maxRows;
@@ -2776,8 +2780,14 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     executeTag();
                     prepareCommandComplete(false);
                 }
-            } finally {
+
                 sqlExecutionContext.getCircuitBreaker().unsetTimer();
+            } catch (QueryPausedException e) {
+                // keep circuit breaker's timer as is
+                throw e;
+            } catch (Exception e) {
+                sqlExecutionContext.getCircuitBreaker().unsetTimer();
+                throw e;
             }
         }
 

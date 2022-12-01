@@ -974,7 +974,24 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailable() throws Exception {
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup(true, 100)) {
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                };
+
+                try {
+                    test.statement.execute("select * from test_data_unavailable(1, 10); " +
+                        "select * from test_data_unavailable(1, 10);");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 int totalRows = 3;
@@ -1727,15 +1744,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         final PGWireServer server;
         final Statement statement;
 
-        PGTestSetup(boolean useSimpleMode) throws SQLException {
-            server = createPGServer(2);
+        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException {
+            server = createPGServer(2, queryTimeout);
             server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
 
         PGTestSetup() throws SQLException {
-            this(true);
+            this(true, Long.MAX_VALUE);
         }
 
         @Override

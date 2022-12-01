@@ -5292,7 +5292,34 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventFiredAfterDelay() throws Exception {
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(2)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .withQueryTimeout(100)
+            .run((engine) -> {
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                };
+
+                final String query = "select * from test_data_unavailable(1, 10)";
+                new SendAndReceiveRequestBuilder()
+                    .withExpectDisconnect(true) // yes, we expect a disconnect in this scenario
+                    .execute(
+                        "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
+                        "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n"
+                    );
+            });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         new HttpQueryTestBuilder()
             .withTempFolder(temp)
             .withWorkerCount(2)
@@ -5344,7 +5371,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventFiredImmediately() throws Exception {
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         new HttpQueryTestBuilder()
             .withTempFolder(temp)
             .withWorkerCount(2)
@@ -6448,7 +6475,35 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventFiredAfterDelay() throws Exception {
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        new HttpQueryTestBuilder()
+            .withTempFolder(temp)
+            .withWorkerCount(2)
+            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+            .withTelemetry(false)
+            .withQueryTimeout(100)
+            .run((engine) -> {
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                };
+
+                final String query = "select * from test_data_unavailable(1, 10)";
+                new SendAndReceiveRequestBuilder()
+                    .withExpectDisconnect(true) // yes, we expect a disconnect in this scenario
+                    .execute(
+                        "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
+                        "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: text/csv; charset=utf-8\r\n" +
+                            "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n"
+                    );
+            });
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         new HttpQueryTestBuilder()
             .withTempFolder(temp)
             .withWorkerCount(2)
@@ -6512,7 +6567,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventFiredImmediately() throws Exception {
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         new HttpQueryTestBuilder()
             .withTempFolder(temp)
             .withWorkerCount(2)

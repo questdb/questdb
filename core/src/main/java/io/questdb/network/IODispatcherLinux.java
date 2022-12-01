@@ -92,7 +92,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
             useful = true;
             final long id = fdid++;
-            int fd = (int) context.getFd();
+            int fd = context.getFd();
             int operation = requestedOperation;
             int epollOp = EpollAccessor.EPOLL_CTL_MOD;
             LOG.debug().$("processing registration [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();

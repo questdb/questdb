@@ -105,7 +105,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
             useful = true;
             long id = fdid++;
-            int fd = (int) context.getFd();
+            int fd = context.getFd();
             int operation = requestedOperation;
             LOG.debug().$("processing registration [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
 
