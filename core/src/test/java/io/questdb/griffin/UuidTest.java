@@ -84,6 +84,26 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testComparisonWithSymbols() throws Exception {
+        // UUID is implicitly casted to String
+        // and we can compare strings to symbols
+        assertCompile("create table x (u UUID, s SYMBOL)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', 'whatever')");
+        assertCompile("insert into x values (null, null)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', null)");
+        assertCompile("insert into x values (null, 'whatever')");
+
+        assertQuery("column\n" +
+                "true\n" +
+                "false\n" +
+                "true\n" +
+                "false\n" +
+                "false\n",
+            "select u = s from x", null, null, true, true, true);
+    }
+
+    @Test
     public void testConcatFunction() throws Exception {
         assertCompile("create table x (u1 UUID, u2 UUID, u3 UUID)");
         assertCompile("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')");
@@ -538,9 +558,7 @@ public class UuidTest extends AbstractGriffinTest {
     @Test
     public void testStringOverloadFunctionWithNull() throws Exception {
         assertCompile("create table x (u uuid)");
-
         assertCompile("insert into x values (null)");
-
         assertQuery("length\n" +
                 "-1\n",
             "select length(u) from x", null, null, true, true, true);
