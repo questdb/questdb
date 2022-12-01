@@ -98,7 +98,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             FloatingSequence that = lexer.csPool.next();
             that.lo = lexer._lo;
             that.hi = lexer._hi;
-            assert that.lo < that.hi;
+            assert that.lo <= that.hi;
             return that;
         }
         return value;
@@ -168,7 +168,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         FloatingSequence that = csPool.next();
         that.lo = lo;
         that.hi = hi;
-        assert that.lo < that.hi;
+        assert that.lo <= that.hi;
         return that;
     }
 
@@ -505,7 +505,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             FloatingSequence that = csPool.next();
             that.lo = lo + start;
             that.hi = lo + end;
-            assert that.lo < that.hi;
+            assert that.lo <= that.hi;
             return that;
         }
     }

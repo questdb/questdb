@@ -169,14 +169,14 @@ public class GenericLexerTest {
             sink.put(tok).put('\n');
         }
         TestUtils.assertEquals("insert\n" +
-                        "into\n" +
-                        "data\n" +
-                        "values\n" +
-                        "(\n" +
-                        "'{ title: \\\"Title\\\"}'\n" +
-                        ")\n" +
-                        ";\n",
-                sink
+                "into\n" +
+                "data\n" +
+                "values\n" +
+                "(\n" +
+                "'{ title: \\\"Title\\\"}'\n" +
+                ")\n" +
+                ";\n",
+            sink
         );
     }
 
@@ -212,13 +212,13 @@ public class GenericLexerTest {
             sink.put(tok).put('\n');
         }
         TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "\"t\"\"ab\"\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'obrian'\n" +
-                        ")\n;\n",
-                sink
+                "INTO\n" +
+                "\"t\"\"ab\"\n" +
+                "VALUES\n" +
+                "(\n" +
+                "'obrian'\n" +
+                ")\n;\n",
+            sink
         );
     }
 
@@ -236,14 +236,32 @@ public class GenericLexerTest {
             sink.put(tok).put('\n');
         }
         TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "tab\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'o''brian'\n" +
-                        ")\n;\n",
-                sink
+                "INTO\n" +
+                "tab\n" +
+                "VALUES\n" +
+                "(\n" +
+                "'o''brian'\n" +
+                ")\n;\n",
+            sink
         );
+    }
+
+    @Test
+    public void testImmutableBetweenEmpty() {
+        GenericLexer ts = new GenericLexer(1);
+        ts.of("foo");
+
+        CharSequence empty = ts.immutableBetween(0, 0);
+        TestUtils.assertEquals("", empty);
+    }
+
+    @Test
+    public void testImmutableEmpty() {
+        GenericLexer ts = new GenericLexer(1);
+        ts.of("");
+
+        CharSequence next = ts.next();
+        TestUtils.assertEquals("", GenericLexer.immutableOf(next));
     }
 
     @Test
@@ -337,7 +355,7 @@ public class GenericLexerTest {
         lex.next(); // slash
         CharSequence bitsTok = lex.next();
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
-                lex.immutablePairOf(geohashTok, '/', bitsTok);
+            lex.immutablePairOf(geohashTok, '/', bitsTok);
         Assert.assertEquals(culprit, pair.toString());
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < pair.length(); i++) {
@@ -552,5 +570,18 @@ public class GenericLexerTest {
     @Test
     public void testUnquote() {
         Assert.assertEquals(GenericLexer.unquote("QuestDB"), GenericLexer.unquote("'QuestDB'"));
+    }
+
+    @Test
+    public void testUnquoteEmpty() {
+        GenericLexer lex = new GenericLexer(64);
+
+        String str = "''";
+        lex.of(str);
+        CharSequence charSequence = lex.immutableBetween(0, str.length());
+        TestUtils.assertEquals(str, charSequence);
+
+        CharSequence unquoted = GenericLexer.unquote(charSequence);
+        TestUtils.assertEquals("", unquoted);
     }
 }

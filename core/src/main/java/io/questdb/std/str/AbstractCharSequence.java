@@ -57,6 +57,14 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
         if (start == 0 && end == length()) {
             return this;
         }
+        // it's tempting apply this optimization:
+        // if (start == end) {
+        //   return "";
+        // }
+        // but that's rather risky, because for example GenericLexer does this:
+        // if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
+        //   throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
+        // }
         return _subSequence(start, end);
     }
 
