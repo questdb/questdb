@@ -175,8 +175,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             path.of(configuration.getRoot()).concat(tableName);
                             int plen = path.length();
                             // in windows if this was a real soft link to a folder, the link would be deleted
-                            Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
-                            Assert.assertTrue(ff.exists(path.trimTo(plen).concat("2022-10-18").$()));
+                            Assert.assertFalse(Files.exists(path.concat(readOnlyPartitionName).$()));
+                            Assert.assertTrue(Files.exists(path.trimTo(plen).concat("2022-10-18").$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -549,6 +549,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     }
             );
         });
+        //  AlterTableAttachPartitionFromSoftLinkTest.testRemoveColumnWindows:511->AbstractCairoTest.assertMemoryLeak:608->AbstractCairoTest.lambda$assertMemoryLeak$0:611->lambda$testRemoveColumnWindows$24:513->createTableWithReadOnlyPartition:820->AbstractCairoTest.assertMemoryLeak:608->AbstractCairoTest.lambda$assertMemoryLeak$0:611->lambda$createTableWithReadOnlyPartition$37:835->lambda$testRemoveColumnWindows$23:543->runColumnPurgeOperator:876 null
     }
 
     @Test
@@ -872,8 +873,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             purgeTask.of(tableName, "s", 1, 0, ColumnType.SYMBOL, PartitionBy.DAY, 1, updatedColumnInfo);
             purgeOperator.purgeExternal(purgeTask, txReader);
             LongList purgedRowIds = purgeOperator.getCompletedRowIds();
-            Assert.assertTrue(purgedRowIds.indexOf(314159L) > -1L);
-            Assert.assertTrue(purgedRowIds.indexOf(628218L) > -1L);
+            Assert.assertNotNull(purgedRowIds);
+            int idx0 = purgedRowIds.indexOf(314159L);
+            int idx1 = purgedRowIds.indexOf(628218L);
+            Assert.assertTrue(idx0 > -1L);
+            Assert.assertTrue(idx1 > -1L);
         }
     }
 
