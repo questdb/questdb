@@ -405,10 +405,10 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             for (int i = 0; i < N; i++) {
                 rwMem.putLong256(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong()
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong()
                 );
             }
 
@@ -427,10 +427,10 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             Long256Impl value = new Long256Impl();
             for (int i = 0; i < N; i++) {
                 value.setAll(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong());
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong());
                 rwMem.putLong256(value);
             }
 
@@ -449,11 +449,11 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             StringSink sink = new StringSink();
             for (int i = 0; i < N; i++) {
                 Numbers.appendLong256(
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    rnd.nextLong(),
-                    sink
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        rnd.nextLong(),
+                        sink
                 );
                 rwMem.putLong256(sink);
                 sink.clear();
@@ -473,11 +473,11 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             for (int i = 0; i < N; i++) {
                 rwMem.putLong256(
-                    i * 32
-                    , rnd.nextLong()
-                    , rnd.nextLong()
-                    , rnd.nextLong()
-                    , rnd.nextLong()
+                        i * 32
+                        , rnd.nextLong()
+                        , rnd.nextLong()
+                        , rnd.nextLong()
+                        , rnd.nextLong()
                 );
             }
 
@@ -496,10 +496,10 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             Long256Impl value = new Long256Impl();
             for (int i = 0; i < N; i++) {
                 value.setAll(
-                    rnd.nextLong()
-                    , rnd.nextLong()
-                    , rnd.nextLong()
-                    , rnd.nextLong()
+                        rnd.nextLong()
+                        , rnd.nextLong()
+                        , rnd.nextLong()
+                        , rnd.nextLong()
                 );
                 rwMem.putLong256(i * 32, value);
             }
@@ -593,12 +593,12 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
                 rnd.reset();
                 MemoryMARW rwMem = Vm.getMARWInstance(
-                    ff,
-                    path,
-                    ff.getMapPageSize(),
-                    0,
-                    MemoryTag.MMAP_DEFAULT,
-                    configuration.getWriterFileOpenOpts()
+                        ff,
+                        path,
+                        ff.getMapPageSize(),
+                        0,
+                        MemoryTag.MMAP_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
                 );
                 rwMem.close();
                 Assert.assertEquals(0, rwMem.getPageCount());
@@ -923,20 +923,20 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final Path path = Path.getThreadLocal(root).concat("t.d").$();
             rnd.reset();
             try (
-                MemoryCMARW rwMem = Vm.getCMARWInstance(
-                    FilesFacadeImpl.INSTANCE,
-                    path,
-                    appendSz,
-                    -1,
-                    MemoryTag.MMAP_DEFAULT,
-                    configuration.getWriterFileOpenOpts()
-                );
+                    MemoryCMARW rwMem = Vm.getCMARWInstance(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            appendSz,
+                            -1,
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    );
 
-                MemoryCMR roMem = new MemoryCMRImpl(
-                    FilesFacadeImpl.INSTANCE,
-                    path,
-                    sz,
-                    MemoryTag.MMAP_DEFAULT)
+                    MemoryCMR roMem = new MemoryCMRImpl(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            sz,
+                            MemoryTag.MMAP_DEFAULT)
             ) {
                 code.run(rwMem, roMem);
             } finally {

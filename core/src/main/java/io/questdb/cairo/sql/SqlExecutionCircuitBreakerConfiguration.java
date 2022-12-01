@@ -29,6 +29,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 
 public interface SqlExecutionCircuitBreakerConfiguration {
+
     boolean checkConnection();
 
     int getBufferSize();

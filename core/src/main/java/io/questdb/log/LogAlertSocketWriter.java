@@ -83,24 +83,24 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
-            FilesFacadeImpl.INSTANCE,
-            NetworkFacadeImpl.INSTANCE,
-            MicrosecondClockImpl.INSTANCE,
-            alertsSrc,
-            writeSequence,
-            level,
-            ALERT_PROPS
+                FilesFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                MicrosecondClockImpl.INSTANCE,
+                alertsSrc,
+                writeSequence,
+                level,
+                ALERT_PROPS
         );
     }
 
     public LogAlertSocketWriter(
-        FilesFacade ff,
-        NetworkFacade nf,
-        MicrosecondClock clock,
-        RingQueue<LogRecordSink> alertsSrc,
-        SCSequence writeSequence,
-        int level,
-        CharSequenceObjHashMap<CharSequence> properties
+            FilesFacade ff,
+            NetworkFacade nf,
+            MicrosecondClock clock,
+            RingQueue<LogRecordSink> alertsSrc,
+            SCSequence writeSequence,
+            int level,
+            CharSequenceObjHashMap<CharSequence> properties
     ) {
         this.ff = ff;
         this.nf = nf;
@@ -150,18 +150,18 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         log = factory.create(LogAlertSocketWriter.class.getName());
         socket = new LogAlertSocket(
-            nf,
-            alertTargets,
-            nInBufferSize,
-            nOutBufferSize,
-            nReconnectDelay,
-            defaultAlertHost,
-            nDefaultPort,
-            log
+                nf,
+                alertTargets,
+                nInBufferSize,
+                nOutBufferSize,
+                nReconnectDelay,
+                defaultAlertHost,
+                nDefaultPort,
+                log
         );
         alertSink = new HttpLogRecordSink(socket)
-            .putHeader(LogAlertSocket.localHostIp)
-            .setMark();
+                .putHeader(LogAlertSocket.localHostIp)
+                .setMark();
         loadLogAlertTemplate();
         socket.connect();
     }
@@ -199,19 +199,19 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         if (needsReading) {
             sink.clear();
             readFile(
-                location,
-                socket.getInBufferPtr(),
-                socket.getInBufferSize(),
-                ff,
-                sink
+                    location,
+                    socket.getInBufferPtr(),
+                    socket.getInBufferSize(),
+                    ff,
+                    sink
             );
             alertTemplate.parse(sink, now, properties);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(
-                "Bad template, no %s declaration found %s",
-                MESSAGE_ENV_VALUE,
-                location));
+                    "Bad template, no %s declaration found %s",
+                    MESSAGE_ENV_VALUE,
+                    location));
         }
         alertTemplateNodes = alertTemplate.getTemplateNodes();
         alertTemplateNodesLen = alertTemplateNodes.size();
@@ -225,9 +225,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             templateFd = ff.openRO(path.$());
             if (templateFd == -1) {
                 throw new LogError(String.format(
-                    "Cannot read %s [errno=%d]",
-                    location,
-                    ff.errno()
+                        "Cannot read %s [errno=%d]",
+                        location,
+                        ff.errno()
                 ));
             }
             long size = ff.length(templateFd);
@@ -236,10 +236,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             }
             if (size < 0 || size != ff.read(templateFd, address, size, 0)) {
                 throw new LogError(String.format(
-                    "Cannot read %s [errno=%d, size=%d]",
-                    location,
-                    ff.errno(),
-                    size
+                        "Cannot read %s [errno=%d, size=%d]",
+                        location,
+                        ff.errno(),
+                        size
                 ));
             }
             Chars.utf8Decode(address, address + size, sink);

@@ -43,11 +43,11 @@ class MigrationContext {
     private Path tablePath2;
 
     public MigrationContext(
-        CairoEngine engine,
-        long mem,
-        int tempMemSize,
-        MemoryARW tempVirtualMem,
-        MemoryMARW rwMemory
+            CairoEngine engine,
+            long mem,
+            int tempMemSize,
+            MemoryARW tempVirtualMem,
+            MemoryMARW rwMemory
     ) {
         this.engine = engine;
         this.tempMemory = mem;
@@ -100,10 +100,10 @@ class MigrationContext {
             return tempMemory;
         }
         throw new UnsupportedOperationException("No temp memory of size "
-            + size
-            + " is allocate. Only "
-            + tempMemoryLen
-            + " is available");
+                + size
+                + " is allocate. Only "
+                + tempMemoryLen
+                + " is available");
     }
 
     public MemoryARW getTempVirtualMem() {

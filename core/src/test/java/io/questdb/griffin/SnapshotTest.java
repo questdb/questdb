@@ -148,13 +148,13 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             final String tableName = "t";
             compile("create table " + tableName + " as " +
-                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day",
-                sqlExecutionContext);
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day",
+                    sqlExecutionContext);
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
             compile("insert into " + tableName +
-                " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
 
             // Release all readers and writers, but keep the snapshot dir around.
             snapshotAgent.clear();
@@ -167,7 +167,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
             assertSql("select count() from " + tableName, "count\n" +
-                partitionCount + "\n");
+                    partitionCount + "\n");
         });
     }
 
@@ -181,22 +181,22 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             final String tableName = "t";
             compile("create table " + tableName + " as " +
-                    "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))",
-                sqlExecutionContext);
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))",
+                    sqlExecutionContext);
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
             final String expectedAllColumns = "a\tb\tc\n" +
-                "JW\tC\t1\n" +
-                "WH\tB\t2\n" +
-                "PE\tB\t3\n";
+                    "JW\tC\t1\n" +
+                    "WH\tB\t2\n" +
+                    "PE\tB\t3\n";
             assertSql("select * from " + tableName, expectedAllColumns);
 
             compile("alter table " + tableName + " drop column b", sqlExecutionContext);
             assertSql("select * from " + tableName, "a\tc\n" +
-                "JW\t1\n" +
-                "WH\t2\n" +
-                "PE\t3\n");
+                    "JW\t1\n" +
+                    "WH\t2\n" +
+                    "PE\t3\n");
 
             // Release all readers and writers, but keep the snapshot dir around.
             snapshotAgent.clear();
@@ -322,8 +322,8 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
-            "create table " + tableName + " (a symbol, b double, c long)",
-            null
+                "create table " + tableName + " (a symbol, b double, c long)",
+                null
         );
     }
 
@@ -331,9 +331,9 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
-            "create table " + tableName + " as " +
-                " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
-            null
+                "create table " + tableName + " as " +
+                        " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
+                null
         );
     }
 
@@ -341,8 +341,8 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
-            "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-            "alter table " + tableName + " drop column c"
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                "alter table " + tableName + " drop column c"
         );
     }
 
@@ -350,8 +350,8 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
-            "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-            null
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null
         );
     }
 
@@ -359,9 +359,9 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
-            "create table " + tableName +
-                " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
-            null
+                "create table " + tableName +
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
+                null
         );
     }
 
@@ -409,17 +409,17 @@ public class SnapshotTest extends AbstractGriffinTest {
         FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
 
         testSnapshotPrepareCheckTableMetadataFiles(
-            "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-            null
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null
         );
 
         // Assert snapshot folder exists
         Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
-            path.of(configuration.getSnapshotRoot()).slash$())
+                path.of(configuration.getSnapshotRoot()).slash$())
         );
         // But snapshot/db folder does not
         Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
         );
     }
 
@@ -579,10 +579,10 @@ public class SnapshotTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
-                "select x, " +
-                " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                " from long_sequence(5)" +
-                ") timestamp(ts) partition by DAY WAL");
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
 
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
@@ -592,11 +592,11 @@ public class SnapshotTest extends AbstractGriffinTest {
             assertWalExistence(true, tableName, 1);
 
             assertSql(tableName, "x\tts\n" +
-                "1\t2022-02-24T00:00:00.000000Z\n" +
-                "2\t2022-02-24T00:00:01.000000Z\n" +
-                "3\t2022-02-24T00:00:02.000000Z\n" +
-                "4\t2022-02-24T00:00:03.000000Z\n" +
-                "5\t2022-02-24T00:00:04.000000Z\n");
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
 
             WalPurgeJobTest.MicrosecondClockMock clock = new WalPurgeJobTest.MicrosecondClockMock();
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
@@ -649,12 +649,12 @@ public class SnapshotTest extends AbstractGriffinTest {
             snapshotInstanceId = snapshotId;
             String tableName = testName.getMethodName() + "_abc";
             compile("create table " + tableName + " as (" +
-                "select x, " +
-                " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
-                " from long_sequence(5)" +
-                ") timestamp(ts) partition by DAY WAL");
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
 
             executeOperation("alter table " + tableName + " add column iii int", CompiledQuery.ALTER);
             executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 41)");
@@ -670,13 +670,13 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // all updates above should be applied to table
             assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\n" +
-                "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
-                "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
-                "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
-                "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
-                "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
-                "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
-                "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n");
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n");
 
 
             executeOperation("alter table " + tableName + " add column kkk int", CompiledQuery.ALTER);
@@ -702,14 +702,14 @@ public class SnapshotTest extends AbstractGriffinTest {
             drainWalQueue();
 
             assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
-                "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
-                "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
-                "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
-                "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
-                "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
-                "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
-                "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
-                "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n");
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n");
 
             // check for updates to the restored table
             executeOperation("alter table " + tableName + " add column lll int", CompiledQuery.ALTER);
@@ -720,16 +720,16 @@ public class SnapshotTest extends AbstractGriffinTest {
             drainWalQueue();
 
             assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
-                "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
-                "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
-                "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
-                "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
-                "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
-                "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
-                "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
-                "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
+                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
 
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
@@ -766,18 +766,18 @@ public class SnapshotTest extends AbstractGriffinTest {
             }
             drainWalQueue();
             assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
-                "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
-                "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
-                "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
-                "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
-                "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
-                "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
-                "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
-                "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
-                "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
-                "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n");
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
+                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
+                    "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
+                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n");
         });
     }
 
@@ -787,19 +787,19 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             final String nonPartitionedTable = "npt";
             compile("create table " + nonPartitionedTable + " as " +
-                    "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
-                sqlExecutionContext);
+                            "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
+                    sqlExecutionContext);
             final String partitionedTable = "pt";
             compile("create table " + partitionedTable + " as " +
-                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
-                sqlExecutionContext);
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
+                    sqlExecutionContext);
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
             compile("insert into " + nonPartitionedTable +
-                " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
+                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
             compile("insert into " + partitionedTable +
-                " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
 
             // Release all readers and writers, but keep the snapshot dir around.
             snapshotAgent.clear();
@@ -813,9 +813,9 @@ public class SnapshotTest extends AbstractGriffinTest {
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
             int expectedCount = expectRecovery ? 20 : 40;
             assertSql("select count() from " + nonPartitionedTable, "count\n" +
-                expectedCount + "\n");
+                    expectedCount + "\n");
             assertSql("select count() from " + partitionedTable, "count\n" +
-                expectedCount + "\n");
+                    expectedCount + "\n");
 
             // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
             path.trimTo(rootLen).slash$();
@@ -859,7 +859,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compile("truncate table " + tableName);
 
                 compile("insert into " + tableName +
-                    " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))", sqlExecutionContext);
+                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))", sqlExecutionContext);
                 if (generateColTops) {
                     compile("alter table " + tableName + " add column c int", sqlExecutionContext);
                 }

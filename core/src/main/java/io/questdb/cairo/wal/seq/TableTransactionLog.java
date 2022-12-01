@@ -227,10 +227,10 @@ public class TableTransactionLog implements Closeable {
         }
 
         public void of(
-            FilesFacade ff,
-            long structureVersionLo,
-            MemorySerializer serializer,
-            @Transient final Path path
+                FilesFacade ff,
+                long structureVersionLo,
+                MemorySerializer serializer,
+                @Transient final Path path
         ) {
 
             // deallocates current state
@@ -252,11 +252,11 @@ public class TableTransactionLog implements Closeable {
                     txnMetaOffsetHi = ff.readNonNegativeLong(txnFd, TXN_META_SIZE_OFFSET);
                     if (txnMetaOffsetHi > txnMetaOffset) {
                         txnMetaAddress = ff.mmap(
-                            txnMetaFd,
-                            txnMetaOffsetHi,
-                            0L,
-                            Files.MAP_RO,
-                            MemoryTag.MMAP_TX_LOG_CURSOR
+                                txnMetaFd,
+                                txnMetaOffsetHi,
+                                0L,
+                                Files.MAP_RO,
+                                MemoryTag.MMAP_TX_LOG_CURSOR
                         );
                         if (txnMetaAddress < 0) {
                             txnMetaAddress = 0;

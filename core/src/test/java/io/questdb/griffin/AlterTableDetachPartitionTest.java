@@ -77,27 +77,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlreadyDetached1() throws Exception {
         assertFailure(
-            "tab143",
-            "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03', '2022-06-03'",
-            "could not detach partition [table=tab143, detachStatus=DETACH_ERR_MISSING_PARTITION"
+                "tab143",
+                "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03', '2022-06-03'",
+                "could not detach partition [table=tab143, detachStatus=DETACH_ERR_MISSING_PARTITION"
         );
     }
 
     @Test
     public void testAlreadyDetached2() throws Exception {
         assertFailure(
-            null,
-            "tab143",
-            "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
-            "could not detach partition [table=tab143, detachStatus=DETACH_ERR_ALREADY_DETACHED",
-            () -> {
-                path.of(configuration.getRoot())
-                    .concat("tab143")
-                    .concat("2022-06-03")
-                    .put(DETACHED_DIR_MARKER)
-                    .slash$();
-                Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 509));
-            }
+                null,
+                "tab143",
+                "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
+                "could not detach partition [table=tab143, detachStatus=DETACH_ERR_ALREADY_DETACHED",
+                () -> {
+                    path.of(configuration.getRoot())
+                            .concat("tab143")
+                            .concat("2022-06-03")
+                            .put(DETACHED_DIR_MARKER)
+                            .slash$();
+                    Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 509));
+                }
         );
     }
 
@@ -119,25 +119,25 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
-                    "select first(ts), ts from " + tableName + " sample by 1d",
-                    "first\tts\n" +
-                        "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
                 );
 
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                    ATTACH_ERR_COPY.name()
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        ATTACH_ERR_COPY.name()
                 );
             }
         });
@@ -165,20 +165,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
-                    "select first(ts), ts from " + tableName + " sample by 1d",
-                    "first\tts\n" +
-                        "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
                 );
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
@@ -187,11 +187,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
 
                 assertSql(
-                    "select first(ts), ts from " + tableName + " sample by 1d",
-                    "first\tts\n" +
-                        "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
-                        "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                        "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
                 );
             }
         });
@@ -217,38 +217,38 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
-                    "select first(ts), ts from " + tableName + " sample by 1d",
-                    "first\tts\n" +
-                        "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
                 );
 
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                    "could not attach partition"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        "could not attach partition"
                 );
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                    "could not attach partition"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        "could not attach partition"
                 );
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
-                    "select first(ts), ts from " + tableName + " sample by 1d",
-                    "first\tts\n" +
-                        "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
-                        "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                        "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
                 );
             }
         });
@@ -260,13 +260,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    5,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
 
                 String timestampDay = "2022-06-02";
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
@@ -286,14 +286,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 }
 
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
-                        "2\t2\t2022-06-02T14:23:59.600000Z\tNaN\n" +
-                        "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
-                        "33\t33\t2022-06-03T12:00:00.000000Z\tNaN\n" +
-                        "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
-                        "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                                "2\t2\t2022-06-02T14:23:59.600000Z\tNaN\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                                "33\t33\t2022-06-03T12:00:00.000000Z\tNaN\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -305,13 +305,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    5,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
 
                 String timestampDay = "2022-06-02";
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
@@ -332,13 +332,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 }
 
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
-                        "33\t33\t2022-06-02T22:00:00.000000Z\tNaN\n" +
-                        "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
-                        "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
-                        "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                                "33\t33\t2022-06-02T22:00:00.000000Z\tNaN\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -351,49 +351,49 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
 
                 createPopulateTable(
-                    src.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    100,
-                    "2020-01-01",
-                    2);
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        100,
+                        "2020-01-01",
+                        2);
 
                 compile("alter table " + tableName + " add column str string");
 
                 compile("insert into " + tableName +
-                    " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null)" +
-                    " from long_sequence(100)");
+                        " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null)" +
+                        " from long_sequence(100)");
 
                 compile("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
 
                 assertSql(
-                    "select first(ts), str from " + tableName + " sample by 1d",
-                    "first\tstr\n" +
-                        "2020-01-01T00:28:47.990000Z\t\n" +
-                        "2020-01-04T00:19:59.000000Z\ta\n" +
-                        "2020-01-04T00:39:59.000000Z\tc\n" +
-                        "2020-01-04T01:19:59.000000Z\tb\n" +
-                        "2020-01-04T01:39:59.000000Z\t\n" +
-                        "2020-01-04T01:59:59.000000Z\ta\n"
+                        "select first(ts), str from " + tableName + " sample by 1d",
+                        "first\tstr\n" +
+                                "2020-01-01T00:28:47.990000Z\t\n" +
+                                "2020-01-04T00:19:59.000000Z\ta\n" +
+                                "2020-01-04T00:39:59.000000Z\tc\n" +
+                                "2020-01-04T01:19:59.000000Z\tb\n" +
+                                "2020-01-04T01:39:59.000000Z\t\n" +
+                                "2020-01-04T01:59:59.000000Z\ta\n"
                 );
 
                 renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
                 compile("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
 
                 assertSql(
-                    "select first(ts), str from " + tableName + " sample by 1d",
-                    "first\tstr\n" +
-                        "2020-01-01T00:28:47.990000Z\t\n" +
-                        "2020-01-02T00:57:35.480000Z\t\n" +
-                        "2020-01-02T23:59:59.000000Z\tc\n" +
-                        "2020-01-03T00:39:59.000000Z\t\n" +
-                        "2020-01-03T01:19:59.000000Z\ta\n" +
-                        "2020-01-03T02:39:59.000000Z\tb\n" +
-                        "2020-01-03T02:59:59.000000Z\tc\n" +
-                        "2020-01-04T00:39:59.000000Z\tc\n" +
-                        "2020-01-04T01:19:59.000000Z\tb\n" +
-                        "2020-01-04T01:39:59.000000Z\t\n" +
-                        "2020-01-04T01:59:59.000000Z\ta\n"
+                        "select first(ts), str from " + tableName + " sample by 1d",
+                        "first\tstr\n" +
+                                "2020-01-01T00:28:47.990000Z\t\n" +
+                                "2020-01-02T00:57:35.480000Z\t\n" +
+                                "2020-01-02T23:59:59.000000Z\tc\n" +
+                                "2020-01-03T00:39:59.000000Z\t\n" +
+                                "2020-01-03T01:19:59.000000Z\ta\n" +
+                                "2020-01-03T02:39:59.000000Z\tb\n" +
+                                "2020-01-03T02:59:59.000000Z\tc\n" +
+                                "2020-01-04T00:39:59.000000Z\tc\n" +
+                                "2020-01-04T01:19:59.000000Z\tb\n" +
+                                "2020-01-04T01:39:59.000000Z\t\n" +
+                                "2020-01-04T01:59:59.000000Z\ta\n"
                 );
             }
         });
@@ -406,27 +406,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(tab
-                        .col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    timestampDay,
-                    4);
+                                .col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4);
                 assertContent(
-                    "l\ti\tts\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
                 );
 
                 // drop the partition
@@ -443,21 +443,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.commit();
                 }
                 String expected = "l\ti\tts\n" +
-                    "137\t137\t2022-06-01T09:59:59.999999Z\n" +
-                    "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                    "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                    "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                    "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                    "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                    "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                    "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                    "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                    "12\t12\t2022-06-04T23:59:58.999992Z\n";
+                        "137\t137\t2022-06-01T09:59:59.999999Z\n" +
+                        "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                        "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                        "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                        "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                        "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                        "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                        "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                        "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                        "12\t12\t2022-06-04T23:59:58.999992Z\n";
                 assertContent(expected, tableName);
                 renameDetachedToAttachable(tableName, timestampDay);
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                    "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
+                        "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
                 );
                 assertContent(expected, tableName);
             }
@@ -482,9 +482,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotDetachActivePartition() throws Exception {
         assertFailure(
-            "tab17",
-            "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
-            "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
+                "tab17",
+                "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
+                "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
         );
     }
 
@@ -507,14 +507,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    100,
-                    "2022-06-01",
-                    5
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        100,
+                        "2022-06-01",
+                        5
                 );
             }
 
@@ -546,39 +546,39 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             }
         };
         assertMemoryLeak(
-            ff1,
-            () -> {
-                String tableName = "tabUndoRenameCopyMeta";
-                try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                    createPopulateTable(tab
-                            .timestamp("ts")
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG),
-                        10,
-                        "2022-06-01",
-                        4
-                    );
+                ff1,
+                () -> {
+                    String tableName = "tabUndoRenameCopyMeta";
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG),
+                                10,
+                                "2022-06-01",
+                                4
+                        );
 
 
-                    engine.clear();
-                    long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
-                        AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
-                        Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
+                        engine.clear();
+                        long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
+                            AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
+                            Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
+                        }
+                        assertContent("ts\ti\tl\n" +
+                                "2022-06-01T09:35:59.900000Z\t1\t1\n" +
+                                "2022-06-01T19:11:59.800000Z\t2\t2\n" +
+                                "2022-06-02T04:47:59.700000Z\t3\t3\n" +
+                                "2022-06-02T14:23:59.600000Z\t4\t4\n" +
+                                "2022-06-02T23:59:59.500000Z\t5\t5\n" +
+                                "2022-06-03T09:35:59.400000Z\t6\t6\n" +
+                                "2022-06-03T19:11:59.300000Z\t7\t7\n" +
+                                "2022-06-04T04:47:59.200000Z\t8\t8\n" +
+                                "2022-06-04T14:23:59.100000Z\t9\t9\n" +
+                                "2022-06-04T23:59:59.000000Z\t10\t10\n", tableName);
                     }
-                    assertContent("ts\ti\tl\n" +
-                        "2022-06-01T09:35:59.900000Z\t1\t1\n" +
-                        "2022-06-01T19:11:59.800000Z\t2\t2\n" +
-                        "2022-06-02T04:47:59.700000Z\t3\t3\n" +
-                        "2022-06-02T14:23:59.600000Z\t4\t4\n" +
-                        "2022-06-02T23:59:59.500000Z\t5\t5\n" +
-                        "2022-06-03T09:35:59.400000Z\t6\t6\n" +
-                        "2022-06-03T19:11:59.300000Z\t7\t7\n" +
-                        "2022-06-04T04:47:59.200000Z\t8\t8\n" +
-                        "2022-06-04T14:23:59.100000Z\t9\t9\n" +
-                        "2022-06-04T23:59:59.000000Z\t10\t10\n", tableName);
-                }
-            });
+                });
     }
 
     @Test
@@ -595,44 +595,44 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(
-            ff1,
-            () -> {
-                copyPartitionOnAttach = true;
-                String tableName = testName.getMethodName();
-                attachableDirSuffix = DETACHED_DIR_MARKER;
+                ff1,
+                () -> {
+                    copyPartitionOnAttach = true;
+                    String tableName = testName.getMethodName();
+                    attachableDirSuffix = DETACHED_DIR_MARKER;
 
-                try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                    createPopulateTable(tab
-                            .timestamp("ts")
-                            .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        3
-                    );
-                    compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                    assertSql(
-                        "select first(ts), ts from " + tableName + " sample by 1d",
-                        "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
-                    );
-
-                    for (int i = 0; i < 2; i++) {
-                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
-                        assertSql(
-                            "select first(ts), ts from " + tableName + " sample by 1d",
-                            "first\tts\n" +
-                                "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
-                                "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                3
                         );
-                        compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                        assertSql(
+                                "select first(ts), ts from " + tableName + " sample by 1d",
+                                "first\tts\n" +
+                                        "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                        );
 
+                        for (int i = 0; i < 2; i++) {
+                            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                            assertSql(
+                                    "select first(ts), ts from " + tableName + " sample by 1d",
+                                    "first\tts\n" +
+                                            "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                            "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                            );
+                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
+
+                        }
                     }
-                }
-            });
+                });
     }
 
     @Test
@@ -654,29 +654,29 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(
-            ff1,
-            () -> {
-                copyPartitionOnAttach = true;
-                String tableName = testName.getMethodName();
-                attachableDirSuffix = DETACHED_DIR_MARKER;
+                ff1,
+                () -> {
+                    copyPartitionOnAttach = true;
+                    String tableName = testName.getMethodName();
+                    attachableDirSuffix = DETACHED_DIR_MARKER;
 
-                try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                    createPopulateTable(tab
-                            .timestamp("ts")
-                            .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        3
-                    );
-                    assertFailure(
-                        "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        DETACH_ERR_COPY.name()
-                    );
-                }
-            });
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                DETACH_ERR_COPY.name()
+                        );
+                    }
+                });
     }
 
     @Test
@@ -689,73 +689,73 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(
-            ff1,
-            () -> {
-                String tableName = testName.getMethodName();
-                try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                    createPopulateTable(tab
-                            .timestamp("ts")
-                            .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        3
-                    );
-                    assertFailure(
-                        "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        DETACH_ERR_HARD_LINK.name()
-                    );
-                }
-            });
+                ff1,
+                () -> {
+                    String tableName = testName.getMethodName();
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                3
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                DETACH_ERR_HARD_LINK.name()
+                        );
+                    }
+                });
     }
 
     @Test
     public void testDetachAttachPartition() throws Exception {
         assertMemoryLeak(
-            () -> {
-                String tableName = testName.getMethodName();
-                try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                    createPopulateTable(
-                        1,
-                        tab.timestamp("ts")
-                            .col("si", ColumnType.SYMBOL).indexed(true, 250)
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG)
-                            .col("s", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        2
-                    );
+                () -> {
+                    String tableName = testName.getMethodName();
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                        createPopulateTable(
+                                1,
+                                tab.timestamp("ts")
+                                        .col("si", ColumnType.SYMBOL).indexed(true, 250)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                2
+                        );
 
-                    String expected = "ts\tsi\ti\tl\ts\n" +
-                        "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                        "2022-06-01T09:35:59.800000Z\tVTJW\t2\t2\t\n" +
-                        "2022-06-01T14:23:59.700000Z\t\t3\t3\tSXUX\n" +
-                        "2022-06-01T19:11:59.600000Z\t\t4\t4\t\n" +
-                        "2022-06-01T23:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                        "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                        "2022-06-02T09:35:59.300000Z\tCPSW\t7\t7\t\n" +
-                        "2022-06-02T14:23:59.200000Z\t\t8\t8\t\n" +
-                        "2022-06-02T19:11:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                        "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
+                        String expected = "ts\tsi\ti\tl\ts\n" +
+                                "2022-06-01T04:47:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                                "2022-06-01T09:35:59.800000Z\tVTJW\t2\t2\t\n" +
+                                "2022-06-01T14:23:59.700000Z\t\t3\t3\tSXUX\n" +
+                                "2022-06-01T19:11:59.600000Z\t\t4\t4\t\n" +
+                                "2022-06-01T23:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                                "2022-06-02T04:47:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                                "2022-06-02T09:35:59.300000Z\tCPSW\t7\t7\t\n" +
+                                "2022-06-02T14:23:59.200000Z\t\t8\t8\t\n" +
+                                "2022-06-02T19:11:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                                "2022-06-02T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n";
 
-                    assertContent(expected, tableName);
+                        assertContent(expected, tableName);
 
-                    engine.clear();
-                    compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                    renameDetachedToAttachable(tableName, "2022-06-01");
-                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        engine.clear();
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        renameDetachedToAttachable(tableName, "2022-06-01");
+                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
-                    engine.clear();
-                    compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                    renameDetachedToAttachable(tableName, "2022-06-01");
-                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        engine.clear();
+                        compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                        renameDetachedToAttachable(tableName, "2022-06-01");
+                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
-                    assertContent(expected, tableName);
-                }
-            });
+                        assertContent(expected, tableName);
+                    }
+                });
     }
 
     @Test
@@ -764,36 +764,36 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabBrokenColType";
             String brokenTableName = "tabBrokenColType2";
             try (
-                TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
-                MemoryMARW mem = Vm.getMARWInstance()
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
-                    1,
-                    tab.timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    timestampDay,
-                    3
+                        1,
+                        tab.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 256)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        timestampDay,
+                        3
                 );
                 TableUtils.createTable(
-                    configuration,
-                    mem,
-                    path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
-                    brokenMeta.timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.INT)
-                        .col("s2", ColumnType.SYMBOL),
-                    1
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 256)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL),
+                        1
                 );
                 compiler.compile(
-                    "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                    sqlExecutionContext
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
                 );
 
                 engine.clear();
@@ -807,8 +807,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // attempt to reattach
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                    "Detached column [index=3, name=l, attribute=type] does not match current table metadata"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
+                        "Detached column [index=3, name=l, attribute=type] does not match current table metadata"
                 );
             }
         });
@@ -817,42 +817,42 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDetachAttachPartitionBrokenMetadataTableId() throws Exception {
         assertFailedAttachBecauseOfMetadata(
-            2,
-            "tabBrokenTableId",
-            "tabBrokenTableId2",
-            brokenMeta -> brokenMeta
-                .timestamp("ts")
-                .col("i", ColumnType.INT)
-                .col("l", ColumnType.LONG),
-            "insert into tabBrokenTableId2 " +
-                "select " +
-                "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
-                "cast(x as int) i, " +
-                "x l " +
-                "from long_sequence(100))",
-            "ALTER TABLE tabBrokenTableId2 ADD COLUMN s SHORT",
-            "Detached partition metadata [table_id] is not compatible with current table metadata"
+                2,
+                "tabBrokenTableId",
+                "tabBrokenTableId2",
+                brokenMeta -> brokenMeta
+                        .timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                "insert into tabBrokenTableId2 " +
+                        "select " +
+                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
+                        "cast(x as int) i, " +
+                        "x l " +
+                        "from long_sequence(100))",
+                "ALTER TABLE tabBrokenTableId2 ADD COLUMN s SHORT",
+                "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
     }
 
     @Test
     public void testDetachAttachPartitionBrokenMetadataTimestampIndex() throws Exception {
         assertFailedAttachBecauseOfMetadata(
-            1,
-            "tabBrokenTimestampIdx",
-            "tabBrokenTimestampIdx2",
-            brokenMeta -> brokenMeta
-                .col("i", ColumnType.INT)
-                .col("l", ColumnType.LONG)
-                .timestamp("ts"),
-            "insert into tabBrokenTimestampIdx2 " +
-                "select " +
-                "cast(x as int) i, " +
-                "x l, " +
-                "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts " +
-                "from long_sequence(100))",
-            "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
-            "Detached partition metadata [timestamp_index] is not compatible with current table metadata"
+                1,
+                "tabBrokenTimestampIdx",
+                "tabBrokenTimestampIdx2",
+                brokenMeta -> brokenMeta
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .timestamp("ts"),
+                "insert into tabBrokenTimestampIdx2 " +
+                        "select " +
+                        "cast(x as int) i, " +
+                        "x l, " +
+                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts " +
+                        "from long_sequence(100))",
+                "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
+                "Detached partition metadata [timestamp_index] is not compatible with current table metadata"
         );
     }
 
@@ -862,20 +862,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabDetachAttachNotAttachable";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("si", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                                .timestamp("ts")
+                                .col("si", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
 
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                    "could not attach partition [table=tabDetachAttachNotAttachable, detachStatus=ATTACH_ERR_MISSING_PARTITION"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        "could not attach partition [table=tabDetachAttachNotAttachable, detachStatus=ATTACH_ERR_MISSING_PARTITION"
                 );
             }
         });
@@ -887,42 +887,42 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabDetachAttachMissingMeta";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
 
                 // remove _meta.detached simply prevents metadata checking, all else is the same
                 path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat("2022-06-02")
-                    .put(DETACHED_DIR_MARKER)
-                    .concat(META_FILE_NAME)
-                    .$();
+                        .concat(tableName)
+                        .concat("2022-06-02")
+                        .put(DETACHED_DIR_MARKER)
+                        .concat(META_FILE_NAME)
+                        .$();
                 Assert.assertTrue(Files.remove(path));
                 path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 Assert.assertTrue(Files.remove(path));
                 renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
-                    "ts\ts1\ti\tl\ts2\n" +
-                        "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
-                        "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
-                        "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
-                        "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
-                        "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
-                        "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
-                        "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
-                        "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
-                        "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
-                        "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
-                    tableName
+                        "ts\ts1\ti\tl\ts2\n" +
+                                "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                                "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
+                                "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
+                                "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
+                                "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                                "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                                "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
+                                "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
+                                "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                                "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
+                        tableName
                 );
             }
         });
@@ -935,14 +935,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabPingPong";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    tab.timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                        tab.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
             }
 
@@ -1044,30 +1044,30 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
-                    "select first(ts), ts from " + tableName + " sample by 1d",
-                    "first\tts\n" +
-                        "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
+                        "select first(ts), ts from " + tableName + " sample by 1d",
+                        "first\tts\n" +
+                                "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"
                 );
 
                 for (int i = 0; i < 2; i++) {
                     compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
                     assertSql(
-                        "select first(ts), ts from " + tableName + " sample by 1d",
-                        "first\tts\n" +
-                            "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
-                            "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
+                            "select first(ts), ts from " + tableName + " sample by 1d",
+                            "first\tts\n" +
+                                    "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
+                                    "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
+                                    "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"
                     );
                     compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
@@ -1079,25 +1079,25 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDetachNonPartitionedNotAllowed() throws Exception {
         assertMemoryLeak(
-            () -> {
-                String tableName = testName.getMethodName();
-                try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                    createPopulateTable(tab
-                            .timestamp("ts")
-                            .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                            .col("i", ColumnType.INT)
-                            .col("l", ColumnType.LONG)
-                            .col("s2", ColumnType.SYMBOL),
-                        10,
-                        "2022-06-01",
-                        1
-                    );
-                    assertFailure(
-                        "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        "table is not partitioned"
-                    );
-                }
-            });
+                () -> {
+                    String tableName = testName.getMethodName();
+                    try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+                        createPopulateTable(tab
+                                        .timestamp("ts")
+                                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                        .col("i", ColumnType.INT)
+                                        .col("l", ColumnType.LONG)
+                                        .col("s2", ColumnType.SYMBOL),
+                                10,
+                                "2022-06-01",
+                                1
+                        );
+                        assertFailure(
+                                "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                                "table is not partitioned"
+                        );
+                    }
+                });
     }
 
     @Test
@@ -1106,13 +1106,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    5,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
 
                 String timestampDay = "2022-06-02";
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -1132,14 +1132,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // attach the partition
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "33\t33\t2022-05-03T12:00:00.000000Z\tNaN\n" +
-                        "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
-                        "2\t2\t2022-06-02T14:23:59.600000Z\tNaN\n" +
-                        "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
-                        "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
-                        "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "33\t33\t2022-05-03T12:00:00.000000Z\tNaN\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\tNaN\n" +
+                                "2\t2\t2022-06-02T14:23:59.600000Z\tNaN\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\tNaN\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\tNaN\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -1152,35 +1152,35 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String brokenTableName = "tabIndexFilesIndex2";
 
             try (
-                TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
-                MemoryMARW mem = Vm.getMARWInstance()
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL).indexed(true, 512)
-                        .timestamp("ts"),
-                    12,
-                    timestampDay,
-                    4
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 512)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4
                 );
 
                 TableUtils.createTable(
-                    configuration,
-                    mem,
-                    path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
-                    brokenMeta.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL)
-                        .timestamp("ts"),
-                    1
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        1
                 );
                 compiler.compile(
-                    "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                    sqlExecutionContext
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
                 );
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
@@ -1199,20 +1199,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 }
 
                 assertContent(
-                    "l\ti\ts\tts\n" +
-                        "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
-                        "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
-                        "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
-                        "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
-                        "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
-                        "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
-                        "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
-                        "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
-                        "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
-                        "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
-                        "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                        "l\ti\ts\tts\n" +
+                                "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
                 );
             }
         });
@@ -1225,35 +1225,35 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String brokenTableName = "tabIndexFilesReIndex2";
 
             try (
-                TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
-                MemoryMARW mem = Vm.getMARWInstance()
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL).indexed(true, 512)
-                        .timestamp("ts"),
-                    12,
-                    timestampDay,
-                    4
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 512)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4
                 );
 
                 TableUtils.createTable(
-                    configuration,
-                    mem,
-                    path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
-                    brokenMeta.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                        .timestamp("ts"),
-                    1
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .timestamp("ts"),
+                        1
                 );
                 compiler.compile(
-                    "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                    sqlExecutionContext
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
                 );
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
@@ -1272,20 +1272,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 }
 
                 assertContent(
-                    "l\ti\ts\tts\n" +
-                        "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
-                        "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
-                        "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
-                        "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
-                        "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
-                        "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
-                        "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
-                        "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
-                        "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
-                        "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
-                        "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                        "l\ti\ts\tts\n" +
+                                "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
                 );
             }
         });
@@ -1298,50 +1298,50 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String brokenTableName = "tabIndexFiles2";
 
             try (
-                TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
-                MemoryMARW mem = Vm.getMARWInstance()
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
             ) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL)
-                        .timestamp("ts"),
-                    12,
-                    timestampDay,
-                    4
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4
                 );
 
                 TableUtils.createTable(
-                    configuration,
-                    mem,
-                    path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
-                    brokenMeta.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                        .timestamp("ts"),
-                    1
+                        configuration,
+                        mem,
+                        path.of(configuration.getRoot()).concat(brokenMeta.getTableName()),
+                        brokenMeta.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .timestamp("ts"),
+                        1
                 );
                 compiler.compile(
-                    "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
-                    sqlExecutionContext
+                        "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
+                        sqlExecutionContext
                 );
 
                 String expected = "l\ti\ts\tts\n" +
-                    "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
-                    "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
-                    "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
-                    "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
-                    "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
-                    "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
-                    "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
-                    "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
-                    "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
-                    "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
-                    "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
-                    "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n";
+                        "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
+                        "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
+                        "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
+                        "4\t4\tVTJW\t2022-06-02T07:59:59.666664Z\n" +
+                        "5\t5\tPEHN\t2022-06-02T15:59:59.583330Z\n" +
+                        "6\t6\t\t2022-06-02T23:59:59.499996Z\n" +
+                        "7\t7\tVTJW\t2022-06-03T07:59:59.416662Z\n" +
+                        "8\t8\t\t2022-06-03T15:59:59.333328Z\n" +
+                        "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
+                        "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
+                        "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
+                        "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n";
 
                 assertContent(expected, tableName);
                 assertContent(expected, brokenTableName);
@@ -1375,13 +1375,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabColumnTops";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 String timestampDay = "2022-06-02";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
@@ -1398,38 +1398,38 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.commit();
                 }
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                        "33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
 
                 // detach the partition
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
 
                 // insert data, which will create the partition again
@@ -1443,18 +1443,18 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.commit();
                 }
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "25160\t25160\t2022-06-02T22:00:00.000000Z\t25160\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "25160\t25160\t2022-06-02T22:00:00.000000Z\t25160\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
 
                 dropCurrentVersionOfPartition(tableName, timestampDay);
@@ -1463,21 +1463,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 // reattach old version
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                        "33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -1486,21 +1486,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDetachPartitionsIndexCapacityDiffers() throws Exception {
         assertFailedAttachBecauseOfMetadata(
-            2,
-            "tabBrokenIndexCapacity",
-            "tabBrokenIndexCapacity2",
-            brokenMeta -> brokenMeta
-                .timestamp("ts")
-                .col("i", ColumnType.INT)
-                .col("l", ColumnType.LONG),
-            "insert into tabBrokenIndexCapacity2 " +
-                "select " +
-                "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
-                "cast(x as int) i, " +
-                "x l " +
-                "from long_sequence(100))",
-            "ALTER TABLE tabBrokenIndexCapacity2 ADD COLUMN s SHORT",
-            "Detached partition metadata [table_id] is not compatible with current table metadata"
+                2,
+                "tabBrokenIndexCapacity",
+                "tabBrokenIndexCapacity2",
+                brokenMeta -> brokenMeta
+                        .timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG),
+                "insert into tabBrokenIndexCapacity2 " +
+                        "select " +
+                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
+                        "cast(x as int) i, " +
+                        "x l " +
+                        "from long_sequence(100))",
+                "ALTER TABLE tabBrokenIndexCapacity2 ADD COLUMN s SHORT",
+                "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
     }
 
@@ -1510,13 +1510,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabInAddColumn";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 engine.clear();
                 String timestampDay = "2022-06-01";
@@ -1532,20 +1532,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -1557,13 +1557,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabInAddColumn2";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 engine.clear();
                 String timestampDay = "2022-06-01";
@@ -1579,20 +1579,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -1604,13 +1604,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabInAddColumnAndData";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 engine.clear();
                 String timestampDay = "2022-06-01";
@@ -1630,21 +1630,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "33\t33\t2022-06-01T00:00:00.000000Z\tNaN\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "33\t33\t2022-06-01T00:00:00.000000Z\tNaN\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -1656,13 +1656,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = "tabInAddColumn2";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 engine.clear();
                 String timestampDay = "2022-06-01";
@@ -1687,21 +1687,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
-                        "33\t33\t2022-06-02T00:00:00.000000Z\t333\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
-                    tableName
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "33\t33\t2022-06-02T00:00:00.000000Z\t333\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
                 );
             }
         });
@@ -1714,27 +1714,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(tab
-                        .col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    timestampDay,
-                    4);
+                                .col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4);
                 assertContent(
-                    "l\ti\tts\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
                 );
 
                 // drop the partition
@@ -1759,19 +1759,19 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.commit();
                 }
                 assertContent(
-                    "l\ti\tts\n" +
-                        "2802\t2802\t2022-06-01T00:00:00.000000Z\n" +
-                        "137\t137\t2022-06-01T09:59:59.999999Z\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                        "l\ti\tts\n" +
+                                "2802\t2802\t2022-06-01T00:00:00.000000Z\n" +
+                                "137\t137\t2022-06-01T09:59:59.999999Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
                 );
 
                 dropCurrentVersionOfPartition(tableName, timestampDay);
@@ -1780,20 +1780,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 // reattach old version
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
                 assertContent(
-                    "l\ti\tts\n" +
-                        "1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                        "2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                        "3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                        "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                        "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                        "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                        "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                        "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                        "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                        "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                        "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
                 );
             }
         });
@@ -1805,13 +1805,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 String timestampDay = "2022-06-01";
                 String timestampWrongDay2 = "2022-06-02";
@@ -1830,8 +1830,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 }
 
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                    "cannot read min, max timestamp from the column"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
+                        "cannot read min, max timestamp from the column"
                 );
             }
         });
@@ -1843,13 +1843,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
-                    1,
-                    tab.col("l", ColumnType.LONG)
-                        .col("i", ColumnType.INT)
-                        .timestamp("ts"),
-                    12,
-                    "2022-06-01",
-                    4);
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
 
                 String timestampDay = "2022-06-01";
                 String timestampWrongDay2 = "2022-06-02";
@@ -1873,8 +1873,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertEquals(0, ff.rename(dst, dst2));
 
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
-                    "invalid timestamp column data in detached partition, data does not match partition directory name"
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
+                        "invalid timestamp column data in detached partition, data does not match partition directory name"
                 );
             }
         });
@@ -1885,8 +1885,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel tab = new TableModel(configuration, "tab0", PartitionBy.DAY)) {
                 CairoTestUtils.create(tab
-                    .col("i", ColumnType.INT)
-                    .col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
                 );
                 try {
                     compile("ALTER TABLE tab0 DETACH PARTITION LIST '2022-06-27'", sqlExecutionContext);
@@ -1902,10 +1902,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testNotPartitioned() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.NONE).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
-                "ALTER TABLE tab DETACH PARTITION LIST '2022-06-27'",
-                23,
-                "table is not partitioned",
-                tableModel
+                    "ALTER TABLE tab DETACH PARTITION LIST '2022-06-27'",
+                    23,
+                    "table is not partitioned",
+                    tableModel
             );
         }
     }
@@ -1913,27 +1913,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testPartitionEmpty() throws Exception {
         assertFailure(
-            "tab11",
-            "ALTER TABLE tab11 DETACH PARTITION LIST '2022-06-06'",
-            "could not detach partition [table=tab11, detachStatus=DETACH_ERR_MISSING_PARTITION"
+                "tab11",
+                "ALTER TABLE tab11 DETACH PARTITION LIST '2022-06-06'",
+                "could not detach partition [table=tab11, detachStatus=DETACH_ERR_MISSING_PARTITION"
         );
     }
 
     @Test
     public void testPartitionFolderDoesNotExist() throws Exception {
         assertFailure(
-            new FilesFacadeImpl() {
-                @Override
-                public boolean exists(LPSZ path) {
-                    if (Chars.endsWith(path, "2022-06-03")) {
-                        return false;
+                new FilesFacadeImpl() {
+                    @Override
+                    public boolean exists(LPSZ path) {
+                        if (Chars.endsWith(path, "2022-06-03")) {
+                            return false;
+                        }
+                        return super.exists(path);
                     }
-                    return super.exists(path);
-                }
-            },
-            "tab111",
-            "ALTER TABLE tab111 DETACH PARTITION LIST '2022-06-03'",
-            "could not detach partition [table=tab111, detachStatus=DETACH_ERR_MISSING_PARTITION_DIR"
+                },
+                "tab111",
+                "ALTER TABLE tab111 DETACH PARTITION LIST '2022-06-03'",
+                "could not detach partition [table=tab111, detachStatus=DETACH_ERR_MISSING_PARTITION_DIR"
         );
     }
 
@@ -1941,10 +1941,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testSyntaxErrorListOrWhereExpected() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
-                "ALTER TABLE tab DETACH PARTITION",
-                32,
-                "'list' or 'where' expected",
-                tableModel
+                    "ALTER TABLE tab DETACH PARTITION",
+                    32,
+                    "'list' or 'where' expected",
+                    tableModel
             );
         }
     }
@@ -1953,10 +1953,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testSyntaxErrorPartitionMissing() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
-                "ALTER TABLE tab DETACH '2022-06-27'",
-                23,
-                "'partition' expected",
-                tableModel
+                    "ALTER TABLE tab DETACH '2022-06-27'",
+                    23,
+                    "'partition' expected",
+                    tableModel
             );
         }
     }
@@ -1965,10 +1965,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testSyntaxErrorPartitionNameExpected() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
-                "ALTER TABLE tab DETACH PARTITION LIST",
-                37,
-                "partition name expected",
-                tableModel
+                    "ALTER TABLE tab DETACH PARTITION LIST",
+                    37,
+                    "partition name expected",
+                    tableModel
             );
         }
     }
@@ -1977,10 +1977,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testSyntaxErrorUnknownKeyword() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
-                "ALTER TABLE tab foobar",
-                16,
-                "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected",
-                tableModel
+                    "ALTER TABLE tab foobar",
+                    16,
+                    "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected",
+                    tableModel
             );
         }
     }
@@ -1994,26 +1994,26 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    4
+                                .timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        4
                 );
                 String expected = "ts\ti\ts1\tl\ts2\n" +
-                    "2022-06-01T09:35:59.900000Z\t1\tPEHN\t1\tSXUX\n" +
-                    "2022-06-01T19:11:59.800000Z\t2\tVTJW\t2\t\n" +
-                    "2022-06-02T04:47:59.700000Z\t3\t\t3\tSXUX\n" +
-                    "2022-06-02T14:23:59.600000Z\t4\t\t4\t\n" +
-                    "2022-06-02T23:59:59.500000Z\t5\t\t5\tGPGW\n" +
-                    "2022-06-03T09:35:59.400000Z\t6\tPEHN\t6\tRXGZ\n" +
-                    "2022-06-03T19:11:59.300000Z\t7\tCPSW\t7\t\n" +
-                    "2022-06-04T04:47:59.200000Z\t8\t\t8\t\n" +
-                    "2022-06-04T14:23:59.100000Z\t9\tPEHN\t9\tRXGZ\n" +
-                    "2022-06-04T23:59:59.000000Z\t10\tVTJW\t10\tIBBT\n";
+                        "2022-06-01T09:35:59.900000Z\t1\tPEHN\t1\tSXUX\n" +
+                        "2022-06-01T19:11:59.800000Z\t2\tVTJW\t2\t\n" +
+                        "2022-06-02T04:47:59.700000Z\t3\t\t3\tSXUX\n" +
+                        "2022-06-02T14:23:59.600000Z\t4\t\t4\t\n" +
+                        "2022-06-02T23:59:59.500000Z\t5\t\t5\tGPGW\n" +
+                        "2022-06-03T09:35:59.400000Z\t6\tPEHN\t6\tRXGZ\n" +
+                        "2022-06-03T19:11:59.300000Z\t7\tCPSW\t7\t\n" +
+                        "2022-06-04T04:47:59.200000Z\t8\t\t8\t\n" +
+                        "2022-06-04T14:23:59.100000Z\t9\tPEHN\t9\tRXGZ\n" +
+                        "2022-06-04T23:59:59.000000Z\t10\tVTJW\t10\tIBBT\n";
                 assertContent(expected, tableName);
 
                 AbstractCairoTest.ff = new FilesFacadeImpl() {
@@ -2034,8 +2034,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // check no metadata files were left behind
                 path.of(configuration.getRoot()).concat(tableName)
-                    .concat("2022-06-01").concat(META_FILE_NAME)
-                    .$();
+                        .concat("2022-06-01").concat(META_FILE_NAME)
+                        .$();
                 Assert.assertFalse(Files.exists(path));
                 path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 Assert.assertFalse(Files.exists(path));
@@ -2044,30 +2044,30 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertFailedAttachBecauseOfMetadata(
-        int brokenMetaId,
-        String tableName,
-        String brokenTableName,
-        Function<TableModel, TableModel> brokenMetaTransform,
-        String insertStmt,
-        String finalStmt,
-        String expectedErrorMessage
+            int brokenMetaId,
+            String tableName,
+            String brokenTableName,
+            Function<TableModel, TableModel> brokenMetaTransform,
+            String insertStmt,
+            String finalStmt,
+            String expectedErrorMessage
     ) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
-                MemoryMARW mem = Vm.getMARWInstance()
+                    TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+                    TableModel brokenMeta = new TableModel(configuration, brokenTableName, PartitionBy.DAY);
+                    MemoryMARW mem = Vm.getMARWInstance()
             ) {
                 createPopulateTable(
-                    1,
-                    tab.timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    10,
-                    "2022-06-01",
-                    3
+                        1,
+                        tab.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
                 );
                 // create populate broken metadata table
                 TableUtils.createTable(configuration, mem, path, brokenMetaTransform.apply(brokenMeta), brokenMetaId);
@@ -2081,35 +2081,35 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 // detach partitions and override detached metadata with broken metadata
                 engine.clear();
                 compile(
-                    "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-02'",
-                    sqlExecutionContext
+                        "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-02'",
+                        sqlExecutionContext
                 );
                 compile(
-                    "ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-02'",
-                    sqlExecutionContext
+                        "ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-02'",
+                        sqlExecutionContext
                 );
                 engine.clear();
                 path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat("2022-06-02")
-                    .put(DETACHED_DIR_MARKER)
-                    .concat(META_FILE_NAME)
-                    .$();
+                        .concat(tableName)
+                        .concat("2022-06-02")
+                        .put(DETACHED_DIR_MARKER)
+                        .concat(META_FILE_NAME)
+                        .$();
                 Assert.assertTrue(Files.remove(path));
                 otherPath.of(configuration.getRoot())
-                    .concat(brokenTableName)
-                    .concat("2022-06-02")
-                    .put(DETACHED_DIR_MARKER)
-                    .concat(META_FILE_NAME)
-                    .$();
+                        .concat(brokenTableName)
+                        .concat("2022-06-02")
+                        .put(DETACHED_DIR_MARKER)
+                        .concat(META_FILE_NAME)
+                        .$();
                 Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(otherPath, path));
 
                 renameDetachedToAttachable(tableName, "2022-06-02");
 
                 // attempt to reattach
                 assertFailure(
-                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
-                    expectedErrorMessage
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
+                        expectedErrorMessage
                 );
             }
         });
@@ -2120,38 +2120,38 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertFailure(
-        @Nullable FilesFacade ff,
-        String tableName,
-        String operation,
-        String errorMsg
+            @Nullable FilesFacade ff,
+            String tableName,
+            String operation,
+            String errorMsg
     ) throws Exception {
         assertFailure(
-            ff,
-            tableName,
-            operation,
-            errorMsg,
-            null
+                ff,
+                tableName,
+                operation,
+                errorMsg,
+                null
         );
     }
 
     private void assertFailure(
-        @Nullable FilesFacade ff,
-        String tableName,
-        String operation,
-        String errorMsg,
-        @Nullable Runnable mutator
+            @Nullable FilesFacade ff,
+            String tableName,
+            String operation,
+            String errorMsg,
+            @Nullable Runnable mutator
     ) throws Exception {
         assertMemoryLeak(ff, () -> {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
-                        .timestamp("ts")
-                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s2", ColumnType.SYMBOL),
-                    100,
-                    "2022-06-01",
-                    5
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        100,
+                        "2022-06-01",
+                        5
                 );
                 if (mutator != null) {
                     mutator.run();
@@ -2185,17 +2185,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     private void renameDetachedToAttachable(String tableName, long... partitions) {
         for (long partition : partitions) {
             PartitionBy.setSinkForPartition(
-                path.of(configuration.getRoot()).concat(tableName),
-                PartitionBy.DAY,
-                partition,
-                false
+                    path.of(configuration.getRoot()).concat(tableName),
+                    PartitionBy.DAY,
+                    partition,
+                    false
             );
             path.put(DETACHED_DIR_MARKER).$();
             PartitionBy.setSinkForPartition(
-                otherPath.of(configuration.getRoot()).concat(tableName),
-                PartitionBy.DAY,
-                partition,
-                false
+                    otherPath.of(configuration.getRoot()).concat(tableName),
+                    PartitionBy.DAY,
+                    partition,
+                    false
             );
             otherPath.put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path, otherPath) > -1);

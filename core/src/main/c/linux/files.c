@@ -389,7 +389,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass 
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
+        (JNIEnv *e, jclass cl, jint fd, jlong len) {
     int rc = posix_fallocate(fd, 0, len);
     if (rc == 0) {
         return JNI_TRUE;

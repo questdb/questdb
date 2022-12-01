@@ -116,15 +116,12 @@ public class ZipTest {
                 Unsafe.free(out, available / 2, MemoryTag.NATIVE_DEFAULT);
             }
 
-
             // ok. read what we produced
 
             File actual = temp.newFile();
-
-
             try (
-                GZIPInputStream is = new GZIPInputStream(new FileInputStream(outFile));
-                FileOutputStream fos = new FileOutputStream(actual)
+                    GZIPInputStream is = new GZIPInputStream(new FileInputStream(outFile));
+                    FileOutputStream fos = new FileOutputStream(actual)
             ) {
                 byte[] buf = new byte[16 * 1024];
 

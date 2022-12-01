@@ -145,10 +145,10 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                .$(task.getTableName())
-                .$(", txn=").$(updateTxn)
-                .$(", error=").$(ex.getFlyweightMessage())
-                .$(", errno=").$(ex.getErrno()).I$();
+                    .$(task.getTableName())
+                    .$(", txn=").$(updateTxn)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno()).I$();
             return true;
         }
     }
@@ -190,9 +190,9 @@ public class ColumnPurgeOperator implements Closeable {
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
 
         LOG.info().$("purging [table=").$(task.getTableName())
-            .$(", column=").$(task.getColumnName())
-            .$(", tableId=").$(task.getTableId())
-            .I$();
+                .$(", column=").$(task.getColumnName())
+                .$(", tableId=").$(task.getTableId())
+                .I$();
 
         setTablePath(task.getTableName());
 
@@ -327,16 +327,16 @@ public class ColumnPurgeOperator implements Closeable {
         path.concat(purgeLogWriter.getTableName());
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForPartition(
-            path,
-            purgeLogWriter.getPartitionBy(),
-            partitionTimestamp,
-            false
+                path,
+                purgeLogWriter.getPartitionBy(),
+                partitionTimestamp,
+                false
         );
         TableUtils.txnPartitionConditionally(path, partitionNameTxn);
         TableUtils.dFile(
-            path,
-            updateCompleteColumnName,
-            purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
+                path,
+                updateCompleteColumnName,
+                purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
         );
         closePurgeLogCompleteFile();
         purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
@@ -367,9 +367,9 @@ public class ColumnPurgeOperator implements Closeable {
                     int errno = ff.errno();
                     long length = ff.length(purgeLogPartitionFd);
                     LOG.error().$("could not mark record as purged [errno=").$(errno)
-                        .$(", writeOffset=").$(offset)
-                        .$(", fd=").$(purgeLogPartitionFd)
-                        .$(", fileSize=").$(length).I$();
+                            .$(", writeOffset=").$(offset)
+                            .$(", fd=").$(purgeLogPartitionFd)
+                            .$(", fileSize=").$(length).I$();
                     // Re-open of the file next run in case something went wrong.
                     purgeLogPartitionTimestamp = -1;
                 }

@@ -112,8 +112,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testAuthTooSmallBuffer() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":9001")
-                .bufferCapacity(1);
+                    .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":9001")
+                    .bufferCapacity(1);
             try {
                 builder.build();
                 fail("tiny buffer should be be allowed as it wont fit auth challenge");
@@ -165,11 +165,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                .address(LOCALHOST)
-                .port(bindPort)
-                .enableAuth(AUTH_KEY_ID1)
-                .privateKey(AUTH_PRIVATE_KEY1)
-                .build()) {
+                    .address(LOCALHOST)
+                    .port(bindPort)
+                    .enableAuth(AUTH_KEY_ID1)
+                    .privateKey(AUTH_PRIVATE_KEY1)
+                    .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, "mytable");
@@ -191,11 +191,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             try {
                 Sender.builder()
-                    .address(LOCALHOST)
-                    .port(bindPort)
-                    .enableAuth(AUTH_KEY_ID1)
-                    .authToken(AUTH_TOKEN_KEY1) // it does not really matter as server will never receive the challange response due to the custom NetworkFacade
-                    .build();
+                        .address(LOCALHOST)
+                        .port(bindPort)
+                        .enableAuth(AUTH_KEY_ID1)
+                        .authToken(AUTH_TOKEN_KEY1) // it does not really matter as server will never receive the challange response due to the custom NetworkFacade
+                        .build();
                 fail("should have failed");
             } catch (LineSenderException e) {
                 // ignored
@@ -208,11 +208,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                .address(LOCALHOST)
-                .port(bindPort)
-                .enableAuth(AUTH_KEY_ID1)
-                .authToken(AUTH_TOKEN_KEY1)
-                .build()) {
+                    .address(LOCALHOST)
+                    .port(bindPort)
+                    .enableAuth(AUTH_KEY_ID1)
+                    .authToken(AUTH_TOKEN_KEY1)
+                    .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, "mytable");
@@ -226,10 +226,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         runInContext(r -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableAuth(AUTH_KEY_ID1).privateKey(AUTH_PRIVATE_KEY1)
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableAuth(AUTH_KEY_ID1).privateKey(AUTH_PRIVATE_KEY1)
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try (Sender sender = builder.build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -244,10 +244,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         runInContext(r -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try (Sender sender = builder.build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -261,9 +261,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = "classpath:/foo/whatever/non-existing";
         runInContext(r -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
                 fail("nonexistent trust store should throw an exception");
@@ -278,9 +278,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             String truststore = "/foo/whatever/non-existing";
             Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
                 fail("nonexistent trustore should throw an exception");
@@ -295,10 +295,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
-                .build()) {
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
+                    .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, "mytable");
@@ -313,10 +313,10 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = trustStoreResource.getFile();
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
-                .build()) {
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
+                    .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, "mytable");
@@ -329,9 +329,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         runInContext(r -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, "wrong password".toCharArray());
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, "wrong password".toCharArray());
             try {
                 builder.build();
                 fail("nonexistent trust store should throw an exception");
@@ -346,8 +346,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testCustomTruststoreButTlsNotEnabled() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
-                .address(LOCALHOST);
+                    .advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                    .address(LOCALHOST);
             try {
                 builder.build();
                 fail("should fail when custom trust store configured, but TLS not enabled");
@@ -386,7 +386,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testFirstTlsValidationDisabledThenCustomTruststore() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().disableCertificateValidation();
+                    .advancedTls().disableCertificateValidation();
             try {
                 builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
                 fail("should not allow custom truststore when TLS validation was disabled disabled");
@@ -426,7 +426,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testPlainAuth_connectionRefused() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":19003");
+                    .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":19003");
             try {
                 builder.build();
                 fail("connection refused should fail fast");
@@ -505,8 +505,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testTlsValidationDisabledButTlsNotEnabled() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().disableCertificateValidation()
-                .address(LOCALHOST);
+                    .advancedTls().disableCertificateValidation()
+                    .address(LOCALHOST);
             try {
                 builder.build();
                 fail("should fail when TLS validation is disabled, but TLS not enabled");
@@ -520,7 +520,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testTlsValidationDisabledDoubleSet() throws Exception {
         assertMemoryLeak(() -> {
             Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().disableCertificateValidation();
+                    .advancedTls().disableCertificateValidation();
             try {
                 builder.advancedTls().disableCertificateValidation();
                 fail("should not allow double TLS validation disabled");

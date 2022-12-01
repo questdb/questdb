@@ -71,16 +71,16 @@ public class TableReadFailTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             spinLockTimeout = 1;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("a", ColumnType.INT)
-                .col("b", ColumnType.LONG)
-                .timestamp()) {
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .timestamp()) {
                 CairoTestUtils.create(model);
             }
 
             try (
-                Path path = new Path();
-                TableReader reader = new TableReader(configuration, "x");
-                MemoryCMARW mem = Vm.getCMARWInstance()
+                    Path path = new Path();
+                    TableReader reader = new TableReader(configuration, "x");
+                    MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
 
                 final Rnd rnd = new Rnd();

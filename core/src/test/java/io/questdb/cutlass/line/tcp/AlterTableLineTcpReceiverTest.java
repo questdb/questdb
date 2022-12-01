@@ -64,28 +64,28 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testAlterCommandAddColumn() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                "plug,room=6B watts=\"22\" 1631817902842\n" +
-                "plug,room=6C watts=\"333\" 1531817902842\n";
+                    "plug,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,room=6C watts=\"333\" 1531817902842\n";
 
             SqlException exception = sendWithAlterStatement(
-                server,
-                lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug ADD COLUMN label2 INT");
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug ADD COLUMN label2 INT");
             Assert.assertNull(exception);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
-                "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
-                "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
             send(server, lineData);
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
-                "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
-                "6C\t333\t1970-01-01T00:25:31.817902Z\tNaN\t\n" +
-                "6B\t55\t1970-01-01T00:27:11.817902Z\tNaN\tPower\n" +
-                "6B\t22\t1970-01-01T00:27:11.817902Z\tNaN\t\n" +
-                "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n" +
-                "6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\t\n";
+                    "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817902Z\tNaN\t\n" +
+                    "6B\t55\t1970-01-01T00:27:11.817902Z\tNaN\tPower\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902Z\tNaN\t\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\t\n";
             assertTable(expected);
         });
     }
@@ -133,13 +133,13 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 LOG.info().$("ABOUT TO DROP PARTITIONS").$();
                 try (SqlCompiler compiler = new SqlCompiler(engine);
                      SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                         .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null
-                         )
+                             .with(
+                                     AllowAllCairoSecurityContext.INSTANCE,
+                                     new BindVariableServiceImpl(configuration),
+                                     null,
+                                     -1,
+                                     null
+                             )
                 ) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
                     try (OperationFuture result = cc.execute(scSequence)) {
@@ -187,13 +187,13 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             SqlException exception = sendWithAlterStatement(
-                server,
-                "plug,room=6A watts=1i " + day1 + "\n" +
-                    "plug,room=6B watts=37i " + day1 + "\n" +
-                    "plug,room=7G watts=21i " + day1 + "\n" +
-                    "plug,room=1C watts=11i " + day1 + "\n",
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"
+                    server,
+                    "plug,room=6A watts=1i " + day1 + "\n" +
+                            "plug,room=6B watts=37i " + day1 + "\n" +
+                            "plug,room=7G watts=21i " + day1 + "\n" +
+                            "plug,room=1C watts=11i " + day1 + "\n",
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"
             );
             Assert.assertNull(exception);
             assertTable("room\twatts\ttimestamp\n");
@@ -201,7 +201,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(server, "plug,room=6A watts=125i " + day1 + "\n");
 
             assertTable("room\twatts\ttimestamp\n" +
-                "6A\t125\t2023-02-27T00:00:00.000000Z\n");
+                    "6A\t125\t2023-02-27T00:00:00.000000Z\n");
         }, true, 50L);
     }
 
@@ -215,18 +215,18 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(server, lineData);
 
             lineData = "plug,room=6B watts=\"22\" " + day2 + "\n" +
-                "plug,room=6C watts=\"333\" " + day3 + "\n";
+                    "plug,room=6C watts=\"333\" " + day3 + "\n";
             SqlException exception = sendWithAlterStatement(
-                server,
-                lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'"
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'"
             );
             Assert.assertNull(exception);
 
             String expected = "room\twatts\ttimestamp\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
-                "6C\t333\t1970-03-03T00:00:00.000000Z\n";
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
+                    "6C\t333\t1970-03-03T00:00:00.000000Z\n";
             assertTable(expected);
         }, true, 250);
     }
@@ -235,41 +235,41 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testAlterCommandDropsColumn() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819994000\n" +
-                "plug,label=Power,room=6B watts=\"22\" 1631817905842\n" +
-                "plug,label=Line,room=6C watts=\"333\" 1531817906844\n";
+                    "plug,label=Power,room=6B watts=\"22\" 1631817905842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817906844\n";
 
             SqlException exception = sendWithAlterStatement(server, lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug DROP COLUMN label");
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP COLUMN label");
 
             Assert.assertNotNull(exception);
             TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
             exception = sendWithAlterStatement(
-                server,
-                lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug RENAME COLUMN label TO label2"
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug RENAME COLUMN label TO label2"
             );
 
             Assert.assertNotNull(exception);
             TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819995001\n" +
-                "plug,label=Power,room=6B watts=\"55\" 1631817902845\n" +
-                "plug,label=Line,room=6C watts=\"666\" 1531817903846\n";
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902845\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817903846\n";
 
             // re-send, this should re-add column label
             send(server, lineData);
 
             String expected = "label\troom\twatts\ttimestamp\n" +
-                "Line\t6C\t666\t1970-01-01T00:25:31.817903Z\n" +
-                "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
-                "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
-                "Power\t6B\t55\t1970-01-01T00:27:11.817902Z\n" +
-                "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
-                "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
-                "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
-                "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
-                "Power\t6A\t4\t1970-01-01T00:43:51.819995Z\n";
+                    "Line\t6C\t666\t1970-01-01T00:25:31.817903Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
+                    "Power\t6B\t55\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
+                    "Power\t6A\t4\t1970-01-01T00:43:51.819995Z\n";
             assertTable(expected);
         }, false, 1000);
     }
@@ -285,24 +285,24 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             for (int i = 0; i < 10; i++) {
                 SqlException exception = sendWithAlterStatement(
-                    server,
-                    lineData,
-                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug add column col" + i + " int");
+                        server,
+                        lineData,
+                        WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                        "ALTER TABLE plug add column col" + i + " int");
                 Assert.assertNull(exception);
             }
             String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
-                "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
+                    "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
             assertTable(expected);
         }, true, 250);
     }
@@ -311,40 +311,40 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testAlterCommandTableMetaModifications() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
-                "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
 
             SqlException exception = sendWithAlterStatement(
-                server,
-                lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug SET PARAM o3MaxLag = 20s;");
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug SET PARAM o3MaxLag = 20s;");
             Assert.assertNull(exception);
 
             exception = sendWithAlterStatement(
-                server,
-                lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;");
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;");
             Assert.assertNull(exception);
 
             SqlException exception3 = sendWithAlterStatement(
-                server,
-                lineData,
-                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "alter table plug alter column label nocache;");
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "alter table plug alter column label nocache;");
             Assert.assertNull(exception3);
 
             assertTable("label\troom\twatts\ttimestamp\n" +
-                "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
             );
 
             engine.releaseAllReaders();
@@ -361,23 +361,23 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testAlterTableAddIndex() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
-                "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
             SqlException ex = sendWithAlterStatement(server, lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
+                    "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
             Assert.assertNull(ex);
 
             String expected = "label\troom\twatts\ttimestamp\n" +
-                "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected);
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
                 TableReaderMetadata metadata = rdr.getMetadata();
                 Assert.assertTrue("Alter makes column indexed",
-                    metadata.isColumnIndexed(
-                        metadata.getColumnIndex("label")
-                    ));
+                        metadata.isColumnIndexed(
+                                metadata.getColumnIndex("label")
+                        ));
             }
         });
     }
@@ -386,10 +386,10 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testDropColumnAddDuplicate() throws Exception {
         runInContext((server) -> {
             send(
-                server,
-                "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
-                    "plug,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,room=6C watts=\"333\",power=220 1531817902842\n"
+                    server,
+                    "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
+                            "plug,room=6B watts=\"22\" 1631817902842\n" +
+                            "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
             try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
@@ -397,15 +397,15 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             send(
-                server,
-                "plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n"
+                    server,
+                    "plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n"
             );
 
             String expected = "room\tpower\ttimestamp\twatts\n" +
-                "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
-                "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
-                "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
             assertTable(expected);
         });
     }
@@ -414,12 +414,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testDropColumnInTheMiddle() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
-                "plug,room=6B watts=\"22\" 1631817902842\n" +
-                "plug,room=6C watts=\"333\",power=220 1531817902842\n";
+                    "plug,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,room=6C watts=\"333\",power=220 1531817902842\n";
 
             send(
-                server,
-                lineData
+                    server,
+                    lineData
             );
 
             try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
@@ -428,17 +428,17 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // Send same data again
             send(
-                server,
-                lineData
+                    server,
+                    lineData
             );
 
             String expected = "room\tpower\ttimestamp\twatts\n" +
-                "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
-                "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
-                "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
-                "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n" +
-                "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
             assertTable(expected);
         });
     }
@@ -477,8 +477,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     }
 
                     String lineData = isSymbol
-                        ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000)
-                        : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
+                            ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000)
+                            : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
 
                     send(server, lineData);
                     columnsAdded.add(isSymbol ? i : -i);
@@ -492,22 +492,22 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             String expected = "iteration\ttimestamp\tcolumn_24\tcolumn_25\tcolumn_26\n" +
-                "1\t1970-01-01T00:20:00.000000Z\t\t\t\n" +
-                "2\t1970-01-01T00:40:00.000000Z\t\t\t\n" +
-                "3\t1970-01-01T01:00:00.000000Z\t\t\t\n" +
-                "4\t1970-01-01T01:20:00.000000Z\t\t\t\n" +
-                "2\t1970-01-01T02:20:00.000000Z\t\t\t\n" +
-                "4\t1970-01-01T03:00:00.000000Z\t\t\t\n" +
-                "2\t1970-01-01T04:00:00.000000Z\t\t\t\n" +
-                "3\t1970-01-01T04:20:00.000000Z\t\t\t\n" +
-                "1\t1970-01-01T05:20:00.000000Z\t\t\t\n" +
-                "3\t1970-01-01T06:00:00.000000Z\t\t\t\n" +
-                "0\t1970-01-01T06:40:00.000000Z\t\t\t\n" +
-                "2\t1970-01-01T07:20:00.000000Z\t\t\t\n" +
-                "4\t1970-01-01T08:00:00.000000Z\t24\t\t\n" +
-                "0\t1970-01-01T08:20:00.000000Z\t24\t25\t\n" +
-                "1\t1970-01-01T08:40:00.000000Z\t24\t25\t26\n" +
-                "2\t1970-01-01T09:00:00.000000Z\t24\t25\t26\n";
+                    "1\t1970-01-01T00:20:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T00:40:00.000000Z\t\t\t\n" +
+                    "3\t1970-01-01T01:00:00.000000Z\t\t\t\n" +
+                    "4\t1970-01-01T01:20:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T02:20:00.000000Z\t\t\t\n" +
+                    "4\t1970-01-01T03:00:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T04:00:00.000000Z\t\t\t\n" +
+                    "3\t1970-01-01T04:20:00.000000Z\t\t\t\n" +
+                    "1\t1970-01-01T05:20:00.000000Z\t\t\t\n" +
+                    "3\t1970-01-01T06:00:00.000000Z\t\t\t\n" +
+                    "0\t1970-01-01T06:40:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T07:20:00.000000Z\t\t\t\n" +
+                    "4\t1970-01-01T08:00:00.000000Z\t24\t\t\n" +
+                    "0\t1970-01-01T08:20:00.000000Z\t24\t25\t\n" +
+                    "1\t1970-01-01T08:40:00.000000Z\t24\t25\t26\n" +
+                    "2\t1970-01-01T09:00:00.000000Z\t24\t25\t26\n";
             assertTable(expected);
         });
     }
@@ -517,10 +517,10 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((server) -> {
 
             send(
-                server,
-                "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
-                    "plug,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,room=6C watts=\"333\",power=220 1531817902842\n"
+                    server,
+                    "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
+                            "plug,room=6B watts=\"22\" 1631817902842\n" +
+                            "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
             try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
@@ -529,19 +529,19 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // Send same data again
             send(
-                server,
-                "plug watts=\"1\",power=220 2631819999000\n" +
-                    "plug,room=6BB watts=\"22\" 1631817902842\n" +
-                    "plug,room=6C watts=\"333\",power=220 1531817902842\n"
+                    server,
+                    "plug watts=\"1\",power=220 2631819999000\n" +
+                            "plug,room=6BB watts=\"22\" 1631817902842\n" +
+                            "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
             String expected = "watts\tpower\ttimestamp\troom\n" +
-                "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
-                "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
-                "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
-                "22\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
-                "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
-                "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
+                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
             assertTable(expected);
         });
     }
@@ -554,15 +554,15 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         // Subscribe local writer even queue to the global engine writer response queue
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (
-            SqlCompiler compiler = new SqlCompiler(engine);
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    new BindVariableServiceImpl(configuration),
-                    null,
-                    -1,
-                    null
-                )
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(
+                                AllowAllCairoSecurityContext.INSTANCE,
+                                new BindVariableServiceImpl(configuration),
+                                null,
+                                -1,
+                                null
+                        )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterOperation alterOperation = cc.getAlterOperation();

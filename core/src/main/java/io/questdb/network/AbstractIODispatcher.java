@@ -74,8 +74,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
 
     public AbstractIODispatcher(
-        IODispatcherConfiguration configuration,
-        IOContextFactory<C> ioContextFactory
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
@@ -131,9 +131,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     @Override
     public void disconnect(C context, int reason) {
         LOG.info()
-            .$("scheduling disconnect [fd=").$(context.getFd())
-            .$(", reason=").$(reason)
-            .I$();
+                .$("scheduling disconnect [fd=").$(context.getFd())
+                .$(", reason=").$(reason)
+                .I$();
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;
@@ -222,14 +222,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             nf.listen(this.serverFd, backlog);
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
-                configuration.getDispatcherLogName(),
-                configuration.getBindIPv4Address(),
-                this.port);
+                    configuration.getDispatcherLogName(),
+                    configuration.getBindIPv4Address(),
+                    this.port);
         }
         LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-            .$(" [fd=").$(serverFd)
-            .$(" backlog=").$(backlog)
-            .I$();
+                .$(" [fd=").$(serverFd)
+                .$(" backlog=").$(backlog)
+                .I$();
     }
 
     private void disconnectContext(IOEvent<C> event) {
@@ -298,10 +298,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
         final int fd = context.getFd();
         LOG.info()
-            .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
-            .$(", fd=").$(fd)
-            .$(", src=").$(DISCONNECT_SOURCES[src])
-            .I$();
+                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
+                .$(", fd=").$(fd)
+                .$(", src=").$(DISCONNECT_SOURCES[src])
+                .I$();
         nf.close(fd, LOG);
         if (closed) {
             Misc.free(context);

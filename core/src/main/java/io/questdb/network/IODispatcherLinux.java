@@ -30,8 +30,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private long fdid = 1;
 
     public IODispatcherLinux(
-        IODispatcherConfiguration configuration,
-        IOContextFactory<C> ioContextFactory
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
@@ -60,12 +60,12 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             }
 
             if (
-                epoll.control(
-                    fd,
-                    id,
-                    epollOp,
-                    operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                ) < 0
+                    epoll.control(
+                            fd,
+                            id,
+                            epollOp,
+                            operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                    ) < 0
             ) {
                 LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
@@ -110,12 +110,12 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             // because we have to remove FD from epoll
             epoll.setOffset(offset);
             if (
-                epoll.control(
-                    fd,
-                    id,
-                    epollOp,
-                    operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                ) < 0
+                    epoll.control(
+                            fd,
+                            id,
+                            epollOp,
+                            operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                    ) < 0
             ) {
                 System.out.println("oops2: " + nf.errno());
             }
@@ -197,8 +197,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         context.clearSuspendEvent();
                     } else {
                         publishOperation(
-                            (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
-                            context
+                                (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
+                                context
                         );
                     }
                     pending.deleteRow(row);

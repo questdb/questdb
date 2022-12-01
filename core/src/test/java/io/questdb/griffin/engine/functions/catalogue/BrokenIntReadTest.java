@@ -35,16 +35,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     @Test
     public void testFailToReadInt_ColumnCountOfFirstTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n";
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(2, expected);
     }
@@ -52,16 +52,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     @Test
     public void testFailToReadInt_ColumnCountOfSecondTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n";
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(4, expected);
     }
@@ -69,16 +69,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     @Test
     public void testFailToReadInt_ColumnCountOfThirdTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n";
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(6, expected);
     }
@@ -86,16 +86,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     @Test
     public void testFailToReadInt_TableIdOfFirstTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n";
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(1, expected);
     }
@@ -103,16 +103,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     @Test
     public void testFailToReadInt_TableIdOfSecondTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n";
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(3, expected);
     }
@@ -120,16 +120,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     @Test
     public void testFailToReadInt_TableIdOfThirdTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n" +
-            "2\t1\t\n" +
-            "2\t2\t\n" +
-            "2\t3\t\n" +
-            "2\t4\t\n" +
-            "2\t5\t\n";
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(5, expected);
     }
@@ -141,11 +141,11 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 return ff;
             }
         }, "x", PartitionBy.NONE)
-            .col("productId", ColumnType.INT)
-            .col("productName", ColumnType.STRING)
-            .col("supplier", ColumnType.SYMBOL)
-            .col("category", ColumnType.SYMBOL)
-            .timestamp()) {
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
+                .timestamp()) {
             CairoTestUtils.createTableWithVersionAndId(model, ColumnType.VERSION, 2);
         }
 
@@ -155,12 +155,12 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 return ff;
             }
         }, "y", PartitionBy.NONE)
-            .col("productId", ColumnType.INT)
-            .col("productName", ColumnType.STRING)
-            .col("supplier", ColumnType.SYMBOL)
-            .col("category", ColumnType.SYMBOL)
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
 
-            .timestamp()) {
+                .timestamp()) {
             CairoTestUtils.createTableWithVersionAndId(model, ColumnType.VERSION, 2);
         }
 
@@ -170,11 +170,11 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 return ff;
             }
         }, "z", PartitionBy.NONE)
-            .col("productId", ColumnType.INT)
-            .col("productName", ColumnType.STRING)
-            .col("supplier", ColumnType.SYMBOL)
-            .col("category", ColumnType.SYMBOL)
-            .timestamp()) {
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
+                .timestamp()) {
             CairoTestUtils.createTableWithVersionAndId(model, ColumnType.VERSION, 2);
         }
     }
@@ -184,16 +184,16 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             createTables(ff);
             printSqlResult(
-                expected,
-                "pg_catalog.pg_attrdef order by 1",
-                null,
-                null,
-                null,
-                true,
-                false,
-                false,
-                false,
-                null
+                    expected,
+                    "pg_catalog.pg_attrdef order by 1",
+                    null,
+                    null,
+                    null,
+                    true,
+                    false,
+                    false,
+                    false,
+                    null
             );
         });
     }

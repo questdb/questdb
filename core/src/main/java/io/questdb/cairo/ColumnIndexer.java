@@ -31,15 +31,16 @@ import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
+
     void closeSlider();
 
     void configureFollowerAndWriter(
-        CairoConfiguration configuration,
-        Path path,
-        CharSequence name,
-        long columnNameTxn,
-        MemoryMA columnMem,
-        long columnTop
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            MemoryMA columnMem,
+            long columnTop
     );
 
     void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);

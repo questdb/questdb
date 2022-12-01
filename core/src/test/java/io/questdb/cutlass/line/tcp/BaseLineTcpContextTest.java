@@ -302,11 +302,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         disconnected = false;
         recvBuffer = null;
         scheduler = new LineTcpMeasurementScheduler(
-            lineTcpConfiguration,
-            engine,
-            createWorkerPool(1, true),
-            null,
-            workerPool = createWorkerPool(nWriterThreads, false)
+                lineTcpConfiguration,
+                engine,
+                createWorkerPool(1, true),
+                null,
+                workerPool = createWorkerPool(nWriterThreads, false)
         ) {
 
             @Override

@@ -94,18 +94,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void configureAnalyticContext(
-        @Nullable VirtualRecord partitionByRecord,
-        @Nullable RecordSink partitionBySink,
-        @Transient @Nullable ColumnTypes partitionByKeyTypes,
-        boolean ordered,
-        boolean baseSupportsRandomAccess
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes partitionByKeyTypes,
+            boolean ordered,
+            boolean baseSupportsRandomAccess
     ) {
         analyticContext.of(
-            partitionByRecord,
-            partitionBySink,
-            partitionByKeyTypes,
-            ordered,
-            baseSupportsRandomAccess
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                baseSupportsRandomAccess
         );
     }
 
@@ -230,9 +230,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     public SqlExecutionContextImpl with(
-        @NotNull CairoSecurityContext cairoSecurityContext,
-        @Nullable BindVariableService bindVariableService,
-        @Nullable Rnd rnd
+            @NotNull CairoSecurityContext cairoSecurityContext,
+            @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
@@ -246,11 +246,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     public SqlExecutionContextImpl with(
-        @NotNull CairoSecurityContext cairoSecurityContext,
-        @Nullable BindVariableService bindVariableService,
-        @Nullable Rnd rnd,
-        long requestFd,
-        @Nullable SqlExecutionCircuitBreaker circuitBreaker
+            @NotNull CairoSecurityContext cairoSecurityContext,
+            @Nullable BindVariableService bindVariableService,
+            @Nullable Rnd rnd,
+            long requestFd,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;

@@ -143,7 +143,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void accumDebugState() {
         debugBuffer.clear();
         debugBuffer.put("table=").put(tableName)
-            .put(", discoveredWalIds=[");
+                .put(", discoveredWalIds=[");
         for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
             final int walId = it.nextInt();
             debugBuffer.put(walId);
@@ -157,7 +157,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         debugBuffer.put("], walInfoDataFrame=[");
         for (int index = 0; index < walInfoDataFrame.size(); ++index) {
             debugBuffer.put('(').put(walInfoDataFrame.walIds.get(index)).put(',')
-                .put(walInfoDataFrame.segmentIds.get(index)).put(')');
+                    .put(walInfoDataFrame.segmentIds.get(index)).put(')');
             if (index < walInfoDataFrame.size() - 1) {
                 debugBuffer.put(',');
             }
@@ -199,8 +199,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 deleteOutstandingWalDirectories();
             } catch (CairoException ce) {
                 LOG.error().$("broad sweep failed [table=").$(tableName)
-                    .$(", msg=").$((Throwable) ce)
-                    .$(", errno=").$(ff.errno()).$(']').$();
+                        .$(", msg=").$((Throwable) ce)
+                        .$(", errno=").$(ff.errno()).$(']').$();
             }
         }
     }
@@ -238,7 +238,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             final int errno = ff.errno();
             if (errno != 2) {
                 LOG.error().$("Could not delete file [path=").$(path)
-                    .$(", errno=").$(errno).$(']').$();
+                        .$(", errno=").$(errno).$(']').$();
                 return false;
             }
         }
@@ -259,8 +259,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
         mayLogDebugInfo();
         LOG.info().$("deleting WAL segment directory [table=").$(tableName)
-            .$(", walId=").$(walId)
-            .$(", segmentId=").$(segmentId).$(']').$();
+                .$(", walId=").$(walId)
+                .$(", segmentId=").$(segmentId).$(']').$();
         if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
             recursiveDelete(setSegmentPath(tableName, walId, segmentId));
         }
@@ -291,7 +291,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void deleteWalDirectory() {
         mayLogDebugInfo();
         LOG.info().$("deleting WAL directory [table=").$(tableName)
-            .$(", walId=").$(walId).$(']').$();
+                .$(", walId=").$(walId).$(']').$();
         if (deleteFile(setWalLockPath(tableName, walId))) {
             recursiveDelete(setWalPath(tableName, walId));
         }
@@ -357,7 +357,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final int errno = ff.rmdir(path);
         if ((errno != 0) && ((errno != 2))) {
             LOG.error().$("Could not delete directory [path=").$(path)
-                .$(", errno=").$(errno).$(']').$();
+                    .$(", errno=").$(errno).$(']').$();
         }
     }
 
@@ -367,43 +367,43 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private Path setSegmentLockPath(CharSequence tableName, int walId, int segmentId) {
         path.of(engine.getConfiguration().getRoot())
-            .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
         TableUtils.lockName(path);
         return path;
     }
 
     private Path setSegmentPath(CharSequence tableName, int walId, int segmentId) {
         return path.of(engine.getConfiguration().getRoot())
-            .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
     }
 
     private Path setSeqTxnPath(CharSequence tableName) {
         return path.of(engine.getConfiguration().getRoot())
-            .concat(tableName)
-            .concat(WalUtils.SEQ_DIR).$();
+                .concat(tableName)
+                .concat(WalUtils.SEQ_DIR).$();
     }
 
     private Path setTablePath(CharSequence tableName) {
         return path.of(engine.getConfiguration().getRoot())
-            .concat(tableName).$();
+                .concat(tableName).$();
     }
 
     private void setTxnPath(CharSequence tableName) {
         path.of(engine.getConfiguration().getRoot())
-            .concat(tableName)
-            .concat(TableUtils.TXN_FILE_NAME).$();
+                .concat(tableName)
+                .concat(TableUtils.TXN_FILE_NAME).$();
     }
 
     private Path setWalLockPath(CharSequence tableName, int walId) {
         path.of(engine.getConfiguration().getRoot())
-            .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
         TableUtils.lockName(path);
         return path;
     }
 
     private Path setWalPath(CharSequence tableName, int walId) {
         return path.of(engine.getConfiguration().getRoot())
-            .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
+                .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 
     private boolean walIsInUse(CharSequence tableName, int walId) {

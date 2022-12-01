@@ -429,11 +429,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int utf8SinkSize;
 
     public PropServerConfiguration(
-        String root,
-        Properties properties,
-        @Nullable Map<String, String> env,
-        Log log,
-        final BuildInformation buildInformation
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log,
+            final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
@@ -826,10 +826,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             writerFileOpenOpts = lopts;
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
-                new DateFormatFactory(),
-                DateLocaleFactory.INSTANCE,
-                new TimestampFormatFactory(),
-                this.locale
+                    new DateFormatFactory(),
+                    DateLocaleFactory.INSTANCE,
+                    new TimestampFormatFactory(),
+                    this.locale
             );
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
@@ -845,9 +845,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             if (pathEquals(root, this.cairoSqlCopyWorkRoot) ||
-                pathEquals(this.root, this.cairoSqlCopyWorkRoot) ||
-                pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot) ||
-                pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
+                    pathEquals(this.root, this.cairoSqlCopyWorkRoot) ||
+                    pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot) ||
+                    pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
@@ -855,7 +855,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyMaxIndexChunkSize -= (cairoSqlCopyMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
             if (this.cairoSqlCopyMaxIndexChunkSize < 16) {
                 throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE.getPropertyPath() +
-                    ", description=max import chunk size can't be smaller than 16]");
+                        ", description=max import chunk size can't be smaller than 16]");
             }
             this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
@@ -950,7 +950,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                     throw new IllegalArgumentException(
-                        PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath() + " (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
+                            PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath() + " (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
                 }
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 1);
@@ -1115,15 +1115,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private static <KeyT> void registerReplacements(
-        Map<KeyT, String> map,
-        KeyT old,
-        PropertyKey... replacements) {
+            Map<KeyT, String> map,
+            KeyT old,
+            PropertyKey... replacements) {
         StringBuilder sb = new StringBuilder("Replaced by ");
         for (int index = 0; index < replacements.length; ++index) {
             if (index > 0) {
                 sb.append(index < (replacements.length - 1)
-                    ? ", "
-                    : " and ");
+                        ? ", "
+                        : " and ");
             }
             String replacement = replacements[index].getPropertyPath();
             sb.append('`');
@@ -1295,10 +1295,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             //unfortunately java.io.Files.isSameFile() doesn't work on files that don't exist
             return new File(p1).getCanonicalPath().replace(File.separatorChar, '/')
-                .equals(new File(p2).getCanonicalPath().replace(File.separatorChar, '/'));
+                    .equals(new File(p2).getCanonicalPath().replace(File.separatorChar, '/'));
         } catch (IOException e) {
             log.info().$("Can't validate configuration property [key=").$(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath())
-                .$(", value=").$(p2).$("]");
+                    .$(", value=").$(p2).$("]");
             return false;
         }
     }
@@ -1418,11 +1418,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected void parseBindTo(
-        Properties properties,
-        Map<String, String> env,
-        PropertyKey key,
-        String defaultValue,
-        BindToParser parser
+            Properties properties,
+            Map<String, String> env,
+            PropertyKey key,
+            String defaultValue,
+            BindToParser parser
     ) throws ServerConfigurationException {
 
         final String bindTo = getString(properties, env, key, defaultValue);
@@ -3620,73 +3620,73 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
 
         registerObsolete(
-            "line.tcp.commit.timeout",
-            PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT,
-            PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION);
+                "line.tcp.commit.timeout",
+                PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT,
+                PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION);
         registerObsolete(
-            "cairo.timestamp.locale",
-            PropertyKey.CAIRO_DATE_LOCALE);
+                "cairo.timestamp.locale",
+                PropertyKey.CAIRO_DATE_LOCALE);
         registerObsolete(
-            "pg.timestamp.locale",
-            PropertyKey.PG_DATE_LOCALE);
+                "pg.timestamp.locale",
+                PropertyKey.PG_DATE_LOCALE);
         registerObsolete(
-            "cairo.sql.append.page.size",
-            PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE);
+                "cairo.sql.append.page.size",
+                PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE);
 
         registerDeprecated(
-            PropertyKey.HTTP_MIN_BIND_TO,
-            PropertyKey.HTTP_MIN_NET_BIND_TO);
+                PropertyKey.HTTP_MIN_BIND_TO,
+                PropertyKey.HTTP_MIN_NET_BIND_TO);
         registerDeprecated(
-            PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT,
-            PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT);
+                PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT,
+                PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT);
         registerDeprecated(
-            PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT,
-            PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT);
+                PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT,
+                PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT);
         registerDeprecated(
-            PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE,
-            PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF);
+                PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE,
+                PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF);
         registerDeprecated(
-            PropertyKey.HTTP_NET_RCV_BUF_SIZE,
-            PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF,
-            PropertyKey.HTTP_NET_CONNECTION_RCVBUF);
+                PropertyKey.HTTP_NET_RCV_BUF_SIZE,
+                PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF,
+                PropertyKey.HTTP_NET_CONNECTION_RCVBUF);
         registerDeprecated(
-            PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT,
-            PropertyKey.HTTP_NET_CONNECTION_LIMIT);
+                PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT,
+                PropertyKey.HTTP_NET_CONNECTION_LIMIT);
         registerDeprecated(
-            PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT,
-            PropertyKey.HTTP_NET_CONNECTION_TIMEOUT);
+                PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT,
+                PropertyKey.HTTP_NET_CONNECTION_TIMEOUT);
         registerDeprecated(
-            PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
-            PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT);
+                PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
+                PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT);
         registerDeprecated(
-            PropertyKey.HTTP_NET_SND_BUF_SIZE,
-            PropertyKey.HTTP_NET_CONNECTION_SNDBUF);
+                PropertyKey.HTTP_NET_SND_BUF_SIZE,
+                PropertyKey.HTTP_NET_CONNECTION_SNDBUF);
         registerDeprecated(
-            PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT,
-            PropertyKey.PG_NET_CONNECTION_LIMIT);
+                PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT,
+                PropertyKey.PG_NET_CONNECTION_LIMIT);
         registerDeprecated(
-            PropertyKey.PG_NET_IDLE_TIMEOUT,
-            PropertyKey.PG_NET_CONNECTION_TIMEOUT);
+                PropertyKey.PG_NET_IDLE_TIMEOUT,
+                PropertyKey.PG_NET_CONNECTION_TIMEOUT);
         registerDeprecated(
-            PropertyKey.PG_NET_RECV_BUF_SIZE,
-            PropertyKey.PG_NET_CONNECTION_RCVBUF);
+                PropertyKey.PG_NET_RECV_BUF_SIZE,
+                PropertyKey.PG_NET_CONNECTION_RCVBUF);
         registerDeprecated(
-            PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT,
-            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT);
+                PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT,
+                PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT);
         registerDeprecated(
-            PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT,
-            PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT);
+                PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT,
+                PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT);
         registerDeprecated(
-            PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
-            PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT);
+                PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
+                PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT);
         registerDeprecated(
-            PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
-            PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF);
+                PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
+                PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF);
         registerDeprecated(
-            PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
-            PropertyKey.LINE_DEFAULT_PARTITION_BY);
+                PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
+                PropertyKey.LINE_DEFAULT_PARTITION_BY);
         registerDeprecated(
-            PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
-            PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
+                PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
+                PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
     }
 }

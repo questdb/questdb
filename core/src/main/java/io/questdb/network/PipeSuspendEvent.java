@@ -75,8 +75,8 @@ public class PipeSuspendEvent extends SuspendEvent {
     public void trigger() {
         if (kqf.writePipe(writeEndFd) < 0) {
             throw NetworkError.instance(kqf.getNetworkFacade().errno())
-                .put("could not write to pipe [fd=").put(writeEndFd)
-                .put(']');
+                    .put("could not write to pipe [fd=").put(writeEndFd)
+                    .put(']');
         }
     }
 

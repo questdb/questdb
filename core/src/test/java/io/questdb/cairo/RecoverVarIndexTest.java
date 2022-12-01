@@ -56,12 +56,13 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
         compiler = new SqlCompiler(engine);
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            .with(
-                AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService,
-                null,
-                -1,
-                null);
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null
+                );
         bindVariableService.clear();
     }
 
@@ -79,19 +80,19 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     @Test
     public void testEmptyTable() throws Exception {
         String createTableSql = "create table xxx as (" +
-            "select " +
-            "rnd_symbol('A', 'B', 'C') as sym1," +
-            "rnd_symbol(4,4,4,2) as sym2," +
-            "x," +
-            "timestamp_sequence(0, 100000000) ts " +
-            "from long_sequence(0)" +
-            "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(0)" +
+                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
         checkRecoverVarIndex(
-            createTableSql,
-            (tablePath) -> {
-            },
-            RecoverVarIndex::rebuildAll
+                createTableSql,
+                (tablePath) -> {
+                },
+                RecoverVarIndex::rebuildAll
         );
     }
 
@@ -99,26 +100,26 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testNonPartitionedWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                "); " +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    "); " +
 
-                "alter table xxx add column str2 string; " +
+                    "alter table xxx add column str2 string; " +
 
-                "insert into xxx " +
-                "select " +
-                "rnd_str('A', 'B', 'C') as str1," +
-                "x," +
-                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
-                "rnd_str(4,4,4,2) as str2 " +
-                "from long_sequence(5000)";
+                    "insert into xxx " +
+                    "select " +
+                    "rnd_str('A', 'B', 'C') as str1," +
+                    "x," +
+                    "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                    "rnd_str(4,4,4,2) as str2 " +
+                    "from long_sequence(5000)";
 
             checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
         });
     }
 
@@ -126,25 +127,25 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testNonPartitionedWithColumnTopAddedLast() throws Exception {
         assertMemoryLeak(() -> {
             String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                ");" +
-                "alter table xxx add column str1 string;" +
-                "alter table xxx add column str2 string";
+                    "select " +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    ");" +
+                    "alter table xxx add column str1 string;" +
+                    "alter table xxx add column str2 string";
 
             checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> {
-                },
-                RecoverVarIndex::rebuildAll);
+                    tablePath -> {
+                    },
+                    RecoverVarIndex::rebuildAll);
 
             engine.releaseAllWriters();
             compiler
-                .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
-                .getInsertOperation()
-                .execute(sqlExecutionContext)
-                .await();
+                    .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
+                    .getInsertOperation()
+                    .execute(sqlExecutionContext)
+                    .await();
             int sym1D = countByFullScanWhereValueD();
             Assert.assertEquals(1, sym1D);
         });
@@ -154,17 +155,17 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testNonePartitionedOneColumn() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ")";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ")";
 
             checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+                    tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str1"));
         });
     }
 
@@ -172,21 +173,21 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testPartitionedDaily() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
             checkRecoverVarIndex(
-                createTableSql,
-                (tablePath) -> {
-                    removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
-                    removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
-                },
-                RecoverVarIndex::rebuildAll
+                    createTableSql,
+                    (tablePath) -> {
+                        removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
+                        removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
+                    },
+                    RecoverVarIndex::rebuildAll
             );
         });
     }
@@ -195,21 +196,21 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testPartitionedNone() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ")";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ")";
 
             checkRecoverVarIndex(
-                createTableSql,
-                (tablePath) -> {
-                    removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
-                    removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
-                },
-                RecoverVarIndex::rebuildAll
+                    createTableSql,
+                    (tablePath) -> {
+                        removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
+                        removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
+                    },
+                    RecoverVarIndex::rebuildAll
             );
         });
     }
@@ -218,17 +219,17 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testPartitionedOneColumn() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
             checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+                    tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str1"));
         });
     }
 
@@ -236,17 +237,17 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testPartitionedOneColumnFirstPartition() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
             checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
+                    tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
         });
     }
 
@@ -254,26 +255,26 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testPartitionedWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                ") timestamp(ts) PARTITION BY DAY; " +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    ") timestamp(ts) PARTITION BY DAY; " +
 
-                "alter table xxx add column str2 string; " +
+                    "alter table xxx add column str2 string; " +
 
-                "insert into xxx " +
-                "select " +
-                "rnd_str('A', 'B', 'C') as str1," +
-                "x," +
-                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
-                "rnd_str(4,4,4,2) as str2 " +
-                "from long_sequence(5000)";
+                    "insert into xxx " +
+                    "select " +
+                    "rnd_str('A', 'B', 'C') as str1," +
+                    "x," +
+                    "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                    "rnd_str(4,4,4,2) as str2 " +
+                    "from long_sequence(5000)";
 
             checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
         });
     }
 
@@ -281,25 +282,25 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testRebuildColumnTableWriterLockedFails() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
             tempWriter = null;
             try {
                 checkRecoverVarIndex(createTableSql,
-                    tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
-                    rebuildIndex -> {
-                        try {
-                            rebuildIndex.reindexColumn("str1");
-                        } finally {
-                            tempWriter.close();
-                        }
-                    });
+                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
+                        rebuildIndex -> {
+                            try {
+                                rebuildIndex.reindexColumn("str1");
+                            } finally {
+                                tempWriter.close();
+                            }
+                        });
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
@@ -311,13 +312,13 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public void testRebuildFailsWriteIFile() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
             AtomicInteger count = new AtomicInteger();
             ff = new FilesFacadeImpl() {
@@ -332,9 +333,9 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
             try {
                 checkRecoverVarIndex(createTableSql,
-                    tablePath -> {
-                    },
-                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+                        tablePath -> {
+                        },
+                        rebuildIndex -> rebuildIndex.reindexColumn("str2"));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
@@ -345,19 +346,19 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     @Test
     public void testRebuildWrongColumn() throws Exception {
         String createTableSql = "create table xxx as (" +
-            "select " +
-            "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-            "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-            "x," +
-            "timestamp_sequence(0, 100000000) ts " +
-            "from long_sequence(10000)" +
-            ") timestamp(ts) PARTITION BY DAY";
+                "select " +
+                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                ") timestamp(ts) PARTITION BY DAY";
 
         try {
             checkRecoverVarIndex(createTableSql,
-                tablePath -> {
-                },
-                rebuildIndex -> rebuildIndex.reindexColumn("x"));
+                    tablePath -> {
+                    },
+                    rebuildIndex -> rebuildIndex.reindexColumn("x"));
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "Wrong column type");

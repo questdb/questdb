@@ -148,7 +148,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testDuplicateTableCreation() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("a", ColumnType.INT)) {
+                    .col("a", ColumnType.INT)) {
                 CairoTestUtils.create(model);
                 try {
                     engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
@@ -217,7 +217,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("a", ColumnType.INT)) {
+                    .col("a", ColumnType.INT)) {
                 CairoTestUtils.create(model);
                 try {
                     engine.lockWriter(readOnlyContext, "x", "testing");
@@ -392,8 +392,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                 @Override
                 public int rename(LPSZ from, LPSZ to) {
                     return counter-- <= 0
-                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
-                        : Files.FILES_RENAME_ERR_OTHER;
+                            && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                            : Files.FILES_RENAME_ERR_OTHER;
                 }
 
                 @Override
@@ -435,7 +435,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE)
-                .col("a", ColumnType.INT)) {
+                    .col("a", ColumnType.INT)) {
                 CairoTestUtils.create(model);
             }
 
@@ -478,7 +478,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("a", ColumnType.INT)) {
+                    .col("a", ColumnType.INT)) {
                 CairoTestUtils.create(model);
                 engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
                 try {
@@ -528,14 +528,14 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     private void createX() {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-            .col("a", ColumnType.INT)) {
+                .col("a", ColumnType.INT)) {
             CairoTestUtils.create(model);
         }
     }
 
     private void createY() {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)
-            .col("b", ColumnType.INT)) {
+                .col("b", ColumnType.INT)) {
             CairoTestUtils.create(model);
         }
     }

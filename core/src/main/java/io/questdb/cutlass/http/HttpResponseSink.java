@@ -247,9 +247,9 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (n < 0) {
                 // disconnected
                 LOG.error()
-                    .$("disconnected [errno=").$(nf.errno())
-                    .$(", fd=").$(fd)
-                    .$(']').$();
+                        .$("disconnected [errno=").$(nf.errno())
+                        .$(", fd=").$(fd)
+                        .$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
             }
             if (n == 0) {

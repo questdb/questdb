@@ -40,21 +40,21 @@ final class Mig600 {
         final int fd = migrationContext.getMetadataFd();
 
         TableUtils.writeIntOrFail(
-            ff,
-            fd,
-            META_OFFSET_MAX_UNCOMMITTED_ROWS,
-            migrationContext.getConfiguration().getMaxUncommittedRows(),
-            tempMem,
-            path
+                ff,
+                fd,
+                META_OFFSET_MAX_UNCOMMITTED_ROWS,
+                migrationContext.getConfiguration().getMaxUncommittedRows(),
+                tempMem,
+                path
         );
 
         TableUtils.writeLongOrFail(
-            ff,
-            fd,
-            META_OFFSET_O3_MAX_LAG,
-            migrationContext.getConfiguration().getO3MaxLag(),
-            tempMem,
-            path
+                ff,
+                fd,
+                META_OFFSET_O3_MAX_LAG,
+                migrationContext.getConfiguration().getO3MaxLag(),
+                tempMem,
+                path
         );
     }
 }

@@ -46,7 +46,6 @@ import java.io.Closeable;
 
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
-
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;

@@ -75,10 +75,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private SymbolTableSource symbolTableSource;
 
     public PageFrameSequence(
-        CairoConfiguration configuration,
-        MessageBus messageBus,
-        PageFrameReducer reducer,
-        WeakClosableObjectPool<PageFrameReduceTask> localTaskPool
+            CairoConfiguration configuration,
+            MessageBus messageBus,
+            PageFrameReducer reducer,
+            WeakClosableObjectPool<PageFrameReduceTask> localTaskPool
     ) {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
@@ -93,10 +93,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      */
     public void await() {
         LOG.debug()
-            .$("awaiting completion [shard=").$(shard)
-            .$(", id=").$(id)
-            .$(", frameCount=").$(frameCount)
-            .I$();
+                .$("awaiting completion [shard=").$(shard)
+                .$(", id=").$(id)
+                .$(", frameCount=").$(frameCount)
+                .I$();
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (!done) {
@@ -116,9 +116,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this);
             } catch (Throwable e) {
                 LOG.error()
-                    .$("await error [id=").$(id)
-                    .$(", ex=").$(e)
-                    .I$();
+                        .$("await error [id=").$(id)
+                        .$(", ex=").$(e)
+                        .I$();
             }
 
             if (nothingProcessed) {
@@ -296,11 +296,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public PageFrameSequence<T> of(
-        RecordCursorFactory base,
-        SqlExecutionContext executionContext,
-        SCSequence collectSubSeq,
-        T atom,
-        int order
+            RecordCursorFactory base,
+            SqlExecutionContext executionContext,
+            SCSequence collectSubSeq,
+            T atom,
+            int order
     ) throws SqlException {
         this.sqlExecutionContext = executionContext;
         this.startTime = clock.getTicks();
@@ -327,11 +327,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 // will be unsubscribed asynchronously.
                 messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
                 LOG.debug()
-                    .$("added [shard=").$(shard)
-                    .$(", id=").$(id)
-                    .$(", seqCurrent=").$(collectSubSeq.current())
-                    .$(", seq=").$(collectSubSeq)
-                    .I$();
+                        .$("added [shard=").$(shard)
+                        .$(", id=").$(id)
+                        .$(", seqCurrent=").$(collectSubSeq.current())
+                        .$(", seq=").$(collectSubSeq)
+                        .I$();
             }
         } catch (Throwable e) {
             this.symbolTableSource = Misc.freeIfCloseable(this.symbolTableSource);
@@ -355,9 +355,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         if (frameCount > 0) {
             long newId = ID_SEQ.incrementAndGet();
             LOG.debug().$("toTop [shard=").$(shard)
-                .$(", id=").$(id)
-                .$(", newId=").$(newId)
-                .I$();
+                    .$(", id=").$(id)
+                    .$(", newId=").$(newId)
+                    .I$();
 
             await();
 
@@ -401,12 +401,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 if (cursor > -1) {
                     reduceQueue.get(cursor).of(this, i);
                     LOG.debug()
-                        .$("dispatched [shard=").$(shard)
-                        .$(", id=").$(getId())
-                        .$(", frameIndex=").$(i)
-                        .$(", frameCount=").$(frameCount)
-                        .$(", cursor=").$(cursor)
-                        .I$();
+                            .$("dispatched [shard=").$(shard)
+                            .$(", id=").$(getId())
+                            .$(", frameIndex=").$(i)
+                            .$(", frameCount=").$(frameCount)
+                            .$(", cursor=").$(cursor)
+                            .I$();
                     reducePubSeq.done(cursor);
                     dispatched = true;
                     break;
@@ -462,11 +462,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     private void prepareForDispatch(
-        Rnd rnd,
-        int frameCount,
-        SymbolTableSource symbolTableSource,
-        T atom,
-        SCSequence collectSubSeq
+            Rnd rnd,
+            int frameCount,
+            SymbolTableSource symbolTableSource,
+            T atom,
+            SCSequence collectSubSeq
     ) {
         this.id = ID_SEQ.incrementAndGet();
         this.done = false;
@@ -497,10 +497,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     private boolean stealWork(
-        RingQueue<PageFrameReduceTask> queue,
-        MCSequence reduceSubSeq,
-        PageAddressCacheRecord record,
-        SqlExecutionCircuitBreaker circuitBreaker
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence reduceSubSeq,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
             Os.pause();
@@ -519,12 +519,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         try {
             LOG.debug()
-                .$("reducing locally [shard=").$(shard)
-                .$(", id=").$(id)
-                .$(", frameIndex=").$(localTask.getFrameIndex())
-                .$(", frameCount=").$(frameCount)
-                .$(", active=").$(isActive())
-                .I$();
+                    .$("reducing locally [shard=").$(shard)
+                    .$(", id=").$(id)
+                    .$(", frameIndex=").$(localTask.getFrameIndex())
+                    .$(", frameCount=").$(frameCount)
+                    .$(", active=").$(isActive())
+                    .I$();
             if (isActive()) {
                 PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this, this);
             }

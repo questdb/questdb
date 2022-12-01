@@ -51,12 +51,12 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         of(
-            configuration,
-            path,
-            name,
-            columnNameTxn,
-            configuration.getDataIndexKeyAppendPageSize(),
-            configuration.getDataIndexValueAppendPageSize()
+                configuration,
+                path,
+                name,
+                columnNameTxn,
+                configuration.getDataIndexKeyAppendPageSize(),
+                configuration.getDataIndexValueAppendPageSize()
         );
     }
 
@@ -288,11 +288,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
             this.valueMem.of(
-                ff,
-                BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
-                valueAppendPageSize,
-                this.valueMemSize,
-                MemoryTag.MMAP_INDEX_WRITER
+                    ff,
+                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
+                    valueAppendPageSize,
+                    this.valueMemSize,
+                    MemoryTag.MMAP_INDEX_WRITER
             );
 
             // block value count is always a power of two
@@ -300,10 +300,10 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             if (blockValueCountMod < 1) {
                 LOG.error()
-                    .$("corrupt file [name=").$(path)
-                    .$(", valueMemSize=").$(this.valueMemSize)
-                    .$(", blockValueCountMod=").$(this.blockValueCountMod)
-                    .I$();
+                        .$("corrupt file [name=").$(path)
+                        .$(", valueMemSize=").$(this.valueMemSize)
+                        .$(", blockValueCountMod=").$(this.blockValueCountMod)
+                        .I$();
                 throw CairoException.critical(0).put("corrupt file ").put(path);
             }
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;

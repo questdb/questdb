@@ -60,9 +60,9 @@ public class DispatcherWriterQueueTest {
     public TemporaryFolder temp = new TemporaryFolder();
     @Rule
     public Timeout timeout = Timeout.builder()
-        .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-        .withLookingForStuckThread(true)
-        .build();
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
     private SqlCompiler compiler;
     private Error error = null;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -72,38 +72,38 @@ public class DispatcherWriterQueueTest {
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         sqlExecutionContext.with(
-            AllowAllCairoSecurityContext.INSTANCE,
-            bindVariableService,
-            null,
-            -1,
-            null);
+                AllowAllCairoSecurityContext.INSTANCE,
+                bindVariableService,
+                null,
+                -1,
+                null);
         bindVariableService.clear();
     }
 
     @Test
     public void testAlterTableAddCacheAlterCache() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("s");
-                Assert.assertTrue("Column s must exist", columnIndex >= 0);
-                Assert.assertTrue(rdr.getSymbolMapReader(columnIndex).isCached());
-            },
-            1,
-            0,
-            "alter+table+<x>+alter+column+s+cache");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue("Column s must exist", columnIndex >= 0);
+                    Assert.assertTrue(rdr.getSymbolMapReader(columnIndex).isCached());
+                },
+                1,
+                0,
+                "alter+table+<x>+alter+column+s+cache");
     }
 
     @Test
     public void testAlterTableAddColumn() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("y");
-                Assert.assertEquals(2, columnIndex);
-                Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
-            },
-            1,
-            0,
-            "alter+table+<x>+add+column+y+int");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("y");
+                    Assert.assertEquals(2, columnIndex);
+                    Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
+                },
+                1,
+                0,
+                "alter+table+<x>+add+column+y+int");
     }
 
     @Test
@@ -112,85 +112,85 @@ public class DispatcherWriterQueueTest {
         SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
-            .withAlterTableStartWaitTimeout(30_000)
-            .withAlterTableMaxWaitTimeout(50_000)
-            .withFilesFacade(new FilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
-                        alterAckReceived.await();
-                        disconnectLatch.countDown();
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
+                .withAlterTableStartWaitTimeout(30_000)
+                .withAlterTableMaxWaitTimeout(50_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public int openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
+                            alterAckReceived.await();
+                            disconnectLatch.countDown();
+                        }
+                        return super.openRW(name, opts);
                     }
-                    return super.openRW(name, opts);
-                }
-            });
+                });
 
         runAlterOnBusyTable((writer, rdr) -> {
-                // Wait command execution
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("s");
-                for (int i = 0; i < 100 && !writer.getMetadata().isColumnIndexed(columnIndex); i++) {
-                    writer.tick(true);
-                    Os.sleep(100);
-                }
-                Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
-            },
-            0,
-            queryTestBuilder,
-            disconnectLatch,
-            "alter+table+<x>+alter+column+s+add+index");
+                    // Wait command execution
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    for (int i = 0; i < 100 && !writer.getMetadata().isColumnIndexed(columnIndex); i++) {
+                        writer.tick(true);
+                        Os.sleep(100);
+                    }
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
+                },
+                0,
+                queryTestBuilder,
+                disconnectLatch,
+                "alter+table+<x>+alter+column+s+add+index");
     }
 
     @Test
     public void testAlterTableAddIndex() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("y");
-                Assert.assertEquals(2, columnIndex);
-                Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
-            },
-            1,
-            0,
-            "alter+table+<x>+add+column+y+int");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("y");
+                    Assert.assertEquals(2, columnIndex);
+                    Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
+                },
+                1,
+                0,
+                "alter+table+<x>+add+column+y+int");
     }
 
     @Test
     public void testAlterTableAddIndexContinuesAfterStartTimeoutExpired() throws Exception {
         SOCountDownLatch alterAckReceived = new SOCountDownLatch(1);
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
-            .withAlterTableStartWaitTimeout(30_000)
-            .withAlterTableMaxWaitTimeout(50_000)
-            .withFilesFacade(new FilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
-                        alterAckReceived.await();
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
+                .withAlterTableStartWaitTimeout(30_000)
+                .withAlterTableMaxWaitTimeout(50_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public int openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
+                            alterAckReceived.await();
+                        }
+                        return super.openRW(name, opts);
                     }
-                    return super.openRW(name, opts);
-                }
-            });
+                });
 
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("s");
-                Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
-            },
-            0,
-            queryTestBuilder,
-            null,
-            "alter+table+<x>+alter+column+s+add+index");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
+                },
+                0,
+                queryTestBuilder,
+                null,
+                "alter+table+<x>+alter+column+s+add+index");
     }
 
     @Test
@@ -198,167 +198,167 @@ public class DispatcherWriterQueueTest {
         SOCountDownLatch alterAckReceived = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withAlterTableStartWaitTimeout(100)
-            .withAlterTableMaxWaitTimeout(10)
-            .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
-            .withFilesFacade(new FilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
-                        alterAckReceived.await();
-                        Os.sleep(500);
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(100)
+                .withAlterTableMaxWaitTimeout(10)
+                .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public int openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
+                            alterAckReceived.await();
+                            Os.sleep(500);
+                        }
+                        return super.openRW(name, opts);
                     }
-                    return super.openRW(name, opts);
-                }
-            });
+                });
 
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("s");
-                Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
-            },
-            1,
-            queryTestBuilder,
-            null,
-            "alter+table+<x>+alter+column+s+add+index");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
+                },
+                1,
+                queryTestBuilder,
+                null,
+                "alter+table+<x>+alter+column+s+add+index");
     }
 
     @Test
     public void testAlterTableAddNocacheAlterCache() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("s");
-                Assert.assertTrue("Column s must exist", columnIndex >= 0);
-                Assert.assertFalse(rdr.getSymbolMapReader(columnIndex).isCached());
-            },
-            1,
-            0,
-            "alter+table+<x>+alter+column+s+nocache");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue("Column s must exist", columnIndex >= 0);
+                    Assert.assertFalse(rdr.getSymbolMapReader(columnIndex).isCached());
+                },
+                1,
+                0,
+                "alter+table+<x>+alter+column+s+nocache");
     }
 
     @Test
     public void testAlterTableAddRenameColumn() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndex("y");
-                Assert.assertTrue("Column y must exist", columnIndex > 0);
-                int columnIndex2 = metadata.getColumnIndex("s2");
-                Assert.assertTrue("Column s2 must exist", columnIndex2 > 0);
-                Assert.assertTrue(metadata.isColumnIndexed(columnIndex2));
-                Assert.assertFalse(rdr.getSymbolMapReader(columnIndex2).isCached());
-            },
-            2,
-            0,
-            "alter+table+<x>+add+column+y+int",
-            "alter+table+<x>+add+column+s2+symbol+capacity+512+nocache+index");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("y");
+                    Assert.assertTrue("Column y must exist", columnIndex > 0);
+                    int columnIndex2 = metadata.getColumnIndex("s2");
+                    Assert.assertTrue("Column s2 must exist", columnIndex2 > 0);
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex2));
+                    Assert.assertFalse(rdr.getSymbolMapReader(columnIndex2).isCached());
+                },
+                2,
+                0,
+                "alter+table+<x>+add+column+y+int",
+                "alter+table+<x>+add+column+s2+symbol+capacity+512+nocache+index");
     }
 
     @Test
     public void testAlterTableFailsToUpgradeConcurrently() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndexQuiet("y");
-                int columnIndex2 = metadata.getColumnIndexQuiet("x");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndexQuiet("y");
+                    int columnIndex2 = metadata.getColumnIndexQuiet("x");
 
-                Assert.assertTrue(columnIndex > -1 || columnIndex2 > -1);
-                Assert.assertTrue(columnIndex == -1 || columnIndex2 == -1);
-            },
-            2,
-            1,
-            "alter+table+<x>+rename+column+s+to+y",
-            "alter+table+<x>+rename+column+s+to+x");
+                    Assert.assertTrue(columnIndex > -1 || columnIndex2 > -1);
+                    Assert.assertTrue(columnIndex == -1 || columnIndex2 == -1);
+                },
+                2,
+                1,
+                "alter+table+<x>+rename+column+s+to+y",
+                "alter+table+<x>+rename+column+s+to+x");
     }
 
     @Test
     public void testCanReuseSameJsonContextForMultipleAlterRuns() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                TableRecordMetadata metadata = writer.getMetadata();
-                int columnIndex = metadata.getColumnIndexQuiet("y");
-                int columnIndex2 = metadata.getColumnIndexQuiet("x");
+                    TableRecordMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndexQuiet("y");
+                    int columnIndex2 = metadata.getColumnIndexQuiet("x");
 
-                Assert.assertTrue(columnIndex > -1 && columnIndex2 > -1);
-                Assert.assertEquals(-1, metadata.getColumnIndexQuiet("s"));
-            },
-            1,
-            0,
-            "alter+table+<x>+add+y+long256,x+timestamp",
-            "alter+table+<x>+drop+column+s");
+                    Assert.assertTrue(columnIndex > -1 && columnIndex2 > -1);
+                    Assert.assertEquals(-1, metadata.getColumnIndexQuiet("s"));
+                },
+                1,
+                0,
+                "alter+table+<x>+add+y+long256,x+timestamp",
+                "alter+table+<x>+drop+column+s");
     }
 
     @Test
     public void testRestUpdateTimeout() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withAlterTableStartWaitTimeout(30_000)
-            .withFilesFacade(new FilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "x.d.1")) {
-                        Os.sleep(50);
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public int openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "x.d.1")) {
+                            Os.sleep(50);
+                        }
+                        return super.openRW(name, opts);
                     }
-                    return super.openRW(name, opts);
-                }
-            });
+                });
 
         runUpdateOnBusyTable((writer, rdr) -> {
-                // Test no resources leak, update can go through or not, it is not deterministic
-            },
-            writer -> {
-            },
-            1,
-            queryTestBuilder,
-            null,
-            null,
-            1,
-            3,
-            URLEncoder.encode("update x set x=1 from tables() where s = 'a'", utf8Encoding)
+                    // Test no resources leak, update can go through or not, it is not deterministic
+                },
+                writer -> {
+                },
+                1,
+                queryTestBuilder,
+                null,
+                null,
+                1,
+                3,
+                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", utf8Encoding)
         );
     }
 
     @Test
     public void testUpdateBusyTable() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withAlterTableStartWaitTimeout(30_000);
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000);
 
         runUpdateOnBusyTable((writer, rdr) ->
-                TestUtils.assertReader(
-                    "s\tx\tts\n" +
-                        "b\t10\t1970-01-01T00:00:00.000001Z\n" +
-                        "c\t2\t1970-01-01T00:00:00.000002Z\n" +
-                        "a\t1\t1970-01-01T00:00:00.000003Z\n" +
-                        "b\t10\t1970-01-01T00:00:00.000004Z\n" +
-                        "c\t5\t1970-01-01T00:00:00.000005Z\n" +
-                        "a\t1\t1970-01-01T00:00:00.000006Z\n" +
-                        "b\t10\t1970-01-01T00:00:00.000007Z\n" +
-                        "c\t8\t1970-01-01T00:00:00.000008Z\n" +
-                        "a\t1\t1970-01-01T00:00:00.000009Z\n",
-                    rdr,
-                    new StringSink()
-                ),
-            writer -> {
-            },
-            0,
-            queryTestBuilder,
-            null,
-            null,
-            -1L,
-            3,
-            URLEncoder.encode("update x set x=1 where s = 'a'", utf8Encoding),
-            URLEncoder.encode("update x set x=10 where s = 'b'", utf8Encoding)
+                        TestUtils.assertReader(
+                                "s\tx\tts\n" +
+                                        "b\t10\t1970-01-01T00:00:00.000001Z\n" +
+                                        "c\t2\t1970-01-01T00:00:00.000002Z\n" +
+                                        "a\t1\t1970-01-01T00:00:00.000003Z\n" +
+                                        "b\t10\t1970-01-01T00:00:00.000004Z\n" +
+                                        "c\t5\t1970-01-01T00:00:00.000005Z\n" +
+                                        "a\t1\t1970-01-01T00:00:00.000006Z\n" +
+                                        "b\t10\t1970-01-01T00:00:00.000007Z\n" +
+                                        "c\t8\t1970-01-01T00:00:00.000008Z\n" +
+                                        "a\t1\t1970-01-01T00:00:00.000009Z\n",
+                                rdr,
+                                new StringSink()
+                        ),
+                writer -> {
+                },
+                0,
+                queryTestBuilder,
+                null,
+                null,
+                -1L,
+                3,
+                URLEncoder.encode("update x set x=1 where s = 'a'", utf8Encoding),
+                URLEncoder.encode("update x set x=10 where s = 'b'", utf8Encoding)
         );
     }
 
@@ -367,34 +367,34 @@ public class DispatcherWriterQueueTest {
         SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withAlterTableStartWaitTimeout(30_000)
-            .withFilesFacade(new FilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "x.d.1")) {
-                        disconnectLatch.countDown();
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public int openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "x.d.1")) {
+                            disconnectLatch.countDown();
+                        }
+                        return super.openRW(name, opts);
                     }
-                    return super.openRW(name, opts);
-                }
-            });
+                });
 
         runUpdateOnBusyTable((wrt, rdr) -> {
-                // Test no resources leak, update can go through or not, it is not deterministic
-            },
-            writer -> {
-            },
-            0,
-            queryTestBuilder,
-            disconnectLatch,
-            null,
-            1000,
-            0,
-            URLEncoder.encode("update x set x=1 from tables()", utf8Encoding)
+                    // Test no resources leak, update can go through or not, it is not deterministic
+                },
+                writer -> {
+                },
+                0,
+                queryTestBuilder,
+                disconnectLatch,
+                null,
+                1000,
+                0,
+                URLEncoder.encode("update x set x=1 from tables()", utf8Encoding)
         );
     }
 
@@ -424,28 +424,28 @@ public class DispatcherWriterQueueTest {
     }
 
     private void runAlterOnBusyTable(
-        final AlterVerifyAction alterVerifyAction,
-        int httpWorkers,
-        int errorsExpected,
-        final String... httpAlterQueries
+            final AlterVerifyAction alterVerifyAction,
+            int httpWorkers,
+            int errorsExpected,
+            final String... httpAlterQueries
     ) throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(httpWorkers)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withAlterTableStartWaitTimeout(30_000);
+                .withTempFolder(temp)
+                .withWorkerCount(httpWorkers)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000);
 
         runAlterOnBusyTable(alterVerifyAction, errorsExpected, queryTestBuilder, null, httpAlterQueries);
     }
 
     private void runAlterOnBusyTable(
-        AlterVerifyAction alterVerifyAction,
-        int errorsExpected,
-        HttpQueryTestBuilder queryTestBuilder,
-        SOCountDownLatch waitToDisconnect,
-        final String... httpAlterQueries
+            AlterVerifyAction alterVerifyAction,
+            int errorsExpected,
+            HttpQueryTestBuilder queryTestBuilder,
+            SOCountDownLatch waitToDisconnect,
+            final String... httpAlterQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
             setupSql(engine);
@@ -453,10 +453,10 @@ public class DispatcherWriterQueueTest {
             try {
                 String tableName = "x";
                 compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
-                    " select rnd_symbol('a', 'b', 'c') as s," +
-                    " cast(x as timestamp) ts" +
-                    " from long_sequence(10)" +
-                    " )", sqlExecutionContext);
+                        " select rnd_symbol('a', 'b', 'c') as s," +
+                        " cast(x as timestamp) ts" +
+                        " from long_sequence(10)" +
+                        " )", sqlExecutionContext);
                 writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
                 SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
                 AtomicInteger errors = new AtomicInteger();
@@ -469,19 +469,19 @@ public class DispatcherWriterQueueTest {
                             barrier.await();
                             if (waitToDisconnect != null) {
                                 int fd = new SendAndReceiveRequestBuilder()
-                                    .connectAndSendRequest(
-                                        "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
-                                            + SendAndReceiveRequestBuilder.RequestHeaders
-                                    );
+                                        .connectAndSendRequest(
+                                                "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
+                                                        + SendAndReceiveRequestBuilder.RequestHeaders
+                                        );
                                 waitToDisconnect.await();
                                 Net.close(fd);
                             } else {
                                 new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                                    "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n\r\n" +
-                                        "00\r\n" +
-                                        "\r\n"
+                                        "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
+                                        "0d\r\n" +
+                                                "{\"ddl\":\"OK\"}\n\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
                                 );
                             }
                         } catch (Error e) {
@@ -525,15 +525,15 @@ public class DispatcherWriterQueueTest {
     }
 
     private void runUpdateOnBusyTable(
-        AlterVerifyAction alterVerifyAction,
-        OnTickAction onTick,
-        int errorsExpected,
-        HttpQueryTestBuilder queryTestBuilder,
-        SOCountDownLatch waitToDisconnect,
-        String errorHeader,
-        long statementTimeout,
-        int updatedCount,
-        final String... httpUpdateQueries
+            AlterVerifyAction alterVerifyAction,
+            OnTickAction onTick,
+            int errorsExpected,
+            HttpQueryTestBuilder queryTestBuilder,
+            SOCountDownLatch waitToDisconnect,
+            String errorHeader,
+            long statementTimeout,
+            int updatedCount,
+            final String... httpUpdateQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
             setupSql(engine);
@@ -541,11 +541,11 @@ public class DispatcherWriterQueueTest {
             try {
                 String tableName = "x";
                 compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
-                    " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
-                    " x," +
-                    " cast(x as timestamp) ts" +
-                    " from long_sequence(9)" +
-                    " )", sqlExecutionContext);
+                        " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
+                        " x," +
+                        " cast(x as timestamp) ts" +
+                        " from long_sequence(9)" +
+                        " )", sqlExecutionContext);
                 writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
                 SOCountDownLatch finished = new SOCountDownLatch(httpUpdateQueries.length);
                 AtomicInteger errors = new AtomicInteger();
@@ -558,31 +558,31 @@ public class DispatcherWriterQueueTest {
                             barrier.await();
                             if (waitToDisconnect != null) {
                                 int fd = new SendAndReceiveRequestBuilder()
-                                    .withStatementTimeout(statementTimeout)
-                                    .connectAndSendRequestWithHeaders(
-                                        "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n"
-                                    );
+                                        .withStatementTimeout(statementTimeout)
+                                        .connectAndSendRequestWithHeaders(
+                                                "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n"
+                                        );
                                 waitToDisconnect.await();
                                 Net.close(fd);
                             } else {
                                 if (errorHeader != null) {
                                     new SendAndReceiveRequestBuilder()
-                                        .withStatementTimeout(statementTimeout)
-                                        .executeWithStandardRequestHeaders(
-                                            "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
-                                            errorHeader
-                                        );
+                                            .withStatementTimeout(statementTimeout)
+                                            .executeWithStandardRequestHeaders(
+                                                    "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
+                                                    errorHeader
+                                            );
                                 } else {
                                     new SendAndReceiveRequestBuilder()
-                                        .withStatementTimeout(statementTimeout)
-                                        .executeWithStandardHeaders(
-                                            "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
-                                            "19\r\n" +
-                                                "{\"ddl\":\"OK\",\"updated\":" + updatedCount + "}\n" +
-                                                "\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                        );
+                                            .withStatementTimeout(statementTimeout)
+                                            .executeWithStandardHeaders(
+                                                    "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
+                                                    "19\r\n" +
+                                                            "{\"ddl\":\"OK\",\"updated\":" + updatedCount + "}\n" +
+                                                            "\r\n" +
+                                                            "00\r\n" +
+                                                            "\r\n"
+                                            );
                                 }
                             }
                         } catch (Error e) {
@@ -627,132 +627,132 @@ public class DispatcherWriterQueueTest {
     }
 
     private void testUpdateAfterReaderOutOfDateException(
-        AlterVerifyAction alterVerifyAction,
-        OnTickAction onTick,
-        SOCountDownLatch updateScheduled,
-        long startWaitTimeout,
-        String errorHeader,
-        long statementTimeout,
-        int updatedCount
+            AlterVerifyAction alterVerifyAction,
+            OnTickAction onTick,
+            SOCountDownLatch updateScheduled,
+            long startWaitTimeout,
+            String errorHeader,
+            long statementTimeout,
+            int updatedCount
     ) throws Exception {
         final SOCountDownLatch updateAckReceived = new SOCountDownLatch(1);
 
         final HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-            .withTempFolder(temp)
-            .withWorkerCount(1)
-            .withHttpServerConfigBuilder(
-                new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-            )
-            .withQueryFutureUpdateListener(waitUntilCommandStarted(updateAckReceived, updateScheduled))
-            .withAlterTableStartWaitTimeout(startWaitTimeout)
-            .withAlterTableMaxWaitTimeout(50_000L)
-            .withFilesFacade(new FilesFacadeImpl() {
-                @Override
-                public int openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
-                        updateAckReceived.await();
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withQueryFutureUpdateListener(waitUntilCommandStarted(updateAckReceived, updateScheduled))
+                .withAlterTableStartWaitTimeout(startWaitTimeout)
+                .withAlterTableMaxWaitTimeout(50_000L)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public int openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
+                            updateAckReceived.await();
+                        }
+                        return super.openRW(name, opts);
                     }
-                    return super.openRW(name, opts);
-                }
-            });
+                });
 
         runUpdateOnBusyTable(
-            alterVerifyAction,
-            onTick,
-            0,
-            queryTestBuilder,
-            null,
-            errorHeader,
-            statementTimeout,
-            updatedCount,
-            URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
+                alterVerifyAction,
+                onTick,
+                0,
+                queryTestBuilder,
+                null,
+                errorHeader,
+                statementTimeout,
+                updatedCount,
+                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
         );
     }
 
     private void testUpdateFailsAfterReaderOutOfDateException(
-        int updateScheduledCount,
-        long startWaitTimeout
+            int updateScheduledCount,
+            long startWaitTimeout
     ) throws Exception {
         final SOCountDownLatch updateScheduled = new SOCountDownLatch(updateScheduledCount);
 
         testUpdateAfterReaderOutOfDateException(
-            (writer, reader) -> {
-                try {
-                    reader.getMetadata().getColumnIndex("ts");
-                    Assert.fail("InvalidColumnException is expected");
-                } catch (InvalidColumnException e) {
-                    //ignored
-                } catch (Throwable th) {
-                    Assert.fail("InvalidColumnException is expected instead");
-                }
-            },
-            new OnTickAction() {
-                private boolean first = true;
-
-                @Override
-                public void run(TableWriter writer) {
-                    if (first) {
-                        updateScheduled.await();
-                        // removing a new column before calling writer.tick() will result in ReaderOutOfDateException
-                        // thrown from UpdateOperator as this changes table structure
-                        // recompile will fail because the column UPDATE refers to is removed
-                        writer.removeColumn("ts");
-                        first = false;
+                (writer, reader) -> {
+                    try {
+                        reader.getMetadata().getColumnIndex("ts");
+                        Assert.fail("InvalidColumnException is expected");
+                    } catch (InvalidColumnException e) {
+                        //ignored
+                    } catch (Throwable th) {
+                        Assert.fail("InvalidColumnException is expected instead");
                     }
-                }
-            },
-            updateScheduled,
-            startWaitTimeout,
-            "HTTP/1.1 400 Bad request\r\n" +
-                "Server: questDB/1.0\r\n" +
-                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                "Transfer-Encoding: chunked\r\n" +
-                "Content-Type: application/json; charset=utf-8\r\n" +
-                "Keep-Alive: timeout=5, max=10000\r\n" +
-                "\r\n" +
-                "4a\r\n" +
-                "{\"query\":\"update x set ts=123\",\"error\":\"Invalid column: ts\",\"position\":13}\r\n" +
-                "00\r\n" +
-                "\r\n",
-            -1L,
-            0);
+                },
+                new OnTickAction() {
+                    private boolean first = true;
+
+                    @Override
+                    public void run(TableWriter writer) {
+                        if (first) {
+                            updateScheduled.await();
+                            // removing a new column before calling writer.tick() will result in ReaderOutOfDateException
+                            // thrown from UpdateOperator as this changes table structure
+                            // recompile will fail because the column UPDATE refers to is removed
+                            writer.removeColumn("ts");
+                            first = false;
+                        }
+                    }
+                },
+                updateScheduled,
+                startWaitTimeout,
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "4a\r\n" +
+                        "{\"query\":\"update x set ts=123\",\"error\":\"Invalid column: ts\",\"position\":13}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                -1L,
+                0);
     }
 
     private void testUpdateSucceedsAfterReaderOutOfDateException(
-        int updateScheduledCount,
-        long startWaitTimeout
+            int updateScheduledCount,
+            long startWaitTimeout
     ) throws Exception {
         SOCountDownLatch updateScheduled = new SOCountDownLatch(updateScheduledCount);
 
         testUpdateAfterReaderOutOfDateException(
-            (writer, reader) -> {
-                TableReaderRecordCursor cursor = reader.getCursor();
-                int colIndex = reader.getMetadata().getColumnIndex("ts");
-                while (cursor.hasNext()) {
-                    long value = cursor.getRecord().getLong(colIndex);
-                    Assert.assertEquals(123L, value);
-                }
-            },
-            new OnTickAction() {
-                private boolean first = true;
-
-                @Override
-                public void run(TableWriter writer) {
-                    if (first) {
-                        updateScheduled.await();
-                        // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
-                        // thrown from UpdateOperator as this changes table structure
-                        // recompile should be successful so the UPDATE completes
-                        writer.addColumn("newCol", ColumnType.INT);
-                        first = false;
+                (writer, reader) -> {
+                    TableReaderRecordCursor cursor = reader.getCursor();
+                    int colIndex = reader.getMetadata().getColumnIndex("ts");
+                    while (cursor.hasNext()) {
+                        long value = cursor.getRecord().getLong(colIndex);
+                        Assert.assertEquals(123L, value);
                     }
-                }
-            },
-            updateScheduled,
-            startWaitTimeout,
-            null,
-            120_000_000L,
-            9);
+                },
+                new OnTickAction() {
+                    private boolean first = true;
+
+                    @Override
+                    public void run(TableWriter writer) {
+                        if (first) {
+                            updateScheduled.await();
+                            // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
+                            // thrown from UpdateOperator as this changes table structure
+                            // recompile should be successful so the UPDATE completes
+                            writer.addColumn("newCol", ColumnType.INT);
+                            first = false;
+                        }
+                    }
+                },
+                updateScheduled,
+                startWaitTimeout,
+                null,
+                120_000_000L,
+                9);
     }
 
     private QueryFutureUpdateListener waitUntilCommandStarted(SOCountDownLatch ackReceived) {

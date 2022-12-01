@@ -48,9 +48,9 @@ public class LogAlertSocketTest {
     private static final Log LOG = LogFactory.getLog(LogAlertSocketTest.class);
 
     public void assertAlertTargets(
-        String alertTargets,
-        String[] expectedHosts,
-        int[] expectedPorts
+            String alertTargets,
+            String[] expectedHosts,
+            int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
@@ -76,8 +76,8 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, "localhost:1234,localhost:1242", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
-                    .putHeader("localhost")
-                    .setMark();
+                        .putHeader("localhost")
+                        .setMark();
 
                 // start servers
                 final int numHosts = alertSkt.getAlertHostsCount();
@@ -89,12 +89,12 @@ public class LogAlertSocketTest {
                 for (int i = 0; i < numHosts; i++) {
                     final int portNumber = alertSkt.getAlertPorts()[i];
                     servers[i] = new MockAlertTarget(
-                        portNumber,
-                        () -> {
-                            firstServerCompleted.countDown();
-                            haltLatch.countDown();
-                        },
-                        () -> TestUtils.await(startBarrier)
+                            portNumber,
+                            () -> {
+                                firstServerCompleted.countDown();
+                                haltLatch.countDown();
+                            },
+                            () -> TestUtils.await(startBarrier)
                     );
                     servers[i].start();
                 }
@@ -103,13 +103,13 @@ public class LogAlertSocketTest {
 
                 // connect to a server and send something
                 alertSkt.send(
-                    builder
-                        .rewindToMark()
-                        .put("Something")
-                        .put(CRLF)
-                        .put(MockAlertTarget.DEATH_PILL)
-                        .put(CRLF)
-                        .$()
+                        builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()
                 );
                 Assert.assertTrue(firstServerCompleted.await(20_000_000_000L));
 
@@ -138,18 +138,18 @@ public class LogAlertSocketTest {
             };
             try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "localhost:1234,localhost:1243", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
-                    .putHeader("localhost")
-                    .setMark();
+                        .putHeader("localhost")
+                        .setMark();
                 final int numHosts = alertSkt.getAlertHostsCount();
                 Assert.assertEquals(2, numHosts);
                 Assert.assertFalse(
-                    alertSkt.send(builder
-                        .rewindToMark()
-                        .put("Something")
-                        .put(CRLF)
-                        .put(MockAlertTarget.DEATH_PILL)
-                        .put(CRLF)
-                        .$()));
+                        alertSkt.send(builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()));
             }
         });
     }
@@ -161,16 +161,16 @@ public class LogAlertSocketTest {
             final int port = 1241;
             try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, host + ":" + port, LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
-                    .putHeader(host)
-                    .setMark();
+                        .putHeader(host)
+                        .setMark();
 
                 // start server
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 final CyclicBarrier startBarrier = new CyclicBarrier(2);
                 final MockAlertTarget server = new MockAlertTarget(
-                    port,
-                    haltLatch::countDown,
-                    () -> TestUtils.await(startBarrier)
+                        port,
+                        haltLatch::countDown,
+                        () -> TestUtils.await(startBarrier)
                 );
                 server.start();
 
@@ -181,13 +181,13 @@ public class LogAlertSocketTest {
 
                 // send something
                 Assert.assertTrue(
-                    alertSkt.send(builder
-                        .rewindToMark()
-                        .put("Something")
-                        .put(CRLF)
-                        .put(MockAlertTarget.DEATH_PILL)
-                        .put(CRLF)
-                        .$()));
+                        alertSkt.send(builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()));
 
                 // wait for haltness
                 haltLatch.await();
@@ -273,144 +273,144 @@ public class LogAlertSocketTest {
     @Test
     public void testParseBadResponse0() throws Exception {
         testParseStatusResponse(
-            "HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 6o\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
-            "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 6o\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6o\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6o\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
     }
 
     @Test
     public void testParseBadResponse1() throws Exception {
         testParseStatusResponse(
-            "HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
-            "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
     }
 
     @Test
     public void testParseBadResponse2() throws Exception {
         testParseStatusResponse("HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 6\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
-            "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 6\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
     }
 
     @Test
     public void testParseBadResponse3() throws Exception {
         testParseStatusResponse("HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 66\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
-            "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 66\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
     }
 
     @Test
     public void testParseStatusErrorResponse() throws Exception {
         testParseStatusResponse(
-            "HTTP/1.1 400 Bad Request\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                "Content-Length: 66\r\n" +
-                "\r\n" +
-                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
-            "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                "Received [0] 127.0.0.1:9093: {\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: {\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
         );
     }
 
     @Test
     public void testParseStatusSuccessResponse() throws Exception {
         testParseStatusResponse(
-            "HTTP/1.1 200 OK\r\n" +
-                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Expose-Headers: Date\r\n" +
-                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Date: Thu, 09 Dec 2021 09:37:22 GMT\r\n" +
-                "Content-Length: 20\r\n" +
-                "\r\n" +
-                "{\"status\":\"success\"}",
-            "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
+                "HTTP/1.1 200 OK\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 09:37:22 GMT\r\n" +
+                        "Content-Length: 20\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"success\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
         );
     }
 

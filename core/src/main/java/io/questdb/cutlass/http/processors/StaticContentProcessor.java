@@ -144,9 +144,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         // attempt not to send file when remote side already has
         // up-to-date version of the same
         if ((val = headers.getHeader("If-None-Match")) != null
-            && (l = val.length()) > 2
-            && val.charAt(0) == '"'
-            && val.charAt(l - 1) == '"') {
+                && (l = val.length()) > 2
+                && val.charAt(0) == '"'
+                && val.charAt(l - 1) == '"') {
             try {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 if (that == ff.getLastModified(path)) {
@@ -164,11 +164,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendRange(
-        HttpConnectionContext context,
-        CharSequence range,
-        LPSZ path,
-        CharSequence contentType,
-        boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            HttpConnectionContext context,
+            CharSequence range,
+            LPSZ path,
+            CharSequence contentType,
+            boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (rangeParser.of(range)) {
 
             StaticContentProcessorState state = LV.get(context);
@@ -214,9 +214,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendVanilla(
-        HttpConnectionContext context,
-        LPSZ path, CharSequence contentType,
-        boolean asAttachment
+            HttpConnectionContext context,
+            LPSZ path, CharSequence contentType,
+            boolean asAttachment
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int fd = ff.openRO(path);
         if (fd == -1) {

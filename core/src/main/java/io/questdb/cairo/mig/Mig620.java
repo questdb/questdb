@@ -73,21 +73,21 @@ public class Mig620 {
         final FilesFacade ff = migrationContext.getFf();
 
         try (MemoryMARW cvMemory = Vm.getCMARWInstance(
-            ff,
-            path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
-            Files.PAGE_SIZE,
-            COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
-            MemoryTag.NATIVE_MIG_MMAP,
-            CairoConfiguration.O_NONE
+                ff,
+                path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
+                Files.PAGE_SIZE,
+                COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
+                MemoryTag.NATIVE_MIG_MMAP,
+                CairoConfiguration.O_NONE
         )) {
             cvMemory.extend(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
             cvMemory.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
             cvMemory.zero();
 
             try (MemoryMARW metaMem = openFileSafe(
-                ff,
-                path.trimTo(pathLen).concat(META_FILE_NAME_MIG).$(),
-                META_OFFSET_COLUMN_TYPES_MIG
+                    ff,
+                    path.trimTo(pathLen).concat(META_FILE_NAME_MIG).$(),
+                    META_OFFSET_COLUMN_TYPES_MIG
             )) {
                 int partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY_MIG);
                 ObjList<String> columnNames = readColumNames(metaMem);

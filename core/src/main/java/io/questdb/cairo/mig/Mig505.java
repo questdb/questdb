@@ -40,12 +40,12 @@ final class Mig505 {
 
         MigrationActions.LOG.info().$("setting table id in [path=").$(path).I$();
         TableUtils.writeIntOrFail(
-            ff,
-            fd,
-            META_OFFSET_TABLE_ID,
-            migrationContext.getNextTableId(),
-            mem,
-            path
+                ff,
+                fd,
+                META_OFFSET_TABLE_ID,
+                migrationContext.getNextTableId(),
+                mem,
+                path
         );
     }
 }

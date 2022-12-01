@@ -54,9 +54,9 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     protected long totalCount = 0;
 
     public AbstractLineProtoUdpReceiver(
-        LineUdpReceiverConfiguration configuration,
-        CairoEngine engine,
-        WorkerPool workerPool
+            LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool
     ) {
         this.configuration = configuration;
         this.commitMode = configuration.getCommitMode();
@@ -75,10 +75,10 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
 
             if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
                 LOG.error()
-                    .$("could not set receive buffer size [fd=").$(fd)
-                    .$(", size=").$(configuration.getReceiveBufferSize())
-                    .$(", errno=").$(configuration.getNetworkFacade().errno())
-                    .I$();
+                        .$("could not set receive buffer size [fd=").$(fd)
+                        .$(", size=").$(configuration.getReceiveBufferSize())
+                        .$(", errno=").$(configuration.getNetworkFacade().errno())
+                        .I$();
             }
 
             lexer = new LineUdpLexer(configuration.getMsgBufferSize());
@@ -139,11 +139,11 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
         if (nf.bindUdp(fd, configuration.isUnicast() ? configuration.getBindIPv4Address() : 0, configuration.getPort())) {
             if (!configuration.isUnicast() && !nf.join(fd, configuration.getBindIPv4Address(), configuration.getGroupIPv4Address())) {
                 throw NetworkError.instance(nf.errno())
-                    .put("cannot join group ")
-                    .put("[fd=").put(fd)
-                    .put(", bind=").ip(configuration.getBindIPv4Address())
-                    .put(", group=").ip(configuration.getGroupIPv4Address())
-                    .put(']');
+                        .put("cannot join group ")
+                        .put("[fd=").put(fd)
+                        .put(", bind=").ip(configuration.getBindIPv4Address())
+                        .put(", group=").ip(configuration.getGroupIPv4Address())
+                        .put(']');
             }
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket("udp-line-server", configuration.getBindIPv4Address(), configuration.getPort());
@@ -153,24 +153,24 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     private void logStarted(LineUdpReceiverConfiguration configuration) {
         if (configuration.isUnicast()) {
             LOG.info()
-                .$("receiving unicast on ")
-                .$ip(configuration.getBindIPv4Address())
-                .$(':')
-                .$(configuration.getPort())
-                .$(" [fd=").$(fd)
-                .$(", commitRate=").$(commitRate)
-                .I$();
+                    .$("receiving unicast on ")
+                    .$ip(configuration.getBindIPv4Address())
+                    .$(':')
+                    .$(configuration.getPort())
+                    .$(" [fd=").$(fd)
+                    .$(", commitRate=").$(commitRate)
+                    .I$();
         } else {
             LOG.info()
-                .$("receiving multicast from ")
-                .$ip(configuration.getGroupIPv4Address())
-                .$(':')
-                .$(configuration.getPort())
-                .$(" via ")
-                .$ip(configuration.getBindIPv4Address())
-                .$(" [fd=").$(fd)
-                .$(", commitRate=").$(commitRate)
-                .I$();
+                    .$("receiving multicast from ")
+                    .$ip(configuration.getGroupIPv4Address())
+                    .$(':')
+                    .$(configuration.getPort())
+                    .$(" via ")
+                    .$ip(configuration.getBindIPv4Address())
+                    .$(" [fd=").$(fd)
+                    .$(", commitRate=").$(commitRate)
+                    .I$();
         }
     }
 }

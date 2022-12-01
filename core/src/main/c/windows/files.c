@@ -578,9 +578,9 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jint handle, jlong size) {
+        (JNIEnv *e, jclass cl, jint fd, jlong size) {
     /* On Windows truncate does the allocation */
-    return Java_io_questdb_std_Files_truncate(e, cl, handle, size);
+    return Java_io_questdb_std_Files_truncate(e, cl, fd, size);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0

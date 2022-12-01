@@ -36,10 +36,10 @@ import org.junit.Assert;
 public class NetUtils {
 
     public static void playScript(
-        NetworkFacade nf,
-        String script,
-        CharSequence ipv4Address,
-        int port
+            NetworkFacade nf,
+            String script,
+            CharSequence ipv4Address,
+            int port
     ) {
         int clientFd = nf.socketTcp(true);
         long sockAddress = nf.sockaddr(Net.parseIPv4(ipv4Address), port);

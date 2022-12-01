@@ -82,8 +82,8 @@ public class HttpQueryTestBuilder {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
-                .withBaseDir(baseDir)
-                .build();
+                    .withBaseDir(baseDir)
+                    .build();
             if (metrics == null) {
                 metrics = Metrics.enabled();
             }
@@ -134,8 +134,8 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
-                HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -162,9 +162,9 @@ public class HttpQueryTestBuilder {
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return textImportProcessor != null ? textImportProcessor.create(
-                            httpConfiguration.getJsonQueryProcessorConfiguration(),
-                            engine,
-                            workerPool.getWorkerCount()
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                workerPool.getWorkerCount()
                         ) : new TextImportProcessor(engine);
                     }
                 });
@@ -185,10 +185,10 @@ public class HttpQueryTestBuilder {
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
-                            httpConfiguration.getJsonQueryProcessorConfiguration(),
-                            engine,
-                            new SqlCompiler(engine),
-                            sqlExecutionContext
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                new SqlCompiler(engine),
+                                sqlExecutionContext
                         );
                     }
                 });
@@ -202,9 +202,9 @@ public class HttpQueryTestBuilder {
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new TextQueryProcessor(
-                            httpConfiguration.getJsonQueryProcessorConfiguration(),
-                            engine,
-                            workerPool.getWorkerCount()
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                workerPool.getWorkerCount()
                         );
                     }
                 });
@@ -328,9 +328,9 @@ public class HttpQueryTestBuilder {
     @FunctionalInterface
     public interface HttpRequestProcessorBuilder {
         HttpRequestProcessor create(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount
+                JsonQueryProcessorConfiguration configuration,
+                CairoEngine engine,
+                int workerCount
         );
     }
 }

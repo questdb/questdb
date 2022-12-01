@@ -54,9 +54,9 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_MIG);
 
         try (
-            MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
-            Path path = new Path();
-            MemoryMARW rwMemory = Vm.getMARWInstance()
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
+                Path path = new Path();
+                MemoryMARW rwMemory = Vm.getMARWInstance()
         ) {
             MigrationContext context = new MigrationContext(engine, mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
@@ -66,16 +66,16 @@ public class EngineMigration {
             final boolean existed = !force && ff.exists(path);
             int upgradeFd = openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
             LOG.debug()
-                .$("open [fd=").$(upgradeFd)
-                .$(", path=").$(path)
-                .$(']').$();
+                    .$("open [fd=").$(upgradeFd)
+                    .$(", path=").$(path)
+                    .$(']').$();
             if (existed) {
                 int currentVersion = TableUtils.readIntOrFail(
-                    ff,
-                    upgradeFd,
-                    0,
-                    mem,
-                    path
+                        ff,
+                        upgradeFd,
+                        0,
+                        mem,
+                        path
                 );
 
                 if (currentVersion >= latestVersion) {
@@ -90,20 +90,20 @@ public class EngineMigration {
                     LOG.info().$("upgrading database [version=").$(latestVersion).I$();
                     if (upgradeTables(context, latestVersion)) {
                         TableUtils.writeIntOrFail(
-                            ff,
-                            upgradeFd,
-                            0,
-                            latestVersion,
-                            mem,
-                            path
+                                ff,
+                                upgradeFd,
+                                0,
+                                latestVersion,
+                                mem,
+                                path
                         );
                     }
                 } finally {
                     Vm.bestEffortClose(
-                        ff,
-                        LOG,
-                        upgradeFd,
-                        Integer.BYTES
+                            ff,
+                            LOG,
+                            upgradeFd,
+                            Integer.BYTES
                     );
                 }
             }
@@ -142,10 +142,10 @@ public class EngineMigration {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fd, META_OFFSET_VERSION, mem, path);
                             if (currentTableVersion < latestVersion) {
                                 LOG.info()
-                                    .$("upgrading [path=").$(path)
-                                    .$(",fromVersion=").$(currentTableVersion)
-                                    .$(",toVersion=").$(latestVersion)
-                                    .I$();
+                                        .$("upgrading [path=").$(path)
+                                        .$(",fromVersion=").$(currentTableVersion)
+                                        .$(",toVersion=").$(latestVersion)
+                                        .I$();
 
                                 copyPath.trimTo(plen);
                                 backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
@@ -162,20 +162,20 @@ public class EngineMigration {
                                             path.trimTo(plen);
                                         } catch (Throwable e) {
                                             LOG.error().$("failed to upgrade table path=")
-                                                .$(path.trimTo(plen))
-                                                .$(", exception: ")
-                                                .$(e).$();
+                                                    .$(path.trimTo(plen))
+                                                    .$(", exception: ")
+                                                    .$(e).$();
                                             throw e;
                                         }
                                     }
 
                                     TableUtils.writeIntOrFail(
-                                        ff,
-                                        fd,
-                                        META_OFFSET_VERSION,
-                                        ver,
-                                        mem,
-                                        path.trimTo(plen)
+                                            ff,
+                                            fd,
+                                            META_OFFSET_VERSION,
+                                            ver,
+                                            mem,
+                                            path.trimTo(plen)
                                     );
                                 }
                             }

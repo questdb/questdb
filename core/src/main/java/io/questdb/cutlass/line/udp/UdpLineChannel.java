@@ -47,17 +47,17 @@ public final class UdpLineChannel implements LineChannel {
             final int errno = nf.errno();
             close();
             throw new LineSenderException("could not bind ")
-                .put("[ip=").appendIPv4(interfaceIPv4Address).put("]")
-                .errno(errno);
+                    .put("[ip=").appendIPv4(interfaceIPv4Address).put("]")
+                    .errno(errno);
         }
 
         if (nf.setMulticastTtl(fd, ttl) != 0) {
             final int errno = nf.errno();
             close();
             throw new LineSenderException("could not set ttl ")
-                .put("[fd=").put(fd)
-                .put(", ttl=").put(ttl).put("]")
-                .errno(errno);
+                    .put("[fd=").put(fd)
+                    .put(", ttl=").put(ttl).put("]")
+                    .errno(errno);
         }
     }
 

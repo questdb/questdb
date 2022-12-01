@@ -37,8 +37,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
-        IODispatcherConfiguration configuration,
-        IOContextFactory<C> ioContextFactory
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
         this.sf = configuration.getSelectFacade();
@@ -230,7 +230,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             this.lim = address + l;
         }
 
-        private void add(long fd) {
+        private void add(int fd) {
             if (_wptr == lim) {
                 resize();
             }

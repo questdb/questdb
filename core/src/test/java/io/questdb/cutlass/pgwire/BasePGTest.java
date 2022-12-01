@@ -53,12 +53,12 @@ import static io.questdb.std.Numbers.hexDigits;
 public abstract class BasePGTest extends AbstractGriffinTest {
 
     public static PGWireServer createPGWireServer(
-        PGWireConfiguration configuration,
-        CairoEngine cairoEngine,
-        WorkerPool workerPool,
-        FunctionFactoryCache functionFactoryCache,
-        DatabaseSnapshotAgent snapshotAgent,
-        PGWireServer.PGConnectionContextFactory contextFactory
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            PGWireServer.PGConnectionContextFactory contextFactory
     ) {
         if (!configuration.isEnabled()) {
             return null;
@@ -68,27 +68,27 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     }
 
     public static PGWireServer createPGWireServer(
-        PGWireConfiguration configuration,
-        CairoEngine cairoEngine,
-        WorkerPool workerPool,
-        FunctionFactoryCache functionFactoryCache,
-        DatabaseSnapshotAgent snapshotAgent
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
         return new PGWireServer(
-            configuration,
-            cairoEngine,
-            workerPool,
-            functionFactoryCache,
-            snapshotAgent,
-            new PGWireServer.PGConnectionContextFactory(
-                cairoEngine,
                 configuration,
-                () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-            )
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
+                snapshotAgent,
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                )
         );
     }
 
@@ -239,11 +239,11 @@ public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
         return createPGWireServer(
-            configuration,
-            engine,
-            new TestWorkerPool(configuration.getWorkerCount(), metrics),
-            compiler.getFunctionFactoryCache(),
-            snapshotAgent
+                configuration,
+                engine,
+                new TestWorkerPool(configuration.getWorkerCount(), metrics),
+                compiler.getFunctionFactoryCache(),
+                snapshotAgent
         );
     }
 
@@ -257,8 +257,8 @@ public abstract class BasePGTest extends AbstractGriffinTest {
             @Override
             public int getCircuitBreakerThrottle() {
                 return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
-                    ? 0 // fail on first check
-                    : super.getCircuitBreakerThrottle();
+                        ? 0 // fail on first check
+                        : super.getCircuitBreakerThrottle();
             }
 
             // should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because

@@ -55,10 +55,10 @@ public class PingMain {
         if (res != 0) {
             Net.freeAddrInfo(inf);
             LOG.error()
-                .$("could not connect [host=").$(host)
-                .$(", port=").$(port)
-                .$(", errno=").$(Os.errno())
-                .I$();
+                    .$("could not connect [host=").$(host)
+                    .$(", port=").$(port)
+                    .$(", errno=").$(Os.errno())
+                    .I$();
         } else {
             long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             DirectByteCharSequence flyweight = new DirectByteCharSequence();

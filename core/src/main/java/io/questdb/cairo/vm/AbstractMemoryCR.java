@@ -27,7 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 
-//contiguous readable
+// contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();

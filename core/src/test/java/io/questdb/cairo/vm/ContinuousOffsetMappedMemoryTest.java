@@ -76,7 +76,7 @@ public class ContinuousOffsetMappedMemoryTest {
 
             TestUtils.assertMemoryLeak(() -> {
                 try (
-                    MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     FilesFacade ff = new FilesFacadeImpl() {
                         @Override
@@ -154,8 +154,8 @@ public class ContinuousOffsetMappedMemoryTest {
 
             TestUtils.assertMemoryLeak(() -> {
                 try (
-                    MemoryCMRImpl memoryR = new MemoryCMRImpl();
-                    MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
+                        MemoryCMRImpl memoryR = new MemoryCMRImpl();
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
                     long fileSize = memoryR.size();
@@ -212,8 +212,8 @@ public class ContinuousOffsetMappedMemoryTest {
 
             TestUtils.assertMemoryLeak(() -> {
                 try (
-                    MemoryCMRImpl memoryR = new MemoryCMRImpl();
-                    MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
+                        MemoryCMRImpl memoryR = new MemoryCMRImpl();
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
 

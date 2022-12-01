@@ -71,8 +71,8 @@ public class EventFdSuspendEvent extends SuspendEvent {
     public void trigger() {
         if (epf.writeEventFd(fd) < 0) {
             throw NetworkError.instance(epf.errno())
-                .put("could not write to eventfd [fd=").put(fd)
-                .put(']');
+                    .put("could not write to eventfd [fd=").put(fd)
+                    .put(']');
         }
     }
 

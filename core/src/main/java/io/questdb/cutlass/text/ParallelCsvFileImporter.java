@@ -194,13 +194,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public static void createTable(
-        final FilesFacade ff,
-        int mkDirMode,
-        final CharSequence root,
-        final CharSequence tableName,
-        TableStructure structure,
-        int tableId,
-        CairoConfiguration configuration
+            final FilesFacade ff,
+            int mkDirMode,
+            final CharSequence root,
+            final CharSequence tableName,
+            TableStructure structure,
+            int tableId,
+            CairoConfiguration configuration
     ) {
         checkTableName(tableName, configuration);
         try (Path path = new Path()) {
@@ -214,15 +214,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
                         TableUtils.createTable(
-                            ff,
-                            root,
-                            mkDirMode,
-                            memory,
-                            path,
-                            tableName,
-                            structure,
-                            ColumnType.VERSION,
-                            tableId
+                                ff,
+                                root,
+                                mkDirMode,
+                                memory,
+                                path,
+                                tableName,
+                                structure,
+                                ColumnType.VERSION,
+                                tableId
                         );
                     }
                     break;
@@ -280,16 +280,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public void of(
-        CharSequence tableName,
-        CharSequence inputFileName,
-        long importId,
-        int partitionBy,
-        byte columnDelimiter,
-        CharSequence timestampColumn,
-        CharSequence timestampFormat,
-        boolean forceHeader,
-        ExecutionCircuitBreaker circuitBreaker,
-        int atomicity
+            CharSequence tableName,
+            CharSequence inputFileName,
+            long importId,
+            int partitionBy,
+            byte columnDelimiter,
+            CharSequence timestampColumn,
+            CharSequence timestampFormat,
+            boolean forceHeader,
+            ExecutionCircuitBreaker circuitBreaker,
+            int atomicity
     ) {
         clear();
         this.circuitBreaker = circuitBreaker;
@@ -302,9 +302,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (timestampFormat != null) {
             DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
             this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
-                false,
-                dateFormat,
-                configuration.getTextConfiguration().getDefaultDateLocale()
+                    false,
+                    dateFormat,
+                    configuration.getTextConfiguration().getDefaultDateLocale()
             );
         }
         this.forceHeader = forceHeader;
@@ -320,52 +320,52 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @TestOnly
     public void of(
-        CharSequence tableName,
-        CharSequence inputFileName,
-        long importId,
-        int partitionBy,
-        byte columnDelimiter,
-        CharSequence timestampColumn,
-        CharSequence tsFormat,
-        boolean forceHeader,
-        ExecutionCircuitBreaker circuitBreaker
+            CharSequence tableName,
+            CharSequence inputFileName,
+            long importId,
+            int partitionBy,
+            byte columnDelimiter,
+            CharSequence timestampColumn,
+            CharSequence tsFormat,
+            boolean forceHeader,
+            ExecutionCircuitBreaker circuitBreaker
     ) {
         of(
-            tableName,
-            inputFileName,
-            importId,
-            partitionBy,
-            columnDelimiter,
-            timestampColumn,
-            tsFormat,
-            forceHeader,
-            circuitBreaker,
-            Atomicity.SKIP_COL
+                tableName,
+                inputFileName,
+                importId,
+                partitionBy,
+                columnDelimiter,
+                timestampColumn,
+                tsFormat,
+                forceHeader,
+                circuitBreaker,
+                Atomicity.SKIP_COL
         );
     }
 
     @TestOnly
     public void of(
-        CharSequence tableName,
-        CharSequence inputFileName,
-        long importId,
-        int partitionBy,
-        byte columnDelimiter,
-        CharSequence timestampColumn,
-        CharSequence timestampFormat,
-        boolean forceHeader
+            CharSequence tableName,
+            CharSequence inputFileName,
+            long importId,
+            int partitionBy,
+            byte columnDelimiter,
+            CharSequence timestampColumn,
+            CharSequence timestampFormat,
+            boolean forceHeader
     ) {
         of(
-            tableName,
-            inputFileName,
-            importId,
-            partitionBy,
-            columnDelimiter,
-            timestampColumn,
-            timestampFormat,
-            forceHeader,
-            null,
-            Atomicity.SKIP_COL
+                tableName,
+                inputFileName,
+                importId,
+                partitionBy,
+                columnDelimiter,
+                timestampColumn,
+                timestampFormat,
+                forceHeader,
+                null,
+                Atomicity.SKIP_COL
         );
     }
 
@@ -423,17 +423,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         } catch (TextImportException e) {
             LOG.error()
-                .$("could not import [phase=").$(TextImportTask.getPhaseName(e.getPhase()))
-                .$(", ex=").$(e.getFlyweightMessage())
-                .I$();
+                    .$("could not import [phase=").$(TextImportTask.getPhaseName(e.getPhase()))
+                    .$(", ex=").$(e.getFlyweightMessage())
+                    .I$();
             throw e;
         }
 
         long endMs = getCurrentTimeMs();
         LOG.info()
-            .$("import complete [importId=").$hexPadded(importId)
-            .$(", file=`").$(inputFilePath).$('`')
-            .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
+                .$("import complete [importId=").$hexPadded(importId)
+                .$(", file=`").$(inputFilePath).$('`')
+                .$("', time=").$((endMs - startMs) / 1000).$("s").I$();
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -459,8 +459,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
             throw CairoException.nonCritical()
-                .put("invalid table name [table=").putAsPrintable(tableName)
-                .put(']');
+                    .put("invalid table name [table=").putAsPrintable(tableName)
+                    .put(']');
         }
     }
 
@@ -480,9 +480,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 writer.attachPartition(timestamp, partition.importedRows);
             } catch (CairoException e) {
                 throw TextImportException.instance(
-                        TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
-                    .put(partitionDirName).put("', msg=")
-                    .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
+                                TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
+                        .put(partitionDirName).put("', msg=")
+                        .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
             }
         }
 
@@ -595,19 +595,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         return path.equals(normalize(configuration.getConfRoot())) ||
-            path.equals(normalize(configuration.getRoot())) ||
-            path.equals(normalize(configuration.getDbDirectory())) ||
-            path.equals(normalize(configuration.getSnapshotRoot())) ||
-            path.equals(normalize(configuration.getBackupRoot()));
+                path.equals(normalize(configuration.getRoot())) ||
+                path.equals(normalize(configuration.getDbDirectory())) ||
+                path.equals(normalize(configuration.getSnapshotRoot())) ||
+                path.equals(normalize(configuration.getBackupRoot()));
     }
 
     private void logTypeError(int i, int type) {
         LOG.info()
-            .$("mis-detected [table=").$(tableName)
-            .$(", column=").$(i)
-            .$(", type=").$(ColumnType.nameOf(type))
-            .$(", workerCount=").$(workerCount)
-            .I$();
+                .$("mis-detected [table=").$(tableName)
+                .$(", column=").$(i)
+                .$(", type=").$(ColumnType.nameOf(type))
+                .$(", workerCount=").$(workerCount)
+                .I$();
     }
 
     private void movePartitions() {
@@ -685,10 +685,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private TableWriter openWriterAndOverrideImportMetadata(
-        ObjList<CharSequence> names,
-        ObjList<TypeAdapter> types,
-        CairoSecurityContext cairoSecurityContext,
-        TypeManager typeManager
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            CairoSecurityContext cairoSecurityContext,
+            TypeManager typeManager
     ) throws TextException {
         TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
@@ -696,9 +696,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (metadata.getColumnCount() < types.size()) {
             writer.close();
             throw TextException.$("column count mismatch [textColumnCount=").put(types.size())
-                .put(", tableColumnCount=").put(metadata.getColumnCount())
-                .put(", table=").put(tableName)
-                .put(']');
+                    .put(", tableColumnCount=").put(metadata.getColumnCount())
+                    .put(", table=").put(tableName)
+                    .put(']');
         }
 
         //remap index is only needed to adjust names and types
@@ -813,12 +813,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
         LOG.info()
-            .$("finished [importId=").$hexPadded(importId)
-            .$(", phase=").$(TextImportTask.getPhaseName(phase))
-            .$(", file=`").$(inputFilePath)
-            .$("`, duration=").$((endMs - startMs) / 1000).$('s')
-            .$(", errors=").$(phaseErrors)
-            .I$();
+                .$("finished [importId=").$hexPadded(importId)
+                .$(", phase=").$(TextImportTask.getPhaseName(phase))
+                .$(", file=`").$(inputFilePath)
+                .$("`, duration=").$((endMs - startMs) / 1000).$('s')
+                .$(", errors=").$(phaseErrors)
+                .I$();
         updatePhaseStatus(phase, TextImportTask.STATUS_FINISHED, null);
     }
 
@@ -826,10 +826,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         if (partitions.size() == 0) {
             if (linesIndexed > 0) {
                 throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT,
-                    "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
             } else {
                 throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT,
-                    "No rows in input file to import.");
+                        "No rows in input file to import.");
             }
         }
 
@@ -857,17 +857,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     task.setChunkIndex(i);
                     task.setCircuitBreaker(circuitBreaker);
                     task.ofPhasePartitionImport(
-                        cairoEngine,
-                        targetTableStructure,
-                        textMetadataDetector.getColumnTypes(),
-                        atomicity,
-                        columnDelimiter,
-                        importRoot,
-                        inputFileName,
-                        i,
-                        lo,
-                        hi,
-                        partitions
+                            cairoEngine,
+                            targetTableStructure,
+                            textMetadataDetector.getColumnTypes(),
+                            atomicity,
+                            columnDelimiter,
+                            importRoot,
+                            inputFileName,
+                            i,
+                            lo,
+                            hi,
+                            partitions
                     );
                     pubSeq.done(seq);
                     queuedCount++;
@@ -891,10 +891,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePrologue(byte phase) {
         phaseErrors = 0;
         LOG.info()
-            .$("started [importId=").$hexPadded(importId)
-            .$(", phase=").$(TextImportTask.getPhaseName(phase))
-            .$(", file=`").$(inputFilePath)
-            .$("`, workerCount=").$(workerCount).I$();
+                .$("started [importId=").$hexPadded(importId)
+                .$(", phase=").$(TextImportTask.getPhaseName(phase))
+                .$(", file=`").$(inputFilePath)
+                .$("`, workerCount=").$(workerCount).I$();
         updatePhaseStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }
@@ -918,15 +918,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         final TextImportTask task = queue.get(seq);
                         task.setChunkIndex(columnIndex);
                         task.ofPhaseSymbolTableMerge(
-                            configuration,
-                            importRoot,
-                            writer,
-                            tableName,
-                            symbolColumnName,
-                            columnIndex,
-                            tmpTableSymbolColumnIndex,
-                            tmpTableCount,
-                            partitionBy
+                                configuration,
+                                importRoot,
+                                writer,
+                                tableName,
+                                symbolColumnName,
+                                columnIndex,
+                                tmpTableSymbolColumnIndex,
+                                tmpTableCount,
+                                partitionBy
                         );
                         pubSeq.done(seq);
                         queuedCount++;
@@ -979,14 +979,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                     task.setChunkIndex(t);
                                     task.setCircuitBreaker(circuitBreaker);
                                     task.ofPhaseUpdateSymbolKeys(
-                                        cairoEngine,
-                                        targetTableStructure,
-                                        t,
-                                        partitionSize,
-                                        partitionTimestamp,
-                                        importRoot,
-                                        symbolColumnName,
-                                        symbolCount
+                                            cairoEngine,
+                                            targetTableStructure,
+                                            t,
+                                            partitionSize,
+                                            partitionTimestamp,
+                                            importRoot,
+                                            symbolColumnName,
+                                            symbolCount
                                     );
                                     pubSeq.done(seq);
                                     queuedCount++;
@@ -1111,12 +1111,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void throwErrorIfNotOk() {
         if (status == TextImportTask.STATUS_FAILED) {
             throw TextImportException.instance(phase, "import failed [phase=")
-                .put(TextImportTask.getPhaseName(phase))
-                .put(", msg=`").put(errorMessage).put("`]");
+                    .put(TextImportTask.getPhaseName(phase))
+                    .put(", msg=`").put(errorMessage).put("`]");
         } else if (status == TextImportTask.STATUS_CANCELLED) {
             TextImportException ex = TextImportException.instance(phase, "import cancelled [phase=")
-                .put(TextImportTask.getPhaseName(phase))
-                .put(", msg=`").put(errorMessage).put("`]");
+                    .put(TextImportTask.getPhaseName(phase))
+                    .put(", msg=`").put(errorMessage).put("`]");
             ex.setCancelled(true);
             throw ex;
         }
@@ -1205,11 +1205,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 forceHeader = textMetadataDetector.isHeader();
 
                 TableWriter writer = prepareTable(
-                    securityContext,
-                    textMetadataDetector.getColumnNames(),
-                    textMetadataDetector.getColumnTypes(),
-                    inputFilePath,
-                    typeManager
+                        securityContext,
+                        textMetadataDetector.getColumnNames(),
+                        textMetadataDetector.getColumnTypes(),
+                        inputFilePath,
+                        typeManager
                 );
                 phaseEpilogue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
                 return writer;
@@ -1299,18 +1299,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     task.setChunkIndex(colIdx);
                     task.setCircuitBreaker(circuitBreaker);
                     task.ofPhaseIndexing(
-                        chunkLo,
-                        chunkHi,
-                        lineNumber,
-                        colIdx,
-                        inputFileName,
-                        importRoot,
-                        partitionBy,
-                        columnDelimiter,
-                        timestampIndex,
-                        timestampAdapter,
-                        forceHeader,
-                        atomicity
+                            chunkLo,
+                            chunkHi,
+                            lineNumber,
+                            colIdx,
+                            inputFileName,
+                            importRoot,
+                            partitionBy,
+                            columnDelimiter,
+                            timestampIndex,
+                            timestampAdapter,
+                            forceHeader,
+                            atomicity
                     );
                     if (forceHeader) {
                         forceHeader = false;
@@ -1332,11 +1332,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     TableWriter prepareTable(
-        CairoSecurityContext cairoSecurityContext,
-        ObjList<CharSequence> names,
-        ObjList<TypeAdapter> types,
-        Path path,
-        TypeManager typeManager
+            CairoSecurityContext cairoSecurityContext,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager
     ) throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
@@ -1378,13 +1378,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
                     int tableId = (int) cairoEngine.getTableIdGenerator().getNextId();
                     createTable(
-                        ff,
-                        configuration.getMkDirMode(),
-                        configuration.getRoot(),
-                        tableName,
-                        targetTableStructure,
-                        tableId,
-                        configuration
+                            ff,
+                            configuration.getMkDirMode(),
+                            configuration.getRoot(),
+                            tableName,
+                            targetTableStructure,
+                            tableId,
+                            configuration
                     );
                     if (targetTableStructure.isWalEnabled()) {
                         cairoEngine.getTableSequencerAPI().registerTable(tableId, targetTableStructure);
@@ -1457,7 +1457,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
             if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                 throw TextException.$("column is not a timestamp [no=").put(timestampIndex)
-                    .put(", name='").put(timestampColumn).put("']");
+                        .put(", name='").put(timestampColumn).put("']");
             }
         }
     }
@@ -1498,12 +1498,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public String toString() {
             return "PartitionInfo{" +
-                "key=" + key +
-                ", name=" + name +
-                ", bytes=" + bytes +
-                ", taskId=" + taskId +
-                ", importedRows=" + importedRows +
-                '}';
+                    "key=" + key +
+                    ", name=" + name +
+                    ", bytes=" + bytes +
+                    ", taskId=" + taskId +
+                    ", importedRows=" + importedRows +
+                    '}';
         }
     }
 

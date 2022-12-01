@@ -43,9 +43,9 @@ public class MimeTypesCacheTest {
 
     @Rule
     public Timeout timeout = Timeout.builder()
-        .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-        .withLookingForStuckThread(true)
-        .build();
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @Test()
     public void testCannotOpen() throws Exception {

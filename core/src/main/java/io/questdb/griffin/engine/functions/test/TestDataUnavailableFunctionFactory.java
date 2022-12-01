@@ -49,11 +49,11 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-        int position,
-        ObjList<Function> args,
-        IntList argPositions,
-        CairoConfiguration configuration,
-        SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         long totalRows = args.getQuick(0).getLong(null);
         long backoffCount = args.getQuick(1).getLong(null);

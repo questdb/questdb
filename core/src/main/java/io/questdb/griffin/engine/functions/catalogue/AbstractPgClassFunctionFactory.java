@@ -61,34 +61,34 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
     private static final int[] staticRelToastRelId = {0};
     private static final int[] staticRelType = {0};
     private static final int[][] staticIntColumns = {
-        staticOid,
-        null,
-        staticRelNamespace,
-        staticRelType,
-        staticRelOfType,
-        staticRelOwner,
-        staticRelAm,
-        staticRelFileNode,
-        staticRelTablespace,
-        null,
-        null,
-        staticRelAllVisible,
-        staticRelToastRelId,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        staticRelRewrite
+            staticOid,
+            null,
+            staticRelNamespace,
+            staticRelType,
+            staticRelOfType,
+            staticRelOwner,
+            staticRelAm,
+            staticRelFileNode,
+            staticRelTablespace,
+            null,
+            null,
+            staticRelAllVisible,
+            staticRelToastRelId,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            staticRelRewrite
     };
 
     @Override
@@ -99,10 +99,10 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
-            new PgClassCursorFactory(
-                configuration,
-                METADATA
-            )
+                new PgClassCursorFactory(
+                        configuration,
+                        METADATA
+                )
         ) {
             @Override
             public boolean isRuntimeConstant() {

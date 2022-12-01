@@ -119,19 +119,19 @@ public class TableSequencerAPI implements QuietCloseable {
                             }
                         } catch (CairoException ex) {
                             LOG.critical().$("could not read WAL table metadata [table=").utf8(nameSink).$(", errno=").$(ex.getErrno())
-                                .$(", error=").$((Throwable) ex).I$();
+                                    .$(", error=").$((Throwable) ex).I$();
                             return;
                         }
                         if (tableId < 0 || lastTxn < 0) {
                             LOG.critical().$("could not read WAL table metadata [table=").utf8(nameSink).$(", tableId=").$(tableId)
-                                .$(", lastTxn=").$(lastTxn).I$();
+                                    .$(", lastTxn=").$(lastTxn).I$();
                             return;
                         }
                         try {
                             callback.onTable(tableId, nameSink, lastTxn);
                         } catch (CairoException ex) {
                             LOG.critical().$("could not process table sequencer [table=").utf8(nameSink).$(", errno=").$(ex.getErrno())
-                                .$(", error=").$((Throwable) ex).I$();
+                                    .$(", error=").$((Throwable) ex).I$();
                         }
                     }
                 }
@@ -244,12 +244,12 @@ public class TableSequencerAPI implements QuietCloseable {
     public void registerTable(int tableId, final TableStructure tableStructure) {
         String tableNameStr = Chars.toString(tableStructure.getTableName());
         try (
-            TableSequencerImpl tableSequencer = getTableSequencerEntry(tableNameStr, SequencerLockType.WRITE, (tableName) -> {
-                TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
-                sequencer.create(tableId, tableStructure);
-                sequencer.open();
-                return sequencer;
-            })
+                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableNameStr, SequencerLockType.WRITE, (tableName) -> {
+                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
+                    sequencer.create(tableId, tableStructure);
+                    sequencer.open();
+                    return sequencer;
+                })
         ) {
             tableSequencer.unlockWrite();
         }
@@ -264,9 +264,9 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void reloadMetadataConditionally(
-        final CharSequence tableName,
-        long expectedStructureVersion,
-        TableRecordMetadataSink sink
+            final CharSequence tableName,
+            long expectedStructureVersion,
+            TableRecordMetadataSink sink
     ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             try {

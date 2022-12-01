@@ -191,9 +191,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     public static LineTcpReceiver createLineTcpReceiver(
-        LineTcpReceiverConfiguration configuration,
-        CairoEngine cairoEngine,
-        WorkerPool workerPool
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
     ) {
         return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
@@ -330,17 +330,17 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 int rc = Net.send(socket.fd, bufaddr + sent, lineDataBytes.length - sent);
                 if (rc < 0) {
                     LOG.error().$("Data sending failed [rc=").$(rc)
-                        .$(", sent=").$(sent)
-                        .$(", bufferSize=").$(lineDataBytes.length)
-                        .I$();
+                            .$(", sent=").$(sent)
+                            .$(", bufferSize=").$(lineDataBytes.length)
+                            .I$();
                     throw new RuntimeException("Data sending failed [rc=" + rc + "]");
                 }
                 sent += rc;
                 if (sent != lineDataBytes.length) {
                     LOG.info().$("Data sending is in progress [rc=").$(rc)
-                        .$(", sent=").$(sent)
-                        .$(", bufferSize=").$(lineDataBytes.length)
-                        .I$();
+                            .$(", sent=").$(sent)
+                            .$(", bufferSize=").$(lineDataBytes.length)
+                            .I$();
                 }
             }
         } finally {

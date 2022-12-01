@@ -37,24 +37,24 @@ import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
-        "Connection: keep-alive\r\n" +
-        "Accept: */*\r\n" +
-        "X-Requested-With: XMLHttpRequest\r\n" +
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-        "Sec-Fetch-Site: same-origin\r\n" +
-        "Sec-Fetch-Mode: cors\r\n" +
-        "Referer: http://localhost:9000/index.html\r\n" +
-        "Accept-Encoding: gzip, deflate, br\r\n" +
-        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-        "\r\n";
-    public final static String ResponseHeaders =
-        "HTTP/1.1 200 OK\r\n" +
-            "Server: questDB/1.0\r\n" +
-            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-            "Transfer-Encoding: chunked\r\n" +
-            "Content-Type: application/json; charset=utf-8\r\n" +
-            "Keep-Alive: timeout=5, max=10000\r\n" +
+            "Connection: keep-alive\r\n" +
+            "Accept: */*\r\n" +
+            "X-Requested-With: XMLHttpRequest\r\n" +
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+            "Sec-Fetch-Site: same-origin\r\n" +
+            "Sec-Fetch-Mode: cors\r\n" +
+            "Referer: http://localhost:9000/index.html\r\n" +
+            "Accept-Encoding: gzip, deflate, br\r\n" +
+            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
             "\r\n";
+    public final static String ResponseHeaders =
+            "HTTP/1.1 200 OK\r\n" +
+                    "Server: questDB/1.0\r\n" +
+                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                    "Transfer-Encoding: chunked\r\n" +
+                    "Content-Type: application/json; charset=utf-8\r\n" +
+                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                    "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
     private final int maxWaitTimeoutMs = 120000;
@@ -93,8 +93,8 @@ public class SendAndReceiveRequestBuilder {
     }
 
     public void execute(
-        String request,
-        CharSequence expectedResponse
+            String request,
+            CharSequence expectedResponse
     ) throws InterruptedException {
         final int fd = nf.socketTcp(true);
         try {
@@ -117,12 +117,12 @@ public class SendAndReceiveRequestBuilder {
     }
 
     public void executeExplicit(
-        String request,
-        int fd,
-        CharSequence expectedResponse,
-        final int len,
-        long ptr,
-        HttpClientStateListener listener
+            String request,
+            int fd,
+            CharSequence expectedResponse,
+            final int len,
+            long ptr,
+            HttpClientStateListener listener
     ) {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
@@ -306,15 +306,15 @@ public class SendAndReceiveRequestBuilder {
     }
 
     public void executeWithStandardHeaders(
-        String request,
-        String response
+            String request,
+            String response
     ) throws InterruptedException {
         execute(request + requestHeaders(), ResponseHeaders + response);
     }
 
     public void executeWithStandardRequestHeaders(
-        String request,
-        CharSequence response
+            String request,
+            CharSequence response
     ) throws InterruptedException {
         execute(request + requestHeaders(), response);
     }
@@ -381,17 +381,17 @@ public class SendAndReceiveRequestBuilder {
             return RequestHeaders;
         } else {
             return "Host: localhost:9000\r\n" +
-                "Connection: keep-alive\r\n" +
-                "Accept: */*\r\n" +
-                "X-Requested-With: XMLHttpRequest\r\n" +
-                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                "Sec-Fetch-Site: same-origin\r\n" +
-                "Sec-Fetch-Mode: cors\r\n" +
-                "Referer: http://localhost:9000/index.html\r\n" +
-                "Accept-Encoding: gzip, deflate, br\r\n" +
-                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                "Statement-Timeout: " + statementTimeout + "\r\n" +
-                "\r\n";
+                    "Connection: keep-alive\r\n" +
+                    "Accept: */*\r\n" +
+                    "X-Requested-With: XMLHttpRequest\r\n" +
+                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                    "Sec-Fetch-Site: same-origin\r\n" +
+                    "Sec-Fetch-Mode: cors\r\n" +
+                    "Referer: http://localhost:9000/index.html\r\n" +
+                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                    "Statement-Timeout: " + statementTimeout + "\r\n" +
+                    "\r\n";
 
         }
     }
@@ -403,13 +403,13 @@ public class SendAndReceiveRequestBuilder {
 
     public interface RequestExecutor {
         void execute(
-            String request,
-            String response
+                String request,
+                String response
         ) throws InterruptedException;
 
         void executeWithStandardHeaders(
-            String request,
-            String response
+                String request,
+                String response
         ) throws InterruptedException;
     }
 }

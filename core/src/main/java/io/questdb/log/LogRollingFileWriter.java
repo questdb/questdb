@@ -72,11 +72,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     public LogRollingFileWriter(
-        FilesFacade ff,
-        MicrosecondClock clock,
-        RingQueue<LogRecordSink> ring,
-        SCSequence subSeq,
-        int level
+            FilesFacade ff,
+            MicrosecondClock clock,
+            RingQueue<LogRecordSink> ring,
+            SCSequence subSeq,
+            int level
     ) {
         this.ff = ff;
         this.clock = clock;

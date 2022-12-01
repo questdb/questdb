@@ -58,9 +58,9 @@ public class Vm {
         long sz = (truncateMode == TRUNCATE_TO_PAGE) ? Files.ceilPageSize(size) : size;
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
-                .$("truncated and closed [fd=").$(fd)
-                .$(", size=").$(sz)
-                .$(']').$();
+                    .$("truncated and closed [fd=").$(fd)
+                    .$(", size=").$(sz)
+                    .$(']').$();
             return sz;
         }
         log.debug().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();

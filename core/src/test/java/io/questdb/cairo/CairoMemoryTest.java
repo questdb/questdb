@@ -201,12 +201,12 @@ public class CairoMemoryTest {
     @Test
     public void testAppendMemoryJump() throws Exception {
         testVirtualMemoryJump(path -> new MemoryPMARImpl(
-                FF,
-                path,
-                FF.getPageSize(),
-                MemoryTag.MMAP_DEFAULT,
-                CairoConfiguration.O_NONE
-            )
+                        FF,
+                        path,
+                        FF.getPageSize(),
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_NONE
+                )
         );
     }
 
@@ -407,14 +407,14 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (
-                MemoryCMARW mem = Vm.getCMARWInstance(
-                    FF,
-                    path,
-                    2 * FF.getPageSize(),
-                    -1,
-                    MemoryTag.MMAP_DEFAULT,
-                    CairoConfiguration.O_NONE
-                )
+                    MemoryCMARW mem = Vm.getCMARWInstance(
+                            FF,
+                            path,
+                            2 * FF.getPageSize(),
+                            -1,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_NONE
+                    )
             ) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
@@ -441,14 +441,14 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (
-                MemoryCMARW mem = Vm.getCMARWInstance(
-                    FF,
-                    path,
-                    2 * FF.getPageSize(),
-                    -1,
-                    MemoryTag.MMAP_DEFAULT,
-                    CairoConfiguration.O_NONE
-                )
+                    MemoryCMARW mem = Vm.getCMARWInstance(
+                            FF,
+                            path,
+                            2 * FF.getPageSize(),
+                            -1,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_NONE
+                    )
             ) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);

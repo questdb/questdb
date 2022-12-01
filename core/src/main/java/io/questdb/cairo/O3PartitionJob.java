@@ -53,26 +53,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     public static void processPartition(
-        Path pathToTable,
-        int partitionBy,
-        ObjList<MemoryMA> columns,
-        ReadOnlyObjList<? extends MemoryCR> oooColumns,
-        long srcOooLo,
-        long srcOooHi,
-        long srcOooMax,
-        long o3TimestampMin,
-        long o3TimestampMax,
-        long partitionTimestamp,
-        long maxTimestamp,
-        long srcDataMax,
-        long srcDataTxn,
-        boolean last,
-        long txn,
-        long sortedTimestampsAddr,
-        TableWriter tableWriter,
-        AtomicInteger columnCounter,
-        O3Basket o3Basket,
-        long colTopSinkAddr
+            Path pathToTable,
+            int partitionBy,
+            ObjList<MemoryMA> columns,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long o3TimestampMin,
+            long o3TimestampMax,
+            long partitionTimestamp,
+            long maxTimestamp,
+            long srcDataMax,
+            long srcDataTxn,
+            boolean last,
+            long txn,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            AtomicInteger columnCounter,
+            O3Basket o3Basket,
+            long colTopSinkAddr
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
@@ -103,8 +103,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$(tableWriter.getTableName())
-                        .$(", e=").$(e)
-                        .I$();
+                            .$(", e=").$(e)
+                            .I$();
                     tableWriter.o3BumpErrorCount();
                     tableWriter.o3ClockDownPartitionUpdateCount();
                     tableWriter.o3CountDownDoneLatch();
@@ -113,41 +113,41 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             publishOpenColumnTasks(
-                txn,
-                columns,
-                oooColumns,
-                pathToTable,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                o3TimestampMin,
-                o3TimestampMax,
-                o3TimestampLo,
-                partitionTimestamp,
-                // below parameters are unused by this type of append
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                srcDataTxn,
-                OPEN_NEW_PARTITION_FOR_APPEND,
-                0,  // timestamp fd
-                0,
-                0,
-                timestampIndex,
-                sortedTimestampsAddr,
-                tableWriter,
-                columnCounter,
-                o3Basket,
-                colTopSinkAddr
+                    txn,
+                    columns,
+                    oooColumns,
+                    pathToTable,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    o3TimestampMin,
+                    o3TimestampMax,
+                    o3TimestampLo,
+                    partitionTimestamp,
+                    // below parameters are unused by this type of append
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    srcDataTxn,
+                    OPEN_NEW_PARTITION_FOR_APPEND,
+                    0,  // timestamp fd
+                    0,
+                    0,
+                    timestampIndex,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    columnCounter,
+                    o3Basket,
+                    colTopSinkAddr
             );
         } else {
             long srcTimestampAddr = 0;
@@ -250,11 +250,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
                         prefixHi = Vect.boundedBinarySearch64Bit(
-                            srcTimestampAddr,
-                            o3TimestampLo,
-                            0,
-                            srcDataMax - 1,
-                            BinarySearch.SCAN_DOWN
+                                srcTimestampAddr,
+                                o3TimestampLo,
+                                0,
+                                srcDataMax - 1,
+                                BinarySearch.SCAN_DOWN
                         );
                         mergeDataLo = prefixHi + 1;
                         mergeO3Lo = srcOooLo;
@@ -270,11 +270,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             branch = 2;
                             mergeO3Hi = srcOooHi;
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
-                                srcTimestampAddr,
-                                o3TimestampMax - 1,
-                                mergeDataLo,
-                                srcDataMax - 1,
-                                BinarySearch.SCAN_DOWN
+                                    srcTimestampAddr,
+                                    o3TimestampMax - 1,
+                                    mergeDataLo,
+                                    srcDataMax - 1,
+                                    BinarySearch.SCAN_DOWN
                             );
 
                             if (mergeDataLo > mergeDataHi) {
@@ -304,11 +304,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             branch = 3;
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
-                                sortedTimestampsAddr,
-                                dataTimestampHi,
-                                srcOooLo,
-                                srcOooHi,
-                                BinarySearch.SCAN_UP
+                                    sortedTimestampsAddr,
+                                    dataTimestampHi,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    BinarySearch.SCAN_UP
                             );
 
                             mergeDataHi = srcDataMax - 1;
@@ -352,11 +352,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         mergeDataLo = 0;
                         prefixHi = Vect.boundedBinarySearchIndexT(
-                            sortedTimestampsAddr,
-                            dataTimestampLo,
-                            srcOooLo,
-                            srcOooHi,
-                            BinarySearch.SCAN_DOWN
+                                sortedTimestampsAddr,
+                                dataTimestampLo,
+                                srcOooLo,
+                                srcOooHi,
+                                BinarySearch.SCAN_DOWN
                         );
                         mergeO3Lo = prefixHi + 1;
 
@@ -372,11 +372,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeType = O3_BLOCK_MERGE;
                             mergeO3Hi = srcOooHi;
                             mergeDataHi = Vect.boundedBinarySearch64Bit(
-                                srcTimestampAddr,
-                                o3TimestampMax,
-                                0,
-                                srcDataMax - 1,
-                                BinarySearch.SCAN_DOWN
+                                    srcTimestampAddr,
+                                    o3TimestampMax,
+                                    0,
+                                    srcDataMax - 1,
+                                    BinarySearch.SCAN_DOWN
                             );
 
                             suffixLo = mergeDataHi + 1;
@@ -394,11 +394,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             branch = 6;
                             mergeDataHi = srcDataMax - 1;
                             mergeO3Hi = Vect.boundedBinarySearchIndexT(
-                                sortedTimestampsAddr,
-                                dataTimestampHi - 1,
-                                mergeO3Lo,
-                                srcOooHi,
-                                BinarySearch.SCAN_DOWN
+                                    sortedTimestampsAddr,
+                                    dataTimestampHi - 1,
+                                    mergeO3Lo,
+                                    srcOooHi,
+                                    BinarySearch.SCAN_DOWN
                             );
 
                             if (mergeO3Lo > mergeO3Hi) {
@@ -441,27 +441,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 LOG.debug()
-                    .$("o3 merge [branch=").$(branch)
-                    .$(", prefixType=").$(prefixType)
-                    .$(", prefixLo=").$(prefixLo)
-                    .$(", prefixHi=").$(prefixHi)
-                    .$(", o3TimestampLo=").$ts(o3TimestampLo)
-                    .$(", o3TimestampMin=").$ts(o3TimestampMin)
-                    .$(", o3TimestampMax=").$ts(o3TimestampMax)
-                    .$(", dataTimestampLo=").$ts(dataTimestampLo)
-                    .$(", dataTimestampHi=").$ts(dataTimestampHi)
-                    .$(", partitionTimestamp=").$ts(partitionTimestamp)
-                    .$(", srcDataMax=").$(srcDataMax)
-                    .$(", mergeType=").$(mergeType)
-                    .$(", mergeDataLo=").$(mergeDataLo)
-                    .$(", mergeDataHi=").$(mergeDataHi)
-                    .$(", mergeO3Lo=").$(mergeO3Lo)
-                    .$(", mergeO3Hi=").$(mergeO3Hi)
-                    .$(", suffixType=").$(suffixType)
-                    .$(", suffixLo=").$(suffixLo)
-                    .$(", suffixHi=").$(suffixHi)
-                    .$(", table=").$(pathToTable)
-                    .I$();
+                        .$("o3 merge [branch=").$(branch)
+                        .$(", prefixType=").$(prefixType)
+                        .$(", prefixLo=").$(prefixLo)
+                        .$(", prefixHi=").$(prefixHi)
+                        .$(", o3TimestampLo=").$ts(o3TimestampLo)
+                        .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                        .$(", o3TimestampMax=").$ts(o3TimestampMax)
+                        .$(", dataTimestampLo=").$ts(dataTimestampLo)
+                        .$(", dataTimestampHi=").$ts(dataTimestampHi)
+                        .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                        .$(", srcDataMax=").$(srcDataMax)
+                        .$(", mergeType=").$(mergeType)
+                        .$(", mergeDataLo=").$(mergeDataLo)
+                        .$(", mergeDataHi=").$(mergeDataHi)
+                        .$(", mergeO3Lo=").$(mergeO3Lo)
+                        .$(", mergeO3Hi=").$(mergeO3Hi)
+                        .$(", suffixType=").$(suffixType)
+                        .$(", suffixLo=").$(suffixLo)
+                        .$(", suffixHi=").$(suffixHi)
+                        .$(", table=").$(pathToTable)
+                        .I$();
 
                 if (prefixType == O3_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
@@ -478,8 +478,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             } catch (Throwable e) {
                 LOG.error().$("process existing partition error [table=").$(tableWriter.getTableName())
-                    .$(", e=").$(e)
-                    .I$();
+                        .$(", e=").$(e)
+                        .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
                 tableWriter.o3BumpErrorCount();
@@ -494,48 +494,48 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long timestampMax = Math.max(o3TimestampMax, dataTimestampHi);
 
             publishOpenColumnTasks(
-                txn,
-                columns,
-                oooColumns,
-                pathToTable,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                o3TimestampMin,
-                timestampMax, // <-- this is max of OOO and data chunk
-                o3TimestampLo,
-                partitionTimestamp,
-                prefixType,
-                prefixLo,
-                prefixHi,
-                mergeType,
-                mergeDataLo,
-                mergeDataHi,
-                mergeO3Lo,
-                mergeO3Hi,
-                suffixType,
-                suffixLo,
-                suffixHi,
-                srcDataMax,
-                srcDataTxn,
-                openColumnMode,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                timestampIndex,
-                sortedTimestampsAddr,
-                tableWriter,
-                columnCounter,
-                o3Basket,
-                colTopSinkAddr
+                    txn,
+                    columns,
+                    oooColumns,
+                    pathToTable,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    o3TimestampMin,
+                    timestampMax, // <-- this is max of OOO and data chunk
+                    o3TimestampLo,
+                    partitionTimestamp,
+                    prefixType,
+                    prefixLo,
+                    prefixHi,
+                    mergeType,
+                    mergeDataLo,
+                    mergeDataHi,
+                    mergeO3Lo,
+                    mergeO3Hi,
+                    suffixType,
+                    suffixLo,
+                    suffixHi,
+                    srcDataMax,
+                    srcDataTxn,
+                    openColumnMode,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    timestampIndex,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    columnCounter,
+                    o3Basket,
+                    colTopSinkAddr
             );
         }
     }
 
     public static void processPartition(
-        O3PartitionTask task,
-        long cursor,
-        Sequence subSeq
+            O3PartitionTask task,
+            long cursor,
+            Sequence subSeq
     ) {
         // find "current" partition boundary in the out-of-order data
         // once we know the boundary we can move on to calculating another one
@@ -564,37 +564,37 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         subSeq.done(cursor);
 
         processPartition(
-            pathToTable,
-            partitionBy,
-            columns,
-            oooColumns,
-            srcOooLo,
-            srcOooHi,
-            srcOooMax,
-            oooTimestampMin,
-            oooTimestampMax,
-            partitionTimestamp,
-            maxTimestamp,
-            srcDataMax,
-            srcDataTxn,
-            last,
-            txn,
-            sortedTimestampsAddr,
-            tableWriter,
-            columnCounter,
-            o3Basket,
-            colTopSinkAddr
+                pathToTable,
+                partitionBy,
+                columns,
+                oooColumns,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                oooTimestampMin,
+                oooTimestampMax,
+                partitionTimestamp,
+                maxTimestamp,
+                srcDataMax,
+                srcDataTxn,
+                last,
+                txn,
+                sortedTimestampsAddr,
+                tableWriter,
+                columnCounter,
+                o3Basket,
+                colTopSinkAddr
         );
     }
 
     private static long createMergeIndex(
-        long srcDataTimestampAddr,
-        long sortedTimestampsAddr,
-        long mergeDataLo,
-        long mergeDataHi,
-        long mergeOOOLo,
-        long mergeOOOHi,
-        long indexSize
+            long srcDataTimestampAddr,
+            long sortedTimestampsAddr,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            long indexSize
     ) {
         // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
         // have to go back and find data rows we need to move accordingly
@@ -602,10 +602,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         try {
             Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
             long ptr = Vect.mergeTwoLongIndexesAsc(
-                index,
-                mergeDataHi - mergeDataLo + 1,
-                sortedTimestampsAddr + mergeOOOLo * 16,
-                mergeOOOHi - mergeOOOLo + 1
+                    index,
+                    mergeDataHi - mergeDataLo + 1,
+                    sortedTimestampsAddr + mergeOOOLo * 16,
+                    mergeOOOHi - mergeOOOLo + 1
             );
             Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
             return ptr;
@@ -615,50 +615,50 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static void publishOpenColumnTaskContended(
-        long cursor,
-        int openColumnMode,
-        Path pathToTable,
-        CharSequence columnName,
-        AtomicInteger columnCounter,
-        AtomicInteger partCounter,
-        int columnType,
-        long timestampMergeIndexAddr,
-        long timestampMergeIndexSize,
-        long srcOooFixAddr,
-        long srcOooVarAddr,
-        long srcOooLo,
-        long srcOooHi,
-        long srcOooMax,
-        long oooTimestampMin,
-        long oooTimestampMax,
-        long oooTimestampLo,
-        long partitionTimestamp,
-        long srcDataTop,
-        long srcDataMax,
-        long srcDataTxn,
-        long txn,
-        int prefixType,
-        long prefixLo,
-        long prefixHi,
-        int mergeType,
-        long mergeDataLo,
-        long mergeDataHi,
-        long mergeOOOLo,
-        long mergeOOOHi,
-        int suffixType,
-        long suffixLo,
-        long suffixHi,
-        int srcTimestampFd,
-        long srcTimestampAddr,
-        long srcTimestampSize,
-        int indexBlockCapacity,
-        int activeFixFd,
-        int activeVarFd,
-        TableWriter tableWriter,
-        BitmapIndexWriter indexWriter,
-        long colTopSinkAddr,
-        int columnIndex,
-        long columnNameTxn
+            long cursor,
+            int openColumnMode,
+            Path pathToTable,
+            CharSequence columnName,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampLo,
+            long partitionTimestamp,
+            long srcDataTop,
+            long srcDataMax,
+            long srcDataTxn,
+            long txn,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int indexBlockCapacity,
+            int activeFixFd,
+            int activeVarFd,
+            TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
+            long colTopSinkAddr,
+            int columnIndex,
+            long columnNameTxn
     ) {
         while (cursor == -2) {
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
@@ -666,238 +666,238 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         if (cursor > -1) {
             publishOpenColumnTaskHarmonized(
-                cursor,
-                openColumnMode,
-                pathToTable,
-                columnName,
-                columnCounter,
-                partCounter,
-                columnType,
-                timestampMergeIndexAddr,
-                timestampMergeIndexSize,
-                srcOooFixAddr,
-                srcOooVarAddr,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                oooTimestampMin,
-                oooTimestampMax,
-                oooTimestampLo,
-                partitionTimestamp,
-                srcDataTop,
-                srcDataMax,
-                srcDataTxn,
-                txn,
-                prefixType,
-                prefixLo,
-                prefixHi,
-                mergeType,
-                mergeDataLo,
-                mergeDataHi,
-                mergeOOOLo,
-                mergeOOOHi,
-                suffixType,
-                suffixLo,
-                suffixHi,
-                indexBlockCapacity,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                activeFixFd,
-                activeVarFd,
-                tableWriter,
-                indexWriter,
-                colTopSinkAddr,
-                columnIndex,
-                columnNameTxn
+                    cursor,
+                    openColumnMode,
+                    pathToTable,
+                    columnName,
+                    columnCounter,
+                    partCounter,
+                    columnType,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcOooFixAddr,
+                    srcOooVarAddr,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    oooTimestampMin,
+                    oooTimestampMax,
+                    oooTimestampLo,
+                    partitionTimestamp,
+                    srcDataTop,
+                    srcDataMax,
+                    srcDataTxn,
+                    txn,
+                    prefixType,
+                    prefixLo,
+                    prefixHi,
+                    mergeType,
+                    mergeDataLo,
+                    mergeDataHi,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    suffixType,
+                    suffixLo,
+                    suffixHi,
+                    indexBlockCapacity,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    activeFixFd,
+                    activeVarFd,
+                    tableWriter,
+                    indexWriter,
+                    colTopSinkAddr,
+                    columnIndex,
+                    columnNameTxn
             );
         } else {
             O3OpenColumnJob.openColumn(
-                openColumnMode,
-                pathToTable,
-                columnName,
-                columnCounter,
-                partCounter,
-                columnType,
-                timestampMergeIndexAddr,
-                timestampMergeIndexSize,
-                srcOooFixAddr,
-                srcOooVarAddr,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                oooTimestampMin,
-                oooTimestampMax,
-                oooTimestampLo,
-                partitionTimestamp,
-                srcDataTop,
-                srcDataMax,
-                srcDataTxn,
-                txn,
-                prefixType,
-                prefixLo,
-                prefixHi,
-                mergeType,
-                mergeOOOLo,
-                mergeOOOHi,
-                mergeDataLo,
-                mergeDataHi,
-                suffixType,
-                suffixLo,
-                suffixHi,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                indexBlockCapacity,
-                activeFixFd,
-                activeVarFd,
-                tableWriter,
-                indexWriter,
-                colTopSinkAddr,
-                columnIndex,
-                columnNameTxn
+                    openColumnMode,
+                    pathToTable,
+                    columnName,
+                    columnCounter,
+                    partCounter,
+                    columnType,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcOooFixAddr,
+                    srcOooVarAddr,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    oooTimestampMin,
+                    oooTimestampMax,
+                    oooTimestampLo,
+                    partitionTimestamp,
+                    srcDataTop,
+                    srcDataMax,
+                    srcDataTxn,
+                    txn,
+                    prefixType,
+                    prefixLo,
+                    prefixHi,
+                    mergeType,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    mergeDataLo,
+                    mergeDataHi,
+                    suffixType,
+                    suffixLo,
+                    suffixHi,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    indexBlockCapacity,
+                    activeFixFd,
+                    activeVarFd,
+                    tableWriter,
+                    indexWriter,
+                    colTopSinkAddr,
+                    columnIndex,
+                    columnNameTxn
             );
         }
     }
 
     private static void publishOpenColumnTaskHarmonized(
-        long cursor,
-        int openColumnMode,
-        Path pathToTable,
-        CharSequence columnName,
-        AtomicInteger columnCounter,
-        AtomicInteger partCounter,
-        int columnType,
-        long timestampMergeIndexAddr,
-        long timestampMergeIndexSize,
-        long srcOooFixAddr,
-        long srcOooVarAddr,
-        long srcOooLo,
-        long srcOooHi,
-        long srcOooMax,
-        long oooTimestampMin,
-        long oooTimestampMax,
-        long oooTimestampLo,
-        long partitionTimestamp,
-        long srcDataTop,
-        long srcDataMax,
-        long srcDataTxn,
-        long txn,
-        int prefixType,
-        long prefixLo,
-        long prefixHi,
-        int mergeType,
-        long mergeDataLo,
-        long mergeDataHi,
-        long mergeOOOLo,
-        long mergeOOOHi,
-        int suffixType,
-        long suffixLo,
-        long suffixHi,
-        int indexBlockCapacity,
-        int srcTimestampFd,
-        long srcTimestampAddr,
-        long srcTimestampSize,
-        int activeFixFd,
-        int activeVarFd,
-        TableWriter tableWriter,
-        BitmapIndexWriter indexWriter,
-        long colTopSinkAddr,
-        int columnIndex,
-        long columnNameTxn
+            long cursor,
+            int openColumnMode,
+            Path pathToTable,
+            CharSequence columnName,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampLo,
+            long partitionTimestamp,
+            long srcDataTop,
+            long srcDataMax,
+            long srcDataTxn,
+            long txn,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            int indexBlockCapacity,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int activeFixFd,
+            int activeVarFd,
+            TableWriter tableWriter,
+            BitmapIndexWriter indexWriter,
+            long colTopSinkAddr,
+            int columnIndex,
+            long columnNameTxn
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
-            openColumnMode,
-            pathToTable,
-            columnName,
-            columnCounter,
-            partCounter,
-            columnType,
-            timestampMergeIndexAddr,
-            timestampMergeIndexSize,
-            srcOooFixAddr,
-            srcOooVarAddr,
-            srcOooLo,
-            srcOooHi,
-            srcOooMax,
-            oooTimestampMin,
-            oooTimestampMax,
-            oooTimestampLo,
-            partitionTimestamp,
-            srcDataTop,
-            srcDataMax,
-            srcDataTxn,
-            txn,
-            prefixType,
-            prefixLo,
-            prefixHi,
-            mergeType,
-            mergeDataLo,
-            mergeDataHi,
-            mergeOOOLo,
-            mergeOOOHi,
-            suffixType,
-            suffixLo,
-            suffixHi,
-            srcTimestampFd,
-            srcTimestampAddr,
-            srcTimestampSize,
-            indexBlockCapacity,
-            activeFixFd,
-            activeVarFd,
-            tableWriter,
-            indexWriter,
-            colTopSinkAddr,
-            columnIndex,
-            columnNameTxn
+                openColumnMode,
+                pathToTable,
+                columnName,
+                columnCounter,
+                partCounter,
+                columnType,
+                timestampMergeIndexAddr,
+                timestampMergeIndexSize,
+                srcOooFixAddr,
+                srcOooVarAddr,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                oooTimestampMin,
+                oooTimestampMax,
+                oooTimestampLo,
+                partitionTimestamp,
+                srcDataTop,
+                srcDataMax,
+                srcDataTxn,
+                txn,
+                prefixType,
+                prefixLo,
+                prefixHi,
+                mergeType,
+                mergeDataLo,
+                mergeDataHi,
+                mergeOOOLo,
+                mergeOOOHi,
+                suffixType,
+                suffixLo,
+                suffixHi,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                indexBlockCapacity,
+                activeFixFd,
+                activeVarFd,
+                tableWriter,
+                indexWriter,
+                colTopSinkAddr,
+                columnIndex,
+                columnNameTxn
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
 
     private static void publishOpenColumnTasks(
-        long txn,
-        ObjList<MemoryMA> columns,
-        ReadOnlyObjList<? extends MemoryCR> oooColumns,
-        Path pathToTable,
-        long srcOooLo,
-        long srcOooHi,
-        long srcOooMax,
-        long oooTimestampMin,
-        long oooTimestampMax,
-        long oooTimestampLo,
-        long partitionTimestamp,
-        int prefixType,
-        long prefixLo,
-        long prefixHi,
-        int mergeType,
-        long mergeDataLo,
-        long mergeDataHi,
-        long mergeOOOLo,
-        long mergeOOOHi,
-        int suffixType,
-        long suffixLo,
-        long suffixHi,
-        long srcDataMax,
-        long srcDataTxn,
-        int openColumnMode,
-        int srcTimestampFd,
-        long srcTimestampAddr,
-        long srcTimestampSize,
-        int timestampIndex,
-        long sortedTimestampsAddr,
-        TableWriter tableWriter,
-        AtomicInteger columnCounter,
-        O3Basket o3Basket,
-        long colTopSinkAddr
+            long txn,
+            ObjList<MemoryMA> columns,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            Path pathToTable,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampLo,
+            long partitionTimestamp,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            long srcDataMax,
+            long srcDataTxn,
+            int openColumnMode,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            int timestampIndex,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            AtomicInteger columnCounter,
+            O3Basket o3Basket,
+            long colTopSinkAddr
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
         tableWriter.addPhysicallyWrittenRows(
-            O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
-                ? srcOooBatchRowSize
-                : srcDataMax + srcOooBatchRowSize
+                O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
+                        ? srcOooBatchRowSize
+                        : srcDataMax + srcOooBatchRowSize
         );
 
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
@@ -909,13 +909,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             assert timestampMergeIndexSize > 0; // avoid SIGSEGV
 
             timestampMergeIndexAddr = createMergeIndex(
-                srcTimestampAddr,
-                sortedTimestampsAddr,
-                mergeDataLo,
-                mergeDataHi,
-                mergeOOOLo,
-                mergeOOOHi,
-                timestampMergeIndexSize
+                    srcTimestampAddr,
+                    sortedTimestampsAddr,
+                    mergeDataLo,
+                    mergeDataHi,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    timestampMergeIndexSize
             );
         } else {
             timestampMergeIndexAddr = 0;
@@ -981,104 +981,104 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
                     if (cursor > -1) {
                         publishOpenColumnTaskHarmonized(
-                            cursor,
-                            openColumnMode,
-                            pathToTable,
-                            columnName,
-                            columnCounter,
-                            o3Basket.nextPartCounter(),
-                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                            timestampMergeIndexAddr,
-                            timestampMergeIndexSize,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
-                            srcOooMax,
-                            oooTimestampMin,
-                            oooTimestampMax,
-                            oooTimestampLo,
-                            partitionTimestamp,
-                            srcDataTop,
-                            srcDataMax,
-                            srcDataTxn,
-                            txn,
-                            prefixType,
-                            prefixLo,
-                            prefixHi,
-                            mergeType,
-                            mergeDataLo,
-                            mergeDataHi,
-                            mergeOOOLo,
-                            mergeOOOHi,
-                            suffixType,
-                            suffixLo,
-                            suffixHi,
-                            indexBlockCapacity,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            activeFixFd,
-                            activeVarFd,
-                            tableWriter,
-                            indexWriter,
-                            colTopSinkAddr + (long) i * Long.BYTES,
-                            i,
-                            columnNameTxn
+                                cursor,
+                                openColumnMode,
+                                pathToTable,
+                                columnName,
+                                columnCounter,
+                                o3Basket.nextPartCounter(),
+                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                timestampMergeIndexAddr,
+                                timestampMergeIndexSize,
+                                srcOooFixAddr,
+                                srcOooVarAddr,
+                                srcOooLo,
+                                srcOooHi,
+                                srcOooMax,
+                                oooTimestampMin,
+                                oooTimestampMax,
+                                oooTimestampLo,
+                                partitionTimestamp,
+                                srcDataTop,
+                                srcDataMax,
+                                srcDataTxn,
+                                txn,
+                                prefixType,
+                                prefixLo,
+                                prefixHi,
+                                mergeType,
+                                mergeDataLo,
+                                mergeDataHi,
+                                mergeOOOLo,
+                                mergeOOOHi,
+                                suffixType,
+                                suffixLo,
+                                suffixHi,
+                                indexBlockCapacity,
+                                srcTimestampFd,
+                                srcTimestampAddr,
+                                srcTimestampSize,
+                                activeFixFd,
+                                activeVarFd,
+                                tableWriter,
+                                indexWriter,
+                                colTopSinkAddr + (long) i * Long.BYTES,
+                                i,
+                                columnNameTxn
                         );
                     } else {
                         publishOpenColumnTaskContended(
-                            cursor,
-                            openColumnMode,
-                            pathToTable,
-                            columnName,
-                            columnCounter,
-                            o3Basket.nextPartCounter(),
-                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                            timestampMergeIndexAddr,
-                            timestampMergeIndexSize,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
-                            srcOooMax,
-                            oooTimestampMin,
-                            oooTimestampMax,
-                            oooTimestampLo,
-                            partitionTimestamp,
-                            srcDataTop,
-                            srcDataMax,
-                            srcDataTxn,
-                            txn,
-                            prefixType,
-                            prefixLo,
-                            prefixHi,
-                            mergeType,
-                            mergeDataLo,
-                            mergeDataHi,
-                            mergeOOOLo,
-                            mergeOOOHi,
-                            suffixType,
-                            suffixLo,
-                            suffixHi,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            indexBlockCapacity,
-                            activeFixFd,
-                            activeVarFd,
-                            tableWriter,
-                            indexWriter,
-                            colTopSinkAddr + (long) i * Long.BYTES,
-                            i,
-                            columnNameTxn
+                                cursor,
+                                openColumnMode,
+                                pathToTable,
+                                columnName,
+                                columnCounter,
+                                o3Basket.nextPartCounter(),
+                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                timestampMergeIndexAddr,
+                                timestampMergeIndexSize,
+                                srcOooFixAddr,
+                                srcOooVarAddr,
+                                srcOooLo,
+                                srcOooHi,
+                                srcOooMax,
+                                oooTimestampMin,
+                                oooTimestampMax,
+                                oooTimestampLo,
+                                partitionTimestamp,
+                                srcDataTop,
+                                srcDataMax,
+                                srcDataTxn,
+                                txn,
+                                prefixType,
+                                prefixLo,
+                                prefixHi,
+                                mergeType,
+                                mergeDataLo,
+                                mergeDataHi,
+                                mergeOOOLo,
+                                mergeOOOHi,
+                                suffixType,
+                                suffixLo,
+                                suffixHi,
+                                srcTimestampFd,
+                                srcTimestampAddr,
+                                srcTimestampSize,
+                                indexBlockCapacity,
+                                activeFixFd,
+                                activeVarFd,
+                                tableWriter,
+                                indexWriter,
+                                colTopSinkAddr + (long) i * Long.BYTES,
+                                i,
+                                columnNameTxn
                         );
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
                     LOG.error().$("open column error [table=").$(tableWriter.getTableName())
-                        .$(", e=").$(e)
-                        .I$();
+                            .$(", e=").$(e)
+                            .I$();
                     columnsInFlight = i + 1;
                     throw e;
                 }
@@ -1088,12 +1088,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LOG.debug().$("idle [delta=").$(delta).$(']').$();
             if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
                 O3CopyJob.closeColumnIdleQuick(
-                    timestampMergeIndexAddr,
-                    timestampMergeIndexSize,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    tableWriter
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter
                 );
             }
         }

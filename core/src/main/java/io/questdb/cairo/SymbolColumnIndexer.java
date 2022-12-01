@@ -61,22 +61,22 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void configureFollowerAndWriter(
-        CairoConfiguration configuration,
-        Path path,
-        CharSequence name,
-        long columnNameTxn,
-        MemoryMA columnMem,
-        long columnTop
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            MemoryMA columnMem,
+            long columnTop
     ) {
         this.columnTop = columnTop;
         try {
             this.writer.of(
-                configuration,
-                path,
-                name,
-                columnNameTxn,
-                configuration.getDataIndexKeyAppendPageSize(),
-                configuration.getDataIndexValueAppendPageSize()
+                    configuration,
+                    path,
+                    name,
+                    columnNameTxn,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    configuration.getDataIndexValueAppendPageSize()
             );
             this.mem.of(columnMem, MemoryTag.MMAP_INDEX_SLIDER);
         } catch (Throwable e) {
@@ -90,12 +90,12 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         this.columnTop = columnTop;
         try {
             this.writer.of(
-                configuration,
-                path,
-                name,
-                columnNameTxn,
-                configuration.getDataIndexKeyAppendPageSize(),
-                configuration.getDataIndexValueAppendPageSize()
+                    configuration,
+                    path,
+                    name,
+                    columnNameTxn,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    configuration.getDataIndexValueAppendPageSize()
             );
         } catch (Throwable e) {
             this.close();

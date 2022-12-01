@@ -26,7 +26,6 @@ package io.questdb.network;
 
 public class KqueueAccessor {
     public static final short EVFILT_READ;
-    public static final int EV_EOF = -32751;
     public static final short SIZEOF_KEVENT;
     static final short DATA_OFFSET;
     static final short EVFILT_WRITE;

@@ -56,13 +56,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private int symbolIndexInTxWriter;
 
     public SymbolMapWriter(
-        CairoConfiguration configuration,
-        Path path,
-        CharSequence name,
-        long columnNameTxn,
-        int symbolCount,
-        int symbolIndexInTxWriter,
-        @NotNull SymbolValueCountCollector valueCountCollector
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolIndexInTxWriter,
+            @NotNull SymbolValueCountCollector valueCountCollector
     ) {
         final int plen = path.length();
         try {
@@ -87,11 +87,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = Vm.getWholeMARWInstance(
-                ff,
-                path,
-                mapPageSize,
-                MemoryTag.MMAP_INDEX_WRITER,
-                configuration.getWriterFileOpenOpts()
+                    ff,
+                    path,
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
             );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
@@ -102,21 +102,21 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // index writer is used to identify attempts to store duplicate symbol value
             // symbol table index stores int keys and long values, e.g. value = key * 2 storage size
             this.indexWriter = new BitmapIndexWriter(
-                configuration,
-                path.trimTo(plen),
-                name,
-                columnNameTxn,
-                configuration.getDataIndexKeyAppendPageSize(),
-                configuration.getDataIndexKeyAppendPageSize() * 2
+                    configuration,
+                    path.trimTo(plen),
+                    name,
+                    columnNameTxn,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    configuration.getDataIndexKeyAppendPageSize() * 2
             );
 
             // this is the place where symbol values are stored
             this.charMem = Vm.getWholeMARWInstance(
-                ff,
-                charFileName(path.trimTo(plen), name, columnNameTxn),
-                mapPageSize,
-                MemoryTag.MMAP_INDEX_WRITER,
-                configuration.getWriterFileOpenOpts()
+                    ff,
+                    charFileName(path.trimTo(plen), name, columnNameTxn),
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
             );
 
             // move append pointer for symbol values in the correct place
@@ -136,11 +136,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.symbolIndexInTxWriter = symbolIndexInTxWriter;
             this.valueCountCollector = valueCountCollector;
             LOG.debug()
-                .$("open [name=").$(path.trimTo(plen).concat(name).$())
-                .$(", fd=").$(this.offsetMem.getFd())
-                .$(", cache=").$(cache != null)
-                .$(", capacity=").$(symbolCapacity)
-                .I$();
+                    .$("open [name=").$(path.trimTo(plen).concat(name).$())
+                    .$(", fd=").$(this.offsetMem.getFd())
+                    .$(", cache=").$(cache != null)
+                    .$(", capacity=").$(symbolCapacity)
+                    .I$();
         } catch (Throwable e) {
             close();
             throw e;

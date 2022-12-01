@@ -32,8 +32,8 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private long fdid = 1;
 
     public IODispatcherOsx(
-        IODispatcherConfiguration configuration,
-        IOContextFactory<C> ioContextFactory
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
         this.capacity = configuration.getEventCapacity();

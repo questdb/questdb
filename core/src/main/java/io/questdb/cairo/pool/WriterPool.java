@@ -145,9 +145,9 @@ public class WriterPool extends AbstractPool {
      * @return null if command is published or TableWriter instance if writer is available
      */
     public TableWriter getWriterOrPublishCommand(
-        CharSequence tableName,
-        String lockReason,
-        @NotNull AsyncWriterCommand asyncWriterCommand
+            CharSequence tableName,
+            String lockReason,
+            @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
         while (true) {
             try {
@@ -354,11 +354,11 @@ public class WriterPool extends AbstractPool {
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.critical()
-                .$("could not open [table=`").utf8(name)
-                .$("`, thread=").$(e.owner)
-                .$(", ex=").$(ex.getFlyweightMessage())
-                .$(", errno=").$(ex.getErrno())
-                .$(']').$();
+                    .$("could not open [table=`").utf8(name)
+                    .$("`, thread=").$(e.owner)
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .$(']').$();
             e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
@@ -368,9 +368,9 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter getWriterEntry(
-        CharSequence tableName,
-        String lockReason,
-        @Nullable AsyncWriterCommand asyncWriterCommand
+            CharSequence tableName,
+            String lockReason,
+            @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
         assert null != lockReason;
         checkClosed();
@@ -427,10 +427,10 @@ public class WriterPool extends AbstractPool {
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
                 LOG.info().$("busy [table=`").utf8(tableName)
-                    .$("`, owner=").$(owner)
-                    .$(", thread=").$(thread)
-                    .$(", reason=").$(reason)
-                    .I$();
+                        .$("`, owner=").$(owner)
+                        .$(", thread=").$(thread)
+                        .$(", reason=").$(reason)
+                        .I$();
                 throw EntryUnavailableException.instance(reason);
             }
         }

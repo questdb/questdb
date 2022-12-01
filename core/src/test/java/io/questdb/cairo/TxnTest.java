@@ -63,16 +63,16 @@ public class TxnTest extends AbstractCairoTest {
                 String tableName = "txntest";
                 try (Path path = new Path()) {
                     try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                            MemoryMARW mem = Vm.getCMARWInstance();
+                            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     ) {
                         model.timestamp();
                         TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            1
+                                configuration,
+                                mem,
+                                path,
+                                model,
+                                1
                         );
                     }
                 }
@@ -139,32 +139,32 @@ public class TxnTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                        MemoryMARW mem = Vm.getCMARWInstance();
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                 ) {
                     model.timestamp();
                     TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1
+                            configuration,
+                            mem,
+                            path,
+                            model,
+                            1
                     );
                 }
             }
             int truncateIteration = 33;
             Thread writerThread = createWriterThread(
-                start,
-                done,
-                iterations,
-                exceptions,
-                rnd,
-                tableName,
-                ff,
-                maxPartitionCount,
-                maxSymbolCount,
-                partitionCountCheck,
-                truncateIteration
+                    start,
+                    done,
+                    iterations,
+                    exceptions,
+                    rnd,
+                    tableName,
+                    ff,
+                    maxPartitionCount,
+                    maxSymbolCount,
+                    partitionCountCheck,
+                    truncateIteration
             );
             Rnd readerRnd = TestUtils.generateRandom(LOG);
 
@@ -172,8 +172,8 @@ public class TxnTest extends AbstractCairoTest {
             for (int th = 0; th < readerThreads; th++) {
                 Thread readerThread = new Thread(() -> {
                     try (
-                        Path path = new Path();
-                        TxReader txReader = new TxReader(ff)
+                            Path path = new Path();
+                            TxReader txReader = new TxReader(ff)
                     ) {
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
@@ -190,8 +190,8 @@ public class TxnTest extends AbstractCairoTest {
                                 // must be truncated
                                 if (txReader.getPartitionCount() > 1) {
                                     Assert.assertTrue(
-                                        "Txn " + txn + " not read as truncated. Partition count: " + txReader.getPartitionCount(),
-                                        txReader.getPartitionCount() < 2);
+                                            "Txn " + txn + " not read as truncated. Partition count: " + txReader.getPartitionCount(),
+                                            txReader.getPartitionCount() < 2);
                                 }
                             } else if (txReader.getPartitionCount() > 2) {
                                 reloadCount.incrementAndGet();
@@ -246,31 +246,31 @@ public class TxnTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                        MemoryMARW mem = Vm.getCMARWInstance();
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                 ) {
                     model.timestamp();
                     TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1
+                            configuration,
+                            mem,
+                            path,
+                            model,
+                            1
                     );
                 }
             }
             Thread writerThread = createWriterThread(
-                start,
-                done,
-                iterations,
-                exceptions,
-                rnd,
-                tableName,
-                ff,
-                maxPartitionCount,
-                maxSymbolCount,
-                partitionCountCheck,
-                Integer.MAX_VALUE
+                    start,
+                    done,
+                    iterations,
+                    exceptions,
+                    rnd,
+                    tableName,
+                    ff,
+                    maxPartitionCount,
+                    maxSymbolCount,
+                    partitionCountCheck,
+                    Integer.MAX_VALUE
             );
 
             Rnd readerRnd = TestUtils.generateRandom(LOG);
@@ -279,8 +279,8 @@ public class TxnTest extends AbstractCairoTest {
             for (int th = 0; th < readerThreads; th++) {
                 Thread readerThread = new Thread(() -> {
                     try (
-                        Path path = new Path();
-                        TxReader txReader = new TxReader(ff)
+                            Path path = new Path();
+                            TxReader txReader = new TxReader(ff)
                     ) {
                         path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
@@ -296,11 +296,11 @@ public class TxnTest extends AbstractCairoTest {
                             for (int i = txReader.getSymbolColumnCount() - 1; i > -1; i--) {
                                 if (i != txReader.getSymbolColumnCount()) {
                                     String trace = String.format(
-                                        "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
-                                        txReader.txn,
-                                        txReader.structureVersion.get(),
-                                        txReader.getPartitionCount(),
-                                        txReader.getSymbolColumnCount()
+                                            "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
+                                            txReader.txn,
+                                            txReader.structureVersion.get(),
+                                            txReader.getPartitionCount(),
+                                            txReader.getSymbolColumnCount()
                                     );
                                     Assert.assertEquals(trace, i, txReader.getSymbolValueCount(i));
                                 }
@@ -310,11 +310,11 @@ public class TxnTest extends AbstractCairoTest {
                             for (int i = txReader.getPartitionCount() - 2; i > -1; i--) {
                                 if (offset + i != txReader.getPartitionSize(i)) {
                                     String trace = String.format(
-                                        "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
-                                        txReader.txn,
-                                        txReader.structureVersion.get(),
-                                        txReader.getPartitionCount(),
-                                        txReader.getSymbolColumnCount()
+                                            "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
+                                            txReader.txn,
+                                            txReader.structureVersion.get(),
+                                            txReader.getPartitionCount(),
+                                            txReader.getSymbolColumnCount()
                                     );
                                     Assert.assertEquals(trace + buildActualSizes(txReader), offset + i, txReader.getPartitionSize(i));
                                 }
@@ -365,23 +365,23 @@ public class TxnTest extends AbstractCairoTest {
 
     @NotNull
     private Thread createWriterThread(
-        CyclicBarrier start,
-        AtomicInteger done,
-        int iterations,
-        ConcurrentLinkedQueue<Throwable> exceptions,
-        Rnd rnd,
-        String tableName,
-        FilesFacade ff,
-        int maxPartitionCount,
-        int maxSymbolCount,
-        AtomicInteger partitionCountCheck,
-        int truncateIteration
+            CyclicBarrier start,
+            AtomicInteger done,
+            int iterations,
+            ConcurrentLinkedQueue<Throwable> exceptions,
+            Rnd rnd,
+            String tableName,
+            FilesFacade ff,
+            int maxPartitionCount,
+            int maxSymbolCount,
+            AtomicInteger partitionCountCheck,
+            int truncateIteration
     ) {
         ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
         return new Thread(() -> {
             try (
-                Path path = new Path();
-                TxWriter txWriter = new TxWriter(ff)
+                    Path path = new Path();
+                    TxWriter txWriter = new TxWriter(ff)
             ) {
                 path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path, PartitionBy.HOUR);

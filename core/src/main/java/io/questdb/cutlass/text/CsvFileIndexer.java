@@ -203,12 +203,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void index(
-        long chunkLo,
-        long chunkHi,
-        long lineNumber,
-        LongList partitionKeysAndSizes,
-        long fileBufAddr,
-        long fileBufSize
+            long chunkLo,
+            long chunkHi,
+            long lineNumber,
+            LongList partitionKeysAndSizes,
+            long fileBufAddr,
+            long fileBufSize
     ) {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
@@ -238,10 +238,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
             if (read < 0 || offset < chunkHi) {
                 throw TextException
-                    .$("could not read file [path='").put(path)
-                    .put("', offset=").put(offset)
-                    .put(", errno=").put(ff.errno())
-                    .put(']');
+                        .$("could not read file [path='").put(path)
+                        .put("', offset=").put(offset)
+                        .put(", errno=").put(ff.errno())
+                        .put(']');
             } else {
                 parseLast();
             }
@@ -255,11 +255,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         this.lineCount = this.lineNumber - lineNumber;
         LOG.info()
-            .$("finished chunk [chunkLo=").$(chunkLo)
-            .$(", chunkHi=").$(chunkHi)
-            .$(", lines=").$(lineCount)
-            .$(", errors=").$(errorCount)
-            .I$();
+                .$("finished chunk [chunkLo=").$(chunkLo)
+                .$(", chunkHi=").$(chunkHi)
+                .$(", lines=").$(lineCount)
+                .$(", errors=").$(errorCount)
+                .I$();
     }
 
     public void indexLine(long ptr, long lo) throws TextException {
@@ -272,7 +272,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long length = offset + ptr - lo - lastLineStart;
         if (length >= (1L << 16)) {
             LOG.error().$("row exceeds maximum line length (65k) for parallel import [line=").$(lineNumber)
-                .$(", length=").$(length).I$();
+                    .$(", length=").$(length).I$();
             errorCount++;
             return;
         }
@@ -307,16 +307,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void of(
-        CharSequence inputFileName,
-        CharSequence importRoot,
-        int index,
-        int partitionBy,
-        byte columnDelimiter,
-        int timestampIndex,
-        TimestampAdapter adapter,
-        boolean ignoreHeader,
-        int atomicity,
-        @Nullable ExecutionCircuitBreaker circuitBreaker
+            CharSequence inputFileName,
+            CharSequence importRoot,
+            int index,
+            int partitionBy,
+            byte columnDelimiter,
+            int timestampIndex,
+            TimestampAdapter adapter,
+            boolean ignoreHeader,
+            int atomicity,
+            @Nullable ExecutionCircuitBreaker circuitBreaker
     ) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
@@ -418,11 +418,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private boolean fitsInBuffer(int requiredLength) {
         if (requiredLength > fieldRollBufLen) {
             LOG.info()
-                .$("timestamp column value too long [path=").$(inputFileName)
-                .$(", line=").$(lineNumber)
-                .$(", requiredLen=").$(requiredLength)
-                .$(", rollLimit=").$(fieldRollBufLen)
-                .$(']').$();
+                    .$("timestamp column value too long [path=").$(inputFileName)
+                    .$(", line=").$(lineNumber)
+                    .$(", requiredLen=").$(requiredLength)
+                    .$(", rollLimit=").$(fieldRollBufLen)
+                    .$(']').$();
             errorCount++;
             rollBufferUnusable = true;
             return false;
@@ -640,8 +640,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long len = ff.length(fd);
         if (len == -1) {
             throw CairoException.critical(ff.errno()).put(
-                    "could not get length of file [path=").put(path)
-                .put(']');
+                            "could not get length of file [path=").put(path)
+                    .put(']');
         }
         ff.fadvise(fd, 0, len, Files.POSIX_FADV_SEQUENTIAL);
     }
