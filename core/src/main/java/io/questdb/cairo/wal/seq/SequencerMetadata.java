@@ -266,6 +266,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
+    void resumeTable() {
+        suspended = false;
+        syncToMetaFile();
+    }
+
     void syncToMetaFile() {
         metaMem.jumpTo(0);
         // Size of metadata

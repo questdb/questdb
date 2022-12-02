@@ -283,6 +283,16 @@ public class TableSequencerAPI implements QuietCloseable {
         closed = false;
     }
 
+    public void resumeTable(final CharSequence tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.resumeTable();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     @TestOnly
     public void setDistressed(String tableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {

@@ -264,6 +264,12 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
+    @Override
+    public void resumeTable() {
+        metadata.resumeTable();
+        engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, tableTransactionLog.lastTxn());
+    }
+
     @TestOnly
     public void setDistressed() {
         this.distressed = true;
