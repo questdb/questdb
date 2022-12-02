@@ -516,6 +516,11 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
                 } else if (SqlKeywords.isResumeKeyword(tok)) {
+                    tok = expectToken(lexer, "'wal'");
+                    if (!SqlKeywords.isWalKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
+                    }
+
                     tok = SqlUtil.fetchNext(lexer); // optional from part
                     long fromTxn = -1;
                     if (tok != null) {

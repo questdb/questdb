@@ -848,7 +848,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
-            compile("alter table " + tableName + " resume");
+            compile("alter table " + tableName + " resume wal");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
 
             drainWalQueue();
@@ -885,7 +885,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
-            compile("alter table " + tableName + " resume from 3");
+            compile("alter table " + tableName + " resume wal from 3");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
 
             drainWalQueue();
@@ -924,7 +924,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t1\t4\n");
 
-            compile("alter table " + tableName + " resume from 3");
+            compile("alter table " + tableName + " resume wal from 3");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
 
             drainWalQueue();
