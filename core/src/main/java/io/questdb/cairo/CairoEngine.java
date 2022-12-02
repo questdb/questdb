@@ -284,12 +284,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     path.of(configuration.getRoot()).concat(tableToken).$();
                     int errno;
                     if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                        LOG.error().$("drop failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
                         throw CairoException.critical(errno).put("could not remove table [name=").put(tableName)
                                 .put(", privateTableName=").put(tableToken.getPrivateTableName()).put(']');
                     }
                 } finally {
-                    unlock(securityContext, tableName, null, false);
+                    readerPool.unlock(tableToken);
+                    writerPool.unlock(tableToken, null, false);
+                    metadataPool.unlock(tableToken);
                 }
 
                 tableNameRegistry.removeTableName(tableName, tableToken);
