@@ -275,8 +275,9 @@ public class SendAndReceiveRequestBuilder {
                 }
             } else if (n < 0) {
                 LOG.error().$("server disconnected").$();
-                assert listener != null;
-                listener.onClosed();
+                if (listener != null) {
+                    listener.onClosed();
+                }
                 break;
             } else {
                 if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
@@ -302,7 +303,6 @@ public class SendAndReceiveRequestBuilder {
             LOG.error().$("timeout expired").$();
             Assert.fail();
         }
-
     }
 
     public void executeWithStandardHeaders(

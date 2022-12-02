@@ -37,10 +37,7 @@ import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
@@ -103,7 +100,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void execute(
             HttpConnectionContext context,
             TextQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
@@ -159,7 +156,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state, 200);
-                    resumeSend(context);
+                    doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
                     internalError(context.getChunkedResponseSocket(), e, state);
@@ -183,7 +180,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new TextQueryProcessorState(context));
@@ -210,6 +207,64 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     @Override
     public void resumeSend(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        try {
+            doResumeSend(context);
+        } catch (CairoError | CairoException e) {
+            // this is something we didn't expect
+            // log the exception and disconnect
+            TextQueryProcessorState state = LV.get(context);
+            if (state != null) {
+                logInternalError(e, state);
+            }
+            throw ServerDisconnectException.INSTANCE;
+        }
+    }
+
+    private static boolean isExpUrl(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == '/'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i) | 32) == 'p';
+    }
+
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
+        if (value == GeoHashes.NULL) {
+            socket.put("null");
+        } else {
+            int bitFlags = GeoHashes.getBitFlags(type);
+            socket.put('\"');
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
+            }
+            socket.put('\"');
+        }
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
+    private static void readyForNextRequest(HttpConnectionContext context) {
+        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
+    }
+
+    private LogRecord critical(TextQueryProcessorState state) {
+        return LOG.critical().$('[').$(state.getFd()).$("] ");
+    }
+
+    private void doResumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
@@ -326,48 +381,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
-    private static boolean isExpUrl(CharSequence tok) {
-        if (tok.length() != 4) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == '/'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i) | 32) == 'p';
-    }
-
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
-        if (value == GeoHashes.NULL) {
-            socket.put("null");
-        } else {
-            int bitFlags = GeoHashes.getBitFlags(type);
-            socket.put('\"');
-            if (bitFlags < 0) {
-                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
-            } else {
-                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
-            }
-            socket.put('\"');
-        }
-    }
-
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
-    private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
-    }
-
-    private LogRecord critical(TextQueryProcessorState state) {
-        return LOG.critical().$('[').$(state.getFd()).$("] ");
-    }
-
     private LogRecord info(TextQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -377,10 +390,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        logInternalError(e, state);
+        sendException(socket, 0, e.getMessage(), state);
+    }
+
+    private void logInternalError(Throwable e, TextQueryProcessorState state) {
         critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
         metrics.health().incrementUnhandledErrors();
-        sendException(socket, 0, e.getMessage(), state);
     }
 
     private boolean parseUrl(

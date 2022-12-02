@@ -5016,18 +5016,23 @@ nodejs code:
             ) {
                 workerPool.start(LOG);
                 try (Connection connection = getConnection(server.getPort(), true, false)) {
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    };
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
-                    String query = "select * from test_data_unavailable(1, 10)";
-                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
-                            "1,1,1\n";
-                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                        Assert.fail();
-                    } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                    try {
+                        String query = "select * from test_data_unavailable(1, 10)";
+                        String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                                "1,1,1\n";
+                        try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, resultSet);
+                            Assert.fail();
+                        } catch (SQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                        }
+                    } finally {
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
                     }
                 }
             }

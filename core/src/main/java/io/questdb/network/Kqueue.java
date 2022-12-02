@@ -95,6 +95,12 @@ public final class Kqueue implements Closeable {
         return kqf.kevent(kq, changeList, n, 0, 0);
     }
 
+    public void removeFD(int fd) {
+        commonFd(fd, 0);
+        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
+    }
+
     public int removeListen(int sfd) {
         writeAddress = changeList;
         commonFd(sfd, 0);

@@ -3082,6 +3082,14 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryDisconnectOnDataUnavailableEventNeverFired() throws Exception {
+        testDisconnectOnDataUnavailableEventNeverFired(
+                "GET /query?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
+                        + SendAndReceiveRequestBuilder.RequestHeaders
+        );
+    }
+
+    @Test
     public void testJsonQueryDropTable() throws Exception {
         testJsonQuery(
                 20,
@@ -5292,33 +5300,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withQueryTimeout(100)
-                .run((engine) -> {
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    };
-
-                    final String query = "select * from test_data_unavailable(1, 10)";
-                    new SendAndReceiveRequestBuilder()
-                            .withExpectDisconnect(true) // yes, we expect a disconnect in this scenario
-                            .execute(
-                                    "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
-                                    "HTTP/1.1 200 OK\r\n" +
-                                            "Server: questDB/1.0\r\n" +
-                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                            "Transfer-Encoding: chunked\r\n" +
-                                            "Content-Type: application/json; charset=utf-8\r\n" +
-                                            "Keep-Alive: timeout=5, max=10000\r\n"
-                            );
-                });
-    }
-
-    @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -6413,6 +6394,14 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
+        testDisconnectOnDataUnavailableEventNeverFired(
+                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
+                        + SendAndReceiveRequestBuilder.RequestHeaders
+        );
+    }
+
+    @Test
     public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -6471,34 +6460,6 @@ public class IODispatcherTest {
                                     "00\r\n" +
                                     "\r\n"
                     );
-                });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withQueryTimeout(100)
-                .run((engine) -> {
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    };
-
-                    final String query = "select * from test_data_unavailable(1, 10)";
-                    new SendAndReceiveRequestBuilder()
-                            .withExpectDisconnect(true) // yes, we expect a disconnect in this scenario
-                            .execute(
-                                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders,
-                                    "HTTP/1.1 200 OK\r\n" +
-                                            "Server: questDB/1.0\r\n" +
-                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                            "Transfer-Encoding: chunked\r\n" +
-                                            "Content-Type: text/csv; charset=utf-8\r\n" +
-                                            "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                            "Keep-Alive: timeout=5, max=10000\r\n"
-                            );
                 });
     }
 
@@ -7636,6 +7597,49 @@ public class IODispatcherTest {
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
                 expectedData);
+    }
+
+    private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run((engine) -> {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                    int fd = nf.socketTcp(true);
+                    try {
+                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+                        assert sockAddrInfo != -1;
+                        try {
+                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
+                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                            nf.configureNonBlocking(fd);
+
+                            long bufLen = request.length();
+                            long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                new SendAndReceiveRequestBuilder()
+                                        .withNetworkFacade(nf)
+                                        .withPauseBetweenSendAndReceive(0)
+                                        .withPrintOnly(false)
+                                        .executeUntilDisconnect(request, fd, 400, ptr, null);
+                            } finally {
+                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } finally {
+                            nf.freeAddrInfo(sockAddrInfo);
+                        }
+                    } finally {
+                        nf.close(fd);
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
+                    }
+                });
     }
 
     private void testHttpQueryGeoHashColumnChars(String request, String expectedResponse) throws Exception {

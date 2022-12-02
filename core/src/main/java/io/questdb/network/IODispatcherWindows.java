@@ -70,9 +70,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             useful = true;
 
             int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, context.getFd());
-            pending.set(r, M_OPERATION, operation);
+            pending.set(r, OPM_TIMESTAMP, timestamp);
+            pending.set(r, OPM_FD, context.getFd());
+            pending.set(r, OPM_OPERATION, operation);
             pending.set(r, context);
         }
         return useful;
@@ -103,7 +103,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
     @Override
     protected void pendingAdded(int index) {
-        pending.set(index, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
+        pending.set(index, OPM_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
     }
 
     @Override
@@ -160,8 +160,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 }
             }
 
-            final long ts = pending.get(i, M_TIMESTAMP);
-            final int fd = (int) pending.get(i, M_FD);
+            final long ts = pending.get(i, OPM_TIMESTAMP);
+            final int fd = (int) pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 
@@ -175,7 +175,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     continue;
                 }
 
-                if (pending.get(i++, M_OPERATION) == IOOperation.READ) {
+                if (pending.get(i++, OPM_OPERATION) == IOOperation.READ) {
                     readFdSet.add(fd);
                     readFdCount++;
                 } else {

@@ -26,6 +26,8 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -38,6 +40,7 @@ import java.io.IOException;
 import java.sql.*;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
@@ -977,14 +980,17 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup(true, 100)) {
-                TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                };
+                AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                 try {
                     test.statement.execute("select * from test_data_unavailable(1, 10); " +
                             "select * from test_data_unavailable(1, 10);");
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                } finally {
+                    // Make sure to close the event on the producer side.
+                    Misc.free(eventRef.get());
                 }
             }
         });

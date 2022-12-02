@@ -267,7 +267,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             } else {
                 state.setPausedQuery(false);
             }
-            doResumeSend(state, context, sqlExecutionContext);
+            try {
+                doResumeSend(state, context, sqlExecutionContext);
+            } catch (CairoError | CairoException e) {
+                // this is something we didn't expect
+                // log the exception and disconnect
+                logInternalError(e, state, context.getMetrics());
+                throw ServerDisconnectException.INSTANCE;
+            }
         }
     }
 
@@ -283,7 +290,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             HttpConnectionContext context,
             SqlExecutionContext sqlExecutionContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         if (state.noCursor()) {
             return;
         }
@@ -309,11 +316,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     state.logBufferTooSmall();
                     throw PeerDisconnectedException.INSTANCE;
                 }
-            } catch (CairoError | CairoException e) {
-                // this is something we didn't expect
-                // log the exception and disconnect
-                logInternalError(e, state, context.getMetrics());
-                throw ServerDisconnectException.INSTANCE;
             }
         }
         // reached the end naturally?
@@ -445,7 +447,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, keepAliveHeader);
@@ -455,7 +457,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         if (factory == null) {
             // COPY 'id' CANCEL; case
@@ -488,7 +490,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         executeSelect(
@@ -502,7 +504,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {

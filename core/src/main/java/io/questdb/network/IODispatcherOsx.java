@@ -24,9 +24,13 @@
 
 package io.questdb.network;
 
-public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
+import io.questdb.std.LongMatrix;
 
-    private static final int M_ID = 3;
+public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
+    private static final int EDM_DEADLINE = 1;
+    private static final int EDM_ID = 0;
+    private static final int OPM_ID = 3;
+    protected final LongMatrix eventDeadlines = new LongMatrix(2);
     private final int capacity;
     private final Kqueue kqueue;
     private long fdid = 1;
@@ -55,18 +59,18 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
             kqueue.setWriteOffset(offset);
 
-            final int fd = (int) pending.get(i, M_FD);
-            int operation = (int) pending.get(i, M_OPERATION);
+            final int fd = (int) pending.get(i, OPM_FD);
+            int operation = (int) pending.get(i, OPM_OPERATION);
             if (operation < 0) {
                 // This is a new connection.
                 operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             }
 
             if (operation == IOOperation.READ) {
-                kqueue.readFD(fd, pending.get(i, M_ID));
+                kqueue.readFD(fd, pending.get(i, OPM_ID));
                 LOG.debug().$("kq [op=1, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             } else {
-                kqueue.writeFD(fd, pending.get(i, M_ID));
+                kqueue.writeFD(fd, pending.get(i, OPM_ID));
                 LOG.debug().$("kq [op=2, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             }
             if (++index > capacity - 1) {
@@ -80,13 +84,37 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
     }
 
-    private int findPending(long ts) {
-        return pending.binarySearch(ts, M_ID);
+    private int processExpiredDeadlines(long timestamp) {
+        int deletedPending = 0;
+        int count = 0;
+        for (int i = 0, n = eventDeadlines.size(); i < n && eventDeadlines.get(i, EDM_DEADLINE) < timestamp; i++, count++) {
+            final long id = eventDeadlines.get(i, EDM_ID);
+            int pendingRow = pending.binarySearch(id, OPM_ID);
+            if (pendingRow < 0) {
+                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(id).$(']').$();
+                continue;
+            }
+            // First, remove event from kqueue tracking.
+            final C context = pending.get(pendingRow);
+            final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            assert suspendEvent != null;
+            kqueue.removeFD(suspendEvent.getFd());
+            pending.deleteRow(pendingRow);
+            deletedPending++;
+            // Next, add the original operation as pending to be resumed later.
+            resumeOperation(timestamp, context, operation);
+        }
+        if (deletedPending > 0) {
+            registerWithKQueue(deletedPending);
+        }
+        eventDeadlines.zapTop(count);
+        return deletedPending;
     }
 
     private void processIdleConnections(long deadline) {
         int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < deadline; i++, count++) {
             doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
@@ -107,14 +135,25 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             long id = fdid++;
             int fd = context.getFd();
             int operation = requestedOperation;
-            LOG.debug().$("processing registration [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
+            LOG.debug().$("processing registration [fd=").$(fd)
+                    .$(", op=").$(operation)
+                    .$(", id=").$(id).I$();
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
                 // Looks like we need to suspend the original operation.
                 fd = suspendEvent.getFd();
                 operation = IOOperation.READ;
-                LOG.debug().$("registering suspend event [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
+                // Start tracking event deadline if it's set.
+                if (suspendEvent.getDeadline() > 0) {
+                    int r = eventDeadlines.addRow();
+                    eventDeadlines.set(r, EDM_ID, id);
+                    eventDeadlines.set(r, EDM_DEADLINE, suspendEvent.getDeadline());
+                }
+                LOG.debug().$("registering suspend event [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(id)
+                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
             }
 
             kqueue.setWriteOffset(offset);
@@ -128,10 +167,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             count++;
 
             int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, fd);
-            pending.set(r, M_ID, id);
-            pending.set(r, M_OPERATION, requestedOperation);
+            pending.set(r, OPM_TIMESTAMP, timestamp);
+            pending.set(r, OPM_FD, fd);
+            pending.set(r, OPM_ID, id);
+            pending.set(r, OPM_OPERATION, requestedOperation);
             pending.set(r, context);
 
             if (count > capacity - 1) {
@@ -155,9 +194,20 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
     }
 
+    private void resumeOperation(long timestamp, C context, int operation) {
+        // To resume an operation, we add it as a new pending operation above the watermark.
+        int newRow = pending.addRow();
+        pending.set(newRow, OPM_TIMESTAMP, timestamp);
+        pending.set(newRow, OPM_FD, context.getFd());
+        pending.set(newRow, OPM_OPERATION, operation);
+        pending.set(newRow, context);
+        pendingAdded(newRow);
+        context.clearSuspendEvent();
+    }
+
     @Override
     protected void pendingAdded(int index) {
-        pending.set(index, M_ID, fdid++);
+        pending.set(index, OPM_ID, fdid++);
     }
 
     @Override
@@ -190,27 +240,29 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     // find row in pending for two reasons:
                     // 1. find payload
                     // 2. remove row from pending, remaining rows will be timed out
-                    int row = findPending(kqueue.getData());
+                    final long id = kqueue.getData();
+                    int row = pending.binarySearch(id, OPM_ID);
                     if (row < 0) {
-                        findPending(kqueue.getData());
-                        LOG.error().$("Internal error: unknown FD: ").$(fd).$();
+                        LOG.error().$("internal error: kqueue returned unexpected id [id=").$(id).$(']').$();
                         continue;
                     }
 
                     C context = pending.get(row);
                     useful |= !context.isLowPriority();
-                    final int operation = (int) pending.get(row, M_OPERATION);
+                    final int operation = (int) pending.get(row, OPM_OPERATION);
                     final SuspendEvent suspendEvent = context.getSuspendEvent();
                     if (suspendEvent != null) {
                         // The original operation was suspended, so let's resume it.
-                        // To do that, we add a new pending operation above the watermark.
-                        int newRow = pending.addRow();
-                        pending.set(newRow, M_TIMESTAMP, timestamp);
-                        pending.set(newRow, M_FD, context.getFd());
-                        pending.set(newRow, M_OPERATION, operation);
-                        pending.set(newRow, context);
-                        pendingAdded(newRow);
-                        context.clearSuspendEvent();
+                        resumeOperation(timestamp, context, operation);
+                        // Stop tracking the deadline.
+                        if (suspendEvent.getDeadline() > 0) {
+                            int deadlineRow = eventDeadlines.binarySearch(id, EDM_ID);
+                            if (deadlineRow < 0) {
+                                LOG.error().$("internal error: event deadline not found [id=").$(id).$(']').$();
+                            } else {
+                                eventDeadlines.deleteRow(deadlineRow);
+                            }
+                        }
                     } else {
                         publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE, context);
                     }
@@ -218,16 +270,21 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     watermark--;
                 }
             }
+        }
 
-            // process rows over watermark
-            if (watermark < pending.size()) {
-                enqueuePending(watermark);
-            }
+        // process timed out suspend events and resume original operations
+        if (eventDeadlines.size() > 0 && eventDeadlines.get(0, EDM_DEADLINE) < timestamp) {
+            watermark -= processExpiredDeadlines(timestamp);
+        }
+
+        // process rows over watermark
+        if (watermark < pending.size()) {
+            enqueuePending(watermark);
         }
 
         // process timed out connections
         final long deadline = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
+        if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < deadline) {
             processIdleConnections(deadline);
             useful = true;
         }
