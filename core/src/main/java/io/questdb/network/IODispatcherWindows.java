@@ -156,6 +156,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     context.clearSuspendEvent();
                 } else {
                     // the event is still pending, skip to the next operation
+                    i++;
                     continue;
                 }
             }
