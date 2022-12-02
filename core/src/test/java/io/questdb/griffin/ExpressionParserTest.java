@@ -55,13 +55,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testAllNotEqual() throws SqlException {
-        x("ab<>all", "a <> all(b)");
-        x("ab<>all", "a != all(b)");
+        x("a b <>all", "a <> all(b)");
+        x("a b <>all", "a != all(b)");
     }
 
     @Test
     public void testArrayDereferenceExpr() throws SqlException {
-        x("ai10+[]", "a[i+10]");
+        x("a i 10 + []", "a[i+10]");
     }
 
     @Test
@@ -103,7 +103,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testArrayDereferencePriority() throws SqlException {
         x(
-                "nspname'pg_toast'<>nspname'^pg_temp_'!~nspnametruepg_catalog.current_schemas1[]=orand",
+                "nspname 'pg_toast' <> nspname '^pg_temp_' !~ nspname true pg_catalog.current_schemas 1 [] = or and",
                 "nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_'  OR nspname = (pg_catalog.current_schemas(true))[1])"
         );
     }
@@ -119,7 +119,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testBinaryMinus() throws Exception {
-        x("4c-", "4-c");
+        x("4 c -", "4-c");
     }
 
     @Test
@@ -135,7 +135,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCaseAsArrayIndex() throws SqlException {
         x(
-                "ab134case[]",
+                "a b 1 3 4 case []",
                 "a[case b when 1 then 3 else 4 end]"
         );
     }
@@ -143,7 +143,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCaseAsArrayIndexAnotherArray() throws SqlException {
         x(
-                "ab1b3[]4case[]",
+                "a b 1 b 3 [] 4 case []",
                 "a[case b when 1 then b[3] else 4 end]"
         );
     }
@@ -195,7 +195,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseInArithmetic() throws SqlException {
-        x("w11+10='th1'w23*1>'th2'0case5*1+",
+        x(" w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case 5 * 1 +",
                 "case" +
                         " when w1+1=10" +
                         " then 'th1'" +
@@ -208,19 +208,19 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCaseInFunction() throws SqlException {
         x(
-                "xyab+10>'a'ab-3<'b'0case10+zf*",
+                "x y  a b + 10 > 'a' a b - 3 < 'b' 0 case 10 + z f *",
                 "x*f(y,case when (a+b) > 10 then 'a' when (a-b)<3 then 'b' else 0 end + 10,z)"
         );
     }
 
     @Test
     public void testCaseLikeSwitch() throws SqlException {
-        x("x1'a'2'b'case", "case x when 1 then 'a' when 2 then 'b' end");
+        x("x 1 'a' 2 'b' case", "case x when 1 then 'a' when 2 then 'b' end");
     }
 
     @Test
     public void testCaseLowercase() throws SqlException {
-        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+        x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(CASE" +
                         " WHEN (w1+1)*5=10" +
                         " THEN 'th1'-1" +
@@ -286,7 +286,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseNested() throws SqlException {
-        x("x0>y1='a''b'casex0<'c'case",
+        x(" x 0 >  y 1 = 'a' 'b' case x 0 < 'c' case",
                 "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
     }
 
@@ -301,14 +301,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWhenOutsideOfCase() throws SqlException {
-        x("when1+10>",
+        x("when 1 + 10 >",
                 "when + 1 > 10"
         );
     }
 
     @Test
     public void testCaseWithArithmetic() throws SqlException {
-        x("w11+10='th1'w23*1>'th2'0case",
+        x(" w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case",
                 "case" +
                         " when w1+1=10" +
                         " then 'th1'" +
@@ -320,7 +320,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithBraces() throws SqlException {
-        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+        x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(case" +
                         " when (w1+1)*5=10" +
                         " then 'th1'-1" +
@@ -332,7 +332,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithCast() throws SqlException {
-        x("1intcast1'th1'2'th2'0case5*1+",
+        x("1 int cast  1 'th1' 2 'th2' 0 case 5 * 1 +",
                 "case (cast(1 as int))" +
                         " when 1" +
                         " then 'th1'" +
@@ -353,7 +353,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithOuterBraces() throws SqlException {
-        x("10w11+10='th1'w23*1>'th2'0case1+*",
+        x("10  w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(case" +
                         " when w1+1=10" +
                         " then 'th1'" +
@@ -365,22 +365,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastFunctionCall() throws SqlException {
-        x("1102030f+shortcast", "cast(1+f(10,20,30) as short)");
+        x("1 10 20 30 f + short cast", "cast(1+f(10,20,30) as short)");
     }
 
     @Test
     public void testCastFunctionCallMultiSpace() throws SqlException {
-        x("1102030f+shortcast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short\n)");
+        x("1 10 20 30 f + short cast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short\n)");
     }
 
     @Test
     public void testCastFunctionWithLambda() throws SqlException {
-        x("(select-choose a, b, c from (x))flongcast", "cast(f(select a,b,c from x) as long)");
+        x(" (select-choose a, b, c from (x)) f long cast", "cast(f(select a,b,c from x) as long)");
     }
 
     @Test
     public void testCastFunctionWithLambdaMultiSpaceNewlineAndComment() throws SqlException {
-        x("(select-choose a, b, c from (x))flongcast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long\n)");
+        x(" (select-choose a, b, c from (x)) f long cast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long\n)");
     }
 
     @Test
@@ -413,32 +413,32 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
-        x("'sp052w92'geohash60bcast", "cast('sp052w92' as geohash(60b))");
+        x("'sp052w92' geohash60b cast", "cast('sp052w92' as geohash(60b))");
     }
 
     @Test
     public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
-        x("'sp052w92'geohash6ccast", "cast('sp052w92' as geohash(6c))");
+        x("'sp052w92' geohash6c cast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
     public void testCastLambda() throws SqlException {
-        x("(select-choose a, b, c from (x))1+longcast", "cast((select a,b,c from x)+1 as long)");
+        x(" (select-choose a, b, c from (x)) 1 + long cast", "cast((select a,b,c from x)+1 as long)");
     }
 
     @Test
     public void testCastLambda2() throws SqlException {
-        x("(select-choose a, b, c from (x))longcast", "cast((select a,b,c from x) as long)");
+        x(" (select-choose a, b, c from (x)) long cast", "cast((select a,b,c from x) as long)");
     }
 
     @Test
     public void testCastLambdaWithAs() throws SqlException {
-        x("(select-choose x y from (tab))funshortcast", "cast(fun(select x as y from tab order by x) as short)");
+        x(" (select-choose x y from (tab)) fun short cast", "cast(fun(select x as y from tab order by x) as short)");
     }
 
     @Test
     public void testCastLowercase() throws SqlException {
-        x("10shortcast", "CAST(10 AS short)");
+        x("10 short cast", "CAST(10 AS short)");
     }
 
     @Test
@@ -474,7 +474,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastNested() throws SqlException {
-        x("1longcastshortcast", "cast(cast(1 as long) as short)");
+        x("1 long cast short cast", "cast(cast(1 as long) as short)");
     }
 
     @Test
@@ -507,7 +507,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastSimple() throws SqlException {
-        x("10shortcast", "cast(10 as short)");
+        x("10 short cast", "cast(10 as short)");
     }
 
     @Test
@@ -530,22 +530,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCommaExit() throws Exception {
-        x("abxybzc*+", "a + b * c(b(x,y),z),");
+        x("a b x y b z c * +", "a + b * c(b(x,y),z),");
     }
 
     @Test
     public void testComplexUnary1() throws Exception {
-        x("4xyc-^", "4^-c(x,y)");
+        x("4 x y c - ^", "4^-c(x,y)");
     }
 
     @Test
     public void testComplexUnary2() throws Exception {
-        x("a-b^", "-a^b");
+        x("a - b ^", "-a^b");
     }
 
     @Test
     public void testCountStar() throws SqlException {
-        x("*count", "count(*)");
+        x("* count", "count(*)");
     }
 
     @Test
@@ -569,17 +569,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDotDereference() throws SqlException {
-        x("a.bn.", "(a.b).n");
+        x("a.b n .", "(a.b).n");
     }
 
     @Test
     public void testDotDereferenceExpression() throws SqlException {
-        x("ua.zc.=", "u = (a.z).c");
+        x("u a.z c . =", "u = (a.z).c");
     }
 
     @Test
     public void testDotDereferenceFunction() throws SqlException {
-        x("a.b123f.", "(a.b).f(1,2,3)");
+        x("a.b 1 2 3 f .", "(a.b).f(1,2,3)");
     }
 
     @Test
@@ -662,7 +662,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDotSpaceStarExpression() throws SqlException {
-        x("a.3*", "a. * 3");
+        x("a. 3 *", "a. * 3");
     }
 
     @Test
@@ -672,7 +672,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleArrayDereference() throws SqlException {
-        x("faj[][]", "f()[a[j]]");
+        x("f a j [] []", "f()[a[j]]");
     }
 
     @Test
@@ -686,7 +686,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualPrecedence() throws Exception {
-        x("abc^^", "a^b^c");
+        x("a b c ^ ^", "a^b^c");
     }
 
     @Test
@@ -699,7 +699,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testExprCompiler() throws Exception {
-        x("ac098dzf+1234x+", "a+f(c,d(0,9,8),z)+x(1,2,3,4)");
+        x("a c 0 9 8 d z f + 1 2 3 4 x +", "a+f(c,d(0,9,8),z)+x(1,2,3,4)");
     }
 
     @Test
@@ -754,16 +754,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x(".234E+10", ".234E+10");
         x(".234e10", ".234e10");
         x(".234E10", ".234E10");
-        x("i.1e-3<90100case", "case when i < .1e-3 then 90 else 100 end");
-        x("i.1e+3<90100case", "case when i < .1e+3 then 90 else 100 end");
-        x("i0.1e-3<90100case", "case when i < 0.1e-3 then 90 else 100 end");
-        x("i0.1e+3<90100case", "case when i < 0.1e+3 then 90 else 100 end");
-
+        x(" i .1e-3 < 90 100 case", "case when i < .1e-3 then 90 else 100 end");
+        x(" i .1e+3 < 90 100 case", "case when i < .1e+3 then 90 else 100 end");
+        x(" i 0.1e-3 < 90 100 case", "case when i < 0.1e-3 then 90 else 100 end");
+        x(" i 0.1e+3 < 90 100 case", "case when i < 0.1e+3 then 90 else 100 end");
     }
 
     @Test
     public void testFloatQualifier() throws SqlException {
-        x("'NaN'float::", "'NaN'::float");
+        x("'NaN' float ::", "'NaN'::float");
     }
 
     @Test
@@ -778,22 +777,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionArrayArg() throws SqlException {
-        x("abi[]ci[]funcj[]", "func(a,b[i],c[i])[j]");
+        x("a b i [] c i [] func j []", "func(a,b[i],c[i])[j]");
     }
 
     @Test
     public void testFunctionArrayDereference() throws SqlException {
-        x("funci[]", "func()[i]");
+        x("func i []", "func()[i]");
     }
 
     @Test
     public void testFunctionCallOnFloatingPointValues() throws SqlException {
-        x("1.2.0921990.f", "f(1.2,.092,1990.)");
+        x("1.2 .092 1990. f", "f(1.2,.092,1990.)");
     }
 
     @Test
     public void testFunctionCallOnFloatingPointValues2() throws SqlException {
-        x(".25.0921990.f", "f(.25,.092,1990.)");
+        x(".25 .092 1990. f", "f(.25,.092,1990.)");
     }
 
     @Test
@@ -803,7 +802,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionWithArgsArrayDereference() throws SqlException {
-        x("1abfunci[]", "func(1,a,b)[i]");
+        x("1 a b func i []", "func(1,a,b)[i]");
     }
 
     @Test
@@ -871,12 +870,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testIn() throws Exception {
-        x("abcin", "a in (b,c)");
+        x("a b c in", "a in (b,c)");
     }
 
     @Test
     public void testInOperator() throws Exception {
-        x("a10=bxyinand", "a = 10 and b in (x,y)");
+        x("a 10 = b x y in and", "a = 10 and b in (x,y)");
     }
 
     @Test
@@ -907,13 +906,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testIsNotNull() throws SqlException {
-        x("aNULL!=", "a IS NOT NULL");
-        x("tab.aNULL!=", "tab.a IS NOT NULL");
-        x("3NULL!=", "3 IS NOT NULL");
-        x("nullNULL!=", "null IS NOT NULL");
-        x("NULLNULL!=", "NULL IS NOT NULL");
-        x("'null'NULL!=", "'null' IS NOT NULL");
-        x("''null||NULL!=", "('' || null) IS NOT NULL");
+        x("a NULL !=", "a IS NOT NULL");
+        x("tab.a NULL !=", "tab.a IS NOT NULL");
+        x("3 NULL !=", "3 IS NOT NULL");
+        x("null NULL !=", "null IS NOT NULL");
+        x("NULL NULL !=", "NULL IS NOT NULL");
+        x("'null' NULL !=", "'null' IS NOT NULL");
+        x("'' null || NULL !=", "('' || null) IS NOT NULL");
         assertFail("column is not 3", 7, "IS NOT must be followed by NULL");
         assertFail(". is not great", 2, "IS [NOT] not allowed here");
         assertFail("column is not $1", 7, "IS NOT must be followed by NULL");
@@ -922,13 +921,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testIsNull() throws SqlException {
-        x("aNULL=", "a IS NULL");
-        x("tab.aNULL=", "tab.a IS NULL");
-        x("3NULL=", "3 IS NULL");
-        x("nullNULL=", "null IS NULL");
-        x("NULLNULL=", "NULL IS NULL");
-        x("'null'NULL=", "'null' IS NULL");
-        x("''null|NULL=", "('' | null) IS NULL");
+        x("a NULL =", "a IS NULL");
+        x("tab.a NULL =", "tab.a IS NULL");
+        x("3 NULL =", "3 IS NULL");
+        x("null NULL =", "null IS NULL");
+        x("NULL NULL =", "NULL IS NULL");
+        x("'null' NULL =", "'null' IS NULL");
+        x("'' null | NULL =", "('' | null) IS NULL");
         assertFail("column is 3", 7, "IS must be followed by NULL");
         assertFail(". is great", 2, "IS [NOT] not allowed here");
         assertFail("column is $1", 7, "IS must be followed by NULL");
@@ -937,22 +936,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambda() throws Exception {
-        x("ablah blahinyand", "a in (`blah blah`) and y");
+        x("a blah blah in y and", "a in (`blah blah`) and y");
     }
 
     @Test
     public void testLambdaInOperator() throws SqlException {
-        x("1(select-choose a, b, c from (x))+", "1 + (select a,b,c from x)");
+        x("1  (select-choose a, b, c from (x)) +", "1 + (select a,b,c from x)");
     }
 
     @Test
     public void testLambdaInOperator2() throws SqlException {
-        x("1(select-choose a, b, c from (x))+", "1 + select a,b,c from x");
+        x("1  (select-choose a, b, c from (x)) +", "1 + select a,b,c from x");
     }
 
     @Test
     public void testLambdaInOperator3() throws SqlException {
-        x("(select-choose a, b, c from (x))1+", "(select a,b,c from x) + 1");
+        x(" (select-choose a, b, c from (x)) 1 +", "(select a,b,c from x) + 1");
     }
 
     @Test
@@ -966,7 +965,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaMiddleParameterBraced() throws SqlException {
-        x("12(select-choose a, b, c, d from (z))4f", "f(1,2,(select a,b,c,d from z), 4)");
+        x("1 2  (select-choose a, b, c, d from (z)) 4 f", "f(1,2,(select a,b,c,d from z), 4)");
     }
 
     @Test
@@ -988,7 +987,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testLiteralExit() throws Exception {
-        x("abxybzc*+", "a + b * c(b(x,y),z) lit");
+        x("a b x y b z c * +", "a + b * c(b(x,y),z) lit");
     }
 
     @Test
@@ -1018,27 +1017,27 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNestedFunctions() throws Exception {
-        x("48yfrz", "z(4, r(f(8,y)))");
+        x("4 8 y f r z", "z(4, r(f(8,y)))");
     }
 
     @Test
     public void testNestedOperator() throws Exception {
-        x("ac4*db+", "a + b( c * 4, d)");
+        x("a c 4 * d b +", "a + b( c * 4, d)");
     }
 
     @Test
     public void testNewLambda() throws SqlException {
-        x("x(select-choose a from (tab))in", "x in (select a from tab)");
+        x("x  (select-choose a from (tab)) in", "x in (select a from tab)");
     }
 
     @Test
     public void testNewLambdaMultipleExpressions() throws SqlException {
-        x("x(select-choose a from (tab))iny(select-choose * from (X))inandk10>and", "x in (select a from tab) and y in (select * from X) and k > 10");
+        x("x  (select-choose a from (tab)) in y  (select-choose * from (X)) in and k 10 > and", "x in (select a from tab) and y in (select * from X) and k > 10");
     }
 
     @Test
     public void testNewLambdaNested() throws SqlException {
-        x("x(select-choose a, b from (T where c in (select-choose * from (Y)) and a = b))in", "x in (select a,b from T where c in (select * from Y) and a=b)");
+        x("x  (select-choose a, b from (T where c in (select-choose * from (Y)) and a = b)) in", "x in (select a,b from T where c in (select * from Y) and a=b)");
     }
 
     @Test
@@ -1053,7 +1052,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNoArgFunction() throws Exception {
-        x("ab4*+", "a+b()*4");
+        x("a b 4 * +", "a+b()*4");
     }
 
     @Test
@@ -1067,12 +1066,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNotIn() throws Exception {
-        x("x'a''b'innot", "x not in ('a','b')");
+        x("x 'a' 'b' in not", "x not in ('a','b')");
     }
 
     @Test
     public void testNotInReverseContext() throws Exception {
-        x("ax'a''b'innotand", "a and not x in ('a','b')");
+        x("a x 'a' 'b' in not and", "a and not x in ('a','b')");
     }
 
     @Test
@@ -1095,22 +1094,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testPGOperator() throws SqlException {
-        x("c.relnameE'^(movies\\\\.csv)$'~", "c.relname ~ E'^(movies\\\\.csv)$'");
+        x("c.relname E'^(movies\\\\.csv)$' ~", "c.relname ~ E'^(movies\\\\.csv)$'");
     }
 
     @Test
     public void testSimple() throws Exception {
-        x("abxyc*2/+", "a + b * c(x,y)/2");
+        x("a b x y c * 2 / +", "a + b * c(x,y)/2");
     }
 
     @Test
     public void testSimpleArrayDereference() throws SqlException {
-        x("ai[]", "a[i]");
+        x("a i []", "a[i]");
     }
 
     @Test
     public void testSimpleCase() throws SqlException {
-        x("w1th1w2th2elscase", "case when w1 then th1 when w2 then th2 else els end");
+        x(" w1 th1 w2 th2 els case", "case when w1 then th1 when w2 then th2 else els end");
     }
 
     @Test
@@ -1120,12 +1119,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testStringConcat() throws SqlException {
-        x("a'b'||c||d||", "a||'b'||c||d");
+        x("a 'b' || c || d ||", "a||'b'||c||d");
     }
 
     @Test
     public void testTextArrayQualifier() throws SqlException {
-        x("'{hello}'text[]::", "'{hello}'::text[]");
+        x("'{hello}' text[] ::", "'{hello}'::text[]");
     }
 
     @Test
@@ -1138,12 +1137,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testTypeQualifier() throws SqlException {
-        x("'hello'something::", "'hello'::something");
+        x("'hello' something ::", "'hello'::something");
     }
 
     @Test
     public void testUnary() throws Exception {
-        x("4c-*", "4 * -c");
+        x("4 c - *", "4 * -c");
     }
 
     @Test
@@ -1153,7 +1152,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testUnbalancedRightBraceExit() throws Exception {
-        x("a5xycb+", "a+b(5,c(x,y)))");
+        x("a 5 x y c b +", "a+b(5,c(x,y)))");
     }
 
     @Test
