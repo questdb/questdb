@@ -88,9 +88,9 @@ public class SCSequence extends AbstractSSequence {
         return next0(next + 1);
     }
 
-    @Override
     // The method is final is because we call it from
     // the constructor.
+    @Override
     public final void setCurrent(long value) {
         this.value = value;
     }

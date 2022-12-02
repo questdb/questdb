@@ -37,10 +37,10 @@ public class WalUtils {
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_SUSPENDED = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
-    public static final int WAL_FORMAT_VERSION = 0;
     public static final int WALE_HEADER_SIZE = Long.BYTES + Integer.BYTES;
     public static final long WALE_SIZE_OFFSET = 0L;
     public static final int WAL_FORMAT_OFFSET = Long.BYTES;
+    public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
 

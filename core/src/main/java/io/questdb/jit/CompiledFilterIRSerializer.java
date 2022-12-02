@@ -76,7 +76,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int NEG = 4;   // -a
     static final int NOT = 5;   // !a
     static final int OR = 7;   // a || b
-    static final int REM = 18;  // a % b
     // Opcodes:
     // Return code. Breaks the loop
     static final int RET = 0; // ret
@@ -90,11 +89,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PredicateContext predicateContext = new PredicateContext();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
-    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
+    private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
     private MemoryCARW memory;
-    private SqlExecutionContext executionContext;
+    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
 
@@ -805,10 +804,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             putOperator(DIV);
             return;
         }
-//        if (Chars.equals(token, "%")) {
-//            putOperator(REM);
-//            return;
-//        }
         throw SqlException.position(position).put("invalid operator: ").put(token);
     }
 

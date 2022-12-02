@@ -50,6 +50,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final LineTcpReceiverConfiguration configuration;
@@ -69,8 +70,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
-
-    private final ObjList<TableUpdateDetails>[] assignedTables;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -110,6 +109,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
+        //noinspection unchecked
         assignedTables = new ObjList[nWriterThreads];
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);
@@ -123,7 +123,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lineConfiguration.getTimestampAdapter(),
                             defaultColumnTypes,
                             lineConfiguration.isStringToCharCastAllowed(),
-                            lineConfiguration.isSymbolAsFieldSupported(),
                             lineConfiguration.getMaxFileNameLength(),
                             lineConfiguration.getAutoCreateNewColumns(),
                             engine.getConfiguration().getDefaultSymbolCapacity(),

@@ -29,6 +29,7 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -50,6 +51,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final FilesFacade ff;
     private final MillisecondClock milliseconClock;
     private final Path path = new Path();
+    private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final NativeLPSZ segmentName = new NativeLPSZ();
     private final long spinLockTimeout;
     private final NativeLPSZ tableName = new NativeLPSZ();
@@ -75,6 +77,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         this.txReader = new TxReader(ff);
 
         // some code here assumes that WAL_NAME_BASE is "wal", this is to fail the tests if it is not
+        //noinspection ConstantConditions
         assert WalUtils.WAL_NAME_BASE.equals("wal");
     }
 
@@ -95,6 +98,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
+    }
+
+    public SimpleWaitingLock getRunLock() {
+        return runLock;
     }
 
     /**
@@ -408,7 +415,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
-            broadSweep();
+            if (runLock.tryLock()) {
+                try {
+                    broadSweep();
+                } finally {
+                    runLock.unlock();
+                }
+            } else {
+                LOG.info().$("skipping, locked out").$();
+            }
         }
         return false;
     }
@@ -417,8 +432,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * Table of columns grouping segment information. One row per walId.
      */
     private static class WalInfoDataFrame {
-        public IntList segmentIds = new IntList();
-        public IntList walIds = new IntList();
+        public final IntList segmentIds = new IntList();
+        public final IntList walIds = new IntList();
 
         public void add(int walId, int segmentId) {
             walIds.add(walId);

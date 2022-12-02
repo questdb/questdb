@@ -74,6 +74,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private static final int ERROR_TRANSACTION = 3;
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_SSL_REQUEST = 80877103;
+    private static final int INIT_GSS_REQUEST = 80877104;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
@@ -163,6 +164,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -171,7 +173,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -1173,8 +1174,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             BadProtocolException,
             PeerDisconnectedException,
             PeerIsSlowToReadException,
-            AuthenticationException,
-            SqlException {
+            AuthenticationException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1664,9 +1664,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void prepareForNewQuery() {
         prepareForNewBatchQuery();
-        if (completed) {
-            characterStore.clear();
-        }
+        characterStore.clear();
     }
 
     private void prepareLoginOk() {
@@ -1758,6 +1756,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void prepareSslResponse() {
+        responseAsciiSink.put('N');
+    }
+
+    private void prepareGssResponse() {
         responseAsciiSink.put('N');
     }
 
@@ -2090,6 +2092,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case INIT_SSL_REQUEST:
                 // SSLRequest
                 prepareSslResponse();
+                sendAndReset();
+                return;
+            case INIT_GSS_REQUEST:
+                // GSSENCRequest
+                prepareGssResponse();
                 sendAndReset();
                 return;
             case INIT_STARTUP_MESSAGE:

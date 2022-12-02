@@ -50,7 +50,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PGUpdateConcurrentTest extends BasePGTest {
-    private final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() {
@@ -264,7 +264,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         int recordIndex = 0;
         while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final StringSink readerSink = this.readerSink.get();
+                final StringSink readerSink = PGUpdateConcurrentTest.readerSink.get();
                 readerSink.clear();
                 TestUtils.printColumn(record, metadata, i, readerSink);
                 CharSequence[] expectedValueArray = expectedValues.get(i);

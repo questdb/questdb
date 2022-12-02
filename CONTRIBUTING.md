@@ -107,6 +107,22 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 
 The web console will be available at [localhost:9000](http://localhost:9000).
 
+### Code formatting
+
+Code is formatted using configuration files in `.idea` directory .
+To minimize conflicts when merging and problems in CI all contributed code should be formatted
+before submitting PR.
+
+In IntelliJ IDEA you can : 
+- automate formatting (preferrable):
+  - open File | Settings
+  - choose Tools | Actions On Save 
+  - select  Reformat & Rearrange Code
+  - click Apply
+
+  or
+- format files manually by selecting them and choosing Code | Reformat File .
+
 ### Compiling C-libraries
 
 C-libraries will have to be compiled for each platform separately. Cmake will

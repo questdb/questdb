@@ -31,7 +31,7 @@ public class Long128Constant extends Long128Function implements ConstantFunction
 
     public static final long NULL_HI = Long.MIN_VALUE;
     public static final long NULL_LO = Long.MIN_VALUE;
-    public static Long128Constant NULL = new Long128Constant(NULL_HI, NULL_LO);
+    public static final Long128Constant NULL = new Long128Constant(NULL_HI, NULL_LO);
 
     private final long hi;
     private final long lo;

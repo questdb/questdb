@@ -146,10 +146,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         this.sqlExecutionContext = null;
     }
 
-    public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name) throws SqlException {
+    public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
         this.sqlExecutionContext = sqlExecutionContext;
         if (name != null) {
             if (name.length() > 0) {
+                if (expressionType != ExpressionNode.BIND_VARIABLE) {
+                    return new StrConstant(name);
+                }
                 switch (name.charAt(0)) {
                     case ':':
                         return createNamedParameter(position, name);
@@ -177,7 +180,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return cast;
     }
 
-    public boolean findNoArgFunction(ExpressionNode node) throws SqlException {
+    public boolean findNoArgFunction(ExpressionNode node) {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload != null) {
             for (int i = 0, n = overload.size(); i < n; i++) {

@@ -40,7 +40,7 @@ public interface LogRecord extends CharSinkBase {
 
     LogRecord $(double x);
 
-    LogRecord $(long x);
+    LogRecord $(long l);
 
     LogRecord $(boolean x);
 

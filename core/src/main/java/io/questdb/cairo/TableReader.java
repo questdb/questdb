@@ -97,8 +97,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         try {
             this.metadata = openMetaFile();
-            this.columnCount = this.metadata.getColumnCount();
-            this.columnCountShl = getColumnBits(columnCount);
             this.partitionBy = this.metadata.getPartitionBy();
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -109,17 +107,19 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
+            this.columnCount = this.metadata.getColumnCount();
+            this.columnCountShl = getColumnBits(columnCount);
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
             partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
 
             int capacity = getColumnBase(partitionCount);
-            this.columns = new ObjList<>(capacity);
+            this.columns = new ObjList<>(capacity + 2);
             this.columns.setPos(capacity + 2);
             this.columns.setQuick(0, NullMemoryMR.INSTANCE);
             this.columns.setQuick(1, NullMemoryMR.INSTANCE);
-            this.bitmapIndexes = new ObjList<>(capacity);
+            this.bitmapIndexes = new ObjList<>(capacity + 2);
             this.bitmapIndexes.setPos(capacity + 2);
 
             this.openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
@@ -231,10 +231,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
-    public long getCommitLag() {
-        return metadata.getCommitLag();
-    }
-
     public TableReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
@@ -258,6 +254,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
+    }
+
+    public long getO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     public int getPartitionCount() {
@@ -597,37 +597,37 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
         LOG.debug().$("resizing columns file list [table=").$(tableName).I$();
         int capacity = partitionCount << columnCountShl;
-        final ObjList<MemoryMR> columns = new ObjList<>(capacity + 2);
-        final LongList columnTops = new LongList(capacity / 2);
-        final ObjList<BitmapIndexReader> indexReaders = new ObjList<>(capacity);
-        columns.setPos(capacity + 2);
-        columns.setQuick(0, NullMemoryMR.INSTANCE);
-        columns.setQuick(1, NullMemoryMR.INSTANCE);
-        columnTops.setPos(capacity / 2);
-        indexReaders.setPos(capacity + 2);
+        final ObjList<MemoryMR> toColumns = new ObjList<>(capacity + 2);
+        final LongList toColumnTops = new LongList(capacity / 2);
+        final ObjList<BitmapIndexReader> toIndexReaders = new ObjList<>(capacity);
+        toColumns.setPos(capacity + 2);
+        toColumns.setQuick(0, NullMemoryMR.INSTANCE);
+        toColumns.setQuick(1, NullMemoryMR.INSTANCE);
+        toColumnTops.setPos(capacity / 2);
+        toIndexReaders.setPos(capacity + 2);
         final long pIndexBase = pTransitionIndex + 8;
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final int base = partitionIndex << columnCountShl;
-            final int oldBase = partitionIndex << this.columnCountShl;
+            final int toBase = partitionIndex << columnCountShl;
+            final int fromBase = partitionIndex << this.columnCountShl;
 
             try {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, oldBase, path)) > -1L) {
+                if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase, path)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
                         final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
-                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
+                        final int fromColumnIndex = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
 
                         if (action == -1) {
-                            closePartitionColumnFile(oldBase, i);
+                            closePartitionColumnFile(fromBase, i);
                         }
 
-                        if (copyFrom > -1) {
-                            copyColumns(oldBase, copyFrom, columns, columnTops, indexReaders, base, i);
-                        } else if (copyFrom != Integer.MIN_VALUE) {
+                        if (fromColumnIndex > -1) {
+                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
+                        } else if (fromColumnIndex != Integer.MIN_VALUE) {
                             // new instance
-                            reloadColumnAt(partitionIndex, path, columns, columnTops, indexReaders, base, i, partitionRowCount);
+                            reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toBase, i, partitionRowCount);
                         }
                     }
                 }
@@ -635,10 +635,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 path.trimTo(rootLen);
             }
         }
-        this.columns = columns;
-        this.columnTops = columnTops;
+        this.columns = toColumns;
+        this.columnTops = toColumnTops;
         this.columnCountShl = columnCountShl;
-        this.bitmapIndexes = indexReaders;
+        this.bitmapIndexes = toIndexReaders;
     }
 
     private void deletePartition(int partitionIndex) {
@@ -1058,8 +1058,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.critical(0).put("Metadata read timeout");
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableName).I$();
+                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableName).put(']');
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
@@ -1199,14 +1199,32 @@ public class TableReader implements Closeable, SymbolTableSource {
                             closePartitionColumnFile(base, i);
                         }
 
-                        if (copyFrom == i) {
-                            // It appears that column hasn't changed its position. There are three possibilities here:
-                            // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                            //    on Windows before column can be deleted. In this case we must check for marker
-                            //    instance and the column from disk
-                            // 2. Column hasn't been altered, and we can skip to next column.
-                            MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if (col instanceof NullMemoryMR) {
+                        // We should only remove columns from existing metadata if column count has reduced.
+                        // And we should not attempt to reload columns, which have no matches in the metadata
+                        if (i < columnCount) {
+                            if (copyFrom == i) {
+                                // It appears that column hasn't changed its position. There are three possibilities here:
+                                // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                                //    on Windows before column can be deleted. In this case we must check for marker
+                                //    instance and the column from disk
+                                // 2. Column hasn't been altered, and we can skip to next column.
+                                MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                                if (col instanceof NullMemoryMR) {
+                                    reloadColumnAt(
+                                            partitionIndex,
+                                            path,
+                                            columns,
+                                            columnTops,
+                                            bitmapIndexes,
+                                            base,
+                                            i,
+                                            partitionRowCount
+                                    );
+                                }
+                            } else if (copyFrom > -1) {
+                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
+                            } else if (copyFrom != Integer.MIN_VALUE) {
+                                // new instance
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,
@@ -1218,20 +1236,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                                         partitionRowCount
                                 );
                             }
-                        } else if (copyFrom > -1) {
-                            copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
-                        } else if (copyFrom != Integer.MIN_VALUE) {
-                            // new instance
-                            reloadColumnAt(
-                                    partitionIndex,
-                                    path,
-                                    columns,
-                                    columnTops,
-                                    bitmapIndexes,
-                                    base,
-                                    i,
-                                    partitionRowCount
-                            );
                         }
                     }
                 }
