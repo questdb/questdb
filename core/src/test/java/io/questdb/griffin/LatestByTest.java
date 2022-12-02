@@ -489,7 +489,7 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    false);
         });
     }
 
@@ -510,7 +510,7 @@ public class LatestByTest extends AbstractGriffinTest {
                             "latest on ts partition by s",
                     "ts",
                     true,
-                    true);
+                    false);
         });
     }
 
