@@ -71,7 +71,7 @@ public class InsertOperationImpl implements InsertOperation {
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableName, "insert");
             if (writer.getStructureVersion() != structureVersion ||
-                    !Chars.equals(tableToken.getLoggingName(), writer.getTableToken().getLoggingName())) {
+                    !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }

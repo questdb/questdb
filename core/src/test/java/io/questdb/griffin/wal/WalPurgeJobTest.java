@@ -121,7 +121,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         assertWalExistence(true, tableName, 1);
 
         // A test FilesFacade that hides the "wal2" directory.
-        String privateTableNamePath = Files.SEPARATOR + Chars.toString(engine.getTableToken(tableName).getPrivateTableName());
+        String privateTableNamePath = Files.SEPARATOR + Chars.toString(engine.getTableToken(tableName).getDirName());
         FilesFacade testFF = new TestFilesFacadeImpl() {
             @Override
             public void iterateDir(LPSZ path, FindVisitor func) {
@@ -683,7 +683,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     static void addColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getLoggingName(), 0);
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getTableName(), 0);
         addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }

@@ -759,7 +759,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch getFirstLatch = new SOCountDownLatch(1);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc("plug", name.getLoggingName())) {
+            if (Chars.equalsNc("plug", name.getTableName())) {
                 if (factoryType == PoolListener.SRC_WRITER) {
                     if (event == PoolListener.EV_GET) {
                         LOG.info().$("EV_GET ").$(name).$();
@@ -838,7 +838,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             if (factoryType == PoolListener.SRC_WRITER
                     && (event == PoolListener.EV_RETURN)
-                    && Chars.equalsNc("plug", name.getLoggingName())) {
+                    && Chars.equalsNc("plug", name.getTableName())) {
                 LOG.info().$("EV_RETURN ").$(name).$();
                 releaseLatch.countDown();
             }

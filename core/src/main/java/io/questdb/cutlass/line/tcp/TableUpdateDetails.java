@@ -166,7 +166,7 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public String getTableNameUtf16() {
-        return tableToken.getLoggingName();
+        return tableToken.getTableName();
     }
 
     public TableToken getTableToken() {
@@ -280,7 +280,7 @@ public class TableUpdateDetails implements Closeable {
             writerAPI.ic();
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken().getLoggingName())
+                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken().getTableName())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();

@@ -139,12 +139,12 @@ public abstract class PurgingOperator {
                             updateTxn,
                             cleanupColumnVersionsAsync
                     );
-                    log.info().$("column purge scheduled [table=").$(tableWriter.getTableToken().getLoggingName())
+                    log.info().$("column purge scheduled [table=").$(tableWriter.getTableToken().getTableName())
                             .$(", column=").$(columnName)
                             .$(", updateTxn=").$(updateTxn)
                             .I$();
                 } else {
-                    log.info().$("columns purged locally [table=").$(tableWriter.getTableToken().getLoggingName())
+                    log.info().$("columns purged locally [table=").$(tableWriter.getTableToken().getTableName())
                             .$(", column=").$(columnName)
                             .$(", newColumnVersion=").$(updateTxn - 1).I$();
                 }

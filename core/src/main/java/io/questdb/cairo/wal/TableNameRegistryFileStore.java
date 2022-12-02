@@ -117,7 +117,7 @@ public class TableNameRegistryFileStore implements Closeable {
                         && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
                     String privateTableName = sink.toString();
-                    String tableName = TableUtils.toTableNameFromPrivateName(privateTableName);
+                    String tableName = TableUtils.getTableNameFromDirName(privateTableName);
                     int tableId = readTableId(path, privateTableName, configuration.getFilesFacade());
                     boolean isWal = tableId < 0;
                     tableId = Math.abs(tableId);
@@ -138,7 +138,7 @@ public class TableNameRegistryFileStore implements Closeable {
         ff.findClose(findPtr);
     }
 
-    public synchronized void removeEntry(final TableToken tableToken) {
+    public synchronized void logDropTable(final TableToken tableToken) {
         writeEntry(tableToken, OPERATION_REMOVE);
     }
 
@@ -316,7 +316,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 }
 
                 nameTableTokenMap.put(tableName, token);
-                if (!Chars.startsWith(token.getPrivateTableName(), token.getLoggingName())) {
+                if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                     // This table is renamed, log system to real table name mapping
                     LOG.advisory().$("renamed WAL table system name [table=").utf8(tableName).$(", privateTableName=").utf8(privateTableName).$();
                 }
@@ -346,8 +346,8 @@ public class TableNameRegistryFileStore implements Closeable {
         }
         long entryCount = tableNameMemory.getLong(0);
         tableNameMemory.putInt(operation);
-        tableNameMemory.putStr(tableToken.getLoggingName());
-        tableNameMemory.putStr(tableToken.getPrivateTableName());
+        tableNameMemory.putStr(tableToken.getTableName());
+        tableNameMemory.putStr(tableToken.getDirName());
         tableNameMemory.putInt(tableToken.getTableId());
         tableNameMemory.putInt(tableToken.isWal() ? TableNameRegistryFileStore.TABLE_TYPE_WAL : TABLE_TYPE_NON_WAL);
 

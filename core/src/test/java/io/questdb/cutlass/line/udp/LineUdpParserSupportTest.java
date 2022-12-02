@@ -278,7 +278,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && name.getLoggingName().equals(tableName)
+                    if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
                             && name.equals(engine.getTableToken(tableName))) {
                         waitForData.countDown();
                     }

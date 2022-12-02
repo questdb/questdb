@@ -1515,7 +1515,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 MemoryMARW mem = Vm.getMARWInstance();
                 Path path = new Path().of(configuration.getRoot()).concat(tableToken)
         ) {
-            TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getPrivateTableName());
+            TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
             compiler.compile(
                     TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
                     sqlExecutionContext

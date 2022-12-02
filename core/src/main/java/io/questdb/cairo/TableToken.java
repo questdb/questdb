@@ -29,14 +29,14 @@ import org.jetbrains.annotations.NotNull;
 public class TableToken {
     private final boolean isWal;
     @NotNull
-    private final String privateTableName;
+    private final String dirName;
     @NotNull
-    private final String publicTableName;
+    private final String tableName;
     private final int tableId;
 
-    public TableToken(@NotNull String publicTableName, @NotNull String privateTableName, int tableId, boolean isWal) {
-        this.publicTableName = publicTableName;
-        this.privateTableName = privateTableName;
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
+        this.tableName = tableName;
+        this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
     }
@@ -50,7 +50,7 @@ public class TableToken {
         TableToken that = (TableToken) o;
 
         if (tableId != that.tableId) return false;
-        return privateTableName.equals(that.privateTableName);
+        return dirName.equals(that.dirName);
     }
 
     /**
@@ -58,15 +58,17 @@ public class TableToken {
      * name used in SQL but can diverge per period of time if it is a WAL table, and it is renamed.
      * Do not use this method to identify table, use CairoEngine.getTableNameByTableToken() instead.
      */
-    public @NotNull String getLoggingName() {
-        return publicTableName;
+    //todo: name should not be exposed to avoid using it incorrectly
+    //     this class should impl Sinkable
+    public @NotNull String getTableName() {
+        return tableName;
     }
 
     /**
      * @return folder where the table is located.
      */
-    public @NotNull String getPrivateTableName() {
-        return privateTableName;
+    public @NotNull String getDirName() {
+        return dirName;
     }
 
     /**

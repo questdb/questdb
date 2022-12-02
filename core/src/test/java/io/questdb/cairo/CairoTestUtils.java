@@ -49,7 +49,7 @@ public class CairoTestUtils {
                 model,
                 ColumnType.VERSION,
                 tableId,
-                tableToken.getPrivateTableName()
+                tableToken.getDirName()
         );
         engine.registerTableToken(tableToken);
     }
@@ -88,7 +88,7 @@ public class CairoTestUtils {
                 model,
                 version,
                 tableId,
-                tableToken.getPrivateTableName()
+                tableToken.getDirName()
         );
         engine.registerTableToken(tableToken);
     }

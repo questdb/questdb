@@ -545,7 +545,7 @@ public class TextImportTask {
 
         public void run(Path path) {
             final FilesFacade ff = cfg.getFilesFacade();
-            path.of(importRoot).concat(tableToken.getLoggingName());
+            path.of(importRoot).concat(tableToken.getTableName());
             int plen = path.length();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
@@ -623,7 +623,7 @@ public class TextImportTask {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
 
             TableToken tableToken = cairoEngine.getTableToken(tableStructure.getTableName());
-            path.of(root).concat(tableToken.getLoggingName()).put('_').put(index);
+            path.of(root).concat(tableToken.getTableName()).put('_').put(index);
             int plen = path.length();
             PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
@@ -858,7 +858,7 @@ public class TextImportTask {
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
             TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
-            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getPrivateTableName(), publicTableName, targetTableStructure, 0);
+            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0);
 
             try (
                     TableWriter writer = new TableWriter(

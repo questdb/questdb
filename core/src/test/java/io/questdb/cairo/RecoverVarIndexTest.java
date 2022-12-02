@@ -375,7 +375,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             TableToken xxx = engine.getTableToken("xxx");
-            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getPrivateTableName();
+            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();

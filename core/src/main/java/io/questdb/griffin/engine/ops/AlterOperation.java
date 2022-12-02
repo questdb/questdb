@@ -123,14 +123,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(tableWriter.getTableToken().getLoggingName())
+                            .$(" ,table=").$(tableWriter.getTableToken().getTableName())
                             .I$();
                     throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableToken().getLoggingName())
+            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableToken().getTableName())
                     .$(", command=").$(command)
                     .$(", errno=").$(e.getErrno())
                     .$(", message=`").$(e.getFlyweightMessage()).$('`')

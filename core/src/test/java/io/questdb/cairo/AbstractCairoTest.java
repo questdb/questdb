@@ -611,7 +611,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getLoggingName(), 0);
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getTableName(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }

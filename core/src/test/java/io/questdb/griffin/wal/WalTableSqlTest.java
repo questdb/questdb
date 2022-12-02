@@ -915,7 +915,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, newTableName, "test")) {
-                Assert.assertEquals(newTableName, writer.getTableToken().getLoggingName());
+                Assert.assertEquals(newTableName, writer.getTableToken().getTableName());
             }
 
             assertSql(newTableName, "x\tsym2\tts\n" +
@@ -937,7 +937,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             }
 
             assertSql("select name, directoryName from tables() order by name", "name\tdirectoryName\n" +
-                    newTableName + "\t" + newTabledirectoryName.getPrivateTableName() + "\n");
+                    newTableName + "\t" + newTabledirectoryName.getDirName() + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
             assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +

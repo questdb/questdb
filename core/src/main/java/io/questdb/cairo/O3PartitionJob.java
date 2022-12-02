@@ -102,7 +102,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     LOG.debug().$("would create [path=").$(path.chop$().slash$()).$(']').$();
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
-                    LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getLoggingName())
+                    LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     tableWriter.o3BumpErrorCount();
@@ -477,7 +477,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             } catch (Throwable e) {
-                LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getLoggingName())
+                LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
@@ -1075,7 +1075,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount();
-                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getLoggingName())
+                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;

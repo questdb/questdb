@@ -954,7 +954,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
 
-            tmpPath.of(importRoot).concat(tableToken.getLoggingName()).put('_').put(t);
+            tmpPath.of(importRoot).concat(tableToken.getTableName()).put('_').put(t);
 
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath.concat(TXN_FILE_NAME).$(), partitionBy)) {
                 txFile.unsafeLoadAll();
@@ -1384,7 +1384,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             ff,
                             configuration.getMkDirMode(),
                             configuration.getRoot(),
-                            tableToken.getPrivateTableName(),
+                            tableToken.getDirName(),
                             targetTableStructure.getTableName(),
                             targetTableStructure,
                             tableToken.getTableId()

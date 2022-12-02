@@ -67,7 +67,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void dropTable(CharSequence tableName, TableToken tableToken, boolean failedCreate) {
-        LOG.info().$("dropping wal table [name=").utf8(tableName).$(", privateTableName=").utf8(tableToken.getPrivateTableName()).I$();
+        LOG.info().$("dropping wal table [name=").utf8(tableName).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 seq.dropTable();
@@ -75,7 +75,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 seq.unlockWrite();
             }
         } catch (CairoException e) {
-            LOG.info().$("failed to drop wal table [name=").utf8(tableName).$(", privateTableName=").utf8(tableToken.getPrivateTableName()).I$();
+            LOG.info().$("failed to drop wal table [name=").utf8(tableName).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
             if (!failedCreate) {
                 throw e;
             }
@@ -93,14 +93,14 @@ public class TableSequencerAPI implements QuietCloseable {
                 long lastTxn;
                 int tableId;
 
-                String publicTableName = tableToken.getLoggingName();
+                String publicTableName = tableToken.getTableName();
                 try {
                     if (!seqRegistry.containsKey(tableToken)) {
                         // Fast path.
                         // The following calls are racy, i.e. there might be a sequencer modifying both
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
-                        path.of(root).concat(tableToken.getPrivateTableName()).concat(SEQ_DIR);
+                        path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
                         long fdMeta = -1;
                         long fdTxn = -1;
                         try {
@@ -278,7 +278,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void renameWalTable(TableToken tableToken, TableToken newTableToken) {
-        assert tableToken.getPrivateTableName().equals(newTableToken.getPrivateTableName());
+        assert tableToken.getDirName().equals(newTableToken.getDirName());
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 tableSequencer.rename(newTableToken);
@@ -287,8 +287,8 @@ public class TableSequencerAPI implements QuietCloseable {
             }
         }
         LOG.advisory().$("renamed wal table [table=")
-                .utf8(tableToken.getLoggingName()).$(", newName=").utf8(newTableToken.getLoggingName())
-                .$(", privateTableName=").utf8(newTableToken.getPrivateTableName()).I$();
+                .utf8(tableToken.getTableName()).$(", newName=").utf8(newTableToken.getTableName())
+                .$(", privateTableName=").utf8(newTableToken.getDirName()).I$();
     }
 
 
@@ -351,7 +351,7 @@ public class TableSequencerAPI implements QuietCloseable {
             }
         }
 
-        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getPrivateTableName()).put(']');
+        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
     private TableSequencerEntry openSequencerInstance(TableToken tableToken) {
@@ -376,7 +376,7 @@ public class TableSequencerAPI implements QuietCloseable {
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
-                    LOG.info().$("releasing idle table sequencer [table=").utf8(tableToken.getPrivateTableName()).I$();
+                    LOG.info().$("releasing idle table sequencer [table=").utf8(tableToken.getDirName()).I$();
                     seqRegistry.remove(tableToken, sequencer);
                     removed = true;
                 }

@@ -162,7 +162,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(getTableToken().getLoggingName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                TableUtils.handleMetadataLoadException(getTableToken().getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
 

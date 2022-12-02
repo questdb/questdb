@@ -71,7 +71,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     public synchronized void reloadTableNameCache() {
         nameTableTokenMap2.clear();
         reverseTableNameTokenMap2.clear();
-        tableNameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2, TABLE_DROPPED_MARKER);
+        nameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2, TABLE_DROPPED_MARKER);
 
         // Swap the maps
         setNameMaps(nameTableTokenMap2, reverseTableNameTokenMap2);
@@ -88,12 +88,12 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public boolean removeTableName(CharSequence tableName, TableToken tableToken) {
+    public boolean dropTable(CharSequence tableName, TableToken token) {
         throw CairoException.critical(0).put("instance is read only");
     }
 
     @Override
-    public void removeTableToken(TableToken tableToken) {
+    public void purgeToken(TableToken token) {
         throw CairoException.critical(0).put("instance is read only");
     }
 

@@ -59,13 +59,13 @@ public class WalReader implements Closeable {
     private final String walName;
 
     public WalReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
-        this.tableName = tableToken.getLoggingName();
+        this.tableName = tableToken.getTableName();
         this.walName = Chars.toString(walName);
         this.rowCount = rowCount;
 
         ff = configuration.getFilesFacade();
         path = new Path();
-        path.of(configuration.getRoot()).concat(tableToken.getPrivateTableName()).concat(walName);
+        path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(walName);
         rootLen = path.length();
 
         try {

@@ -211,7 +211,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         readerPool.unlock(tableToken);
                         writerPool.unlock(tableToken, null, newTable);
                         metadataPool.unlock(tableToken);
-                        LOG.info().$("unlocked [privateTableName=`").utf8(tableToken.getPrivateTableName()).$("`]").$();
+                        LOG.info().$("unlocked [privateTableName=`").utf8(tableToken.getDirName()).$("`]").$();
                     }
                 }
             } else {
@@ -222,7 +222,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable th) {
             if (struct.isWalEnabled()) {
                 // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
-                tableSequencerAPI.dropTable(tableToken.getLoggingName(), tableToken, true);
+                tableSequencerAPI.dropTable(tableToken.getTableName(), tableToken, true);
             }
             throw th;
         } finally {
@@ -251,7 +251,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 mkDirMode,
                 mem,
                 path,
-                tableToken.getPrivateTableName(),
+                tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
                 tableId
@@ -274,9 +274,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         if (tableToken.isWal()) {
-            if (tableNameRegistry.removeTableName(tableName, tableToken)) {
+            if (tableNameRegistry.dropTable(tableName, tableToken)) {
                 tableSequencerAPI.dropTable(tableName, tableToken, false);
             }
+            // todo: log that this drop table was unsuccessful, e.g. someone else beat us to it
         } else {
             CharSequence lockedReason = lock(securityContext, tableToken, "removeTable");
             if (null == lockedReason) {
@@ -286,7 +287,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
                         LOG.error().$("drop failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
                         throw CairoException.critical(errno).put("could not remove table [name=").put(tableName)
-                                .put(", privateTableName=").put(tableToken.getPrivateTableName()).put(']');
+                                .put(", privateTableName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
                     readerPool.unlock(tableToken);
@@ -294,7 +295,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     metadataPool.unlock(tableToken);
                 }
 
-                tableNameRegistry.removeTableName(tableName, tableToken);
+                tableNameRegistry.dropTable(tableName, tableToken);
                 return;
             }
             throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
@@ -361,7 +362,7 @@ public class CairoEngine implements Closeable, WriterSource {
             final TableRecordMetadata metadata = metadataPool.get(tableToken);
             if (structureVersion != TableUtils.ANY_TABLE_VERSION && metadata.getStructureVersion() != structureVersion) {
                 // rename to StructureVersionException?
-                final ReaderOutOfDateException ex = ReaderOutOfDateException.of(tableToken.getLoggingName(), metadata.getTableId(), metadata.getTableId(), structureVersion, metadata.getStructureVersion());
+                final ReaderOutOfDateException ex = ReaderOutOfDateException.of(tableToken.getTableName(), metadata.getTableId(), metadata.getTableId(), structureVersion, metadata.getStructureVersion());
                 metadata.close();
                 throw ex;
             }
@@ -467,7 +468,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
             return TableUtils.TABLE_RESERVED;
         }
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getPrivateTableName());
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
     }
 
     public IDGenerator getTableIdGenerator() {
@@ -478,11 +479,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // In Table Name Registry TableToken has up to date tableName === TableToken.getLoggingName(),
         // even after rename, Table Name Registry values are updated, that's why it's safe to use
         // TableToken.getLoggingName() as table name here.
-        return getTableToken(tableName).getLoggingName();
+        return getTableToken(tableName).getTableName();
     }
 
-    public String getTableNameByTableToken(TableToken tableToken) {
-        return tableNameRegistry.getTableNameByTableToken(tableToken);
+    public String getTableName(TableToken token) {
+        return tableNameRegistry.getTableName(token);
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -501,7 +502,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken getTableTokenByPrivateTableName(String tableName, int tableId) {
-        return tableNameRegistry.getTableTokenByPrivateTableName(tableName, tableId);
+        return tableNameRegistry.getTableToken(tableName, tableId);
     }
 
     public Iterable<TableToken> getTableTokens() {
@@ -628,7 +629,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (lockedReason == null) { // not locked
             if (readerPool.lock(tableToken)) {
                 if (metadataPool.lock(tableToken)) {
-                    LOG.info().$("locked [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
+                    LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
                     return null;
                 }
                 readerPool.unlock(tableToken);
@@ -684,7 +685,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 return;
             } else if (cursor == -1L) {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=")
-                        .$(pubSeq.current()).$(", table=").utf8(tableToken.getPrivateTableName())
+                        .$(pubSeq.current()).$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
                 notifyWalTxnRepublisher();
@@ -747,7 +748,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void removeTableToken(TableToken tableName) {
-        tableNameRegistry.removeTableToken(tableName);
+        tableNameRegistry.purgeToken(tableName);
     }
 
     public void rename(
@@ -775,7 +776,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     } finally {
                         unlock(securityContext, tableName, null, false);
                     }
-                    tableNameRegistry.removeTableName(tableName, tableToken);
+                    tableNameRegistry.dropTable(tableName, tableToken);
                 } else {
                     LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
                     throw EntryUnavailableException.instance(lockedReason);
@@ -872,7 +873,7 @@ public class CairoEngine implements Closeable, WriterSource {
             throw rethrow;
         } catch (Throwable th) {
             LOG.critical()
-                    .$("could not repair before reading [privateTableName=").utf8(tableToken.getPrivateTableName())
+                    .$("could not repair before reading [privateTableName=").utf8(tableToken.getDirName())
                     .$(" ,error=").$(th.getMessage()).I$();
             throw rethrow;
         }

@@ -217,7 +217,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                     if (engine.isLiveTable(tableToken)
                             && ff.exists(path.trimTo(plimit).concat(tableToken).concat(TableUtils.META_FILE_NAME).$())) {
 
-                        tableName = tableToken.getLoggingName();
+                        tableName = tableToken.getTableName();
 
                         // open metadata file and read id
                         long fd = ff.openRO(path);

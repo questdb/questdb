@@ -174,7 +174,7 @@ public class WriterPool extends AbstractPool {
      *
      * @param tableToken table name
      * @param lockReason description of where or why lock is held
-     * @return true if lock was successful, false otherwise
+     * @return lock reason as String
      */
     public String lock(TableToken tableToken, String lockReason) {
         checkClosed();
@@ -207,7 +207,7 @@ public class WriterPool extends AbstractPool {
             return reinterpretOwnershipReason(e.ownershipReason);
         }
 
-        LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getPrivateTableName()).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
+        LOG.error().$("could not lock, busy [table=`").utf8(tableToken.getDirName()).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY);
         return reinterpretOwnershipReason(e.ownershipReason);
     }
@@ -235,7 +235,7 @@ public class WriterPool extends AbstractPool {
                 // calling thread must be trying to unlock writer that hasn't been locked.
                 // This qualifies for "illegal state".
                 notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCKED);
-                throw CairoException.critical(0).put("Writer ").put(tableToken.getPrivateTableName()).put(" is not locked");
+                throw CairoException.critical(0).put("Writer ").put(tableToken.getDirName()).put(" is not locked");
             }
 
             if (newTable) {
@@ -244,7 +244,7 @@ public class WriterPool extends AbstractPool {
                 // be visible. To prevent spurious file system errors (or even allowing the same table to be
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
-                LOG.info().$("created [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).$(']').$();
+                LOG.info().$("created [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
                 writer = new TableWriter(configuration, tableToken, messageBus, null, false, e, root, metrics);
             }
 
@@ -252,7 +252,7 @@ public class WriterPool extends AbstractPool {
                 // unlock must remove entry because pool does not deal with null writer
 
                 if (e.lockFd != -1L) {
-                    Path path = Path.getThreadLocal(root).concat(tableToken.getPrivateTableName());
+                    Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
                     TableUtils.lockName(path);
                     if (!ff.closeRemove(e.lockFd, path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
@@ -269,10 +269,10 @@ public class WriterPool extends AbstractPool {
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED);
-            LOG.debug().$("unlocked [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).I$();
+            LOG.debug().$("unlocked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).I$();
         } else {
             notifyListener(thread, tableToken, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.critical(0).put("Not lock owner of ").put(tableToken.getPrivateTableName());
+            throw CairoException.critical(0).put("Not lock owner of ").put(tableToken.getDirName());
         }
     }
 
@@ -326,7 +326,7 @@ public class WriterPool extends AbstractPool {
         if (isClosed()) {
             // pool closed, but we somehow managed to lock writer
             // make sure that interceptor cleared to allow calling thread close writer normally
-            LOG.info().$('\'').utf8(tableName.getPrivateTableName()).$("' born free").$();
+            LOG.info().$('\'').utf8(tableName.getDirName()).$("' born free").$();
             return e.goodbye();
         }
         e.ownershipReason = lockReason;
@@ -341,7 +341,7 @@ public class WriterPool extends AbstractPool {
             w.close();
             e.writer = null;
             e.ownershipReason = OWNERSHIP_REASON_RELEASED;
-            LOG.info().$("closed [table=`").utf8(name.getPrivateTableName()).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
+            LOG.info().$("closed [table=`").utf8(name.getDirName()).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
             notifyListener(thread, name, ev);
         }
     }
@@ -349,13 +349,13 @@ public class WriterPool extends AbstractPool {
     private TableWriter createWriter(TableToken tableToken, Entry e, long thread, String lockReason) {
         try {
             checkClosed();
-            LOG.info().$("open [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).$(']').$();
+            LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
             e.writer = new TableWriter(configuration, tableToken, messageBus, null, true, e, root, metrics);
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
-            record.$("could not open [table=`").utf8(tableToken.getLoggingName())
+            record.$("could not open [table=`").utf8(tableToken.getTableName())
                     .$("`, thread=").$(e.owner)
                     .$(", ex=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
@@ -427,7 +427,7 @@ public class WriterPool extends AbstractPool {
                 }
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
-                LOG.info().$("busy [table=`").utf8(tableToken.getPrivateTableName())
+                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
                         .$("`, owner=").$(owner)
                         .$(", thread=").$(thread)
                         .$(", reason=").$(reason)
@@ -439,23 +439,23 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, TableToken tableToken, String lockReason) {
         assertLockReasonIsNone(lockReason);
-        Path path = Path.getThreadLocal(root).concat(tableToken.getPrivateTableName());
+        Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
         TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
-            LOG.error().$("could not lock [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).$(']').$();
+            LOG.error().$("could not lock [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;
             e.owner = UNALLOCATED;
             return false;
         }
-        LOG.debug().$("locked [table=`").utf8(tableToken.getPrivateTableName()).$("`, thread=").$(thread).$(']').$();
+        LOG.debug().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
         notifyListener(thread, tableToken, PoolListener.EV_LOCK_SUCCESS);
         e.ownershipReason = lockReason;
         return true;
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$(">> [table=`").utf8(e.writer.getTableToken().getPrivateTableName()).$("`, thread=").$(e.owner).$(']').$();
+        LOG.info().$(">> [table=`").utf8(e.writer.getTableToken().getDirName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getTableToken(), event);
         return e.writer;
     }
@@ -491,7 +491,7 @@ public class WriterPool extends AbstractPool {
         }
 
         if (e.owner != UNALLOCATED) {
-            LOG.info().$("<< [table=`").utf8(name.getPrivateTableName()).$("`, thread=").$(thread).$(']').$();
+            LOG.info().$("<< [table=`").utf8(name.getDirName()).$("`, thread=").$(thread).$(']').$();
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
@@ -511,7 +511,7 @@ public class WriterPool extends AbstractPool {
 
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
-            LOG.critical().$("orphaned [table=`").utf8(name.getPrivateTableName()).$("`]").$();
+            LOG.critical().$("orphaned [table=`").utf8(name.getDirName()).$("`]").$();
             notifyListener(thread, name, PoolListener.EV_UNEXPECTED_CLOSE);
         }
         return true;
@@ -537,7 +537,7 @@ public class WriterPool extends AbstractPool {
             if (owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("'").utf8(e.writer.getTableToken().getLoggingName()).$("' is still busy [owner=").$(owner).$(']').$();
+                LOG.info().$("'").utf8(e.writer.getTableToken().getTableName()).$("' is still busy [owner=").$(owner).$(']').$();
             }
         }
         return count;

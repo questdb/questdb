@@ -135,7 +135,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path concat(TableToken token) {
-        return concat(token.getPrivateTableName());
+        return concat(token.getDirName());
     }
 
     public Path concat(long pUtf8NameZ) {

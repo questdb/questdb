@@ -205,7 +205,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return tableToken.getLoggingName();
+                        return tableToken.getTableName();
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -216,7 +216,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         }
                     }
                     if (col == systemNameColumn) {
-                        return tableToken.getPrivateTableName();
+                        return tableToken.getDirName();
                     }
                     return null;
                 }
@@ -233,9 +233,9 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 public boolean open(TableToken tableToken) {
 
-                    if (hideTelemetryTables && (Chars.equals(tableToken.getLoggingName(), TelemetryJob.tableName)
-                            || Chars.equals(tableToken.getLoggingName(), TelemetryJob.configTableName)
-                            || Chars.startsWith(tableToken.getLoggingName(), sysTablePrefix))) {
+                    if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryJob.tableName)
+                            || Chars.equals(tableToken.getTableName(), TelemetryJob.configTableName)
+                            || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
                         return false;
                     }
 

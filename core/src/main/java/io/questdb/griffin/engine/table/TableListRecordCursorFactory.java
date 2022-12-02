@@ -90,7 +90,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     TableToken tableToken = tableTokens.next();
                     if (engine.isLiveTable(tableToken)) {
-                        tableName = tableToken.getLoggingName();
+                        tableName = tableToken.getTableName();
                     } else {
                         tableName = null;
                     }

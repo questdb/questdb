@@ -248,7 +248,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         int tableId = addedTables.getLast();
                         String tableName = "tab" + tableId;
                         TableToken tableToken = rw.getTableToken(tableName);
-                        rw.removeTableName(tableName, tableToken);
+                        rw.dropTable(tableName, tableToken);
                         addedTables.remove(tableId);
                     }
 

@@ -157,7 +157,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 // so that we know when the table writer is returned to the pool whence the ilpAgent is stopped
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (name != null && Chars.equalsNc(tableName, name.getLoggingName())) {
+                    if (name != null && Chars.equalsNc(tableName, name.getTableName())) {
                         if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                             tableWriterReturnedToPool.countDown();
                         }

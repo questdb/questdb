@@ -35,7 +35,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);
-        if (!this.tableNameStore.lock()) {
+        if (!this.nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
             }
@@ -57,12 +57,12 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public void registerName(TableToken tableToken) {
-        String tableName = tableToken.getLoggingName();
+        String tableName = tableToken.getTableName();
         if (!nameTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken)) {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
         if (tableToken.isWal()) {
-            tableNameStore.appendEntry(tableToken);
+            nameStore.appendEntry(tableToken);
         }
         reverseTableNameTokenMap.put(tableToken, tableName);
     }
@@ -71,37 +71,37 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public synchronized void reloadTableNameCache() {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
-        tableNameStore.reload(nameTableTokenMap, reverseTableNameTokenMap, TABLE_DROPPED_MARKER);
+        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap, TABLE_DROPPED_MARKER);
     }
 
     @Override
-    public boolean removeTableName(CharSequence tableName, TableToken tableToken) {
-        if (nameTableTokenMap.remove(tableName, tableToken)) {
-            if (tableToken.isWal()) {
-                tableNameStore.removeEntry(tableToken);
-                reverseTableNameTokenMap.put(tableToken, TABLE_DROPPED_MARKER);
+    public boolean dropTable(CharSequence tableName, TableToken token) {
+        if (nameTableTokenMap.remove(tableName, token)) {
+            if (token.isWal()) {
+                nameStore.logDropTable(token);
+                reverseTableNameTokenMap.put(token, TABLE_DROPPED_MARKER);
                 return true;
             } else {
-                return reverseTableNameTokenMap.remove(tableToken) != null;
+                return reverseTableNameTokenMap.remove(token) != null;
             }
         }
         return false;
     }
 
     @Override
-    public void removeTableToken(TableToken tableToken) {
-        reverseTableNameTokenMap.remove(tableToken);
+    public void purgeToken(TableToken token) {
+        reverseTableNameTokenMap.remove(token);
     }
 
     @Override
     public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
         String newTableNameStr = Chars.toString(newName);
-        TableToken newNameRecord = new TableToken(newTableNameStr, tableToken.getPrivateTableName(), tableToken.getTableId(), tableToken.isWal());
+        TableToken newNameRecord = new TableToken(newTableNameStr, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
 
         if (nameTableTokenMap.putIfAbsent(newTableNameStr, newNameRecord) == null) {
             // Persist to file
-            tableNameStore.removeEntry(tableToken);
-            tableNameStore.appendEntry(newNameRecord);
+            nameStore.logDropTable(tableToken);
+            nameStore.appendEntry(newNameRecord);
 
             // Delete out of date key
             reverseTableNameTokenMap.remove(tableToken);
@@ -116,11 +116,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public void resetMemory() {
-        tableNameStore.resetMemory();
+        nameStore.resetMemory();
     }
 
     @Override
     public void unlockTableName(TableToken tableToken) {
-        nameTableTokenMap.remove(tableToken.getLoggingName(), LOCKED_TOKEN);
+        nameTableTokenMap.remove(tableToken.getTableName(), LOCKED_TOKEN);
     }
 }

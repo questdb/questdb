@@ -228,7 +228,7 @@ public class TableWriterTest extends AbstractCairoTest {
                             path,
                             model,
                             tableId,
-                            registerTableName(model.getTableName()).getPrivateTableName()
+                            registerTableName(model.getTableName()).getDirName()
                     );
                 }
             }

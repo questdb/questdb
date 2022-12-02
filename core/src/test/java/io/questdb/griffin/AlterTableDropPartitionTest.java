@@ -740,7 +740,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
                     // Delete partition folder
                     TableToken tableToken = engine.getTableToken(src.getName());
-                    File dir = new File(Paths.get(root.toString(), tableToken.getPrivateTableName(), folderToDelete).toString());
+                    File dir = new File(Paths.get(root.toString(), tableToken.getDirName(), folderToDelete).toString());
                     deleteDir(dir);
 
                     if (opened) {

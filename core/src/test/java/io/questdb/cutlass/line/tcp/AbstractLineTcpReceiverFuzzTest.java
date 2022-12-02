@@ -396,8 +396,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void runTest() throws Exception {
-        runTest((factoryType, thread, name, event, segment, position) -> {
-            String tableName = engine.getTableNameByTableToken(name);
+        runTest((factoryType, thread, token, event, segment, position) -> {
+            String tableName = engine.getTableName(token);
             if (walEnabled) {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
                     handleWriterGetEvent(tableName);

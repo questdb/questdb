@@ -560,7 +560,7 @@ public class DropIndexTest extends AbstractGriffinTest {
         TableToken tableToken = engine.getTableToken(tableName);
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
                 (String) configuration.getRoot(),
-                tableToken.getPrivateTableName()
+                tableToken.getDirName()
         );
         try (Stream<?> stream = Files.find(
                 tablePath,

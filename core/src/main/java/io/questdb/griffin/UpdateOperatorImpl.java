@@ -70,7 +70,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws ReaderOutOfDateException {
 
-        LOG.info().$("updating [table=").$(tableWriter.getTableToken().getLoggingName()).$(" instance=").$(op.getCorrelationId()).I$();
+        LOG.info().$("updating [table=").$(tableWriter.getTableToken().getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
 
         try {
             final int tableId = op.getTableId();

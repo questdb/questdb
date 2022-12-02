@@ -1519,7 +1519,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 final String walName;
                 final IntList walSymbolCounts = new IntList();
                 try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    assertEquals(tableName, walWriter.getTableToken().getLoggingName());
+                    assertEquals(tableName, walWriter.getTableToken().getTableName());
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
                         stringSink.clear();
@@ -3095,13 +3095,13 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     static void removeColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken().getLoggingName(), 0);
+        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken().getTableName(), 0);
         removeColumnOperation.ofDropColumn(columnName);
         writer.apply(removeColumnOperation.build(), true);
     }
 
     static void renameColumn(TableWriterAPI writer) {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken().getLoggingName(), 0);
+        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken().getTableName(), 0);
         renameColumnC.ofRenameColumn("b", "c");
         writer.apply(renameColumnC.build(), true);
     }

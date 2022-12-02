@@ -86,7 +86,7 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
 
     @Override
     public String getTableNameAsString(CharSequence tableName) {
-        return tableToken.getLoggingName();
+        return tableToken.getTableName();
     }
 
     @Override

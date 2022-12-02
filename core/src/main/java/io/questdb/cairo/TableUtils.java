@@ -1057,17 +1057,17 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
-    public static String toTableNameFromPrivateName(String privateTableName) {
-        int suffixIndex = Chars.indexOf(privateTableName, SYSTEM_TABLE_NAME_SUFFIX);
+    public static String getTableNameFromDirName(String privateName) {
+        int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);
         if (suffixIndex == -1) {
-            return privateTableName;
+            return privateName;
         }
 
-        if (suffixIndex != privateTableName.length() - 1) {
+        if (suffixIndex != privateName.length() - 1) {
             // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
             return null;
         }
-        return privateTableName.substring(0, suffixIndex);
+        return privateName.substring(0, suffixIndex);
     }
 
     public static void txnPartition(CharSink path, long txn) {

@@ -42,7 +42,7 @@ public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(
                 0,
-                wApi.getTableToken().getLoggingName(),
+                wApi.getTableToken().getTableName(),
                 wApi.getMetadata().getTableId()
         );
         builder.ofRenameColumn(columName, newColName);

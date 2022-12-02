@@ -52,7 +52,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
-        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getPrivateTableName());
+        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName());
         this.plen = path.length();
         this.metaMem = Vm.getMRInstance();
     }
@@ -268,12 +268,12 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (!existenceChecked) {
                     path.trimTo(plen).slash$();
                     if (!ff.exists(path)) {
-                        throw CairoException.critical(2).put("table does not exist [table=").put(tableToken.getLoggingName()).put(']');
+                        throw CairoException.critical(2).put("table does not exist [table=").put(tableToken.getTableName()).put(']');
                     }
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken.getLoggingName(), deadline, ex, millisecondClock, timeout);
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, timeout);
             }
         }
     }

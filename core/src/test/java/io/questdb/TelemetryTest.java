@@ -121,8 +121,8 @@ public class TelemetryTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     TableToken telemetry = engine.getTableToken("telemetry");
                     TableToken telemetry_config = engine.getTableToken("telemetry_config");
-                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry.getPrivateTableName()));
-                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config.getPrivateTableName()));
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry.getDirName()));
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config.getDirName()));
                 }
 
                 Misc.free(telemetryJob);

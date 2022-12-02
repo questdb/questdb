@@ -147,7 +147,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, zTableToken.getPrivateTableName() + ".lock") && count-- > 0) {
+                if (Chars.endsWith(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -888,7 +888,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, zTableToken.getPrivateTableName() + ".lock") && count-- > 0) {
+                if (Chars.endsWith(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);

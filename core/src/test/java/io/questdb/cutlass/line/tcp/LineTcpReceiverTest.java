@@ -145,7 +145,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getLoggingName(), tableName)
+                    if (Chars.equalsNc(name.getTableName(), tableName)
                             && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
                     }
@@ -446,7 +446,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getLoggingName(), tableName)
+                    if (Chars.equalsNc(name.getTableName(), tableName)
                             && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
                     }
@@ -580,9 +580,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             // One engine hook for all writers
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    tableIndex.get(engine.getTableNameByTableToken(name)).countDown();
+                    tableIndex.get(engine.getTableName(token)).countDown();
                 }
             });
 
@@ -1463,9 +1463,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final Rnd rand = new Rnd();
             final StringBuilder[] expectedSbs = new StringBuilder[tables.size()];
 
-            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (tables.contains(engine.getTableNameByTableToken(tableToken))) {
+                    if (tables.contains(engine.getTableName(token))) {
                         tablesCreated.countDown();
                     }
                 }

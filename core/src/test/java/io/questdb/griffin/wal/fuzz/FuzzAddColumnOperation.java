@@ -49,7 +49,7 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(
                 0,
-                wApi.getTableToken().getLoggingName(),
+                wApi.getTableToken().getTableName(),
                 wApi.getMetadata().getTableId()
         );
         builder.ofAddColumn(newColName, 14, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);

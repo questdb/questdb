@@ -143,7 +143,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void accumDebugState() {
         debugBuffer.clear();
-        debugBuffer.put("table=").put(tableName.getPrivateTableName())
+        debugBuffer.put("table=").put(tableName.getDirName())
                 .put(", discoveredWalIds=[");
         for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
             final int walId = it.nextInt();
@@ -262,7 +262,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteSegmentDirectory(TableToken tableName, int walId, int segmentId) {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL segment directory [table=").utf8(tableName.getPrivateTableName())
+        LOG.info().$("deleting WAL segment directory [table=").utf8(tableName.getDirName())
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
         if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
@@ -272,7 +272,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteTableSequencerFiles(TableToken tableToken) {
         setTableSequencerPath(tableToken);
-        LOG.info().$("table is dropped, deleting sequencer files [table=").utf8(tableToken.getPrivateTableName()).$(']').$();
+        LOG.info().$("table is dropped, deleting sequencer files [table=").utf8(tableToken.getDirName()).$(']').$();
         recursiveDelete(path);
     }
 
@@ -300,7 +300,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteWalDirectory() {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL directory [table=").utf8(tableName.getPrivateTableName())
+        LOG.info().$("deleting WAL directory [table=").utf8(tableName.getDirName())
                 .$(", walId=").$(walId).$(']').$();
         if (deleteFile(setWalLockPath(tableName, walId))) {
             recursiveDelete(setWalPath(tableName, walId));

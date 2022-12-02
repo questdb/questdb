@@ -317,7 +317,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                                 // read rows
                                 TestUtils.assertReader(
-                                        expectedRowMap.get(reader.getTableToken().getPrivateTableName()),
+                                        expectedRowMap.get(reader.getTableToken().getDirName()),
                                         reader,
                                         sink
                                 );
