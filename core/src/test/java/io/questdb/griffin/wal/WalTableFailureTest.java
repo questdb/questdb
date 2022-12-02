@@ -929,7 +929,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
             assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tYYY\n");
-            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t2\t4\n");
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\tfalse\t2\t4\n");
         });
     }
 
