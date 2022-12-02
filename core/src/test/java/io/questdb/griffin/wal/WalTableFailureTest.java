@@ -820,6 +820,120 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalTableSuspendResume() throws Exception {
+        FilesFacade filesFacade = new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            compile("update " + tableName + " set x = 1111");
+            compile("update " + tableName + " set sym = 'XXX'");
+            compile("update " + tableName + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            compile("alter table " + tableName + " resume");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeFromTxn() throws Exception {
+        FilesFacade filesFacade = new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            compile("update " + tableName + " set x = 1111");
+            compile("update " + tableName + " set sym = 'XXX'");
+            compile("update " + tableName + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            compile("alter table " + tableName + " resume from 3");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tYYY\n");
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeStatusTable() throws Exception {
+        FilesFacade filesFacade = new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            compile("update " + tableName + " set x = 1111");
+            compile("update " + tableName + " set sym = 'XXX'");
+            compile("update " + tableName + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t1\t4\n");
+
+            compile("alter table " + tableName + " resume from 3");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tYYY\n");
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t2\t4\n");
+        });
+    }
+
+    @Test
     public void testWalUpdateFailedSuspendsTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1111";
