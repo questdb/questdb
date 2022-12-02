@@ -36,11 +36,14 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     private final HeapRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
+    //used to skip some cursor factories if values repeat  
+    private int[] cursorFactoriesIdx;
 
-    public HeapRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories) {
+    public HeapRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
         this.cursor = new HeapRowCursor();
+        this.cursorFactoriesIdx = cursorFactoriesIdx;
     }
 
     @Override
@@ -48,7 +51,7 @@ public class HeapRowCursorFactory implements RowCursorFactory {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
         }
-        cursor.of(cursors);
+        cursor.of(cursors, cursorFactoriesIdx[0]);
         return cursor;
     }
 
