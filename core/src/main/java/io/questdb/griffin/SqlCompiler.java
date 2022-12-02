@@ -515,6 +515,26 @@ public class SqlCompiler implements Closeable {
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
+                } else if (SqlKeywords.isResumeKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer); // optional from part
+                    long fromTxn = -1;
+                    if (tok != null) {
+                        if (SqlKeywords.isFromKeyword(tok)) {
+                            CharSequence txnValue = expectToken(lexer, "txn value");
+                            final int valuePosition = lexer.getPosition();
+                            try {
+                                fromTxn = Numbers.parseLong(txnValue);
+                            } catch (NumericException e) {
+                                throw SqlException.$(valuePosition, "invalid value [value=").put(txnValue).put(']');
+                            }
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
+                        }
+                    }
+                    if (!engine.getTableSequencerAPI().isSuspended(tableName)) {
+                        throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' is not suspended");
+                    }
+                    return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
                 }
@@ -1019,6 +1039,25 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
         return compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private CompiledQuery alterTableResume(int tableNamePosition, String tableName, long resumeFromTxn, SqlExecutionContext executionContext) throws SqlException {
+        try (TableWriter tableWriter = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "table resume")) {
+            long seqTxn = tableWriter.getSeqTxn();
+            if (resumeFromTxn > seqTxn) {
+                tableWriter.setSeqTxn(resumeFromTxn);
+            }
+            engine.getTableSequencerAPI().resumeTable(tableName);
+            return compiledQuery.ofTableResume();
+        } catch (EntryUnavailableException tableBusy) {
+            throw SqlException.position(tableNamePosition).put("table resume, busy [table=`").put(tableName).put("`]");
+        } catch (CairoException ex) {
+            LOG.critical().$("table resume failed [table=").$(tableName)
+                .$(", error=").$(ex.getFlyweightMessage())
+                .$(", errno=").$(ex.getErrno())
+                .I$();
+            throw SqlException.position(tableNamePosition).put(ex.getFlyweightMessage()).put("[errno=").put(ex.getErrno()).put(']');
+        }
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableNamePosition, int tableId) throws SqlException {

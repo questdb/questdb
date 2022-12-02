@@ -1883,6 +1883,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isResumeKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'r'
+            && (tok.charAt(i++) | 32) == 'e'
+            && (tok.charAt(i++) | 32) == 's'
+            && (tok.charAt(i++) | 32) == 'u'
+            && (tok.charAt(i++) | 32) == 'm'
+            && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {
         if (tok.length() < 7) {
             return false;
