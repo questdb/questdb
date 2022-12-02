@@ -132,6 +132,10 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
+    public void resetChangesFlag() {
+        this.hasChanges = false;
+    }
+
     public void truncate(boolean isPartitioned) {
         if (cachedList.size() > 0) {
             if (isPartitioned) {

@@ -1655,6 +1655,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 this.txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
+                columnVersionWriter.resetChangesFlag();
                 columnVersionWriter.readUnsafe();
                 purgeUnusedPartitions();
                 configureAppendPosition();
