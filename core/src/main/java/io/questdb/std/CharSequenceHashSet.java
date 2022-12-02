@@ -125,6 +125,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return list.indexOf(keys[index]);
     }
 
+    public int getListIndexOf(CharSequence cs) {
+        return getListIndexAt(keyIndex(cs));
+    }
+
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
         return keys[index1];
