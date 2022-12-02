@@ -117,8 +117,8 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private Iterator<TableToken> systemNames;
             private TableToken tableToken;
+            private Iterator<TableToken> tableTokens;
 
             @Override
             public void close() {
@@ -137,21 +137,21 @@ public class TableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (systemNames == null) {
-                    systemNames = engine.getTableTokens().iterator();
+                if (tableTokens == null) {
+                    tableTokens = engine.getTableTokens().iterator();
                 }
 
                 do {
-                    boolean hasNext = systemNames.hasNext();
+                    boolean hasNext = tableTokens.hasNext();
                     if (!hasNext) {
-                        systemNames = null;
+                        tableTokens = null;
                     } else {
-                        tableToken = systemNames.next();
+                        tableToken = tableTokens.next();
                         tableToken = engine.isLiveTable(tableToken) && record.open(tableToken) ? tableToken : null;
                     }
-                } while (systemNames != null && tableToken == null);
+                } while (tableTokens != null && tableToken == null);
 
-                return systemNames != null;
+                return tableTokens != null;
             }
 
             @Override

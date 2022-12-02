@@ -71,7 +71,7 @@ public abstract class AbstractCairoTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final MicrosecondClock defaultMicrosecondClock = new ClockMock();
     public static long dataAppendPageSize = -1;
-    public static boolean mangleTableSystemName = true;
+    public static boolean mangleTablePrivateName = true;
     public static int recreateDistressedSequencerAttempts = 3;
     public static long spinLockTimeout = -1;
     @ClassRule
@@ -504,7 +504,7 @@ public abstract class AbstractCairoTest {
 
             @Override
             public boolean manglePrivateTableNames() {
-                return mangleTableSystemName;
+                return mangleTablePrivateName;
             }
         };
         metrics = Metrics.enabled();
@@ -529,7 +529,7 @@ public abstract class AbstractCairoTest {
         backupDir = null;
         backupDirTimestampFormat = null;
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
-        mangleTableSystemName = true;
+        mangleTablePrivateName = true;
     }
 
     @Before

@@ -841,6 +841,56 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameDropTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String newTableName = testName.getMethodName() + "_new";
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int i = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
+                if (Chars.contains(name, "2022-02-25") && i++ == 0) {
+                    try {
+                        compile("drop table " + newTableName);
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            TableToken table2directoryName = engine.getTableToken(tableName);
+            compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+            compile("rename table " + tableName + " to " + newTableName);
+
+            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
+            Assert.assertEquals(table2directoryName, newTabledirectoryName);
+
+            drainWalQueue();
+
+            try {
+                assertSql(newTableName, "x\tsym2\tts\n" +
+                        "2\tEF\t2022-02-25T00:00:00.000000Z\n");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
+            }
+        });
+    }
+
+    @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

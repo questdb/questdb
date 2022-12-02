@@ -292,7 +292,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             boolean hasNext;
                             if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                                 Misc.free(structuralChangeCursor);
-                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(writer.getTableToken(), newStructureVersion - 1);
+                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableToken, newStructureVersion - 1);
                                 hasNext = structuralChangeCursor.hasNext();
                             }
 
@@ -316,7 +316,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             return;
 
                         case RENAME_TABLE_WALID:
-                            writer.changeTableName(seqTxn, tableToken);
+                            // Get table name from structure change cursor
+                            TableToken updatedToken = engine.refreshTableToken(tableToken);
+                            if (updatedToken == null) {
+                                LOG.info().$("detected table delete during WAL replay [privateTableName=").$(tableToken.getPrivateTableName()).I$();
+                                // Return will handle table drop on next iteration.
+                                return;
+                            }
+                            writer.changeTableName(seqTxn, updatedToken);
                             break;
 
                         case 0:

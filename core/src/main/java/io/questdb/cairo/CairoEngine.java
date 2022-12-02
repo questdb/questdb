@@ -695,6 +695,10 @@ public class CairoEngine implements Closeable, WriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
+    public TableToken refreshTableToken(TableToken tableToken) {
+        return tableNameRegistry.refreshTableToken(tableToken);
+    }
+
     public void registerTableToken(TableToken tableToken) {
         tableNameRegistry.registerName(tableToken);
     }

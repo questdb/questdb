@@ -53,8 +53,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
 
-        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, TableToken systemName, MessageBus messageBus) {
-            super(pool.getConfiguration(), systemName, messageBus);
+        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, TableToken tableToken, MessageBus messageBus) {
+            super(pool.getConfiguration(), tableToken, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

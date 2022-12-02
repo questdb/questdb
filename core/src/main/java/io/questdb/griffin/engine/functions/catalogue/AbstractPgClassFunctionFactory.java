@@ -153,8 +153,8 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         private final long tempMem;
         private CairoEngine engine;
         private int fixedRelPos = -1;
-        private Iterator<TableToken> systemNames;
         private String tableName;
+        private Iterator<TableToken> tableTokens;
 
         public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
@@ -203,20 +203,21 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             record.of(diskReadingRecord);
-            if (systemNames == null) {
-                systemNames = engine.getTableTokens().iterator();
+            if (tableTokens == null) {
+                tableTokens = engine.getTableTokens().iterator();
             }
 
             do {
-                boolean hasNext = systemNames.hasNext();
+                boolean hasNext = tableTokens.hasNext();
                 if (!hasNext) {
-                    systemNames = null;
+                    tableTokens = null;
                 } else {
-                    TableToken tableToken = systemNames.next();
-                    tableName = tableToken.getLoggingName();
+                    TableToken tableToken = tableTokens.next();
 
                     if (engine.isLiveTable(tableToken)
                             && ff.exists(path.trimTo(plimit).concat(tableToken).concat(TableUtils.META_FILE_NAME).$())) {
+
+                        tableName = tableToken.getLoggingName();
 
                         // open metadata file and read id
                         long fd = ff.openRO(path);
@@ -233,8 +234,8 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                         tableName = null;
                     }
                 }
-            } while (systemNames != null && tableName == null);
-            return systemNames != null;
+            } while (tableTokens != null && tableName == null);
+            return tableTokens != null;
         }
 
         public void of(CairoEngine engine) {
@@ -250,7 +251,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         public void toTop() {
             fixedRelPos = -1;
             record.of(staticReadingRecord);
-            systemNames = null;
+            tableTokens = null;
         }
 
         private class DiskReadingRecord implements Record {

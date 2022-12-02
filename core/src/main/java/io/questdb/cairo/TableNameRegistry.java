@@ -87,6 +87,13 @@ public interface TableNameRegistry extends Closeable {
     TableToken lockTableName(String tableName, String privateTableName, int tableId, boolean isWal);
 
     /**
+     * Returns most up-to-date table token, including updated Table Logging Name. If table does not exist, returns null.
+     *
+     * @return resolved TableToken. If no token exists, returns null
+     */
+    TableToken refreshTableToken(TableToken TableToken);
+
+    /**
      * Registers table name and releases lock. This method must be called after {@link #lockTableName(String, String, int, boolean)}.
      *
      * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean)}

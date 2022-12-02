@@ -52,13 +52,6 @@ import java.util.zip.ZipInputStream;
 
 public class EngineMigrationTest extends AbstractGriffinTest {
 
-    @BeforeClass
-    public static void setUpStatic() {
-        mangleTableSystemName = false;
-        AbstractGriffinTest.setUpStatic();
-    }
-
-
     public static void replaceDbContent(String path) throws IOException {
 
         engine.releaseAllReaders();
@@ -80,6 +73,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
             }
         }
+    }
+
+    @BeforeClass
+    public static void setUpStatic() {
+        mangleTablePrivateName = false;
+        AbstractGriffinTest.setUpStatic();
     }
 
     @Test

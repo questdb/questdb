@@ -757,12 +757,12 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path().of(configuration.getRoot())) {
-                TableToken systemName = engine.getTableToken(tableName);
-                assertWalFileExist(path, systemName, walName, 0, "_meta");
-                assertWalFileExist(path, systemName, walName, 0, "_event");
-                assertWalFileExist(path, systemName, walName, 0, "a.d");
-                assertWalFileExist(path, systemName, walName, 0, "b.d");
-                assertWalFileExist(path, systemName, walName, 0, "b.i");
+                TableToken tableToken = engine.getTableToken(tableName);
+                assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                assertWalFileExist(path, tableToken, walName, 0, "_event");
+                assertWalFileExist(path, tableToken, walName, 0, "a.d");
+                assertWalFileExist(path, tableToken, walName, 0, "b.d");
+                assertWalFileExist(path, tableToken, walName, 0, "b.i");
             }
         });
     }
@@ -1031,15 +1031,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                         }
 
                         try (Path path = new Path().of(configuration.getRoot())) {
-                            TableToken systemName = engine.getTableToken(tableName);
-                            assertWalFileExist(path, systemName, walName, 0, "_meta");
-                            assertWalFileExist(path, systemName, walName, 0, "_event");
-                            assertWalFileExist(path, systemName, walName, 0, "a.d");
-                            assertWalFileExist(path, systemName, walName, 0, "b.d");
-                            assertWalFileExist(path, systemName, walName, 1, "_meta");
-                            assertWalFileExist(path, systemName, walName, 1, "_event");
-                            assertWalFileExist(path, systemName, walName, 1, "a.d");
-                            assertWalFileExist(path, systemName, walName, 1, "b.d");
+                            TableToken tableToken = engine.getTableToken(tableName);
+                            assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                            assertWalFileExist(path, tableToken, walName, 0, "_event");
+                            assertWalFileExist(path, tableToken, walName, 0, "a.d");
+                            assertWalFileExist(path, tableToken, walName, 0, "b.d");
+                            assertWalFileExist(path, tableToken, walName, 1, "_meta");
+                            assertWalFileExist(path, tableToken, walName, 1, "_event");
+                            assertWalFileExist(path, tableToken, walName, 1, "a.d");
+                            assertWalFileExist(path, tableToken, walName, 1, "b.d");
                         }
                     }
                 }
@@ -1178,12 +1178,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                         }
 
                         try (Path path = new Path().of(configuration.getRoot())) {
-                            TableToken systemName = engine.getTableToken(tableName);
-                            assertWalFileExist(path, systemName, walName, segmentId, "_meta");
-                            assertWalFileExist(path, systemName, walName, segmentId, "_event");
-                            assertWalFileExist(path, systemName, walName, segmentId, "a.d");
-                            assertWalFileExist(path, systemName, walName, segmentId, "b.d");
-                            assertWalFileExist(path, systemName, walName, segmentId, "ts.d");
+                            TableToken tableToken = engine.getTableToken(tableName);
+                            assertWalFileExist(path, tableToken, walName, segmentId, "_meta");
+                            assertWalFileExist(path, tableToken, walName, segmentId, "_event");
+                            assertWalFileExist(path, tableToken, walName, segmentId, "a.d");
+                            assertWalFileExist(path, tableToken, walName, segmentId, "b.d");
+                            assertWalFileExist(path, tableToken, walName, segmentId, "ts.d");
                         }
                     }
                 }
@@ -2384,17 +2384,17 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path().of(configuration.getRoot())) {
-                TableToken systemName = engine.getTableToken(tableName);
-                assertWalFileExist(path, systemName, walName, 0, "_meta");
-                assertWalFileExist(path, systemName, walName, 0, "_event");
-                assertWalFileExist(path, systemName, walName, 0, "a.d");
-                assertWalFileExist(path, systemName, walName, 0, "b.d");
-                assertWalFileExist(path, systemName, walName, 0, "b.i");
-                assertWalFileExist(path, systemName, walName, 1, "_meta");
-                assertWalFileExist(path, systemName, walName, 1, "_event");
-                assertWalFileExist(path, systemName, walName, 1, "a.d");
-                assertWalFileExist(path, systemName, walName, 1, "b.d");
-                assertWalFileExist(path, systemName, walName, 1, "b.i");
+                TableToken tableToken = engine.getTableToken(tableName);
+                assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                assertWalFileExist(path, tableToken, walName, 0, "_event");
+                assertWalFileExist(path, tableToken, walName, 0, "a.d");
+                assertWalFileExist(path, tableToken, walName, 0, "b.d");
+                assertWalFileExist(path, tableToken, walName, 0, "b.i");
+                assertWalFileExist(path, tableToken, walName, 1, "_meta");
+                assertWalFileExist(path, tableToken, walName, 1, "_event");
+                assertWalFileExist(path, tableToken, walName, 1, "a.d");
+                assertWalFileExist(path, tableToken, walName, 1, "b.d");
+                assertWalFileExist(path, tableToken, walName, 1, "b.i");
             }
         });
     }
@@ -2793,25 +2793,25 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             try (Path path = new Path().of(configuration.getRoot())) {
-                TableToken systemName = engine.getTableToken(tableName);
-                assertWalFileExist(path, systemName, walName, 0, "_meta");
-                assertWalFileExist(path, systemName, walName, 0, "_event");
-                assertWalFileExist(path, systemName, walName, 0, "a.d");
-                assertWalFileExist(path, systemName, walName, 0, "b.d");
-                assertWalFileExist(path, systemName, walName, 0, "c.d");
-                assertWalFileExist(path, systemName, walName, 0, "d.d");
-                assertWalFileExist(path, systemName, walName, "b.c");
-                assertWalFileExist(path, systemName, walName, "b.k");
-                assertWalFileExist(path, systemName, walName, "b.o");
-                assertWalFileExist(path, systemName, walName, "b.v");
-                assertWalFileExist(path, systemName, walName, "c.c");
-                assertWalFileExist(path, systemName, walName, "c.k");
-                assertWalFileExist(path, systemName, walName, "c.o");
-                assertWalFileExist(path, systemName, walName, "c.v");
-                assertWalFileExist(path, systemName, walName, "d.c");
-                assertWalFileExist(path, systemName, walName, "d.k");
-                assertWalFileExist(path, systemName, walName, "d.o");
-                assertWalFileExist(path, systemName, walName, "d.v");
+                TableToken tableToken = engine.getTableToken(tableName);
+                assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                assertWalFileExist(path, tableToken, walName, 0, "_event");
+                assertWalFileExist(path, tableToken, walName, 0, "a.d");
+                assertWalFileExist(path, tableToken, walName, 0, "b.d");
+                assertWalFileExist(path, tableToken, walName, 0, "c.d");
+                assertWalFileExist(path, tableToken, walName, 0, "d.d");
+                assertWalFileExist(path, tableToken, walName, "b.c");
+                assertWalFileExist(path, tableToken, walName, "b.k");
+                assertWalFileExist(path, tableToken, walName, "b.o");
+                assertWalFileExist(path, tableToken, walName, "b.v");
+                assertWalFileExist(path, tableToken, walName, "c.c");
+                assertWalFileExist(path, tableToken, walName, "c.k");
+                assertWalFileExist(path, tableToken, walName, "c.o");
+                assertWalFileExist(path, tableToken, walName, "c.v");
+                assertWalFileExist(path, tableToken, walName, "d.c");
+                assertWalFileExist(path, tableToken, walName, "d.k");
+                assertWalFileExist(path, tableToken, walName, "d.o");
+                assertWalFileExist(path, tableToken, walName, "d.v");
             }
         });
     }

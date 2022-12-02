@@ -61,9 +61,9 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata()) {
                         TestUtils.await(barrier);
 
-                        TableToken systemName = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.getTableToken(tableName);
                         do {
-                            engine.getTableSequencerAPI().getTableMetadata(systemName, metadata);
+                            engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {
@@ -130,10 +130,10 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 () -> {
                     try {
                         TestUtils.await(barrier);
-                        TableToken systemName = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.getTableToken(tableName);
                         do {
-                            engine.getTableSequencerAPI().lastTxn(systemName);
-                        } while (engine.getTableSequencerAPI().lastTxn(systemName) < iterations && exception.get() == null);
+                            engine.getTableSequencerAPI().lastTxn(tableToken);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
@@ -155,15 +155,15 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 () -> {
                     try {
                         TestUtils.await(barrier);
-                        TableToken systemName = engine.getTableToken(tableName);
+                        TableToken tableToken = engine.getTableToken(tableName);
                         long lastTxn = 0;
                         do {
-                            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(systemName, lastTxn)) {
+                            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, lastTxn)) {
                                 while (cursor.hasNext()) {
                                     lastTxn = cursor.getTxn();
                                 }
                             }
-                        } while (engine.getTableSequencerAPI().lastTxn(systemName) < iterations && exception.get() == null);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {

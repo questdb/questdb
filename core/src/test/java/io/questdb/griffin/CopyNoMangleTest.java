@@ -33,12 +33,12 @@ import java.io.IOException;
 import static io.questdb.griffin.CopyTest.runAndFetchImportId;
 import static io.questdb.griffin.CopyTest.testCopy;
 
-// Runs some tests from CopyTest, but without mangling system table names
-public class CopyTestNoMangle extends AbstractGriffinTest {
+// Runs some tests from CopyTest, but without mangling private table names
+public class CopyNoMangleTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        mangleTableSystemName = false;
+        mangleTablePrivateName = false;
         inputRoot = TestUtils.getCsvRoot();
         try {
             inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();

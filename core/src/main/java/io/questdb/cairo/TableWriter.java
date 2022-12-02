@@ -778,7 +778,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     public void changeTableName(long seqTxn, TableToken tableToken) {
         // This is change of the logical name of WAL table used for logging.
-        // System Table Name and all paths remains the same.
+        // Private Table Name and all paths remains the same.
         this.tableToken = tableToken;
         markSeqTxnCommitted(seqTxn);
     }

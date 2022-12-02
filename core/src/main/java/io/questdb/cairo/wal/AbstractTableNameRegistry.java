@@ -86,6 +86,14 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         return reverseTableNameTokenMap.get(tableToken) == TABLE_DROPPED_MARKER;
     }
 
+    public TableToken refreshTableToken(TableToken tableToken) {
+        String tableName = reverseTableNameTokenMap.get(tableToken);
+        if (tableName != null) {
+            return nameTableTokenMap.get(tableName);
+        }
+        return null;
+    }
+
     @Override
     public void resetMemory() {
         tableNameStore.resetMemory();

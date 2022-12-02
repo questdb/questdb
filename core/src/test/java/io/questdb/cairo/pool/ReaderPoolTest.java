@@ -45,14 +45,14 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class ReaderPoolTest extends AbstractCairoTest {
 
-    private TableToken uTableSystemName;
+    private TableToken uTableToken;
 
     @Before
     public void setUpInstance() {
         try (TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CairoTestUtils.create(model);
         }
-        uTableSystemName = engine.getTableToken("u");
+        uTableToken = engine.getTableToken("u");
     }
 
     @Test
@@ -68,7 +68,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     for (int i = 0; i < 1000; i++) {
-                        try (TableReader ignored = pool.get(uTableSystemName)) {
+                        try (TableReader ignored = pool.get(uTableToken)) {
                             readerCount.incrementAndGet();
                         } catch (EntryUnavailableException ignored) {
                         }
@@ -155,7 +155,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testCloseReaderWhenPoolClosed() throws Exception {
         assertWithPool(pool -> {
-            TableReader reader = pool.get(uTableSystemName);
+            TableReader reader = pool.get(uTableToken);
             Assert.assertNotNull(reader);
             pool.close();
             Assert.assertTrue(reader.isOpen());
@@ -167,7 +167,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testCloseWithActiveReader() throws Exception {
         assertWithPool(pool -> {
-            TableReader reader = pool.get(uTableSystemName);
+            TableReader reader = pool.get(uTableToken);
             Assert.assertNotNull(reader);
             pool.close();
             Assert.assertTrue(reader.isOpen());
@@ -179,7 +179,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testCloseWithInactiveReader() throws Exception {
         assertWithPool(pool -> {
-            TableReader reader = pool.get(uTableSystemName);
+            TableReader reader = pool.get(uTableToken);
             Assert.assertNotNull(reader);
             reader.close();
             Assert.assertTrue(reader.isOpen());
@@ -433,7 +433,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
             for (int i = 0; i < 64; i++) {
-                Assert.assertTrue(readers.add(pool.get(uTableSystemName)));
+                Assert.assertTrue(readers.add(pool.get(uTableToken)));
             }
             for (int i = 0, n = readers.size(); i < n; i++) {
                 TableReader reader = readers.get(i);
@@ -471,7 +471,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             for (int i = 0; i < 3; i++) {
                 try {
-                    pool.get(uTableSystemName);
+                    pool.get(uTableToken);
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -482,7 +482,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             locked.set(0);
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
             for (int i = 0; i < K; i++) {
-                Assert.assertTrue(readers.add(pool.get(uTableSystemName)));
+                Assert.assertTrue(readers.add(pool.get(uTableToken)));
             }
 
             Assert.assertEquals(K, pool.getBusyCount());
@@ -515,7 +515,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             pool.close();
 
             try {
-                pool.get(uTableSystemName);
+                pool.get(uTableToken);
                 Assert.fail();
             } catch (PoolClosedException ignored) {
             }
@@ -529,7 +529,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             ObjList<TableReader> readers = new ObjList<>();
             try {
                 do {
-                    readers.add(pool.get(uTableSystemName));
+                    readers.add(pool.get(uTableToken));
                 } while (true);
             } catch (EntryUnavailableException e) {
                 Assert.assertEquals(pool.getMaxEntries(), readers.size());
@@ -603,7 +603,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
             try {
                 for (int i = 0; i < 64; i++) {
-                    Assert.assertTrue(readers.add(pool.get(uTableSystemName)));
+                    Assert.assertTrue(readers.add(pool.get(uTableToken)));
                 }
                 Assert.assertEquals(64, pool.getBusyCount());
 
@@ -613,12 +613,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     reader.close();
                 }
 
-                Assert.assertTrue(pool.lock(uTableSystemName));
+                Assert.assertTrue(pool.lock(uTableToken));
                 Assert.assertEquals(0, pool.getBusyCount());
                 for (int i = 0, n = readers.size(); i < n; i++) {
                     Assert.assertFalse(readers.get(i).isOpen());
                 }
-                pool.unlock(uTableSystemName);
+                pool.unlock(uTableToken);
             } finally {
                 // Release readers on failure
                 // In OSX the number of shared memory system wide can be quite small
@@ -642,12 +642,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
             CountDownLatch stopLatch = new CountDownLatch(2);
 
-            TableToken xTableSystemName = new TableToken("x", "x", 123, false);
+            TableToken xTableToken = new TableToken("x", "x", 123, false);
 
             final Runnable runnable = () -> {
                 try {
                     barrier.await();
-                    if (pool.lock(xTableSystemName)) {
+                    if (pool.lock(xTableToken)) {
                         successCount.incrementAndGet();
                     } else {
                         failureCount.incrementAndGet();
@@ -739,7 +739,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             x = pool.get(xTableToken);
             Assert.assertNotNull(x);
 
-            y = pool.get(uTableSystemName);
+            y = pool.get(uTableToken);
             Assert.assertNotNull(y);
 
             // expect lock to fail because we have "x" open
@@ -782,13 +782,13 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testLockUnlockMultiple() throws Exception {
         assertWithPool(pool -> {
-            TableReader r1 = pool.get(uTableSystemName);
-            TableReader r2 = pool.get(uTableSystemName);
+            TableReader r1 = pool.get(uTableToken);
+            TableReader r2 = pool.get(uTableToken);
             r1.close();
-            Assert.assertFalse(pool.lock(uTableSystemName));
+            Assert.assertFalse(pool.lock(uTableToken));
             r2.close();
-            Assert.assertTrue(pool.lock(uTableSystemName));
-            pool.unlock(uTableSystemName);
+            Assert.assertTrue(pool.lock(uTableToken));
+            pool.unlock(uTableToken);
         });
     }
 
@@ -810,7 +810,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             Listener listener = new Listener();
             pool.setPoolListener(listener);
 
-            TableReader reader = pool.get(uTableSystemName);
+            TableReader reader = pool.get(uTableToken);
 
             Assert.assertNotNull(reader);
             Assert.assertTrue(reader.isOpen());
@@ -831,7 +831,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             TableReader firstReader = null;
             for (int i = 0; i < 1000; i++) {
-                try (TableReader reader = pool.get(uTableSystemName)) {
+                try (TableReader reader = pool.get(uTableToken)) {
                     if (firstReader == null) {
                         firstReader = reader;
                     }

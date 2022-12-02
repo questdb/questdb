@@ -371,13 +371,13 @@ public class TableSequencerAPI implements QuietCloseable {
             return true;
         }
         boolean removed = false;
-        for (TableToken tableSystemName : seqRegistry.keySet()) {
-            final TableSequencerEntry sequencer = seqRegistry.get(tableSystemName);
+        for (TableToken tableToken : seqRegistry.keySet()) {
+            final TableSequencerEntry sequencer = seqRegistry.get(tableToken);
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
-                    LOG.info().$("releasing idle table sequencer [table=").utf8(tableSystemName.getPrivateTableName()).I$();
-                    seqRegistry.remove(tableSystemName, sequencer);
+                    LOG.info().$("releasing idle table sequencer [table=").utf8(tableToken.getPrivateTableName()).I$();
+                    seqRegistry.remove(tableToken, sequencer);
                     removed = true;
                 }
             }
