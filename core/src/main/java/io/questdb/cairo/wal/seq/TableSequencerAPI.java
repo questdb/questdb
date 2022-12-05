@@ -98,8 +98,8 @@ public class TableSequencerAPI implements QuietCloseable {
                                 long fdMeta = -1;
                                 long fdTxn = -1;
                                 try {
-                                    fdMeta = openFileRO(ff, path, META_FILE_NAME);
-                                    fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                    fdMeta = TableUtils.openFileRO(ff, path, META_FILE_NAME);
+                                    fdTxn = TableUtils.openFileRO(ff, path, TXNLOG_FILE_NAME);
                                     tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
                                     lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
                                 } finally {
@@ -318,16 +318,6 @@ public class TableSequencerAPI implements QuietCloseable {
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(tableName, path, ff);
-    }
-
-    private static long openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
-        final int rootLen = path.length();
-        path.concat(fileName).$();
-        try {
-            return TableUtils.openRO(ff, path, LOG);
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     @NotNull
