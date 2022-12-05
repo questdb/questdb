@@ -3104,7 +3104,7 @@ public class IODispatcherTest {
                         TestUtils.assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
                         nf.close(fd);
                         fd = -1;
-                        // Check that I/O dispatcher closes the event once it finds out the disconnect.
+                        // Check that I/O dispatcher closes the event once it detects the disconnect.
                         TestUtils.assertEventually(() -> Assert.assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
                     } finally {
                         if (fd > -1) {
@@ -5378,8 +5378,8 @@ public class IODispatcherTest {
                                     "00\r\n" +
                                     "\r\n"
                     );
-                    stopDelayThread.set(true);
 
+                    stopDelayThread.set(true);
                     delayThread.join();
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
@@ -6554,8 +6554,8 @@ public class IODispatcherTest {
                                     "00\r\n" +
                                     "\r\n"
                     );
-                    stopDelayThread.set(true);
 
+                    stopDelayThread.set(true);
                     delayThread.join();
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());

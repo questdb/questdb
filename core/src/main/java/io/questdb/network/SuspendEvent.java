@@ -41,7 +41,7 @@ public abstract class SuspendEvent implements Closeable {
 
     private static final long REF_COUNT_OFFSET;
 
-    private long deadline = -1;
+    private long deadline = Long.MAX_VALUE;
     private volatile int refCount = 2;
 
     public abstract void _close();
@@ -64,7 +64,7 @@ public abstract class SuspendEvent implements Closeable {
     }
 
     /**
-     * Returns a deadline (epoch millis) for the event or -1 if the deadline is not set.
+     * Returns a deadline (epoch millis) for the event or Long.MAX_VALUE if the deadline is not set.
      */
     public long getDeadline() {
         return deadline;

@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int DISCONNECT_SRC_IDLE = 1;
+    protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
     // OPM_XYZ = 3 is defined in the child classes
@@ -354,6 +355,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected abstract void unregisterListenerFd();
 
     static {
-        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown"};
+        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "peer"};
     }
 }
