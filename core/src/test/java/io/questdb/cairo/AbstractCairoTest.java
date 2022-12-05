@@ -609,12 +609,12 @@ public abstract class AbstractCairoTest {
             AbstractCairoTest.ff = ff2;
             try {
                 code.run();
+            } finally {
                 engine.releaseInactive();
                 engine.releaseInactiveCompilers();
                 engine.releaseInactiveTableSequencers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
-            } finally {
                 engine.clear();
                 AbstractCairoTest.ff = ffBefore;
             }
