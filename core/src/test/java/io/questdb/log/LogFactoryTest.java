@@ -34,7 +34,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -710,12 +709,32 @@ public class LogFactoryTest {
 
     @Test
     public void testLogAutoDeleteByDirectorySize40k() throws Exception {
-        testAutoDeleteByDirectorySize("40k");
+        testAutoDelete("40k", null);
     }
 
     @Test
     public void testLogAutoDeleteByDirectorySize500k() throws Exception {
-        testAutoDeleteByDirectorySize("500k");
+        testAutoDelete("500k", null);
+    }
+    
+    @Test
+    public void testLogAutoDeleteByFileAge1Year() throws Exception {
+        testAutoDelete(null, "1y");
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge6months() throws Exception {
+        testAutoDelete(null, "6m");
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge3weeks() throws Exception {
+        testAutoDelete(null, "3w");
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge25days() throws Exception {
+        testAutoDelete(null, "25d");
     }
 
     private static void assertDisabled(LogRecord r) {
@@ -825,7 +844,7 @@ public class LogFactoryTest {
         Assert.assertEquals(expectedMemUsage, Unsafe.getMemUsed());
     }
 
-    private void testAutoDeleteByDirectorySize(String sizeLimit) throws NumericException {
+    private void testAutoDelete(String sizeLimit, String lifeDuration) throws NumericException {
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
         long speed = 24 * 60000L;
 
@@ -838,15 +857,25 @@ public class LogFactoryTest {
             LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
-                w.setRollSize(sizeLimit);
+                if(sizeLimit != null) w.setRollSize(sizeLimit);
+                else w.setRollSize("600k");
                 w.setRollEvery("day");
-                w.setSizeLimit(sizeLimit);
+                if(sizeLimit != null) w.setSizeLimit(sizeLimit);
+                if(lifeDuration != null) w.setLifeDuration(lifeDuration);
                 return w;
             });
 
             factory.add(config);
             factory.bind();
             factory.startThread();
+            
+            if(lifeDuration != null) {
+                Path testPath = new Path();
+                testPath.of(base+"mylog-test.txt").$();
+                Files.touch(testPath);
+                Files.setLastModified(testPath, clock.getTicks()/1000 - Numbers.parseLongDuration(lifeDuration)/1000);
+                System.out.println();
+            }
 
             Log logger = factory.create("x");
             for (int i = 0; i < 100000; i++) {
@@ -875,7 +904,12 @@ public class LogFactoryTest {
             }
         }
         //It usually ends up with 4 files without auto log removal
-        Assert.assertTrue(fileCount == 1);
+        if(sizeLimit != null) {
+            Assert.assertTrue(fileCount == 1);
+        }
+        if(lifeDuration != null) {
+            Assert.assertTrue(fileCount == 2);
+        }
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
