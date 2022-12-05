@@ -641,10 +641,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     overloadPossible |= argTypeTag == ColumnType.STRING &&
                             sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
-                    // Implicit cast from STRING to UUID
-                    overloadPossible |= argTypeTag == ColumnType.STRING &&
-                            sigArgTypeTag == ColumnType.UUID && !factory.isGroupBy();
-
                     // Implicit cast from SYMBOL to TIMESTAMP
                     overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
