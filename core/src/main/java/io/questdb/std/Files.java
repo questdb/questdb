@@ -416,6 +416,16 @@ public final class Files {
         return unlink(softLink.address());
     }
 
+    public static  long getDiskSize(LPSZ path) {
+        if (path != null) {
+            return getDiskSize(path.address());
+        }
+        // current directory
+        return getDiskSize(0);
+    }
+    
+    private static native long getDiskSize(long lpszPath);
+
     public native static long write(long fd, long address, long len, long offset);
 
     private native static int close0(long fd);
