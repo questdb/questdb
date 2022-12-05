@@ -45,7 +45,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
-    private int structureVersion = -1;
+    private long structureVersion = -1;
     private boolean suspended;
     private int tableId;
     private String tableName;
@@ -111,7 +111,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, int structureVersion, int columnCount) {
+    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
@@ -196,7 +196,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         // Size of metadata
         metaMem.putInt(0);
         metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putInt(structureVersion);
+        metaMem.putLong(structureVersion);
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);

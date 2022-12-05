@@ -153,7 +153,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     } else {
                         // This is metadata change
                         // to be taken from TableSequencer directly
-                        final int newStructureVersion = transactionLogCursor.getStructureVersion();
+                        final long newStructureVersion = transactionLogCursor.getStructureVersion();
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
                                     .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)

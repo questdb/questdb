@@ -104,7 +104,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public TableMetadataChangeLog getMetadataChangeLogCursor(int structureVersionLo) {
+    public TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo) {
         if (metadata.getStructureVersion() == structureVersionLo) {
             // Nothing to do.
             return EmptyOperationCursor.INSTANCE;
@@ -118,8 +118,8 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public int getStructureVersion() {
-        return (int) metadata.getStructureVersion();
+    public long getStructureVersion() {
+        return metadata.getStructureVersion();
     }
 
     @Override
@@ -159,7 +159,7 @@ public class TableSequencerImpl implements TableSequencer {
                 timestampIndex,
                 compressedTimestampIndex,
                 metadata.isSuspended(),
-                (int) metadata.getStructureVersion(),
+                metadata.getStructureVersion(),
                 compressedColumnCount
         );
 
@@ -194,7 +194,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long nextStructureTxn(int expectedStructureVersion, TableMetadataChange change) {
+    public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         long txn;
@@ -233,7 +233,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long nextTxn(int expectedStructureVersion, int walId, int segmentId, int segmentTxn) {
+    public long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         long txn;

@@ -52,7 +52,7 @@ public class TableTransactionLog implements Closeable {
     public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
-    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Integer.BYTES;
+    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     private static final long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
     private static final long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
     private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
@@ -107,8 +107,8 @@ public class TableTransactionLog implements Closeable {
         return instance;
     }
 
-    long addEntry(int structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
-        txnMem.putInt(structureVersion);
+    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+        txnMem.putLong(structureVersion);
         txnMem.putInt(walId);
         txnMem.putInt(segmentId);
         txnMem.putInt(segmentTxn);
@@ -121,10 +121,10 @@ public class TableTransactionLog implements Closeable {
         return maxTxn;
     }
 
-    void beginMetadataChangeEntry(int newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
         assert newStructureVersion == txnMetaMemIndex.getAppendOffset() / Long.BYTES;
 
-        txnMem.putInt(newStructureVersion);
+        txnMem.putLong(newStructureVersion);
         txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
         txnMem.putInt(-1);
         txnMem.putInt(-1);
@@ -195,7 +195,7 @@ public class TableTransactionLog implements Closeable {
             txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.
             txnMetaMem.jumpTo(0L);
         } else {
-            long maxStructureVersion = txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
             txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
             long structureAppendOffset = maxStructureVersion * Long.BYTES;
             long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
@@ -204,8 +204,8 @@ public class TableTransactionLog implements Closeable {
         }
     }
 
-    AlterOperation readTableMetadataChangeLog(int structureVersion, MemorySerializer serializer) {
-        long txnMetaOffset = txnMetaMemIndex.getLong((long) structureVersion * Long.BYTES);
+    AlterOperation readTableMetadataChangeLog(long structureVersion, MemorySerializer serializer) {
+        long txnMetaOffset = txnMetaMemIndex.getLong(structureVersion * Long.BYTES);
         int recordSize = txnMetaMem.getInt(txnMetaOffset);
         if (recordSize < 0 || recordSize > Files.PAGE_SIZE) {
             throw CairoException.critical(0).put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
@@ -279,11 +279,11 @@ public class TableTransactionLog implements Closeable {
                 long txnCount = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
                 if (txnCount > -1L) {
 
-                    int maxStructureVersion = ff.readNonNegativeInt(fdTxn, HEADER_SIZE + (txnCount - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+                    long maxStructureVersion = ff.readNonNegativeLong(fdTxn, HEADER_SIZE + (txnCount - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
                     if (maxStructureVersion > structureVersionLo) {
                         txnMetaOffset = ff.readNonNegativeLong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
                         if (txnMetaOffset > -1L) {
-                            txnMetaOffsetHi = ff.readNonNegativeLong(fdTxnMetaIndex, (long) maxStructureVersion * Long.BYTES);
+                            txnMetaOffsetHi = ff.readNonNegativeLong(fdTxnMetaIndex, maxStructureVersion * Long.BYTES);
 
                             if (txnMetaOffsetHi > txnMetaOffset) {
                                 txnMetaAddress = ff.mmap(
@@ -354,13 +354,13 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public long getTxn() {
-            return txn;
+        public long getStructureVersion() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
 
         @Override
-        public int getStructureVersion() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        public long getTxn() {
+            return txn;
         }
 
         @Override

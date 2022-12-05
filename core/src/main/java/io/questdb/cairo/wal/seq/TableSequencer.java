@@ -29,11 +29,11 @@ import io.questdb.std.QuietCloseable;
 public interface TableSequencer extends QuietCloseable {
     long NO_TXN = Long.MIN_VALUE;
 
-    TableMetadataChangeLog getMetadataChangeLogCursor(int structureVersionLo);
+    TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo);
 
     int getNextWalId();
 
-    int getStructureVersion();
+    long getStructureVersion();
 
     int getTableId();
 
@@ -49,10 +49,10 @@ public interface TableSequencer extends QuietCloseable {
 
     long lastTxn();
 
-    long nextStructureTxn(int structureVersion, TableMetadataChange change);
+    long nextStructureTxn(long structureVersion, TableMetadataChange change);
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(int expectedStructureVersion, int walId, int segmentId, int segmentTxn);
+    long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn);
 
     void suspendTable();
 }
