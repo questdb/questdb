@@ -337,6 +337,10 @@ public final class Files {
 
     public native static long read(long fd, long address, long len, long offset);
 
+    public native static byte readNonNegativeByte(long fd, long offset);
+
+    public native static short readNonNegativeShort(long fd, long offset);
+
     public native static int readNonNegativeInt(long fd, long offset);
 
     public native static long readNonNegativeLong(long fd, long offset);

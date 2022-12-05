@@ -127,6 +127,22 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    readNonNegativeByte
+ * Signature: (JJ)B
+ */
+JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    readNonNegativeShort
+ * Signature: (JJ)S
+ */
+JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    readNonNegativeInt
  * Signature: (JJ)I
  */

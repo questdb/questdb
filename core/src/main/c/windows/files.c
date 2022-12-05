@@ -191,6 +191,40 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return -1;
 }
 
+JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong offset) {
+    DWORD count;
+    jbyte result;
+    if (set_file_pos((HANDLE) fd, offset) &&
+        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 1, &count, NULL)) {
+        if (count != 1) {
+            return -1;
+        }
+        return result;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong offset) {
+    DWORD count;
+    jshort result;
+    if (set_file_pos((HANDLE) fd, offset) &&
+        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 2, &count, NULL)) {
+        if (count != 2) {
+            return -1;
+        }
+        return result;
+    }
+    SaveLastError();
+    return -1;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         (JNIEnv *e, jclass cl,
          jlong fd,
