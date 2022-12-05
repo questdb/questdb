@@ -37,8 +37,13 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+
+import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class WalTableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
@@ -75,18 +80,17 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     }
 
     private static class WalTableListCursorFactory extends AbstractRecordCursorFactory {
-        private final CairoConfiguration configuration;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        TableListRecordCursor cursor = new TableListRecordCursor();
+        private final TableListRecordCursor cursor;
         private Path rootPath;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
-            this.configuration = configuration;
             this.ff = configuration.getFilesFacade();
             this.rootPath = new Path().of(configuration.getRoot());
             this.sqlExecutionContext = sqlExecutionContext;
+            this.cursor = new TableListRecordCursor();
         }
 
         @Override
@@ -108,11 +112,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final StringSink tableNameSink = new StringSink();
+            private final TxReader txReader = new TxReader(ff);
             private long findPtr = 0;
 
             @Override
             public void close() {
                 findPtr = ff.findClose(findPtr);
+                txReader.close();
             }
 
             @Override
@@ -131,6 +137,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 while (true) {
                     if (findPtr == 0) {
                         findPtr = ff.findFirst(rootPath.$());
+                        rootPath.trimTo(rootLen);
                         if (findPtr <= 0) {
                             return false;
                         }
@@ -210,15 +217,34 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 }
 
                 public boolean switchTo(final CharSequence tableName) {
-                    final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
-                    final TableSequencerAPI sequencerAPI = cairoEngine.getTableSequencerAPI();
-
-                    suspendedFlag = sequencerAPI.isSuspended(tableName);
-                    sequencerTxn = sequencerAPI.lastTxn(tableName);
-                    writerTxn = -1;
-                    try (TableReader reader = cairoEngine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                        writerTxn = reader.getTxn();
+                    int rootLen = rootPath.length();
+                    rootPath.concat(tableName).concat(SEQ_DIR);
+                    long fdMeta = -1;
+                    long fdTxn = -1;
+                    try {
+                        fdMeta = TableUtils.openFileRO(ff, rootPath, META_FILE_NAME);
+                        fdTxn = TableUtils.openFileRO(ff, rootPath, TXNLOG_FILE_NAME);
+                        suspendedFlag = ff.readNonNegativeByte(fdMeta, SEQ_META_SUSPENDED) > 0;
+                        sequencerTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                    } finally {
+                        rootPath.trimTo(rootLen);
+                        if (fdMeta > -1) {
+                            ff.close(fdMeta);
+                        }
+                        if (fdTxn > -1) {
+                            ff.close(fdTxn);
+                        }
                     }
+
+                    rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+                    txReader.ofRO(rootPath, PartitionBy.NONE);
+                    rootPath.trimTo(rootLen);
+
+                    final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+                    MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
+                    long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                    writerTxn = txReader.getSeqTxn();
                     return true;
                 }
             }
