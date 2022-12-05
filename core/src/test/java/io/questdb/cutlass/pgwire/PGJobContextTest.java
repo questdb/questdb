@@ -50,6 +50,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -4996,6 +4997,132 @@ nodejs code:
     }
 
     @Test
+    public void testQueryAgainstIndexedSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        String no5 = "1\n2\n3\n4\n6\n7\n8\n9\nnull\n";
+        String noNull = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+        String no5AndNull = "1\n2\n3\n4\n6\n7\n8\n9\n";
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+                compiler.compile("drop table if exists tab", sqlExecutionContext);
+                compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
+                compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
+                drainWalQueue();
+
+                ResultProducer sameVal =
+                        (paramVals, isBindVals, bindVals, output) -> {
+                            String value = isBindVals[0] ? bindVals[0] : paramVals[0];
+                            output.put(valMap.get(value)).put('\n');
+                        };
+
+                assertQueryAgainstIndexedSymbol(values, "s = #X", new String[]{"#X"}, connection, tsOption, sameVal);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X)", new String[]{"#X"}, connection, tsOption, sameVal);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X, '10')", new String[]{"#X"}, connection, tsOption, sameVal);
+
+                ResultProducer otherVals = (paramVals, isBindVals, bindVals, output) -> {
+                    String value = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    if (valMap.get(value).equals("5")) {
+                        output.put(no5);
+                    } else {
+                        output.put(noNull);
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s != #X", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s != #X and s != '10'", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X)", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X, '10')", new String[]{"#X"}, connection, tsOption, otherVals);
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S1') and s in (#X2, 'S2')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+
+                ResultProducer otherVals2 = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (!isSame) {
+                        output.put(no5AndNull);
+                    } else {
+                        if (valMap.get(left).equals("5")) {
+                            output.put(no5);
+                        } else {
+                            output.put(noNull);
+                        }
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s != #X2 and s != 'S'", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1) and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, 'S') and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, 'S2') and s not in (#X2, 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+
+                ResultProducer sameValIfParmsDiffer = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (!isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+
+                ResultProducer sameVal2 = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(right)).put('\n');
+                    } else {
+                        output.put("5\nnull\n");
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+            });
+        }
+
+    }
+
+    @Test
     public void testQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
@@ -7199,6 +7326,69 @@ create table tab as (
         });
     }
 
+    private void assertQueryAgainstIndexedSymbol(String[] values, String whereClause, String[] params, Connection connection, String tsOption, ResultProducer expected) throws Exception {
+        StringSink expSink = new StringSink();
+        StringSink metaSink = new StringSink();
+        String[] paramValues = new String[params.length];
+        boolean[] isBindParam = new boolean[params.length];
+        String[] bindValues = new String[params.length];
+        int nValues = values.length;
+
+        int iterations = 1;
+        for (int i = 0; i < params.length; i++) {
+            iterations *= nValues;
+        }
+
+        for (int iter = 0; iter < iterations; iter++) {
+            int tempIter = iter;
+
+            for (int p = 0; p < params.length; p++) {
+                paramValues[p] = values[tempIter % nValues];
+
+                if (paramValues[p].startsWith("?")) {
+                    isBindParam[p] = true;
+                    bindValues[p] = paramValues[p].substring(1);
+                    paramValues[p] = "?";
+                } else {
+                    isBindParam[p] = false;
+                    bindValues[p] = null;
+                }
+
+                tempIter /= nValues;
+            }
+
+            String where = whereClause;
+            for (int p = 0; p < params.length; p++) {
+                where = where.replace(params[p], paramValues[p]);
+            }
+
+            String query = "select s from tab where " + where;
+
+            sink.clear();
+            expSink.clear();
+            expSink.put("s[VARCHAR]\n");
+            expected.produce(paramValues, isBindParam, bindValues, expSink);
+            metaSink.clear();
+            metaSink.put("query: ").put(query).put("\nvalues: ");
+            for (int p = 0; p < paramValues.length; p++) {
+                metaSink.put(isBindParam[p] ? bindValues[p] : paramValues[p]).put(' ');
+            }
+            metaSink.put("\nts option: ").put(tsOption);
+
+            try (PreparedStatement ps = connection.prepareStatement(query)) {
+                int bindIdx = 1;
+                for (int p = 0; p < paramValues.length; p++) {
+                    if (isBindParam[p]) {
+                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
+                    }
+                }
+                try (ResultSet result = ps.executeQuery()) {
+                    assertResultSet(metaSink.toString(), expSink, sink, result);
+                }
+            }
+        }
+    }
+
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
         assertWithPgServer(bits, Long.MAX_VALUE, runnable);
     }
@@ -8648,6 +8838,11 @@ create table tab as (
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
+    }
+
+    @FunctionalInterface
+    interface ResultProducer {
+        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
