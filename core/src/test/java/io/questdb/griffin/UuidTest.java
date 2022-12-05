@@ -263,6 +263,18 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertFromFunctionReturningLong() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertFailure("insert into x values (rnd_long())", null, 22, "inconvertible types");
+    }
+
+    @Test
+    public void testInsertFromFunctionReturningString() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (rnd_str('11111111-1111-1111-1111-111111111111'))");
+    }
+
+    @Test
     public void testInsertNullByOmitting() throws Exception {
         assertCompile("create table x (i INT, u UUID, i2 INT)");
         assertCompile("insert into x (i, i2) values (42, 0)");
