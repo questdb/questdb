@@ -439,11 +439,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     @Override
-    public boolean isLowPriority() {
-        return isPausedQuery;
-    }
-
-    @Override
     public PGConnectionContext of(int fd, IODispatcher<PGConnectionContext> dispatcher) {
         PGConnectionContext r = super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);

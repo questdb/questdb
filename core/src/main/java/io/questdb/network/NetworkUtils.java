@@ -31,6 +31,9 @@ public class NetworkUtils {
     private NetworkUtils() {
     }
 
+    /**
+     * Return true if a disconnect happened, false otherwise.
+     */
     public static boolean testConnection(NetworkFacade nf, int fd, long buffer, int bufferSize) {
         if (fd == -1) {
             return true;

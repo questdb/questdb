@@ -232,11 +232,6 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     @Override
-    public boolean isLowPriority() {
-        return resumeProcessor != null;
-    }
-
-    @Override
     public HttpConnectionContext of(int fd, IODispatcher<HttpConnectionContext> dispatcher) {
         HttpConnectionContext r = super.of(fd, dispatcher);
         if (fd == -1) {

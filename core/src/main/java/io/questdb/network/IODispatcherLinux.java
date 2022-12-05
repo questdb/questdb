@@ -125,7 +125,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     }
 
     private void handleSuspendEvent(long id) {
-        System.out.println(">>> handleSuspendEvent " + id);
         final int eventsRow = pendingEvents.binarySearch(id, EVM_ID);
         if (eventsRow < 0) {
             LOG.error().$("internal error: epoll returned unexpected event id [eventId=").$(id).I$();
@@ -200,7 +199,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
             useful = true;
             final long opId = nextOpId();
-            int fd = context.getFd();
+            final int fd = context.getFd();
             int operation = requestedOperation;
             LOG.debug().$("processing registration [fd=").$(fd)
                     .$(", op=").$(operation)
@@ -208,7 +207,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
-                // if the operation was suspended, we request a read to be able to detect client disconnect 
+                // if the operation was suspended, we request a read to be able to detect a client disconnect 
                 operation = IOOperation.READ;
             }
 
@@ -251,7 +250,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     }
 
     private void resumeOperation(C context, long id, int operation) {
-        // to resume a socket operation, we simply re-arm the epoll
+        // to resume a socket operation, we simply re-arm epoll
         if (
                 epoll.control(
                         context.getFd(),
@@ -301,15 +300,15 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 if (id == 0) {
                     accept(timestamp);
                     useful = true;
-                } else {
-                    if (isEventId(id)) {
-                        handleSuspendEvent(id);
-                    } else {
-                        if (handleSocketOperation(id)) {
-                            useful = true;
-                            watermark--;
-                        }
-                    }
+                    continue;
+                }
+                if (isEventId(id)) {
+                    handleSuspendEvent(id);
+                    continue;
+                }
+                if (handleSocketOperation(id)) {
+                    useful = true;
+                    watermark--;
                 }
             }
         }
