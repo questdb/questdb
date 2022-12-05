@@ -29,10 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
@@ -231,6 +228,27 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
+    public long addUuid(long offset, DirectByteCharSequence value, boolean hasNonAsciiChars) throws NumericException {
+        int maxLen = 2 * value.length();
+        checkCapacity(offset, Byte.BYTES + Integer.BYTES + maxLen);
+        long strPos = offset + Byte.BYTES + Integer.BYTES; // skip field type and string length
+        tempSink.of(strPos, strPos + maxLen);
+        if (hasNonAsciiChars) {
+            utf8ToUtf16Unchecked(value, tempSink);
+        } else {
+            tempSink.put(value);
+        }
+        UuidUtil.checkDashesAndLength(tempSink);
+        long hi = UuidUtil.parseHi(tempSink);
+        long lo = UuidUtil.parseLo(tempSink);
+        Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
+        offset += Byte.BYTES;
+        Unsafe.getUnsafe().putLong(offset, hi);
+        offset += Long.BYTES;
+        Unsafe.getUnsafe().putLong(offset, lo);
+        return offset + Long.BYTES;
+    }
+
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
         switch (entityType) {
@@ -261,6 +279,8 @@ public class LineTcpEventBuffer {
                 return Float.BYTES;
             case LineTcpParser.ENTITY_TYPE_DOUBLE:
                 return Double.BYTES;
+            case LineTcpParser.ENTITY_TYPE_UUID:
+                return UuidUtil.BYTES;
             case ENTITY_TYPE_NULL:
                 return 0;
             default:

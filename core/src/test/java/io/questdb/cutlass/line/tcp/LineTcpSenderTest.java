@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
@@ -259,6 +259,85 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .at(ts * 1000);
                 sender.flush();
                 assertTableSizeEventually(engine, "victim", 1);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertBadStringIntoUuidColumn() throws Exception {
+        runInContext(r -> {
+            // create table with UUID column
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+                    .col("u1", ColumnType.UUID)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            // this sender fails as the string is not UUID
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", "totally not a uuid")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            // this sender succeeds as the string is in the UUID format
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                TestUtils.assertReader("u1\ttimestamp\n" +
+                        "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testInsertStringIntoUuidColumn() throws Exception {
+        runInContext(r -> {
+            // create table with UUID column
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+                    .col("u1", ColumnType.UUID)
+                    .col("u2", ColumnType.UUID)
+                    .col("u3", ColumnType.UUID)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
+                        // u2 empty -> insert as null
+                        .stringColumn("u3", "33333333-3333-3333-3333-333333333333")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                TestUtils.assertReader("u1\tu2\tu3\ttimestamp\n" +
+                        "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
     }
