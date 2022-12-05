@@ -618,34 +618,42 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         continue;
                     }
 
-                    int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
-                    sigArgTypeSum += overloadDistance;
-                    // Overload with cast to higher precision
-                    boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
+                    boolean overloadPossible = false;
+                    // we do not want to use any overload when checking the output of a cast() function.
+                    // the output must be the exact type as specified by a user. that's the whole point of casting. 
+                    // for all other functions else we want to explore possible casting opportunities
+                    //
+                    // output of a cast() function is always the 2nd argument in a function signature
+                    if (k != 1 || !Chars.equals("cast", node.token)) {
+                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
+                        sigArgTypeSum += overloadDistance;
+                        // Overload with cast to higher precision
+                        overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
-                    // Overload when arg is double NaN to func which accepts INT, LONG
-                    overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
-                            arg.isConstant() &&
-                            Double.isNaN(arg.getDouble(null)) &&
-                            (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
+                        // Overload when arg is double NaN to func which accepts INT, LONG
+                        overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
+                                arg.isConstant() &&
+                                Double.isNaN(arg.getDouble(null)) &&
+                                (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
-                    // Implicit cast from CHAR to STRING
-                    overloadPossible |= argTypeTag == ColumnType.CHAR &&
-                            sigArgTypeTag == ColumnType.STRING;
+                        // Implicit cast from CHAR to STRING
+                        overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                                sigArgTypeTag == ColumnType.STRING;
 
-                    // Implicit cast from STRING to TIMESTAMP
-                    overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                        // Implicit cast from STRING to TIMESTAMP
+                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
+                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
-                    // Implicit cast from STRING to GEOHASH
-                    overloadPossible |= argTypeTag == ColumnType.STRING &&
-                            sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
+                        // Implicit cast from STRING to GEOHASH
+                        overloadPossible |= argTypeTag == ColumnType.STRING &&
+                                sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
-                    // Implicit cast from SYMBOL to TIMESTAMP
-                    overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
-                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                        // Implicit cast from SYMBOL to TIMESTAMP
+                        overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
+                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
-                    overloadPossible |= arg.isUndefined();
+                        overloadPossible |= arg.isUndefined();
+                    }
 
                     // can we use overload mechanism?
                     if (overloadPossible) {

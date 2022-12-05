@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.MutableUuid;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -357,14 +356,10 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // ignore until casting to UUID is sorted out. right now it'll happily cast to String when a castin function to UUID is not available
     public void testLongExplicitCastAsUuid() throws Exception {
         assertCompile("create table x (l long)");
         assertCompile("insert into x values (42)");
-        assertQuery("cast\n" +
-                        "NaN\n",
-                "select cast(l as uuid) from x", null, null, true, true, true);
+        assertFailure("select cast(l as uuid) from x", null, 7, "unexpected argument for function");
     }
 
     @Test
