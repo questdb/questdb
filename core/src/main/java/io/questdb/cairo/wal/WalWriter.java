@@ -167,7 +167,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
 
-                txn = tableSequencerAPI.nextStructureTxn(tableName, (int) metadata.getStructureVersion(), operation);
+                txn = tableSequencerAPI.nextStructureTxn(tableName, metadata.getStructureVersion(), operation);
                 if (txn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }

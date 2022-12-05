@@ -217,7 +217,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long nextStructureTxn(final CharSequence tableName, int structureVersion, AlterOperation operation) {
+    public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
             long txn;
             try {
