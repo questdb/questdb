@@ -95,6 +95,11 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public int getTestConnectionBufferSize() {
+        return 64;
+    }
+
+    @Override
     public long getTimeout() {
         return 5 * 60 * 1000L;
     }

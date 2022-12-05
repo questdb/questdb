@@ -88,7 +88,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
-    private final int circuitBreakerBufferSize;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final long circuitBreakerTimeout;
@@ -375,6 +374,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long minIdleMsBeforeWriterRelease;
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
+    private int netTestConnectionBufferSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -640,8 +640,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
-            this.circuitBreakerBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.circuitBreakerTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
+
+            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, 64);
 
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
@@ -2416,6 +2417,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
+        @Override
         public long getTimeout() {
             return httpNetConnectionTimeout;
         }
@@ -2490,6 +2496,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return httpMinNetConnectionSndBuf;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
         }
 
         public long getTimeout() {
@@ -2928,6 +2939,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
+        @Override
         public long getTimeout() {
             return lineTcpNetConnectionTimeout;
         }
@@ -3334,6 +3350,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return pgNetConnectionSndBuf;
         }
 
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
         }
@@ -3348,7 +3369,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getBufferSize() {
-            return circuitBreakerBufferSize;
+            return netTestConnectionBufferSize;
         }
 
         @Override
@@ -3632,6 +3653,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerObsolete(
                 "cairo.sql.append.page.size",
                 PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE);
+        registerObsolete(
+                "circuit.breaker.buffer.size",
+                PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
 
         registerDeprecated(
                 PropertyKey.HTTP_MIN_BIND_TO,

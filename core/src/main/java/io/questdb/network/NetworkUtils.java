@@ -24,45 +24,43 @@
 
 package io.questdb.network;
 
-/**
- * eventfd(2)-based suspend event object. Used on Linux in combination with epoll.
- */
-public class EventFdSuspendEvent extends SuspendEvent {
+import io.questdb.std.Unsafe;
 
-    private final EpollFacade epf;
-    private final int fd;
+public class NetworkUtils {
 
-    public EventFdSuspendEvent(EpollFacade epf) {
-        this.epf = epf;
-        int fd = epf.eventFd();
-        if (fd < 0) {
-            throw NetworkError.instance(epf.errno(), "cannot create eventfd event");
+    private NetworkUtils() {
+    }
+
+    public static boolean testConnection(NetworkFacade nf, int fd, long buffer, int bufferSize) {
+        if (fd == -1) {
+            return true;
         }
-        this.fd = fd;
-        epf.getNetworkFacade().bumpFdCount(fd);
-    }
 
-    @Override
-    public void _close() {
-        epf.getNetworkFacade().close(fd);
-    }
+        final int nRead = nf.peek(fd, buffer, bufferSize);
 
-    @Override
-    public boolean checkTriggered() {
-        return epf.readEventFd(fd) == 1;
-    }
-
-    @Override
-    public int getFd() {
-        return fd;
-    }
-
-    @Override
-    public void trigger() {
-        if (epf.writeEventFd(fd) < 0) {
-            throw NetworkError.instance(epf.errno())
-                    .put("could not write to eventfd [fd=").put(fd)
-                    .put(']');
+        if (nRead == 0) {
+            return false;
         }
+
+        if (nRead < 0) {
+            return true;
+        }
+
+        // Read \r\n from the input stream and discard it since some HTTP clients
+        // send these chars as a keep alive in between requests.
+        int index = 0;
+        while (index < nRead) {
+            byte b = Unsafe.getUnsafe().getByte(buffer + index);
+            if (b != (byte) '\r' && b != (byte) '\n') {
+                break;
+            }
+            index++;
+        }
+
+        if (index > 0) {
+            nf.recv(fd, buffer, index);
+        }
+
+        return false;
     }
 }

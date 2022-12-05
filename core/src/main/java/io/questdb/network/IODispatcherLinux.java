@@ -66,7 +66,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
             final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
             if (epoll.control(fd, id, ctlMod, epollOp) < 0) {
-                LOG.error().$("epoll_ctl failure [id=").$(id).$(",err=").$(nf.errno()).I$();
+                LOG.error().$("epoll_ctl failure [id=").$(id).$(", err=").$(nf.errno()).I$();
             }
         }
     }
@@ -87,7 +87,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             assert suspendEvent != null;
             if (epoll.control(suspendEvent.getFd(), id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                LOG.error().$("epoll_ctl failure [id=").$(id).$(",err=").$(nf.errno()).I$();
+                LOG.error().$("epoll_ctl failure [id=").$(id).$(", err=").$(nf.errno()).I$();
             }
             pending.deleteRow(pendingRow);
             deletedPending++;

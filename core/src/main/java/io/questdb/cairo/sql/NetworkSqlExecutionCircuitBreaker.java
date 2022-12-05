@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -51,7 +52,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.bufferSize = configuration.getBufferSize();
         this.memoryTag = memoryTag;
-        this.buffer = Unsafe.malloc(bufferSize, this.memoryTag);
+        this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
         long timeout = configuration.getTimeout();
         if (timeout > 0) {
@@ -79,8 +80,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize, this.memoryTag);
-        buffer = 0;
+        buffer = Unsafe.free(buffer, bufferSize, this.memoryTag);
         fd = -1;
     }
 
@@ -157,35 +157,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (!configuration.checkConnection()) {
             return false;
         }
-
-        if (fd == -1) {
-            return true;
-        }
-
-        final int nRead = nf.peek(fd, buffer, bufferSize);
-
-        if (nRead == 0) {
-            return false;
-        }
-
-        if (nRead < 0) {
-            return true;
-        }
-
-        int index = 0;
-        long ptr = buffer;
-        while (index < nRead) {
-            byte b = Unsafe.getUnsafe().getByte(ptr + index);
-            if (b != (byte) '\r' && b != (byte) '\n') {
-                break;
-            }
-            index++;
-        }
-
-        if (index > 0) {
-            nf.recv(fd, buffer, index);
-        }
-
-        return false;
+        return NetworkUtils.testConnection(nf, fd, buffer, bufferSize);
     }
 }

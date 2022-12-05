@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.std.Unsafe;
+
 import java.io.Closeable;
 
 /**
@@ -37,7 +39,12 @@ import java.io.Closeable;
  */
 public abstract class SuspendEvent implements Closeable {
 
+    private static final long REF_COUNT_OFFSET;
+
     private long deadline = -1;
+    private volatile int refCount = 2;
+
+    public abstract void _close();
 
     /**
      * Returns true if the event was triggered.
@@ -49,7 +56,12 @@ public abstract class SuspendEvent implements Closeable {
      * The underlying OS resources are freed on the second close call.
      */
     @Override
-    public abstract void close();
+    public void close() {
+        final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
+        if (prevRefCount == 1) {
+            _close();
+        }
+    }
 
     /**
      * Returns a deadline (epoch millis) for the event or -1 if the deadline is not set.
@@ -62,6 +74,10 @@ public abstract class SuspendEvent implements Closeable {
      * Returns fd to be used to listen/wait for the event.
      */
     public abstract int getFd();
+
+    public boolean isClosedByAtLeastOneSide() {
+        return refCount <= 1;
+    }
 
     /**
      * Returns true if the deadline was set to an older value than the given timestamp,
@@ -82,4 +98,8 @@ public abstract class SuspendEvent implements Closeable {
      * Sends the event to the receiving side.
      */
     public abstract void trigger();
+
+    static {
+        REF_COUNT_OFFSET = Unsafe.getFieldOffset(SuspendEvent.class, "refCount");
+    }
 }

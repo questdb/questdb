@@ -24,20 +24,14 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Unsafe;
-
 /**
  * pipe(2)-based suspend event object. Used on OS X and BSD in combination with kqueue.
  */
 public class PipeSuspendEvent extends SuspendEvent {
 
-    private static final long REF_COUNT_OFFSET;
-
     private final KqueueFacade kqf;
     private final int readEndFd;
     private final int writeEndFd;
-    @SuppressWarnings("unused")
-    private volatile int refCount;
 
     public PipeSuspendEvent(KqueueFacade kqf) {
         this.kqf = kqf;
@@ -49,21 +43,17 @@ public class PipeSuspendEvent extends SuspendEvent {
         this.writeEndFd = (int) fds;
         kqf.getNetworkFacade().bumpFdCount(readEndFd);
         kqf.getNetworkFacade().bumpFdCount(writeEndFd);
-        this.refCount = 2;
+    }
+
+    @Override
+    public void _close() {
+        kqf.getNetworkFacade().close(readEndFd);
+        kqf.getNetworkFacade().close(writeEndFd);
     }
 
     @Override
     public boolean checkTriggered() {
         return kqf.readPipe(readEndFd) == 1;
-    }
-
-    @Override
-    public void close() {
-        final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
-        if (prevRefCount == 1) {
-            kqf.getNetworkFacade().close(readEndFd);
-            kqf.getNetworkFacade().close(writeEndFd);
-        }
     }
 
     @Override
@@ -78,9 +68,5 @@ public class PipeSuspendEvent extends SuspendEvent {
                     .put("could not write to pipe [fd=").put(writeEndFd)
                     .put(']');
         }
-    }
-
-    static {
-        REF_COUNT_OFFSET = Unsafe.getFieldOffset(PipeSuspendEvent.class, "refCount");
     }
 }

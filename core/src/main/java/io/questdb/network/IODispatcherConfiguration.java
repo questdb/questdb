@@ -91,5 +91,7 @@ public interface IODispatcherConfiguration {
 
     int getSndBufSize();
 
+    int getTestConnectionBufferSize();
+
     long getTimeout();
 }

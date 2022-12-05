@@ -27,9 +27,7 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjLongMatrix;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,12 +64,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private final long queuedConnectionTimeoutMs;
     private final int rcvBufSize;
     private final int sndBufSize;
+    private final int testConnectionBufSize;
     protected boolean closed = false;
     protected int serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
     private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
+    private long testConnectionBuf;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -80,6 +80,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
+
+        this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
+        this.testConnectionBuf = Unsafe.malloc(this.testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
 
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCycle());
@@ -126,6 +129,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             nf.close(serverFd, LOG);
             serverFd = -1;
         }
+
+        testConnectionBuf = Unsafe.free(testConnectionBuf, testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
@@ -341,6 +346,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected abstract void registerListenerFd();
+
+    protected boolean testConnection(int fd) {
+        return NetworkUtils.testConnection(nf, fd, testConnectionBuf, testConnectionBufSize);
+    }
 
     protected abstract void unregisterListenerFd();
 

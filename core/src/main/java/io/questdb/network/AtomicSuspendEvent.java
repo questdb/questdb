@@ -34,13 +34,13 @@ public class AtomicSuspendEvent extends SuspendEvent {
     private volatile boolean flag;
 
     @Override
-    public boolean checkTriggered() {
-        return flag;
+    public void _close() {
+        // no-op
     }
 
     @Override
-    public void close() {
-        // no-op
+    public boolean checkTriggered() {
+        return flag;
     }
 
     @Override

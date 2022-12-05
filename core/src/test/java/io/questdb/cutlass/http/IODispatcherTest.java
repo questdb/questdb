@@ -3082,6 +3082,41 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(60_000) // use a large value for query timeout
+                .run((engine) -> {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    final String query = "select * from test_data_unavailable(1, 10)";
+                    final String request = "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n"
+                            + SendAndReceiveRequestBuilder.RequestHeaders;
+
+                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                    int fd = -1;
+                    try {
+                        fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
+                        TestUtils.assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
+                        nf.close(fd);
+                        fd = -1;
+                        // Check that I/O dispatcher closes the event once it finds out the disconnect.
+                        TestUtils.assertEventually(() -> Assert.assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
+                    } finally {
+                        if (fd > -1) {
+                            nf.close(fd);
+                        }
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
+                    }
+                });
+    }
+
+    @Test
     public void testJsonQueryDisconnectOnDataUnavailableEventNeverFired() throws Exception {
         testDisconnectOnDataUnavailableEventNeverFired(
                 "GET /query?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"

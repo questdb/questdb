@@ -120,7 +120,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
             count = sf.select(readFdSet.address, writeFdSet.address, 0);
             if (count < 0) {
-                LOG.error().$("Error in select(): ").$(nf.errno()).$();
+                LOG.error().$("select failure [err=").$(nf.errno()).I$();
                 return false;
             }
         } else {
@@ -242,8 +242,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         private void close() {
             if (address != 0) {
-                Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-                address = 0;
+                address = Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             }
         }
 
