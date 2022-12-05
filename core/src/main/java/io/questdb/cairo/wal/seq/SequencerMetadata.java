@@ -80,7 +80,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         Misc.free(roMetaMem);
     }
 
-    public void copyFrom(TableDescriptor model, String tableName, int tableId, int structureVersion, boolean suspended) {
+    public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion, boolean suspended) {
         reset();
         this.tableName = tableName;
         timestampIndex = model.getTimestampIndex();
