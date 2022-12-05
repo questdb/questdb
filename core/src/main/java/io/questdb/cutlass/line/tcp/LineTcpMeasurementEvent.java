@@ -285,14 +285,14 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createMeasurementEvent(
-            TableUpdateDetails tableUpdateDetails,
+            TableUpdateDetails tud,
             LineTcpParser parser,
             int workerId
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
-        final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
+        final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tableUpdateDetails;
+        this.tableUpdateDetails = tud;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -309,7 +309,7 @@ class LineTcpMeasurementEvent implements Closeable {
             int columnWriterIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
-                if (columnWriterIndex == tableUpdateDetails.getTimestampIndex()) {
+                if (columnWriterIndex == tud.getTimestampIndex()) {
                     timestamp = timestampAdapter.getMicros(entity.getLongValue());
                     continue;
                 }
@@ -543,7 +543,7 @@ class LineTcpMeasurementEvent implements Closeable {
         }
         buffer.addDesignatedTimestamp(buffer.getAddress() + Long.BYTES, timestamp);
         buffer.addNumOfColumns(buffer.getAddress() + 2 * Long.BYTES, entitiesWritten);
-        writerWorkerId = tableUpdateDetails.getWriterThreadId();
+        writerWorkerId = tud.getWriterThreadId();
     }
 
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
