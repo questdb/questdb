@@ -33,9 +33,9 @@ public class RpnBuilder implements ExpressionParserListener {
     @Override
     public void onNode(ExpressionNode node) {
         if (node.queryModel != null) {
-            sink.put('(').put(node.queryModel).put(')');
+            sink.put('(').put(node.queryModel).put(')').put(' ');
         } else {
-            sink.put(node.token);
+            sink.put(node.token).put(' ');
         }
     }
 
@@ -44,6 +44,10 @@ public class RpnBuilder implements ExpressionParserListener {
     }
 
     public final CharSequence rpn() {
+        if (sink.charAt(sink.length() - 1) == ' ') {
+            sink.clear(sink.length() - 1);
+        }
+
         return sink;
     }
 }

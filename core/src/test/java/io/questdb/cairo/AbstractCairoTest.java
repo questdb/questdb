@@ -691,6 +691,14 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    protected enum StringAsTagMode {
+        WITH_STRINGS_AS_TAG, NO_STRINGS_AS_TAG
+    }
+
+    protected enum SymbolAsFieldMode {
+        WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
+    }
+
     protected enum WalMode {
         WITH_WAL, NO_WAL
     }
