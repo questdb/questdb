@@ -25,6 +25,7 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
+import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -627,6 +628,42 @@ public final class TestUtils {
         }
     }
 
+    public static void assertSqlCursors(QuestDBNode node, ObjList<QuestDBNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
+        try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
+            for (int i = 0, n = nodes.size(); i < n; i++) {
+                final QuestDBNode dbNode = nodes.get(i);
+                try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
+                    try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
+                        try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
+                            assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
+                        }
+                    } catch (AssertionError e) {
+                        log.error().$(e).$();
+                        try (RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext())) {
+                            try (RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())) {
+                                log.xDebugW().$();
+
+                                LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                                LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
+                                printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
+                                record.$();
+                                printer.print(expectedCursor, factory.getMetadata(), false, log);
+
+                                record = log.xDebugW().$("> but was:<");
+                                printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
+                                record.$();
+
+                                printer.print(actualCursor, factory2.getMetadata(), false, log);
+                                log.xDebugW().$(">").$();
+                            }
+                        }
+                        throw e;
+                    }
+                }
+            }
+        }
+    }
+
     public static void assertSqlWithTypes(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -1142,8 +1179,9 @@ public final class TestUtils {
     }
 
     public static void removeTestPath(CharSequence root) {
-        Path path = Path.getThreadLocal(root);
-        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+        final Path path = Path.getThreadLocal(root);
+        final int rc = Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {

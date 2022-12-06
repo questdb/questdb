@@ -168,7 +168,7 @@ public class Long128Tests extends AbstractGriffinTest {
                         ")"
         );
         engine.clear();
-        defaultMapType = "compact";
+        configOverrideDefaultMapType("compact");
 
         assertQuery("ts\tts1\tts11\ti\n" +
                         "00000000-0000-0006-0000-000000000003\t00000000-0000-0006-0000-000000000003\t2022-02-24T00:00:00.000000Z\t1\n" +
