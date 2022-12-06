@@ -168,6 +168,7 @@ public enum PropertyKey {
     CAIRO_IO_URING_ENABLED("cairo.iouring.enabled"),
     CAIRO_MAX_CRASH_FILES("cairo.max.crash.files"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),
+    CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),
     HTTP_MIN_ENABLED("http.min.enabled"),
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),

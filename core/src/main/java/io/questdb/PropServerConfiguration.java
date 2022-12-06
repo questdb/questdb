@@ -641,8 +641,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
             this.circuitBreakerTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
-
-            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, 64);
+            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
+            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
@@ -3653,9 +3653,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerObsolete(
                 "cairo.sql.append.page.size",
                 PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE);
-        registerObsolete(
-                "circuit.breaker.buffer.size",
-                PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
 
         registerDeprecated(
                 PropertyKey.HTTP_MIN_BIND_TO,
@@ -3712,5 +3709,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerDeprecated(
                 PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
                 PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
+        registerDeprecated(
+                PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
+                PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
     }
 }
