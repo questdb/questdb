@@ -47,7 +47,7 @@ class WalWriterEvents implements Closeable {
     private AtomicIntList initialSymbolCounts;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
-    private long txn = 0;
+    private int txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
 
     WalWriterEvents(FilesFacade ff) {
@@ -177,7 +177,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    int data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
@@ -213,7 +213,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
     }
 
-    long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext, long nowNanos, long nowMicros) {
+    int sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext, long nowNanos, long nowMicros) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
@@ -230,7 +230,7 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
-    long truncate() {
+    int truncate() {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.TRUNCATE);

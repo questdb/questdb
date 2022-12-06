@@ -28,7 +28,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 
 public interface MemorySerializer {
-    void fromSink(Object instance, MemoryCR memory, long offset);
+    void fromSink(Object instance, MemoryCR memory, long offsetLo, long offsetHi);
 
     void toSink(Object obj, MemoryA sink);
 }

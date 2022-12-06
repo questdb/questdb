@@ -240,7 +240,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, int segmentId, long segmentTxn) {
+    public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
             long txn;
             try {
@@ -442,7 +442,7 @@ public class TableSequencerAPI implements QuietCloseable {
                     // Sequencer is distressed, close before removing from the pool.
                     // Remove from registry only if this thread closed the instance.
                     if (checkClose()) {
-                        LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).$();
+                        LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).I$();
                         pool.seqRegistry.remove(getTableName(), this);
                     }
                 }
