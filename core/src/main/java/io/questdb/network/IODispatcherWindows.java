@@ -154,17 +154,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
                     // the event has been triggered or expired already, clear it and proceed
                     context.clearSuspendEvent();
-                } else {
-                    // the event is still pending, check if we have a client disconnect
-                    // TODO add the operation to select instead of check on each iteration
-                    if (testConnection(context.getFd())) {
-                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
-                        pending.deleteRow(i);
-                        n--;
-                    } else {
-                        i++; // just skip to the next operation
-                    }
-                    continue;
                 }
             }
 
@@ -174,7 +163,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             assert fd != serverFd;
 
             if (newOp == -1) {
-                // check if expired
+                // new operation case
+
+                // check if the connection was idle for too long
                 if (ts < deadline) {
                     doDisconnect(context, DISCONNECT_SRC_IDLE);
                     pending.deleteRow(i);
@@ -183,7 +174,14 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     continue;
                 }
 
-                if (pending.get(i++, OPM_OPERATION) == IOOperation.READ) {
+                int operation = (int) pending.get(i, OPM_OPERATION);
+                i++;
+                if (suspendEvent != null) {
+                    // if the operation was suspended, we request a read to be able to detect a client disconnect
+                    operation = IOOperation.READ;
+                }
+
+                if (operation == IOOperation.READ) {
                     readFdSet.add(fd);
                     readFdCount++;
                 } else {
@@ -191,9 +189,20 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     writeFdCount++;
                 }
             } else {
-                // this fd just has fired
-                // publish event
-                // and remove from pending
+                // select()'ed operation case
+                if (suspendEvent != null) {
+                    // the event is still pending, check if we have a client disconnect
+                    if (testConnection(context.getFd())) {
+                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
+                        pending.deleteRow(i);
+                        n--;
+                    } else {
+                        i++; // just skip to the next operation
+                    }
+                    continue;
+                }
+
+                // publish event and remove from pending
                 useful = true;
 
                 if ((newOp & SelectAccessor.FD_READ) > 0) {

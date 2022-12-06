@@ -87,10 +87,8 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
             if (operation == IOOperation.READ) {
                 kqueue.readFD(fd, pending.get(i, OPM_ID));
-                LOG.debug().$("kq [op=1, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             } else {
                 kqueue.writeFD(fd, pending.get(i, OPM_ID));
-                LOG.debug().$("kq [op=2, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             }
             if (++index > capacity - 1) {
                 registerWithKQueue(index);
@@ -176,52 +174,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         return idSeq++ << 1;
     }
 
-    private void processExpiredDeadlines(long timestamp) {
-        int index = 0;
-        int offset = 0;
-        int count = 0;
-        for (int i = 0, n = pendingEvents.size(); i < n && pendingEvents.get(i, EVM_DEADLINE) < timestamp; i++, count++) {
-            final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
-            final int pendingRow = pending.binarySearch(opId, OPM_ID);
-            if (pendingRow < 0) {
-                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
-                continue;
-            }
-
-            // First, remove the suspend event from kqueue tracking.
-            final C context = pending.get(pendingRow);
-            final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            assert suspendEvent != null;
-            kqueue.setWriteOffset(offset);
-            kqueue.removeFD(suspendEvent.getFd());
-            offset += KqueueAccessor.SIZEOF_KEVENT;
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = offset = 0;
-            }
-            pending.deleteRow(pendingRow);
-
-            // Next, close the event and resume the original operation.
-            context.clearSuspendEvent();
-            kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ) {
-                kqueue.readFD(context.getFd(), opId);
-            } else {
-                kqueue.writeFD(context.getFd(), opId);
-            }
-            offset += KqueueAccessor.SIZEOF_KEVENT;
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = offset = 0;
-            }
-        }
-        if (index > 0) {
-            registerWithKQueue(index);
-        }
-        pendingEvents.zapTop(count);
-    }
-
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < deadline; i++, count++) {
@@ -305,6 +257,52 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         return useful;
     }
 
+    private void processSuspendEventDeadlines(long timestamp) {
+        int index = 0;
+        int offset = 0;
+        int count = 0;
+        for (int i = 0, n = pendingEvents.size(); i < n && pendingEvents.get(i, EVM_DEADLINE) < timestamp; i++, count++) {
+            final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
+            final int pendingRow = pending.binarySearch(opId, OPM_ID);
+            if (pendingRow < 0) {
+                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
+                continue;
+            }
+
+            // First, remove the suspend event from kqueue tracking.
+            final C context = pending.get(pendingRow);
+            final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            assert suspendEvent != null;
+            kqueue.setWriteOffset(offset);
+            kqueue.removeFD(suspendEvent.getFd());
+            offset += KqueueAccessor.SIZEOF_KEVENT;
+            if (++index > capacity - 1) {
+                registerWithKQueue(index);
+                index = offset = 0;
+            }
+            pending.deleteRow(pendingRow);
+
+            // Next, close the event and resume the original operation.
+            context.clearSuspendEvent();
+            kqueue.setWriteOffset(offset);
+            if (operation == IOOperation.READ) {
+                kqueue.readFD(context.getFd(), opId);
+            } else {
+                kqueue.writeFD(context.getFd(), opId);
+            }
+            offset += KqueueAccessor.SIZEOF_KEVENT;
+            if (++index > capacity - 1) {
+                registerWithKQueue(index);
+                index = offset = 0;
+            }
+        }
+        if (index > 0) {
+            registerWithKQueue(index);
+        }
+        pendingEvents.zapTop(count);
+    }
+
     private void registerWithKQueue(int changeCount) {
         if (kqueue.register(changeCount) != 0) {
             throw NetworkError.instance(nf.errno()).put("could not register [changeCount=").put(changeCount).put(']');
@@ -364,7 +362,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         // process timed out suspend events and resume the original operations
         if (pendingEvents.size() > 0 && pendingEvents.get(0, EVM_DEADLINE) < timestamp) {
-            processExpiredDeadlines(timestamp);
+            processSuspendEventDeadlines(timestamp);
         }
 
         // process timed out connections

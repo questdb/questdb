@@ -155,31 +155,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         return idSeq++ << 1;
     }
 
-    private void processExpiredDeadlines(long timestamp) {
-        int count = 0;
-        for (int i = 0, n = pendingEvents.size(); i < n && pendingEvents.get(i, EVM_DEADLINE) < timestamp; i++, count++) {
-            final long eventId = pendingEvents.get(i, EVM_ID);
-            final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
-            final int pendingRow = pending.binarySearch(opId, OPM_ID);
-            if (pendingRow < 0) {
-                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
-                continue;
-            }
-            // First, remove the suspend event from the epoll interest list.
-            final C context = pending.get(pendingRow);
-            final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            assert suspendEvent != null;
-            if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                LOG.error().$("epoll_ctl remove suspend event failure [eventId=").$(eventId)
-                        .$(", err=").$(nf.errno()).I$();
-            }
-            // Next, resume the original operation and close the event.
-            resumeOperation(context, opId, operation);
-        }
-        pendingEvents.zapTop(count);
-    }
-
     private void processIdleConnections(long idleTimestamp) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < idleTimestamp; i++, count++) {
@@ -247,6 +222,31 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             }
         }
         return useful;
+    }
+
+    private void processSuspendEventDeadlines(long timestamp) {
+        int count = 0;
+        for (int i = 0, n = pendingEvents.size(); i < n && pendingEvents.get(i, EVM_DEADLINE) < timestamp; i++, count++) {
+            final long eventId = pendingEvents.get(i, EVM_ID);
+            final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
+            final int pendingRow = pending.binarySearch(opId, OPM_ID);
+            if (pendingRow < 0) {
+                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
+                continue;
+            }
+            // First, remove the suspend event from the epoll interest list.
+            final C context = pending.get(pendingRow);
+            final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            assert suspendEvent != null;
+            if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                LOG.error().$("epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                        .$(", err=").$(nf.errno()).I$();
+            }
+            // Next, resume the original operation and close the event.
+            resumeOperation(context, opId, operation);
+        }
+        pendingEvents.zapTop(count);
     }
 
     private void resumeOperation(C context, long id, int operation) {
@@ -320,7 +320,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
         // process timed out suspend events and resume the original operations
         if (pendingEvents.size() > 0 && pendingEvents.get(0, EVM_DEADLINE) < timestamp) {
-            processExpiredDeadlines(timestamp);
+            processSuspendEventDeadlines(timestamp);
         }
 
         // process timed out connections
