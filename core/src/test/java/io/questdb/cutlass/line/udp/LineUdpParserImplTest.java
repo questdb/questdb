@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -582,7 +581,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         .timestamp()) {
             CairoTestUtils.create(model);
         }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+        try (TableWriter writer = getWriter("t_ilp21")) {
             writer.removeColumn("event");
         }
         engine.releaseInactive();
@@ -610,7 +609,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         .timestamp()) {
             CairoTestUtils.create(model);
         }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+        try (TableWriter writer = getWriter("t_ilp21")) {
             writer.removeColumn("event");
             writer.addColumn("event", ColumnType.SHORT);
         }

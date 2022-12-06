@@ -124,7 +124,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             rnd.reset();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "allgeo")) {
+            try (TableReader reader = getReader("allgeo")) {
                 final TableReaderRecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -864,7 +864,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             assertReaderCheckWal(expected1, "trades");
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades", "testing")) {
+            try (TableWriter w = getWriter("trades")) {
                 w.truncate();
             }
 
@@ -1214,7 +1214,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             rnd.reset();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "all2")) {
+            try (TableReader reader = getReader("all2")) {
                 final TableReaderRecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {

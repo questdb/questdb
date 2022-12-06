@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.wal.AbstractTableNameRegistry;
+import io.questdb.cairo.wal.ReverseTableMapItem;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.HashMap;
@@ -36,8 +37,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private volatile long lastReloadTimestampMs = 0;
     private HashMap<CharSequence, TableToken> nameTableTokenMap = new HashMap<>();
     private HashMap<CharSequence, TableToken> nameTableTokenMap2 = new HashMap<>();
-    private HashMap<TableToken, String> reverseTableNameTokenMap = new HashMap<>();
-    private HashMap<TableToken, String> reverseTableNameTokenMap2 = new HashMap<>();
+    private HashMap<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap = new HashMap<>();
+    private HashMap<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap2 = new HashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration) {
         super(configuration);
@@ -45,6 +46,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         long timeout = configuration.getTableRegistryAutoReloadTimeout();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;
         setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
+    }
+
+    @Override
+    public boolean dropTable(TableToken token) {
+        throw CairoException.critical(0).put("instance is read only");
     }
 
     @Override
@@ -63,6 +69,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
+    public void purgeToken(TableToken token) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
     public void registerName(TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
     }
@@ -71,7 +82,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     public synchronized void reloadTableNameCache() {
         nameTableTokenMap2.clear();
         reverseTableNameTokenMap2.clear();
-        nameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2, TABLE_DROPPED_MARKER);
+        nameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2);
 
         // Swap the maps
         setNameMaps(nameTableTokenMap2, reverseTableNameTokenMap2);
@@ -80,21 +91,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         nameTableTokenMap2 = nameTableTokenMap;
         nameTableTokenMap = tmp;
 
-        HashMap<TableToken, String> tmp2 = reverseTableNameTokenMap2;
+        HashMap<CharSequence, ReverseTableMapItem> tmp2 = reverseTableNameTokenMap2;
         reverseTableNameTokenMap2 = reverseTableNameTokenMap;
         reverseTableNameTokenMap = tmp2;
 
         lastReloadTimestampMs = clockMs.getTicks();
-    }
-
-    @Override
-    public boolean dropTable(CharSequence tableName, TableToken token) {
-        throw CairoException.critical(0).put("instance is read only");
-    }
-
-    @Override
-    public void purgeToken(TableToken token) {
-        throw CairoException.critical(0).put("instance is read only");
     }
 
     @Override

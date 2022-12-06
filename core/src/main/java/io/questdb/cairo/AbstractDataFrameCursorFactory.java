@@ -31,13 +31,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
-    private final int tableId;
-    private final String tableName;
+    private final TableToken tableToken;
     private final long tableVersion;
 
-    public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
-        this.tableName = tableName;
-        this.tableId = tableId;
+    public AbstractDataFrameCursorFactory(TableToken tableToken, long tableVersion) {
+        this.tableToken = tableToken;
         this.tableVersion = tableVersion;
     }
 
@@ -46,24 +44,23 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     @Override
-    public boolean supportTableRowId(CharSequence tableName) {
-        return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
+    public boolean supportTableRowId(TableToken tableToken) {
+        return tableToken.equals(this.tableToken);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.attr("tableName").val(tableName);
+        sink.attr("tableName").val(tableToken);
     }
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableName).put("\"}");
+        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableToken).put("\"}");
     }
 
     protected TableReader getReader(SqlExecutionContext executionContext) {
         return executionContext.getReader(
-                tableName,
-                tableId,
+                tableToken,
                 tableVersion
         );
     }

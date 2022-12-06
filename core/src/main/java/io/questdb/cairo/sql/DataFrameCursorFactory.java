@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -67,7 +68,7 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
      */
     int getOrder();
 
-    boolean supportTableRowId(CharSequence tableName);
+    boolean supportTableRowId(TableToken tableToken);
 
     /**
      * @param sink to print data frame cursor to

@@ -168,7 +168,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
+            TableToken tt = engine.getTableTokenIfExists(tableName);
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt));
         }
     }
 
@@ -180,7 +181,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 long size = reader.getCursor().size();
                 assertEquals(expectedSize, size);
             } catch (EntryLockedException e) {
@@ -214,7 +215,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }

@@ -55,6 +55,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final NativeLPSZ segmentName = new NativeLPSZ();
     private final long spinLockTimeout;
+    private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
     private final TxReader txReader;
     private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
     private final NativeLPSZ walName = new NativeLPSZ();
@@ -171,12 +172,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * WAL segments across the database and deletes any which are no longer needed.
      */
     private void broadSweep() {
-        engine.getTableSequencerAPI().forAllWalTables(broadSweepIter);
+        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepIter);
     }
 
-    private void broadSweep(int tableId, final TableToken tableName, long lastTxn) {
+    private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
         try {
-            this.tableName = tableName;
+            this.tableName = tableToken;
             discoveredWalIds.clear();
             walsInUse.clear();
             walInfoDataFrame.clear();
@@ -197,13 +198,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 deleteOutstandingWalDirectories();
             }
 
-            if (engine.isTableDropped(tableName)) {
+            if (engine.isTableDropped(tableToken)) {
                 // Delete sequencer files
-                deleteTableSequencerFiles(tableName);
-                engine.removeTableToken(tableName);
+                deleteTableSequencerFiles(tableToken);
+                engine.removeTableToken(tableToken);
             }
         } catch (CairoException ce) {
-            LOG.error().$("broad sweep failed [table=").$(tableName)
+            LOG.error().$("broad sweep failed [table=").$(tableToken)
                     .$(", msg=").$((Throwable) ce)
                     .$(", errno=").$(ff.errno()).$(']').$();
         }

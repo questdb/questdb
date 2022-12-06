@@ -63,7 +63,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final double retryDelayMultiplier;
     private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
-    private final String tableName;
+    private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
     private SqlCompiler sqlCompiler;
@@ -76,7 +76,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.clock = configuration.getMicrosecondClock();
         this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
         this.inSubSequence = engine.getMessageBus().getColumnPurgeSubSeq();
-        this.tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
+        String tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
         this.taskPool = new WeakMutableObjectPool<>(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());
         this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);
         this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
@@ -102,7 +102,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         ") timestamp(ts) partition by MONTH",
                 sqlExecutionContext
         );
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "QuestDB system");
+        this.tableToken = engine.getTableToken(tableName);
+        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "QuestDB system");
         this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
         processTableRecords(engine);
     }
@@ -118,7 +119,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
     @TestOnly
     public String getLogTableName() {
-        return tableName;
+        return tableToken.getTableName();
     }
 
     @TestOnly
@@ -142,7 +143,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
         } catch (Throwable th) {
             LOG.error().$("error saving to column version house keeping log, cannot commit")
-                    .$(", releasing writer and stop updating log [table=").$(tableName)
+                    .$(", releasing writer and stop updating log [table=").$(tableToken)
                     .$(", error=").$(th)
                     .I$();
             writer = Misc.free(writer);
@@ -196,13 +197,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private void processTableRecords(CairoEngine engine) {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
-                    "SELECT * FROM \"" + tableName + "\" WHERE completed = null",
+                    "SELECT * FROM \"" + tableToken.getTableName() + "\" WHERE completed = null",
                     sqlExecutionContext
             );
 
             long microTime = clock.getTicks();
             try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {
-                assert recordCursorFactory.supportsUpdateRowId(tableName);
+                assert recordCursorFactory.supportsUpdateRowId(tableToken);
                 int count = 0;
 
                 try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {
@@ -323,7 +324,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 }
             } catch (Throwable th) {
                 LOG.error().$("error saving to column version house keeping log, unable to insert")
-                        .$(", releasing writer and stop updating log [table=").$(tableName)
+                        .$(", releasing writer and stop updating log [table=").$(tableToken)
                         .$(", error=").$(th)
                         .I$();
                 writer = Misc.free(writer);

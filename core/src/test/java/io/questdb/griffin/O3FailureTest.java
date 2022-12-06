@@ -57,6 +57,16 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
+    private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
+        @Override
+        public long openRW(LPSZ name, long opts) {
+            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+    };
+    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffAllocateFailure = new TestFilesFacadeImpl() {
         private boolean failNextAlloc = false;
 
@@ -80,7 +90,6 @@ public class O3FailureTest extends AbstractO3Test {
             return super.length(fd);
         }
     };
-    private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffFailToAllocateIndex = new TestFilesFacadeImpl() {
         boolean failNextAlloc = false;
         long theFd;
@@ -195,15 +204,6 @@ public class O3FailureTest extends AbstractO3Test {
         public long openRW(LPSZ name, long opts) {
             if (!fixFailure.get() || (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
-                return -1;
-            }
-            return super.openRW(name, opts);
-        }
-    };
-    private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
-        @Override
-        public long openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -1778,7 +1778,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "500\t8068645982235546347\t1970-01-07T08:45:00.000000Z\tNaN\n" +
                 "10\t3500000\t1970-01-07T08:45:00.000000Z\t10.2\n";
 
-        try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+        try (TableWriter w = getWriter(executionContext, "x", "test")) {
 
             // Adding column is essential, columns open in writer's constructor will have
             // mapped memory, whereas newly added column does not
@@ -1869,7 +1869,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+        try (TableWriter w = getWriter(executionContext, "x", "test")) {
 
             // stash copy of X, in case X is corrupt
             compiler.compile("create table y as (select * from x)", executionContext);
@@ -3764,7 +3764,7 @@ public class O3FailureTest extends AbstractO3Test {
         int batches = 0;
         int batchCount = 75;
         while (batches < batchCount) {
-            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+            try (TableWriter w = getWriter(executionContext, "x", "test")) {
                 for (int i = 0; i < batchCount; i++) {
                     batches++;
                     for (int k = 0; k < 1000; k++) {

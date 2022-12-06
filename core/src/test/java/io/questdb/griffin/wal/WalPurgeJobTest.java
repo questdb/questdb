@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -139,7 +140,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             }
         };
 
-        try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        try (WalWriter walWriter1 = getWalWriter(tableName)) {
             // Assert we've obtained a writer to wal1 and we're not already on wal2.
             assertWalExistence(true, tableName, 1);
             assertWalExistence(false, tableName, 2);
@@ -162,7 +163,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             // We commit the segment to the sequencer.
             walWriter1.commit();
 
-            try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter2 = getWalWriter(tableName)) {
                 assertWalExistence(true, tableName, 1);
                 assertWalExistence(true, tableName, 2);
                 assertSegmentExistence(true, tableName, 2, 0);
@@ -386,7 +387,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
-        try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        try (WalWriter walWriter1 = getWalWriter(tableName)) {
             // Alter is committed.
             addColumn(walWriter1, "i1");
 
@@ -535,7 +536,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(false, tableName, 1);
-            try (TableWriterAPI ignored = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI ignored = getTableWriterAPI(tableName)) {
                 // No-op. We just want to create a WAL.
             }
 
@@ -683,7 +684,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     static void addColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getTableName(), 0);
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }

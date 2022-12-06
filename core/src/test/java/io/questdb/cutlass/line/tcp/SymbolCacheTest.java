@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -70,7 +69,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             Rnd rnd = new Rnd();
 
             Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     start.await();
                     for (int i = 0; i < totalColAddCount; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
@@ -106,7 +105,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                              path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                              PartitionBy.DAY
                      );
-                     TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)
+                     TableReader rdr = getReader(tableName)
                 ) {
                     path.of(configuration.getRoot()).concat(tableToken);
                     start.await();
@@ -290,7 +289,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     }
                 }).start();
 
-                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
+                try (TableWriter w = getWriter("x")) {
                     barrier.await();
 
                     OUT:

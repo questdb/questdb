@@ -28,9 +28,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.Iterator;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -59,9 +58,10 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
+        private final ObjList<TableToken> tableBucket = new ObjList<>();
         private CairoEngine engine;
+        private int tableIndex = -1;
         private String tableName = null;
-        private Iterator<TableToken> tableTokens;
 
         @Override
         public void close() {
@@ -79,25 +79,16 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (tableTokens == null) {
-                tableTokens = engine.getTableTokens().iterator();
+            if (tableIndex < 0) {
+                engine.getTableTokens(tableBucket, false);
+                tableIndex = 0;
             }
 
-            do {
-                boolean hasNext = tableTokens.hasNext();
-                if (!hasNext) {
-                    tableTokens = null;
-                } else {
-                    TableToken tableToken = tableTokens.next();
-                    if (engine.isLiveTable(tableToken)) {
-                        tableName = tableToken.getTableName();
-                    } else {
-                        tableName = null;
-                    }
-                }
-            } while (tableTokens != null && tableName == null);
-
-            return tableTokens != null;
+            if (tableIndex == tableBucket.size()) {
+                return false;
+            }
+            tableName = tableBucket.get(tableIndex++).getTableName();
+            return true;
         }
 
         @Override
@@ -112,7 +103,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            tableTokens = null;
+            tableIndex = -1;
         }
 
         private TableListRecordCursor of(@NotNull CairoEngine cairoEngine) {

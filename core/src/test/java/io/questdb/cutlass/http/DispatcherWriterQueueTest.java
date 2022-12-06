@@ -423,21 +423,18 @@ public class DispatcherWriterQueueTest {
         testUpdateSucceedsAfterReaderOutOfDateException(1, 30_000L);
     }
 
-    private void runAlterOnBusyTable(
-            final AlterVerifyAction alterVerifyAction,
-            int httpWorkers,
-            int errorsExpected,
-            final String... httpAlterQueries
-    ) throws Exception {
-        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(httpWorkers)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-                )
-                .withAlterTableStartWaitTimeout(30_000);
+    private TableReader getReader(CairoEngine engine, String tableName) {
+        TableToken tt = engine.getTableToken(tableName);
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt);
+    }
 
-        runAlterOnBusyTable(alterVerifyAction, errorsExpected, queryTestBuilder, null, httpAlterQueries);
+    private TableWriter getWriter(CairoEngine engine, String tableName) {
+        TableToken tt = engine.getTableToken(tableName);
+        return engine.getWriter(
+                sqlExecutionContext.getCairoSecurityContext(),
+                tt,
+                "test lock"
+        );
     }
 
     private void runAlterOnBusyTable(
@@ -457,7 +454,7 @@ public class DispatcherWriterQueueTest {
                         " cast(x as timestamp) ts" +
                         " from long_sequence(10)" +
                         " )", sqlExecutionContext);
-                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
+                writer = getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
@@ -512,7 +509,7 @@ public class DispatcherWriterQueueTest {
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseInactive();
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (TableReader rdr = getReader(engine, tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
@@ -522,6 +519,23 @@ public class DispatcherWriterQueueTest {
                 compiler.close();
             }
         });
+    }
+
+    private void runAlterOnBusyTable(
+            final AlterVerifyAction alterVerifyAction,
+            int httpWorkers,
+            int errorsExpected,
+            final String... httpAlterQueries
+    ) throws Exception {
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(httpWorkers)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000);
+
+        runAlterOnBusyTable(alterVerifyAction, errorsExpected, queryTestBuilder, null, httpAlterQueries);
     }
 
     private void runUpdateOnBusyTable(
@@ -546,7 +560,7 @@ public class DispatcherWriterQueueTest {
                         " cast(x as timestamp) ts" +
                         " from long_sequence(9)" +
                         " )", sqlExecutionContext);
-                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
+                writer = getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpUpdateQueries.length);
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpUpdateQueries.length);
@@ -614,7 +628,7 @@ public class DispatcherWriterQueueTest {
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseAllReaders();
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (TableReader rdr = getReader(engine, tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
@@ -763,7 +777,7 @@ public class DispatcherWriterQueueTest {
     private QueryFutureUpdateListener waitUntilCommandStarted(SOCountDownLatch ackReceived, SOCountDownLatch scheduled) {
         return new QueryFutureUpdateListener() {
             @Override
-            public void reportBusyWaitExpired(CharSequence tableName, long commandId) {
+            public void reportBusyWaitExpired(TableToken tableToken, long commandId) {
                 if (scheduled != null) {
                     scheduled.countDown();
                 }
@@ -777,7 +791,7 @@ public class DispatcherWriterQueueTest {
             }
 
             @Override
-            public void reportStart(CharSequence tableName, long commandId) {
+            public void reportStart(TableToken tableToken, long commandId) {
                 if (scheduled != null) {
                     scheduled.countDown();
                 }

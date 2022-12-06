@@ -744,9 +744,9 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
 
             // WalWriter.applyMetadataChangeLog should be triggered
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, tableName, 0);
+            try (WalWriter walWriter1 = getWalWriter(tableName)) {
+                try (WalWriter walWriter2 = getWalWriter(tableName)) {
+                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, walWriter2.getTableToken(), 0);
                     addColumnC.addColumnToList("C", 8, ColumnType.INT, 0, false, false, 0);
                     walWriter1.apply(addColumnC.build(), true);
                     walWriter1.commit();

@@ -61,7 +61,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                try (TableReader rdr1 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
+                try (TableReader rdr1 = getReader("up_part_o3_many")) {
                     compile("insert into up_part_o3_many " +
                             " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                             " x," +
@@ -70,12 +70,12 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                             " rnd_symbol('1', '2', '3', '4') sym2" +
                             " from long_sequence(3)");
 
-                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
+                    try (TableReader rdr2 = getReader("up_part_o3_many")) {
                         executeUpdate("UPDATE up_part_o3_many SET x = 100, str='u1', sym2='EE' WHERE ts >= '1970-01-03'");
                         runPurgeJob(purgeJob);
 
                         currentMicros++;
-                        try (TableReader rdr3 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
+                        try (TableReader rdr3 = getReader("up_part_o3_many")) {
                             executeUpdate("UPDATE up_part_o3_many SET x = 200, str='u2', sym2='EE' WHERE x = 100");
                             runPurgeJob(purgeJob);
                             rdr3.openPartition(0);
@@ -208,7 +208,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
+                try (TableReader ignored = getReader("up_part")) {
                     executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     // cannot purge column versions because of active reader
                     runPurgeJob(purgeJob);
@@ -261,7 +261,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(3)");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
+                try (TableReader rdr = getReader("up_part_o3")) {
                     executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
@@ -276,7 +276,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
                 try (ColumnPurgeJob purgeJob = createPurgeJob()) {
 
-                    try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
+                    try (TableReader ignored = getReader("up_part_o3")) {
                         executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
                     }
 
@@ -343,7 +343,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
+                try (TableReader rdr = getReader("up_part")) {
                     executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
 
                     runPurgeJob(purgeJob);
@@ -416,7 +416,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(3)");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
+                try (TableReader rdr = getReader("up_part_o3")) {
                     executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
@@ -465,7 +465,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
+                try (TableReader rdr = getReader("up_part")) {
                     executeUpdate("UPDATE up_part SET x = 100, str='abcd',SYM2='EE' WHERE ts >= '1970-01-02'");
 
                     runPurgeJob(purgeJob);
@@ -521,7 +521,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts)", sqlExecutionContext);
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                try (TableReader rdr = getReader("up")) {
                     executeUpdate("UPDATE up SET x = 100, str='abcd', sym2='EE'");
 
                     runPurgeJob(purgeJob);
@@ -566,7 +566,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts)", sqlExecutionContext);
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                try (TableReader rdr = getReader("up")) {
                     executeUpdate("UPDATE up SET x = 100, str='abcd'");
 
                     runPurgeJob(purgeJob);
@@ -613,7 +613,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurgeRespectsTableTruncates")) {
+                try (TableReader rdr = getReader("testPurgeRespectsTableTruncates")) {
                     executeUpdate("UPDATE testPurgeRespectsTableTruncates SET x = 100, str='abcd'");
 
                     runPurgeJob(purgeJob);
@@ -668,7 +668,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(3)");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
+                try (TableReader rdr = getReader("up_part_o3")) {
                     executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
@@ -725,7 +725,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
                 try (Path path = new Path()) {
                     for (int i = 1; i < 10; i++) {
-                        try (TableReader ignore = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
+                        try (TableReader ignore = getReader("up_part_o3_many")) {
                             executeUpdate("UPDATE up_part_o3_many SET x = x + 1, str = str || 'u2', sym2 = sym2 || '2'");
                             runPurgeJob(purgeJob);
                         }
@@ -765,7 +765,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                         " rnd_symbol('1', '2', '3', '4') sym2" +
                         " from long_sequence(3)");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
+                try (TableReader rdr = getReader("up_part_o3")) {
                     executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2 = 'EE' WHERE ts >= '1970-01-03'");
 
                     currentMicros = 20;

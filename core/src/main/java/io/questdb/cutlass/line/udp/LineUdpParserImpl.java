@@ -84,6 +84,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private long tableName;
+    private TableToken tableToken;
     private TableWriter writer;
     private final LineEndParser MY_LINE_END = this::appendRow;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
@@ -182,7 +183,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName), WRITER_LOCK_REASON);
+        TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
@@ -225,9 +226,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         row.append();
     }
 
-    private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
+    private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
         try {
-            entry.writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+            entry.writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+            this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
             LOG.info().$("cached writer [name=").$(tableName).$(']').$();
@@ -265,7 +267,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
-        engine.createTable(
+        tableToken = engine.createTable(
                 cairoSecurityContext,
                 ddlMem,
                 path,
@@ -277,13 +279,14 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
+        TableToken tableToken = engine.getTableTokenIfExists(token);
         switch (entry.state) {
             case 0:
-                int exists = engine.getStatus(cairoSecurityContext, path, token);
+                int exists = engine.getStatus(cairoSecurityContext, path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;
-                        cacheWriter(entry, token);
+                        cacheWriter(entry, token, tableToken);
                         break;
                     case TABLE_DOES_NOT_EXIST:
                         if (!autoCreateNewTables) {
@@ -311,7 +314,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 }
                 break;
             case 1:
-                cacheWriter(entry, token);
+                cacheWriter(entry, token, tableToken);
                 break;
             default:
                 switchModeToSkipLine();

@@ -61,9 +61,9 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader rdr = getReader("tbl")) {
 
-                try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                try (TableReader rdr2 = getReader("tbl")) {
                     // in order insert
                     compiler.compile("insert into tbl select 2, '1970-01-10T11'", sqlExecutionContext);
 
@@ -106,7 +106,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             // Open a reader so that writer will not delete partitions easily
             ObjList<TableReader> readers = new ObjList<>(tableCount);
             for (int i = 0; i < tableCount; i++) {
-                readers.add(engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl" + i));
+                readers.add(getReader("tbl" + i));
             }
 
             Thread writeThread = new Thread(() -> {
@@ -169,7 +169,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
@@ -198,8 +198,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-10', 60*60*1000000L) ts from long_sequence(5)) timestamp(ts) partition by HOUR", sqlExecutionContext);
 
                 TableToken tableToken = engine.getTableToken("tbl");
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
-                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                try (TableReader rdr = getReader("tbl")) {
+                    try (TableReader rdr2 = getReader("tbl")) {
                         compile("alter table tbl drop partition where ts >= '1970-01-10T03'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
@@ -272,7 +272,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 }
 
                 // lock reader on this transaction
-                readers.add(engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName));
+                readers.add(getReader(tableName));
             }
 
             runPartitionPurgeJobs();
@@ -330,7 +330,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("insert into " + tableName + " select 2, '1970-01-10T11'", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (TableReader rdr = getReader(tableName)) {
 
                 // OOO insert
                 compiler.compile("insert into " + tableName + " select 4, '1970-01-10T09'", sqlExecutionContext);
@@ -367,14 +367,14 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                try (TableReader rdr = getReader("tbl")) {
                     // OOO inserts partition 1970-01-09
                     compiler.compile("insert into tbl select 4, '1970-01-09T09'", sqlExecutionContext);
 
                     path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.2").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
-                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                    try (TableReader rdr2 = getReader("tbl")) {
                         compile("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
@@ -406,7 +406,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by HOUR", sqlExecutionContext);
 
             try (Path path = new Path()) {
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tbl", "test")) {
+                try (TableWriter writer = getWriter("tbl")) {
                     long startTimestamp = Timestamps.HOUR_MICROS + 10;
 
                     for (int i = 0; i < 10; i++) {
@@ -449,7 +449,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
@@ -486,7 +486,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
@@ -521,7 +521,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader rdr = getReader("tbl")) {
 
                 // in order insert
                 compiler.compile("insert into tbl select 2, '1970-01-10T11'", sqlExecutionContext);
@@ -551,7 +551,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 to not do delete in writer
-            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader ignored = getReader("tbl")) {
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
@@ -614,8 +614,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 compiler.compile("create table tbl as (select x, timestamp_sequence('1970-01-10', 60*60*1000000L) ts from long_sequence(1)) timestamp(ts) partition by HOUR", sqlExecutionContext);
 
                 TableToken tableToken = engine.getTableToken("tbl");
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
-                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                try (TableReader rdr = getReader("tbl")) {
+                    try (TableReader rdr2 = getReader("tbl")) {
                         compile("alter table tbl drop partition list '1970-01-10T00'", sqlExecutionContext);
                         runPartitionPurgeJobs();
 
@@ -654,7 +654,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
             TableReader[] readers = new TableReader[iterations];
             for (int i = 0; i < iterations; i++) {
-                TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl");
+                TableReader rdr = getReader("tbl");
                 readers[i] = rdr;
 
                 // OOO insert
@@ -696,7 +696,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             TableReader[] readers = new TableReader[2 * iterations];
 
             for (int i = 0; i < iterations; i++) {
-                TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl");
+                TableReader rdr = getReader("tbl");
                 readers[2 * i] = rdr;
 
                 // in order insert
@@ -704,7 +704,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 runPartitionPurgeJobs();
 
-                TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl");
+                TableReader rdr2 = getReader("tbl");
                 readers[2 * i + 1] = rdr2;
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);

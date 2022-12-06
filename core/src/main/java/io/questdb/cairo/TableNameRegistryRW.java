@@ -25,13 +25,13 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.wal.AbstractTableNameRegistry;
+import io.questdb.cairo.wal.ReverseTableMapItem;
 import io.questdb.std.Chars;
-
-import java.util.concurrent.ConcurrentHashMap;
+import io.questdb.std.ConcurrentHashMap;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
-    private final ConcurrentHashMap<CharSequence, TableToken> nameTableTokenMap = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<TableToken, String> reverseTableNameTokenMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);
@@ -41,6 +41,20 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             }
         }
         setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
+    }
+
+    @Override
+    public boolean dropTable(TableToken token) {
+        if (nameTableTokenMap.remove(token.getTableName(), token)) {
+            if (token.isWal()) {
+                nameStore.logDropTable(token);
+                reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
+                return true;
+            } else {
+                return reverseTableNameTokenMap.remove(token.getDirName()) != null;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -56,6 +70,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public void purgeToken(TableToken token) {
+        reverseTableNameTokenMap.remove(token.getDirName());
+    }
+
+    @Override
     public void registerName(TableToken tableToken) {
         String tableName = tableToken.getTableName();
         if (!nameTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken)) {
@@ -64,33 +83,14 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (tableToken.isWal()) {
             nameStore.appendEntry(tableToken);
         }
-        reverseTableNameTokenMap.put(tableToken, tableName);
+        reverseTableNameTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
     }
 
     @Override
     public synchronized void reloadTableNameCache() {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
-        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap, TABLE_DROPPED_MARKER);
-    }
-
-    @Override
-    public boolean dropTable(CharSequence tableName, TableToken token) {
-        if (nameTableTokenMap.remove(tableName, token)) {
-            if (token.isWal()) {
-                nameStore.logDropTable(token);
-                reverseTableNameTokenMap.put(token, TABLE_DROPPED_MARKER);
-                return true;
-            } else {
-                return reverseTableNameTokenMap.remove(token) != null;
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public void purgeToken(TableToken token) {
-        reverseTableNameTokenMap.remove(token);
+        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap);
     }
 
     @Override
@@ -103,10 +103,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logDropTable(tableToken);
             nameStore.appendEntry(newNameRecord);
 
-            // Delete out of date key
-            reverseTableNameTokenMap.remove(tableToken);
-            reverseTableNameTokenMap.put(newNameRecord, newTableNameStr);
-
+            reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
             nameTableTokenMap.remove(oldName, tableToken);
             return newNameRecord;
         } else {

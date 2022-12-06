@@ -46,16 +46,13 @@ public class InsertOperationImpl implements InsertOperation {
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long structureVersion;
     private final TableToken tableToken;
-    private final String tableName;
 
     public InsertOperationImpl(
             CairoEngine engine,
-            String tableName,
             TableToken tableToken,
             long structureVersion
     ) {
         this.engine = engine;
-        this.tableName = tableName;
         this.tableToken = tableToken;
         this.structureVersion = structureVersion;
     }
@@ -69,7 +66,7 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableName, "insert");
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "insert");
             if (writer.getStructureVersion() != structureVersion ||
                     !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();

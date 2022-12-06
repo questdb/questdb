@@ -403,7 +403,7 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 Assert.assertEquals(expectedTxn, reader.getTxn());
                 Assert.assertEquals(2, reader.getTxFile().getSeqTxn());
             }

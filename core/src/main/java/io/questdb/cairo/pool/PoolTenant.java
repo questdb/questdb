@@ -65,4 +65,9 @@ public interface PoolTenant extends QuietCloseable {
      * the reader to be fully up-to-date with all data and metadata changes.
      */
     void refresh();
+
+    /**
+     * Refreshes value of the Table Token to the one it was created with.
+     */
+    void updateTableToken(TableToken tableToken);
 }

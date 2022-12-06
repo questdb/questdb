@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
-
 public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     private TableToken tableToken;
 
@@ -41,52 +39,50 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     }
 
     @Override
-    public TableRecordMetadata getMetadata(CharSequence tableName) {
-        return getCairoEngine().getMetadata(
-                getCairoSecurityContext(),
-                tableToken
-        );
-    }
-
-    @Override
-    public TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
+    public TableRecordMetadata getMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(
-                getCairoSecurityContext(),
-                tableToken,
-                structureVersion
-        );
+        return engine.getMetadata(getCairoSecurityContext(), this.tableToken);
     }
 
     @Override
-    public TableReader getReader(CharSequence tableName, int tableId, long version) {
-        return getCairoEngine().getReaderByTableToken(
-                getCairoSecurityContext(),
-                tableToken
-        );
+    public TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(getCairoSecurityContext(), this.tableToken, structureVersion);
     }
 
     @Override
-    public TableReader getReader(CharSequence tableName) {
-        return getCairoEngine().getReaderByTableToken(
-                getCairoSecurityContext(),
-                tableToken
-        );
+    public TableReader getReader(TableToken tableToken, long version) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), this.tableToken, version);
     }
 
     @Override
-    public int getStatus(Path path, CharSequence tableName, int lo, int hi) {
-        return TABLE_EXISTS;
+    public TableReader getReader(TableToken tableName) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), this.tableToken);
     }
 
     @Override
-    public int getStatus(Path path, CharSequence tableName) {
-        return TABLE_EXISTS;
+    public int getStatus(Path path, TableToken tableName) {
+        return getCairoEngine().getStatus(getCairoSecurityContext(), path, this.tableToken);
     }
 
     @Override
-    public String getTableNameAsString(CharSequence tableName) {
-        return tableToken.getTableName();
+    public TableToken getTableToken(CharSequence tableName, int lo, int hi) {
+        return this.tableToken;
+    }
+
+    @Override
+    public TableToken getTableToken(CharSequence tableName) {
+        return tableToken;
+    }
+
+    @Override
+    public TableToken getTableTokenIfExists(CharSequence tableName) {
+        return this.tableToken;
+    }
+
+    @Override
+    public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
+        return this.tableToken;
     }
 
     @Override

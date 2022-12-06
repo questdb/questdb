@@ -545,7 +545,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(expectedReaderVersion, txReader.getTxn());
             Assert.assertEquals(expectedReaderVersion, txReader.getVersion());
             Assert.assertEquals(expectedColumnVersion, txReader.getColumnVersion());
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 Assert.assertEquals(partitionedBy, metadata.getPartitionBy());
                 Assert.assertEquals(expectedStructureVersion, metadata.getStructureVersion());

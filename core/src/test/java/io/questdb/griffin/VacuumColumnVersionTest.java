@@ -72,7 +72,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 );
                 compile("alter table testPurge drop column x");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
@@ -108,7 +108,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
                 String[] files = {"sym2.d", "sym2.k", "sym2.v"};
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET x = 100, sym2='EE' WHERE ts >= '1970-01-02'");
                     runPurgeJob(purgeJob);
 
@@ -161,7 +161,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                         sqlExecutionContext
                 );
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
@@ -210,8 +210,8 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 );
 
                 try (
-                        TableReader rdr1 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge1");
-                        TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge2")
+                        TableReader rdr1 = getReader("testPurge1");
+                        TableReader rdr2 = getReader("testPurge2")
                 ) {
                     executeUpdate("UPDATE testPurge1 SET x = 100, str = 'abc' WHERE ts >= '1970-01-02'");
                     executeUpdate("UPDATE testPurge2 SET x = 100, str = 'dcf' WHERE ts >= '1970-01-02'");
@@ -247,7 +247,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+            try (TableReader rdr = getReader("testPurge")) {
                 executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                 rdr.openPartition(0);
 
@@ -289,7 +289,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 compile("alter table testPurge add column x int");
                 compile("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
@@ -429,7 +429,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         );
         compile("alter table " + tableName + " drop column x");
         compile("alter table " + tableName + " add column x int");
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        try (TableReader rdr = getReader(tableName)) {
             compile("insert into " + tableName + "(ts, x, str,sym1,sym2) " +
                     "select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                     " x," +

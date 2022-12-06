@@ -38,8 +38,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
-import java.util.Iterator;
-
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
@@ -117,11 +115,13 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
+            private final ObjList<TableToken> tableBucket = new ObjList<>();
+            private int tableIndex = -1;
             private TableToken tableToken;
-            private Iterator<TableToken> tableTokens;
 
             @Override
             public void close() {
+                tableIndex = -1;
                 tableReaderMetadata.clear();//release FD of last table on the list
             }
 
@@ -137,21 +137,21 @@ public class TableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (tableTokens == null) {
-                    tableTokens = engine.getTableTokens().iterator();
+                if (tableIndex < 0) {
+                    engine.getTableTokens(tableBucket, false);
+                    tableIndex = -1;
                 }
 
-                do {
-                    boolean hasNext = tableTokens.hasNext();
-                    if (!hasNext) {
-                        tableTokens = null;
-                    } else {
-                        tableToken = tableTokens.next();
-                        tableToken = engine.isLiveTable(tableToken) && record.open(tableToken) ? tableToken : null;
+                tableIndex++;
+                int n = tableBucket.size();
+                for (; tableIndex < n; tableIndex++) {
+                    tableToken = tableBucket.get(tableIndex);
+                    if (record.open(tableToken)) {
+                        break;
                     }
-                } while (tableTokens != null && tableToken == null);
+                }
 
-                return tableTokens != null;
+                return tableIndex < n;
             }
 
             @Override

@@ -1638,12 +1638,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             Assert.assertTrue(disconnected);
         });
 
-        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
-                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
-        );
-
-        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
-            Assert.fail();
+        try {
+            engine.getTableToken(table);
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
         }
@@ -1693,12 +1689,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             Assert.assertTrue(disconnected);
         });
 
-        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
-                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
-        );
-
-        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
-            Assert.fail();
+        try {
+            engine.getTableToken(table);
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
         }
@@ -1979,7 +1971,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             } catch (SqlException ex) {
                 throw new RuntimeException(ex);
             }
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+            try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
             }
@@ -2005,7 +1997,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
             assertTable(expected, table);
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+
+            try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
             }

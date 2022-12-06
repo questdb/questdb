@@ -497,7 +497,8 @@ public final class TestUtils {
     public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        TableToken tt = engine.getTableToken(tableName);
+        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
 

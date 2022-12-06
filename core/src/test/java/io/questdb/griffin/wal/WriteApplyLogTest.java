@@ -127,7 +127,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
             compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
 
             try (
-                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                    TableWriter writer = getWriter("x");
                     Path walPath = new Path()
             ) {
                 TableToken tableToken = engine.getTableToken("wal_all");
@@ -179,7 +179,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
             compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
 
             try (
-                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                    TableWriter writer = getWriter("x");
                     Path walPath = new Path()
             ) {
                 TableToken tableToken = engine.getTableToken("wal_all");

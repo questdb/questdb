@@ -188,7 +188,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         try {
                             alterOperationBuilder.clear();
                             alterOperationBuilder
-                                    .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
+                                    .ofAddColumn(0, tableUpdateDetails.getTableToken(), 0)
                                     .addColumnToList(columnName, 0, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
                             writer.apply(alterOperationBuilder.build(), true);
                         } catch (CairoException e) {

@@ -536,7 +536,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
-            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "testing")) {
+            try (TableWriter ignore = getWriter("test")) {
                 try {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
@@ -1432,7 +1432,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 true
                         );
 
-                        try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                        try (TableReader r = getReader("test")) {
                             Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
                         }
                     }
@@ -3040,7 +3040,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertTable(expected);
         textLoader.clear();
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "testing")) {
+        try (TableWriter writer = getWriter(engine, "test")) {
             writer.truncate();
         }
 
@@ -3258,7 +3258,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                 }
         );
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+        try (TableReader reader = getReader("test")) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(1, reader.size());
@@ -3362,7 +3362,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             );
             Assert.assertEquals(expectedPartitionNames.size(), rmdirCallCount.get());
             Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+            try (TableReader reader = getReader("test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
                 Assert.assertEquals(6, reader.size());

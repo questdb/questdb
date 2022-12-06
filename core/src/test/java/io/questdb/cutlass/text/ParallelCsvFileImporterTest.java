@@ -832,7 +832,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         }
 
         refreshTablesInBaseEngine();
-        testImportThrowsException(tabex3, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "name is reserved [table=" + tabex3 + "]");
+        testImportThrowsException(tabex3, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "name is reserved [tableName=" + tabex3 + "]");
     }
 
     @Test
@@ -1247,7 +1247,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             // verify that the index is present
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "alltypes")) {
+            try (TableReader reader = getReader("alltypes")) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym");
                 Assert.assertTrue("Column sym must exist", columnIndex >= 0);

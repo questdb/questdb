@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -38,8 +39,8 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class TableSequencerAPI implements QuietCloseable {
@@ -66,8 +67,8 @@ public class TableSequencerAPI implements QuietCloseable {
         releaseAll();
     }
 
-    public void dropTable(CharSequence tableName, TableToken tableToken, boolean failedCreate) {
-        LOG.info().$("dropping wal table [name=").utf8(tableName).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
+    public void dropTable(TableToken tableToken, boolean failedCreate) {
+        LOG.info().$("dropping wal table [name=").$(tableToken).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 seq.dropTable();
@@ -75,25 +76,30 @@ public class TableSequencerAPI implements QuietCloseable {
                 seq.unlockWrite();
             }
         } catch (CairoException e) {
-            LOG.info().$("failed to drop wal table [name=").utf8(tableName).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
+            LOG.info().$("failed to drop wal table [name=").$(tableToken).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
             if (!failedCreate) {
                 throw e;
             }
         }
     }
 
-    public void forAllWalTables(final RegisteredTable callback) {
+    public void forAllWalTables(ObjList<TableToken> tableTokenBucket, boolean includeDropped, RegisteredTable callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.PATH.get();
 
-        for (TableToken tableToken : engine.getTableTokens()) {
-            if ((engine.isLiveTable(tableToken) && tableToken.isWal())
-                    || engine.isTableDropped(tableToken)) {
+        engine.getTableTokens(tableTokenBucket, includeDropped);
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            TableToken tableToken = tableTokenBucket.getQuick(i);
+
+            // Exclude locked entries.
+            // Use includeDropped argument to decide whether to include dropped tables.
+            String publicTableName = tableToken.getTableName();
+            boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
+            if (engine.isWalTable(tableToken)) {
                 long lastTxn;
                 int tableId;
 
-                String publicTableName = tableToken.getTableName();
                 try {
                     if (!seqRegistry.containsKey(tableToken)) {
                         // Fast path.
@@ -101,21 +107,10 @@ public class TableSequencerAPI implements QuietCloseable {
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        long fdMeta = -1;
-                        long fdTxn = -1;
-                        try {
-                            fdMeta = openFileRO(ff, path, META_FILE_NAME);
-                            fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-                            tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
-                            lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
-                        } finally {
-                            if (fdMeta > -1) {
-                                ff.close(fdMeta);
-                            }
-                            if (fdTxn > -1) {
-                                ff.close(fdTxn);
-                            }
-                        }
+                        tableId = tableToken.getTableId();
+                        long fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                        lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET); // does not throw
+                        ff.close(fdTxn);
                     } else {
                         // Slow path.
                         try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
@@ -124,7 +119,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         }
                     }
                 } catch (CairoException ex) {
-                    LOG.critical().$("could not read WAL table metadata [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
+                    LOG.critical().$("could not read WAL table transaction file [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
                             .$(", error=").$((Throwable) ex).I$();
                     continue;
                 }
@@ -137,6 +132,13 @@ public class TableSequencerAPI implements QuietCloseable {
 
                 try {
                     callback.onTable(tableId, tableToken, lastTxn);
+                } catch (CairoException ex) {
+                    LOG.critical().$("could not process table sequencer [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
+                            .$(", error=").$((Throwable) ex).I$();
+                }
+            } else if (isDropped) {
+                try {
+                    callback.onTable(tableToken.getTableId(), tableToken, -1);
                 } catch (CairoException ex) {
                     LOG.critical().$("could not process table sequencer [table=").utf8(publicTableName).$(", errno=").$(ex.getErrno())
                             .$(", error=").$((Throwable) ex).I$();

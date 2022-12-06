@@ -497,7 +497,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             cairoEngine.unlockTableName(tableToken);
         }
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.drop(securityContext, tmpPath, tableName);
+            cairoEngine.drop(securityContext, tmpPath, tableToken);
         }
     }
 
@@ -692,7 +692,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             CairoSecurityContext cairoSecurityContext,
             TypeManager typeManager
     ) throws TextException {
-        TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
+        TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
 
         if (metadata.getColumnCount() < types.size()) {
@@ -1391,7 +1391,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     );
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
-                    writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
+                    writer = cairoEngine.getWriter(cairoSecurityContext, tableToken, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();
                     break;
                 case TableUtils.TABLE_EXISTS:

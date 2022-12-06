@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.NumericException;
@@ -43,7 +42,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createX(tbl);
             }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
                 compile(alterCommand, sqlExecutionContext);
 
@@ -63,7 +62,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createX(tbl);
             }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader rdr = getReader(tableName)) {
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 1s";
                 compile(alterCommand2, sqlExecutionContext);
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
@@ -77,12 +76,12 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 Assert.assertEquals(1000000, rdr.getMetadata().getO3MaxLag());
             }
             engine.releaseAllReaders();
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader rdr = getReader(tableName)) {
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(1000000, rdr.getMetadata().getO3MaxLag());
             }
 
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 0";
                 compile(alterCommand, sqlExecutionContext);
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 0s";
@@ -130,15 +129,15 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             }
 
             engine.releaseAllReaders();
-            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+            try (TableReader ignore = getReader("X")) {
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
             }
 
             // Reopen writer to fix
-            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "setMaxUncommittedRowsFailsToReopenBackMetaFile")) {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+            try (TableWriter ignore = getWriter("X")) {
+                try (TableReader reader = getReader("X")) {
                     Assert.assertEquals(1000, reader.getMaxUncommittedRows());
                 }
             }
@@ -175,7 +174,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
-                try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                try (TableReader rdr = getReader("X")) {
                     Assert.assertEquals(configuration.getMaxUncommittedRows(), rdr.getMetadata().getMaxUncommittedRows());
                 }
 
@@ -215,7 +214,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 }
 
                 engine.releaseAllReaders();
-                try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                try (TableReader ignored = getReader("X")) {
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -257,7 +256,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 }
 
                 engine.releaseAllReaders();
-                try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                try (TableReader ignored = getReader("X")) {
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -308,7 +307,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createX(tbl);
             }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader rdr = getReader(tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 111s";
                 compile(alterCommand, sqlExecutionContext);
 
@@ -359,7 +358,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 createX(tbl);
             }
-            try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+            try (TableReader ignored = getReader("X")) {
                 try {
                     compile("alter TABLE X SET PARAM vommitLag = 111s", sqlExecutionContext);
                     Assert.fail();
@@ -417,7 +416,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                     // test open table writer
                     engine.releaseInactive();
                     engine.releaseAllWriters();
-                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing").close();
+                    getWriter("x1").close();
 
                     TestUtils.assertSql(
                             compiler,
@@ -450,7 +449,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                     // test open table writer
                     engine.releaseInactive();
                     engine.releaseAllWriters();
-                    engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing").close();
+                    getWriter("x1").close();
 
                     TestUtils.assertSql(
                             compiler,

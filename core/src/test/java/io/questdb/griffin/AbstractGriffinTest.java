@@ -202,7 +202,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     public static void assertReader(String expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName))) {
             TestUtils.assertReader(expected, reader, sink);
         }
     }
@@ -739,7 +739,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                             // and again
                             assertCursorRawRecords(expected2, factory, expectSize);
                             return;
-                        } catch (ReaderOutOfDateException e) {
+                        } catch (TableReferenceOutOfDateException e) {
                             Misc.free(factory);
                             factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
                             count--;
@@ -1119,7 +1119,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                         // and again
                         assertCursor(expected2, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
                         return;
-                    } catch (ReaderOutOfDateException e) {
+                    } catch (TableReferenceOutOfDateException e) {
                         Misc.free(factory);
                         factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
                         count--;

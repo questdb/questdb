@@ -35,7 +35,6 @@ import io.questdb.std.str.Path;
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
-    private final TableToken tableToken;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int maxUncommittedRows;
     private MemoryMR metaMem;
@@ -45,6 +44,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private int plen;
     private long structureVersion;
     private int tableId;
+    private TableToken tableToken;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
 
@@ -268,7 +268,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (!existenceChecked) {
                     path.trimTo(plen).slash$();
                     if (!ff.exists(path)) {
-                        throw CairoException.critical(2).put("table does not exist [table=").put(tableToken.getTableName()).put(']');
+                        throw CairoException.tableDoesNotExist(tableToken.getTableName());
                     }
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
@@ -323,5 +323,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             clear();
             throw e;
         }
+    }
+
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 }

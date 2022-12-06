@@ -43,7 +43,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
     @Override
     protected MetadataTenant newTenant(TableToken tableToken, Entry<MetadataTenant> entry, int index) {
-        if (tableToken.isWal()) {
+        if (engine.isWalTable(tableToken)) {
             return new SequencerMetadataTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());
         }
         return new TableReaderMetadataTenant(this, entry, index, tableToken);
@@ -54,8 +54,8 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
         private final int index;
-        private final TableToken tableToken;
         private final TableSequencerAPI tableSequencerAPI;
+        private final TableToken tableToken;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
         private AbstractMultiTenantPool<MetadataTenant> pool;
 

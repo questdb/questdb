@@ -75,8 +75,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int INIT_CANCEL_REQUEST = 80877102;
-    private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_GSS_REQUEST = 80877104;
+    private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
@@ -334,13 +334,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     @Override
-    public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, CharSequence name, String lockReason) {
-        TableToken tableToken = engine.getTableToken(name);
+    public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, TableToken tableToken, String lockReason) {
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getTableWriterAPI(context, name, lockReason);
+        return engine.getTableWriterAPI(context, tableToken, lockReason);
     }
 
     public void handleClientOperation(
@@ -1250,38 +1249,55 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void executeInsert() throws SqlException {
-        final TableWriterAPI writer;
-        try {
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this);
-                    try {
-                        rowCount = m.execute();
-                        writer = m.popWriter();
-                        pendingWriters.put(writer.getTableToken(), writer);
-                    } catch (Throwable e) {
-                        Misc.free(m);
-                        throw e;
+    private void executeInsert(SqlCompiler compiler) throws SqlException {
+        TableWriterAPI writer;
+        boolean recompileStale = true;
+        for (int retries = 0; recompileStale; retries++) {
+            try {
+                switch (transactionState) {
+                    case IN_TRANSACTION:
+                        final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this);
+                        recompileStale = false;
+                        try {
+                            rowCount = m.execute();
+                            writer = m.popWriter();
+                            pendingWriters.put(writer.getTableToken(), writer);
+                        } catch (Throwable e) {
+                            Misc.free(m);
+                            throw e;
+                        }
+                        break;
+                    case ERROR_TRANSACTION:
+                        // when transaction is in error state, skip execution
+                        break;
+                    default:
+                        // in any other case we will commit in place
+                        try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this)) {
+                            recompileStale = false;
+                            rowCount = m2.execute();
+                            m2.commit();
+                        }
+                        break;
+                }
+                prepareCommandComplete(true);
+                return;
+            } catch (TableReferenceOutOfDateException ex) {
+                if (!recompileStale || retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    if (transactionState == IN_TRANSACTION) {
+                        transactionState = ERROR_TRANSACTION;
                     }
-                    break;
-                case ERROR_TRANSACTION:
-                    // when transaction is in error state, skip execution
-                    break;
-                default:
-                    // in any other case we will commit in place
-                    try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this)) {
-                        rowCount = m2.execute();
-                        m2.commit();
-                    }
-                    break;
+                    throw ex;
+                }
+                LOG.info().$(ex.getFlyweightMessage()).$();
+                Misc.free(typesAndInsert);
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                processCompiledQuery(cc);
+            } catch (Throwable e) {
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
+                throw e;
             }
-            prepareCommandComplete(true);
-        } catch (Throwable e) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            throw e;
         }
     }
 
@@ -1325,8 +1341,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     recompileStale = false;
                 }
                 prepareCommandComplete(true);
-            } catch (ReaderOutOfDateException e) {
-                if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                     if (transactionState == IN_TRANSACTION) {
                         transactionState = ERROR_TRANSACTION;
                     }
@@ -1353,8 +1369,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
-        String tableName = op.getTableName();
-        TableToken tableToken = engine.getTableToken(tableName);
+        TableToken tableToken = op.getTableToken();
+        if (tableToken == null) {
+            throw CairoException.critical(0).put("invalid update operation plan cached, table token is null");
+        }
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             op.withContext(sqlExecutionContext);
@@ -1681,6 +1699,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         characterStore.clear();
     }
 
+    private void prepareGssResponse() {
+        responseAsciiSink.put('N');
+    }
+
     private void prepareLoginOk() {
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
@@ -1770,10 +1792,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void prepareSslResponse() {
-        responseAsciiSink.put('N');
-    }
-
-    private void prepareGssResponse() {
         responseAsciiSink.put('N');
     }
 
@@ -2069,7 +2087,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
-            executeInsert();
+            executeInsert(compiler);
         } else if (typesAndUpdate != null) {
             LOG.debug().$("executing update").$();
             executeUpdate(compiler);
@@ -2405,16 +2423,18 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     // It's left here so when we add the sub-protocol later we won't need to reimplemented it.
     // We could keep it just in git history, but chances are nobody would recall to search for it there
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        TableToken tableToken = engine.getTableTokenIfExists(textLoader.getTableName());
         if (
                 TableUtils.TABLE_EXISTS == engine.getStatus(
                         sqlExecutionContext.getCairoSecurityContext(),
                         path,
-                        textLoader.getTableName()
+                        tableToken
                 )) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName(), WRITER_LOCK_REASON)) {
+
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken, WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -2510,8 +2530,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         recompileStale = false;
                         // cache random if it was replaced
                         this.rnd = sqlExecutionContext.getRandom();
-                    } catch (ReaderOutOfDateException e) {
-                        if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                             throw e;
                         }
                         LOG.info().$(e.getFlyweightMessage()).$();
@@ -2719,7 +2739,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     prepareRowDescription();
                     sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
                 } else if (typesAndInsert != null) {
-                    executeInsert();
+                    executeInsert(compiler);
                 } else if (typesAndUpdate != null) {
                     executeUpdate(compiler);
                 } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||

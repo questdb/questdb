@@ -24,15 +24,17 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class TableToken {
-    private final boolean isWal;
+public class TableToken implements Sinkable {
     @NotNull
     private final String dirName;
+    private final boolean isWal;
+    private final int tableId;
     @NotNull
     private final String tableName;
-    private final int tableId;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal) {
         this.tableName = tableName;
@@ -54,17 +56,6 @@ public class TableToken {
     }
 
     /**
-     * @return table name to use for logging. Note that most of the time it is same as public table
-     * name used in SQL but can diverge per period of time if it is a WAL table, and it is renamed.
-     * Do not use this method to identify table, use CairoEngine.getTableNameByTableToken() instead.
-     */
-    //todo: name should not be exposed to avoid using it incorrectly
-    //     this class should impl Sinkable
-    public @NotNull String getTableName() {
-        return tableName;
-    }
-
-    /**
      * @return folder where the table is located.
      */
     public @NotNull String getDirName() {
@@ -80,12 +71,28 @@ public class TableToken {
         return tableId;
     }
 
+    /**
+     * @return table name to use for logging. Note that most of the time it is same as public table
+     * name used in SQL but can diverge per period of time if it is a WAL table, and it is renamed.
+     * Do not use this method to identify table, use CairoEngine.getTableNameByTableToken() instead.
+     */
+    //todo: name should not be exposed to avoid using it incorrectly
+    //     this class should impl Sinkable
+    public @NotNull String getTableName() {
+        return tableName;
+    }
+
     @Override
     public int hashCode() {
         return tableId;
     }
 
-    public boolean isWal() {
+    @Override
+    public void toSink(CharSink sink) {
+        sink.encodeUtf8(tableName);
+    }
+
+    boolean isWal() {
         return isWal;
     }
 }

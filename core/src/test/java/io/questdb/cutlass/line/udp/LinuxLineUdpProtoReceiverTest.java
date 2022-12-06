@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -251,7 +250,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                     }
 
                     // warm writer up
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    try (TableWriter w = getWriter(engine, tableName)) {
                         w.warmUp();
                     }
 

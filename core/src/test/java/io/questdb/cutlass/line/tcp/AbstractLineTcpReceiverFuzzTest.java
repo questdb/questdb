@@ -166,7 +166,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (tableName == null) {
             throw new RuntimeException("Table name is missing");
         }
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
@@ -293,7 +293,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             getLog().info().$(table.getName()).$(" has not been created yet").$();
             return false;
         }
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             return table.size() <= reader.size();
@@ -397,7 +397,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void runTest() throws Exception {
         runTest((factoryType, thread, token, event, segment, position) -> {
-            String tableName = engine.getTableName(token);
+            String tableName = token.getTableName();
             if (walEnabled) {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
                     handleWriterGetEvent(tableName);

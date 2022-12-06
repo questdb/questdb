@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -328,7 +327,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-11-04T00:00:17.279900Z\t2022-11-05T23:59:59.000000Z\t10000\n");
 
-            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader ignore = getReader(tableName)) {
                 // drop the partition which was attached via soft link
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
                 // there is a reader, cannot unlink, thus the link will still exist
@@ -950,7 +949,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         8,
                         "2022-08-01",
                         4);
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
+                try (TableWriter writer = getWriter(src.getName())) {
                     writer.removeColumn("s");
                     writer.removeColumn("str");
                     writer.removeColumn("i");
@@ -1007,7 +1006,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
                 long txn;
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                try (TableWriter writer = getWriter(dst.getName())) {
                     txn = writer.getTxn();
                     writer.attachPartition(timestamp);
                 }
@@ -1091,7 +1090,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 // Add 1 row without commit
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                try (TableWriter writer = getWriter(dst.getName())) {
                     long insertTs = TimestampFormatUtils.parseTimestamp("2022-08-01T23:59:59.999z");
                     TableWriter.Row row = writer.newRow(insertTs + 1000L);
                     row.putLong(0, 1L);
@@ -1458,7 +1457,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
 
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getTableName(), "testing")) {
+                    try (TableWriter writer = getWriter(dst.getTableName())) {
                         writer.removePartition(timestamp);
                         copyPartitionToAttachable(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
                         Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestamp));
@@ -1466,7 +1465,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     // Go active
                     Assert.assertTrue(dstReader.reload());
-                    try (TableReader srcReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getTableName())) {
+                    try (TableReader srcReader = getReader(src.getTableName())) {
                         String expected =
                                 "l\ti\tstr\tts\n" +
                                         "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
@@ -1622,7 +1621,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         // Check table is writable after partition attach
         engine.clear();
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+        try (TableWriter writer = getWriter(dst.getName())) {
             TableWriter.Row row = writer.newRow(timestamp);
             row.putInt(1, 1);
             row.append();
@@ -1731,7 +1730,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     private int readAllRows(String tableName) {
         try (FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()) {
-            cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName));
+            cursor.of(getReader(tableName));
             DataFrame frame;
             int count = 0;
             while ((frame = cursor.next()) != null) {

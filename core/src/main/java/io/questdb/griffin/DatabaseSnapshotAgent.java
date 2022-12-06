@@ -369,11 +369,11 @@ public class DatabaseSnapshotAgent implements Closeable {
                                     TableUtils.isValidTableName(tableName, tableName.length())
                                             && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
                             ) {
-                                boolean isWalTable = engine.isWalTableName(tableName);
+                                boolean isWalTable = engine.isWalTable(tableToken);
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
-                                TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableName);
+                                TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableToken);
                                 snapshotReaders.add(reader);
 
                                 path.trimTo(snapshotLen).concat(tableToken);

@@ -22,16 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.wal.ReverseTableMapItem;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -91,19 +88,22 @@ public class TableNameRegistryFileStore implements Closeable {
         return lockFd != -1;
     }
 
+    public synchronized void logDropTable(final TableToken tableToken) {
+        writeEntry(tableToken, OPERATION_REMOVE);
+    }
+
     public void reload(
             Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<TableToken, String> reverseTableNameTokenMap,
-            String droppedMarker
+            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         tableIds.clear();
-        reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap, droppedMarker);
+        reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap);
         reloadFromRootDirectory(nameTableTokenMap, reverseTableNameTokenMap);
     }
 
     public void reloadFromRootDirectory(
             Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<TableToken, String> reverseTableNameTokenMap
+            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         Path path = Path.getThreadLocal(configuration.getRoot());
         FilesFacade ff = configuration.getFilesFacade();
@@ -130,16 +130,12 @@ public class TableNameRegistryFileStore implements Closeable {
 
                         TableToken token = new TableToken(tableName, privateTableName, tableId, isWal);
                         nameTableTokenMap.put(tableName, token);
-                        reverseTableNameTokenMap.put(token, tableName);
+                        reverseTableNameTokenMap.put(privateTableName, ReverseTableMapItem.of(token));
                     }
                 }
             }
         } while (ff.findNext(findPtr) > 0);
         ff.findClose(findPtr);
-    }
-
-    public synchronized void logDropTable(final TableToken tableToken) {
-        writeEntry(tableToken, OPERATION_REMOVE);
     }
 
     @TestOnly
@@ -210,7 +206,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 if (ff.findType(findPtr) == DT_FILE) {
                     nameSink.clear();
                     Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-                    if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE)) {
+                    if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) && nameSink.length() > TABLE_REGISTRY_NAME_FILE.length() + 1) {
                         //noinspection CatchMayIgnoreException
                         try {
                             int version = Numbers.parseInt(nameSink, TABLE_REGISTRY_NAME_FILE.length() + 1, nameSink.length());
@@ -254,8 +250,8 @@ public class TableNameRegistryFileStore implements Closeable {
 
     private void reloadFromTablesFile(
             Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<TableToken, String> reverseTableNameTokenMap,
-            String droppedMarker) {
+            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+    ) {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot());
@@ -269,7 +265,9 @@ public class TableNameRegistryFileStore implements Closeable {
             try {
                 memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                 LOG.info().$("reloading tables file [path=").utf8(path).I$();
-                break;
+                if (memory.size() >= Long.BYTES) {
+                    break;
+                }
             } catch (CairoException e) {
                 if (!isLocked()) {
                     if (e.errnoPathDoesNotExist()) {
@@ -305,9 +303,11 @@ public class TableNameRegistryFileStore implements Closeable {
             TableToken token = new TableToken(tableName, privateTableName, tableId, tableType == TABLE_TYPE_WAL);
             if (operation == OPERATION_REMOVE) {
                 // remove from registry
-                nameTableTokenMap.remove(tableName);
-                reverseTableNameTokenMap.put(token, droppedMarker);
-                deletedRecordsFound++;
+                TableToken tableToken = nameTableTokenMap.remove(tableName);
+                if (tableToken != null) {
+                    reverseTableNameTokenMap.put(privateTableName, ReverseTableMapItem.ofDropped(tableToken));
+                    deletedRecordsFound++;
+                }
             } else {
                 if (tableIds.contains(tableId)) {
                     LOG.critical().$("duplicate table id found, table will not be accessible " +
@@ -321,8 +321,7 @@ public class TableNameRegistryFileStore implements Closeable {
                     LOG.advisory().$("renamed WAL table system name [table=").utf8(tableName).$(", privateTableName=").utf8(privateTableName).$();
                 }
 
-                reverseTableNameTokenMap.remove(token);
-                reverseTableNameTokenMap.put(token, tableName);
+                reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
                 currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
             }
         }

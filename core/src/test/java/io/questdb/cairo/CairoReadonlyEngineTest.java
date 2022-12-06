@@ -99,14 +99,14 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             try (CairoEngine roEngine = new CairoEngine(roConfig)) {
-                createTable(tableName, engine);
+                TableToken token = createTable(tableName, engine);
 
                 roEngine.reloadTableNames();
                 try {
                     roEngine.drop(
                             AllowAllCairoSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
-                            tableName);
+                            token);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertEquals("instance is read only", e.getFlyweightMessage());
@@ -180,7 +180,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
         });
     }
 
-    private static void createTable(String tableName, CairoEngine cairoEngine) {
+    private static TableToken createTable(String tableName, CairoEngine cairoEngine) {
         try (TableModel table1 = new TableModel(
                 configuration,
                 tableName,
@@ -189,7 +189,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
             table1.timestamp("ts")
                     .col("x", ColumnType.INT)
                     .col("y", ColumnType.STRING);
-            CairoTestUtils.create(table1, cairoEngine);
+            return CairoTestUtils.create(table1, cairoEngine);
         }
     }
 }

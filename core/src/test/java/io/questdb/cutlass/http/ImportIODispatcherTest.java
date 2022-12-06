@@ -558,7 +558,8 @@ public class ImportIODispatcherTest {
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
-                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_RESERVED) {
+                                TableToken tt = engine.getTableTokenIfExists(tableName);
+                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }

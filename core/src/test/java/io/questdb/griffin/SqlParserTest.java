@@ -7039,7 +7039,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     }
                 }
             } finally {
-                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null, false);
+                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, tableToken, null, false);
             }
         });
     }

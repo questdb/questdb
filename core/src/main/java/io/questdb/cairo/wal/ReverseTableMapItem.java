@@ -22,32 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.wal.fuzz;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Rnd;
+import io.questdb.cairo.TableToken;
 
-public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
-    private final String columName;
-    private final String newColName;
+public class ReverseTableMapItem {
+    private final boolean isDropped;
+    private final TableToken tableToken;
 
-    public FuzzRenameColumnOperation(String columName, String newColName) {
-        this.columName = columName;
-        this.newColName = newColName;
+    private ReverseTableMapItem(TableToken tableToken, boolean isDropped) {
+        this.tableToken = tableToken;
+        this.isDropped = isDropped;
     }
 
-    @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(
-                0,
-                wApi.getTableToken(),
-                wApi.getMetadata().getTableId()
-        );
-        builder.ofRenameColumn(columName, newColName);
-        AlterOperation alter = builder.build();
-        wApi.apply(alter, true);
-        return true;
+    public static ReverseTableMapItem of(TableToken tableToken) {
+        return new ReverseTableMapItem(tableToken, false);
+    }
+
+    public static ReverseTableMapItem ofDropped(TableToken tableToken) {
+        return new ReverseTableMapItem(tableToken, true);
+    }
+
+    public TableToken getToken() {
+        return tableToken;
+    }
+
+    public boolean isDropped() {
+        return isDropped;
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -83,8 +84,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return baseFactory.supportsUpdateRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return baseFactory.supportsUpdateRowId(tableToken);
     }
 
     @Override

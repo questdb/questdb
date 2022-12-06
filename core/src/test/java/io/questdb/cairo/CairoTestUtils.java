@@ -32,11 +32,11 @@ import io.questdb.std.str.Path;
 
 public class CairoTestUtils {
 
-    public static void create(TableModel model) {
-        create(model, AbstractCairoTest.engine);
+    public static TableToken create(TableModel model) {
+        return create(model, AbstractCairoTest.engine);
     }
 
-    public static void create(TableModel model, CairoEngine engine) {
+    public static TableToken create(TableModel model, CairoEngine engine) {
         int tableId = (int) engine.getTableIdGenerator().getNextId();
         TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
         if (tableToken == null) {
@@ -52,10 +52,11 @@ public class CairoTestUtils {
                 tableToken.getDirName()
         );
         engine.registerTableToken(tableToken);
+        return tableToken;
     }
 
-    public static void create(CairoEngine engine, TableModel model) {
-        engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), Path.PATH.get(), false, model, false);
+    public static TableToken create(CairoEngine engine, TableModel model) {
+        return engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), Path.PATH.get(), false, model, false);
     }
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {

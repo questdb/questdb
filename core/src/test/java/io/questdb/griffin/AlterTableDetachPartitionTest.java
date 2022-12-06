@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.model.IntervalUtils;
@@ -274,7 +273,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 renameDetachedToAttachable(tableName, timestampDay);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
 
@@ -320,7 +319,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, timestampDay);
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
 
@@ -436,7 +435,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 // insert data, which will create the partition again
                 engine.clear();
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T09:59:59.999999Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     TableWriter.Row row = writer.newRow(timestamp);
                     row.putLong(0, 137L);
                     row.putInt(1, 137);
@@ -563,7 +562,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                         engine.clear();
                         long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
-                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
+                        try (TableWriter writer = getWriter(tableName)) {
                             AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                             Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
                         }
@@ -965,7 +964,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 try {
                     start.await();
                     while (isLive.get()) {
-                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                        try (TableWriter writer = getWriter(tableName)) {
                             long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
                             if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
                                 writer.detachPartition(partitionTimestamp);
@@ -995,7 +994,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                             Iterator<Long> timestamps = detachedPartitionTimestamps.iterator();
                             if (timestamps.hasNext()) {
                                 long partitionTimestamp = timestamps.next();
-                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                                try (TableWriter writer = getWriter(tableName)) {
                                     renameDetachedToAttachable(tableName, partitionTimestamp);
                                     writer.attachPartition(partitionTimestamp);
                                     timestamps.remove();
@@ -1122,7 +1121,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         4);
 
                 String timestampDay = "2022-06-02";
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
 
@@ -1192,10 +1191,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, brokenTableName, "testing")) {
+                try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.detachPartition(timestamp);
                 }
                 TableToken tableToken = engine.getTableToken(brokenTableName);
@@ -1206,7 +1205,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.attachPartition(timestamp);
                 }
 
@@ -1270,10 +1269,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, brokenTableName, "testing")) {
+                try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.detachPartition(timestamp);
                 }
 
@@ -1285,7 +1284,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.attachPartition(timestamp);
                 }
 
@@ -1332,6 +1331,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         4
                 );
 
+                TableToken tableToken2 = registerTableName(brokenMeta.getTableName());
                 TableUtils.createTable(
                         configuration,
                         mem,
@@ -1340,9 +1340,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
                                 .timestamp("ts"),
-                        1,
-                        registerTableName(brokenMeta.getTableName()).getDirName()
+                        tableToken2.getTableId(),
+                        tableToken2.getDirName()
                 );
+
                 compiler.compile(
                         "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
                         sqlExecutionContext
@@ -1366,26 +1367,32 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 assertContent(expected, brokenTableName);
 
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, brokenTableName, "testing")) {
+                try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.detachPartition(timestamp);
                 }
 
-                TableToken tableToken = engine.getTableToken(brokenTableName);
-                TableToken tableToken1 = engine.getTableToken(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
+                TableToken brokenTableToken = engine.getTableToken(brokenTableName);
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                otherPath.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
-
+                path.of(configuration.getRoot()).concat(brokenTableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
+                otherPath.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                // Change table id in the metadata file in the partition
+                otherPath.chop$().concat(META_FILE_NAME).$();
+                try (var mem2 = Vm.getCMARWInstance()) {
+                    mem2.smallFile(configuration.getFilesFacade(), otherPath, MemoryTag.NATIVE_DEFAULT);
+                    mem2.putInt(META_OFFSET_TABLE_ID, tableToken.getTableId());
+                }
+
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.attachPartition(timestamp);
                 }
 
-                Assert.assertFalse(Files.exists(otherPath.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(otherPath.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).concat("s.k").$()));
                 Assert.assertFalse(Files.exists(otherPath.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
@@ -1409,7 +1416,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 String timestampDay = "2022-06-02";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
 
@@ -1458,7 +1465,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // insert data, which will create the partition again
                 engine.clear();
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     TableWriter.Row row = writer.newRow(timestamp);
                     row.putLong(0, 25160L);
                     row.putInt(1, 25160);
@@ -1545,7 +1552,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 engine.clear();
                 String timestampDay = "2022-06-01";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
                     writer.detachPartition(timestamp);
@@ -1592,7 +1599,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 engine.clear();
                 String timestampDay = "2022-06-01";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.detachPartition(timestamp);
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
@@ -1639,7 +1646,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 engine.clear();
                 String timestampDay = "2022-06-01";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
                     TableWriter.Row row = writer.newRow(timestamp);
@@ -1691,7 +1698,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 engine.clear();
                 String timestampDay = "2022-06-01";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     writer.detachPartition(timestamp);
 
                     // structural change
@@ -1768,7 +1775,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 engine.clear();
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                try (TableWriter writer = getWriter(tableName)) {
 
                     TableWriter.Row row = writer.newRow(timestamp2);
                     row.putLong(0, 137L);
@@ -2051,7 +2058,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 };
                 engine.clear(); // to recreate the writer with the new ff
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                     Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
                 }

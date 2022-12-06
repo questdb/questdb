@@ -25,7 +25,6 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -356,13 +355,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            TableToken sysTableName1;
+            TableToken tableToken = engine.getTableToken(tableName);
             try (
-                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)
             ) {
-                sysTableName1 = engine.getTableToken(tableName);
                 compile("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
 
                 compile("drop table " + tableName);
@@ -396,7 +394,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
                 // Nonstructural change
                 try {
-                    AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableName, 1);
+                    AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableToken, 1);
                     dropPartition.addPartitionToList(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"), 0);
                     AlterOperation dropAlter = dropPartition.build();
                     dropAlter.withContext(sqlExecutionContext);
@@ -416,14 +414,14 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 );
 
                 TableToken sysTableName2 = engine.getTableToken(tableName);
-                MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
+                MatcherAssert.assertThat(tableToken, Matchers.not(Matchers.equalTo(sysTableName2)));
 
                 engine.releaseAllReaders();
                 drainWalQueue();
 
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+                checkTableFilesExist(tableToken, "2022-02-24", "x.d", false);
             }
-            checkWalFilesRemoved(sysTableName1);
+            checkWalFilesRemoved(tableToken);
 
             assertSql(tableName, "x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n");
@@ -632,7 +630,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
             TableToken sysTableName1 = engine.getTableToken(tableName);
 
-            try (TableReader ignore = sqlExecutionContext.getReader(tableName)) {
+            try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
                 compile("drop table " + tableName);
                 drainWalQueue();
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
@@ -914,7 +912,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, newTableName, "test")) {
+            try (TableWriter writer = getWriter(newTableName)) {
                 Assert.assertEquals(newTableName, writer.getTableToken().getTableName());
             }
 
@@ -960,7 +958,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             executeInsert("insert into " + tableName +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
-            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "Rogue")) {
+            try (TableWriter ignore = getWriter(tableName)) {
                 drainWalQueue();
                 assertSql(tableName, "x\tsym\tts\tsym2\n");
             }

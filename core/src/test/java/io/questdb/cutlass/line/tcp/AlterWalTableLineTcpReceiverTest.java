@@ -177,15 +177,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
+            TableToken tt;
             try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
                 tm.col("room", ColumnType.SYMBOL);
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
                 tm.wal();
-                CairoTestUtils.create(engine, tm);
+                tt = CairoTestUtils.create(engine, tm);
             }
 
-            try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
+            try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);
                 row.putSym(0, "6A");
                 row.putLong(1, 100L);
@@ -372,7 +373,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             );
 
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+            try (TableReader reader = getReader("plug")) {
                 TableReaderMetadata meta = reader.getMetadata();
                 Assert.assertEquals(1, meta.getMaxUncommittedRows());
                 Assert.assertEquals(20 * 1_000_000L, meta.getO3MaxLag());
@@ -491,7 +492,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected);
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+            try (TableReader rdr = getReader("plug")) {
                 TableReaderMetadata metadata = rdr.getMetadata();
                 Assert.assertTrue(
                         "Alter makes column indexed",
@@ -873,7 +874,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     }
 
     protected void assertTableSize() {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+        try (TableReader reader = getReader("plug")) {
             Assert.assertEquals(10001, reader.getCursor().size());
         }
     }

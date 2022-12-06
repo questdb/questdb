@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -98,7 +97,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 CyclicBarrier startBarrier = new CyclicBarrier(2);
                 CountDownLatch haltLatch = new CountDownLatch(1);
                 new Thread(() -> {
-                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    try (TableWriter ignore = getWriter("x")) {
                         // make sure writer is locked before test begins
                         startBarrier.await();
                         // make sure we don't release writer until main test finishes
@@ -371,7 +370,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             Assert.assertEquals(ALTER, compile.getType());
                             compile.execute(null).await();
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -396,7 +395,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol capacity 2048", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(2048, smr.getSymbolCapacity());
@@ -452,7 +451,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol index", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -472,7 +471,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol index capacity 9000", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -498,7 +497,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol nocache", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -520,7 +519,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try (CairoEngine engine = new CairoEngine(configuration)) {
                         Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
 
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                        try (TableReader reader = getReader("x")) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
                             Assert.assertNotNull(smr);
                             Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -553,7 +552,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             Assert.assertEquals(ALTER, cc.getType());
                             cc.execute(null).await();
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -593,7 +592,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             Assert.assertEquals(ALTER, cc.getType());
                             cc.execute(null).await();
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());

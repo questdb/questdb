@@ -25,7 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -490,6 +490,10 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
+    }
+
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
@@ -562,7 +566,6 @@ public class WalWriter implements TableWriterAPI {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableToken, getStructureVersion())) {
-            this.tableToken = structureChangeCursor.getTableToken();
             long metadataVersion = getStructureVersion();
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();
@@ -589,7 +592,7 @@ public class WalWriter implements TableWriterAPI {
         if (
                 (verifyStructureVersion && operation.getTableVersion() != getStructureVersion())
                         || operation.getTableId() != metadata.getTableId()) {
-            throw ReaderOutOfDateException.of(tableToken.getTableName(), metadata.getTableId(), operation.getTableId(), getStructureVersion(), operation.getTableVersion());
+            throw TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), operation.getTableId(), getStructureVersion(), operation.getTableVersion());
         }
 
         try {

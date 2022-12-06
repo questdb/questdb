@@ -32,6 +32,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
@@ -47,7 +48,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     private static final int NEXT_OPEN = 0;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long UNLOCKED = -1L;
-    private final java.util.concurrent.ConcurrentHashMap<TableToken, Entry<T>> entries = new java.util.concurrent.ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
 
@@ -57,7 +58,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
-    public Map<TableToken, Entry<T>> entries() {
+    public Map<CharSequence, Entry<T>> entries() {
         return entries;
     }
 
@@ -103,9 +104,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         e.assignTenant(i, null);
                         tenant.goodbye();
                         LOG.info().$('\'').utf8(tableToken.getDirName()).$("' born free").$();
+                        tenant.updateTableToken(tableToken);
                         return tenant;
                     }
                     LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
+                    tenant.updateTableToken(tableToken);
                     return tenant;
                 }
             }
@@ -128,7 +131,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
     public int getBusyCount() {
         int count = 0;
-        for (Map.Entry<TableToken, Entry<T>> me : entries.entrySet()) {
+        for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
             Entry<T> e = me.getValue();
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -194,7 +197,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     }
 
     public void unlock(TableToken tableToken) {
-        Entry<T> e = entries.get(tableToken);
+        Entry<T> e = entries.get(tableToken.getDirName());
         long thread = Thread.currentThread().getId();
         if (e == null) {
             LOG.info().$("not found, cannot unlock [table=`").$(tableToken).$("`]").$();
@@ -203,7 +206,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         }
 
         if (e.lockOwner == thread) {
-            entries.remove(tableToken);
+            entries.remove(tableToken.getDirName());
             while (e != null) {
                 e = e.next;
             }
@@ -240,10 +243,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     private Entry<T> getEntry(TableToken name) {
         checkClosed();
 
-        Entry<T> e = entries.get(name);
+        Entry<T> e = entries.get(name.getDirName());
         if (e == null) {
             e = new Entry<T>(0, clock.getTicks());
-            Entry<T> other = entries.putIfAbsent(name, e);
+            Entry<T> other = entries.putIfAbsent(name.getDirName(), e);
             if (other != null) {
                 e = other;
             }

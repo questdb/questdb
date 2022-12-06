@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -38,12 +38,14 @@ public interface TableNameRegistry extends Closeable {
     void close();
 
     /**
-     * Returns table name by table token. If table does not exist, returns null.
+     * Part of "drop table" workflow. Purges name from the registry to make the name available for new
+     * tables. The method checks that table name and token both match the latest information held in
+     * the registry. This is to avoid race condition on "drop" and "create" table by the same name.
      *
-     * @param token table token
-     * @return table name or throws exception if table does not exist
+     * @param token table token of the same table as of the time of "drop"
+     * @return true if table name was removed, false otherwise
      */
-    @NotNull String getTableName(TableToken token);
+    boolean dropTable(TableToken token);
 
     /**
      * Returns table token by table name. If table does not exist, returns null.
@@ -60,11 +62,20 @@ public interface TableNameRegistry extends Closeable {
     TableToken getTableToken(String dirName, int tableId);
 
     /**
-     * Returns all table tokens. Among live table it also returns dropped tables which are not fully deleted yet.
+     * Sets all table tokens to the bucket provided. Among live table it can return dropped tables which are not fully deleted yet.
      *
-     * @return all table tokens
+     * @param bucket         bucket to set table tokens to
+     * @param includeDropped if true, include dropped tables
      */
-    Iterable<TableToken> getTableTokens();
+    void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped);
+
+    /**
+     * Returns Table Token by directory name.
+     *
+     * @param dirName directory name
+     * @return If table does not exist, returns null otherwise returns TableToken
+     */
+    TableToken getTokenByDirName(String dirName);
 
     /**
      * Checks that table token does not belong to a dropped table.
@@ -88,6 +99,14 @@ public interface TableNameRegistry extends Closeable {
     TableToken lockTableName(String tableName, String privateTableName, int tableId, boolean isWal);
 
     /**
+     * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is
+     * part of async directory purging job.
+     *
+     * @param token table token to remove
+     */
+    void purgeToken(TableToken token);
+
+    /**
      * Returns most up-to-date table token, including updated Table Logging Name. If table does not exist, returns null.
      *
      * @return resolved TableToken. If no token exists, returns null
@@ -101,35 +120,15 @@ public interface TableNameRegistry extends Closeable {
      */
     void registerName(TableToken tableToken);
 
-
     /**
      * Reloads table name registry from storage.
      */
     void reloadTableNameCache();
 
     /**
-     * Part of "drop table" workflow. Purges name from the registry to make the name available for new
-     * tables. The method checks that table name and token both match the latest information held in
-     * the registry. This is to avoid race condition on "drop" and "create" table by the same name. 
-     *
-     * @param tableName  name of the table
-     * @param token table token of the same table as of the time of "drop"
-     * @return true if table name was removed, false otherwise
-     */
-    boolean dropTable(CharSequence tableName, TableToken token);
-
-    /**
-     * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is
-     * part of async directory purging job.
-     *
-     * @param token table token to remove
-     */
-    void purgeToken(TableToken token);
-
-    /**
      * Updates table name in registry.
      *
-     * @param oldName    old table name
+     * @param oldName    old table  name
      * @param newName    new table name
      * @param tableToken table token to make sure intended table name is updated
      * @return updated table token

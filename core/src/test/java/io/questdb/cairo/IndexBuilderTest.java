@@ -364,7 +364,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
+                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"), "test lock"),
                         indexBuilder -> {
                             try {
                                 indexBuilder.reindexColumn("sym2");
@@ -494,7 +494,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 indexBuilder -> indexBuilder.reindexAllInPartition("1970-01-01"));
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -600,7 +600,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         );
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);

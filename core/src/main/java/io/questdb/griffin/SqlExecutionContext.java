@@ -80,21 +80,14 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableRecordMetadata getMetadata(CharSequence tableName) {
+    default TableRecordMetadata getMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(
-                getCairoSecurityContext(),
-                engine.getTableToken(tableName)
-        );
+        return engine.getMetadata(getCairoSecurityContext(), tableToken);
     }
 
-    default TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
+    default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
         final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(
-                getCairoSecurityContext(),
-                engine.getTableToken(tableName),
-                structureVersion
-        );
+        return engine.getMetadata(getCairoSecurityContext(), tableToken, structureVersion);
     }
 
     long getNow();
@@ -103,11 +96,11 @@ public interface SqlExecutionContext extends Closeable {
 
     Rnd getRandom();
 
-    default TableReader getReader(CharSequence tableName, int tableId, long version) {
-        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, tableId, version);
+    default TableReader getReader(TableToken tableName, long version) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, version);
     }
 
-    default TableReader getReader(CharSequence tableName) {
+    default TableReader getReader(TableToken tableName) {
         return getCairoEngine().getReader(getCairoSecurityContext(), tableName);
     }
 
@@ -117,16 +110,24 @@ public interface SqlExecutionContext extends Closeable {
         return getWorkerCount();
     }
 
-    default int getStatus(Path path, CharSequence tableName, int lo, int hi) {
-        return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName, lo, hi);
-    }
-
-    default int getStatus(Path path, CharSequence tableName) {
+    default int getStatus(Path path, TableToken tableName) {
         return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
     }
 
-    default String getTableNameAsString(CharSequence tableName) {
-        return getCairoEngine().getTableNameAsString(tableName);
+    default TableToken getTableToken(CharSequence tableName) {
+        return getCairoEngine().getTableToken(tableName);
+    }
+
+    default TableToken getTableToken(CharSequence tableName, int lo, int hi) {
+        return getCairoEngine().getTableToken(tableName, lo, hi);
+    }
+
+    default TableToken getTableTokenIfExists(CharSequence tableName) {
+        return getCairoEngine().getTableTokenIfExists(tableName);
+    }
+
+    default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
+        return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
     int getWorkerCount();

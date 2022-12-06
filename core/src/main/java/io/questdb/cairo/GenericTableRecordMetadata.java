@@ -90,4 +90,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
         this.structureVersion = structureVersion;
         // todo: maxUncommittedRows where from ?
     }
+
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
+    }
 }

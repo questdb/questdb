@@ -89,8 +89,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return masterFactory.supportsUpdateRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return masterFactory.supportsUpdateRowId(tableToken);
     }
 
     @Override

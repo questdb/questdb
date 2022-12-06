@@ -30,12 +30,12 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
-    private final TableToken tableToken;
     private int maxUncommittedRows;
     private long o3MaxLag;
     private long structureVersion;
     private int symbolMapCount;
     private int tableId;
+    private TableToken tableToken;
     private int version;
     private boolean walEnabled;
 
@@ -69,13 +69,13 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public TableToken getTableToken() {
-        return tableToken;
+    public int getTableId() {
+        return tableId;
     }
 
     @Override
-    public int getTableId() {
-        return tableId;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     public int getTableVersion() {
@@ -142,6 +142,10 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
 
     public void setTableVersion() {
         version = ColumnType.VERSION;
+    }
+
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
     void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {

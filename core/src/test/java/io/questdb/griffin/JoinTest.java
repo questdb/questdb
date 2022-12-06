@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
@@ -58,8 +57,8 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
+                    TableWriter orders = getWriter("orders");
+                    TableWriter quotes = getWriter("quotes")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;
@@ -3299,8 +3298,8 @@ public class JoinTest extends AbstractGriffinTest {
                     "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)", sqlExecutionContext);
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
+                    TableWriter orders = getWriter("orders");
+                    TableWriter quotes = getWriter("quotes")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;

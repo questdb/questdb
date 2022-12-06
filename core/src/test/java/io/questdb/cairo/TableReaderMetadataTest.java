@@ -74,9 +74,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         AtomicInteger columnsAdded = new AtomicInteger();
         AtomicInteger reloadCount = new AtomicInteger();
         int totalColAddCount = 1000;
+        TableToken tableToken = engine.getTableToken("all");
 
         Thread writerThread = new Thread(() -> {
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "all", "test")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
                 start.await();
                 for (int i = 0; i < totalColAddCount; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);
@@ -91,7 +92,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         });
 
         Thread readerThread = new Thread(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                 start.await();
                 int colAdded = -1, newColsAdded;
                 while (colAdded < totalColAddCount) {
@@ -396,7 +397,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "all");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, engine.getTableToken("all"));
         }
         CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
 

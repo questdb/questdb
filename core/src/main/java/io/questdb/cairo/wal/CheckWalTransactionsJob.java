@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
@@ -38,6 +39,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
+    private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
     private final TxReader txReader;
     private long lastProcessedCount = 0;
     private Path threadLocalPath;
@@ -54,7 +56,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
 
     public void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
-        engine.getTableSequencerAPI().forAllWalTables(checkNotifyOutstandingTxnInWal);
+        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWal);
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, TableToken tableToken, long txn) {

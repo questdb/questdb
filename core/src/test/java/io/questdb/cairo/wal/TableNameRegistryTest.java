@@ -36,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.Iterator;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -66,7 +65,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                     compiler.compile("drop table tab" + j, executionContext);
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
                                         throw e;
                                     }
                                 }
@@ -105,7 +105,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (SqlException | CairoException e) {
                                     // Should never fail on drop table.
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
                                         throw e;
                                     }
                                 }
@@ -183,14 +184,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.releaseInactive();
             runWalPurgeJob();
 
-            int size = 0;
-            Iterator<TableToken> iterator = engine.getTableTokens().iterator();
-            while (iterator.hasNext()) {
-                size++;
-                iterator.next();
-            }
-
-            Assert.assertEquals(0, size);
+            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            engine.getTableTokens(tableTokenBucket, true);
+            Assert.assertEquals(0, tableTokenBucket.size());
         });
     }
 
@@ -215,7 +211,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             }
 
                             ro.reloadTableNameCache();
-                            int size = getSize(ro);
+                            int size = getNonDroppedSize(ro);
                             Assert.assertEquals(tableCount, size);
                         }
                     } catch (Throwable e) {
@@ -248,14 +244,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         int tableId = addedTables.getLast();
                         String tableName = "tab" + tableId;
                         TableToken tableToken = rw.getTableToken(tableName);
-                        rw.dropTable(tableName, tableToken);
+                        rw.dropTable(tableToken);
                         addedTables.remove(tableId);
                     }
 
                     if (rnd.nextBoolean()) {
                         // May run compaction
                         rw.reloadTableNameCache();
-                        Assert.assertEquals(addedTables.size(), getSize(rw));
+                        Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
                     }
                 }
                 Path.clearThreadLocals();
@@ -273,13 +269,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         });
     }
 
-    private static int getSize(TableNameRegistry ro) {
-        int size = 0;
-        for (TableToken tableToken : ro.getTableTokens()) {
-            if (!ro.isTableDropped(tableToken)) {
-                size++;
-            }
-        }
-        return size;
+    private static int getNonDroppedSize(TableNameRegistry ro) {
+        ObjList<TableToken> bucket = new ObjList<>();
+        ro.getTableTokens(bucket, false);
+        return bucket.size();
     }
 }

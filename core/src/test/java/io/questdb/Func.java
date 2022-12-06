@@ -22,32 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.wal.fuzz;
+package io.questdb;
 
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Rnd;
-
-public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
-    private final String columName;
-    private final String newColName;
-
-    public FuzzRenameColumnOperation(String columName, String newColName) {
-        this.columName = columName;
-        this.newColName = newColName;
-    }
-
-    @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(
-                0,
-                wApi.getTableToken(),
-                wApi.getMetadata().getTableId()
-        );
-        builder.ofRenameColumn(columName, newColName);
-        AlterOperation alter = builder.build();
-        wApi.apply(alter, true);
-        return true;
-    }
+@FunctionalInterface
+public interface Func<T, R> {
+    R apply(T t);
 }

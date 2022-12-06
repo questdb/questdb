@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.NullMapWriter;
@@ -779,7 +779,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     public void changeTableName(long seqTxn, TableToken tableToken) {
         // This is change of the logical name of WAL table used for logging.
         // Private Table Name and all paths remains the same.
-        this.tableToken = tableToken;
+        updateTableToken(tableToken);
         markSeqTxnCommitted(seqTxn);
     }
 
@@ -1306,7 +1306,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         } else {
             LOG.info()
                     .$("not my command [cmdTableId=").$(cmd.getTableId())
-                    .$(", cmdTableName=").$(cmd.getTableName())
+                    .$(", cmdTableName=").$(cmd.getTableToken())
                     .$(", myTableId=").$(getMetadata().getTableId())
                     .$(", myTableName=").utf8(tableToken.getTableName())
                     .I$();
@@ -1888,6 +1888,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         this.commitIntervalFraction = commitIntervalFraction;
         this.commitIntervalDefault = commitIntervalDefault;
         this.commitInterval = calculateCommitInterval();
+    }
+
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
+        this.metadata.updateTableToken(tableToken);
     }
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
@@ -4351,7 +4356,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
             affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
-        } catch (ReaderOutOfDateException ex) {
+        } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
                     .$("cannot complete async cmd, reader is out of date [type=").$(cmdType)
                     .$(", tableName=").utf8(tableToken.getTableName())
@@ -4767,7 +4772,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         if (pubCursor > -1) {
             try {
                 final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-                event.of(eventType, tableId, tableToken.getDirName());
+                event.of(eventType, tableId, tableToken);
                 event.putInt(errorCode);
                 if (errorCode != AsyncWriterCommand.Error.OK) {
                     event.putStr(errorMsg);
@@ -4934,7 +4939,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             todoCount = openTodoMem();
         } catch (CairoException ex) {
             if (ex.errnoPathDoesNotExist()) {
-                throw CairoException.nonCritical().put("table does not exist [table=").put(tableToken.getTableName()).put(']');
+                throw CairoException.tableDoesNotExist(tableToken.getTableName());
             }
             throw ex;
         }

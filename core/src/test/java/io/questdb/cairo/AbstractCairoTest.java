@@ -28,12 +28,14 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
@@ -51,6 +53,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 import org.junit.*;
@@ -64,6 +67,8 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCairoTest {
+
+
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new PlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -611,7 +616,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken().getTableName(), 0);
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
         addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
@@ -688,6 +693,35 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableReader getReader(CharSequence tableName) {
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
+        return engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "test");
+    }
+
+    @NotNull
+    protected static WalWriter getWalWriter(CharSequence tableName) {
+        return engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriter getWriter(CharSequence tableName) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+    }
+
+    protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+    }
+
+    protected static TableWriter getWriter(TableToken tt) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt, "testing");
+    }
+
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
         return new TableReader(configuration, engine.getTableToken(tableName));
     }
@@ -721,7 +755,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected boolean isWalTable(CharSequence tableName) {
-        return engine.isWalTableName(tableName);
+        return engine.isWalTable(engine.getTableToken(tableName));
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {

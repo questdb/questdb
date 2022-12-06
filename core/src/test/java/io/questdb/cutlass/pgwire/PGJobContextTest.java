@@ -24,11 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -1708,7 +1704,7 @@ if __name__ == "__main__":
                 try (final Connection connection = getConnection(server.getPort(), false, true)) {
 
                     connection.prepareStatement("create table xyz(a int)").execute();
-                    try (TableWriter ignored1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
+                    try (TableWriter ignored1 = getWriter("xyz")) {
                         connection.prepareStatement("drop table xyz").execute();
                         Assert.fail();
                     } catch (SQLException e) {
@@ -2390,6 +2386,17 @@ if __name__ == "__main__":
                 ">420000001a006c72757073635f315f30000000000000020001000144000000065000450000000900000000005300000004\n" +
                 "<3200000004540000003500027472756500000000000001000000100001ffffffff000166616c736500000000000002000000100001ffffffff00014400000010000200000001010000000100430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
+    public void testGssApiRequestClosedGracefully() throws Exception {
+        final String script = ">0000000804d21630\n" +
+                "<4e\n";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
@@ -5528,7 +5535,7 @@ nodejs code:
                 // we need to let server process disconnect and release writer
                 Os.sleep(2000);
 
-                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
+                try (TableWriter w = getWriter("xyz")) {
                     w.commit();
                 }
 
@@ -7114,6 +7121,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -7167,10 +7178,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -7207,6 +7214,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
@@ -7283,10 +7294,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -7597,17 +7604,6 @@ create table tab as (
         );
     }
 
-    @Test
-    public void testGssApiRequestClosedGracefully() throws Exception {
-        final String script = ">0000000804d21630\n" +
-            "<4e\n";
-        assertHexScript(
-            NetworkFacadeImpl.INSTANCE,
-            script,
-            getHexPgWireConfig()
-        );
-    }
-
     private void assertHexScript(String script) throws Exception {
         skipOnWalRun();
         final Rnd rnd = new Rnd();
@@ -7817,7 +7813,7 @@ create table tab as (
                             }
 
                             @Override
-                            public void reportStart(CharSequence tableName, long commandId) {
+                            public void reportStart(TableToken tableToken, long commandId) {
                                 if (queryScheduledCount != null) {
                                     queryScheduledCount.countDown();
                                 }
@@ -8043,7 +8039,7 @@ create table tab as (
 
                     if (alterRequestReturnSuccess) {
                         Assert.assertEquals(0, errors.get());
-                        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                        try (TableReader rdr = getReader(tableName)) {
                             int bIndex = rdr.getMetadata().getColumnIndex("b");
                             Assert.assertEquals(1, bIndex);
                             Assert.assertEquals(totalCount, rdr.size());
@@ -9139,7 +9135,7 @@ create table tab as (
                     insert1.execute();
                     mayDrainWalQueue();
 
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                    try (TableWriter writer = getWriter("x")) {
                         SOCountDownLatch finished = new SOCountDownLatch(1);
                         new Thread(() -> {
                             try {

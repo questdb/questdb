@@ -66,7 +66,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final TableToken tableToken;
     private final MemoryMR todoMem = Vm.getMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
@@ -77,6 +76,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryMR> columns;
     private int partitionCount;
     private long rowCount;
+    private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
@@ -441,6 +441,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long size() {
         return rowCount;
+    }
+
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
+        this.metadata.updateTableToken(tableToken);
     }
 
     private static int getColumnBits(int columnCount) {

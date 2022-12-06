@@ -153,7 +153,7 @@ public class AbstractO3Test {
         try (
                 final TableWriter w = engine.getWriter(
                         executionContext.getCairoSecurityContext(),
-                        "x",
+                        engine.getTableToken("x"),
                         "test"
                 )
         ) {
@@ -377,6 +377,11 @@ public class AbstractO3Test {
                 TestUtils.execute(null, runnable, configuration, LOG);
             }
         });
+    }
+
+    protected static TableWriter getWriter(SqlExecutionContext sqlExecutionContext, String tableName, String test) {
+        CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        return engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName), test);
     }
 
     protected static void printSqlResult(

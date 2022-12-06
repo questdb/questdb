@@ -50,7 +50,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor(cairoEngine);
+        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
         readerPoolCursor.of(cairoEngine.getReaderPoolEntries());
         return readerPoolCursor;
     }
@@ -61,20 +61,15 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     private static class ReaderPoolCursor implements RecordCursor {
-        private final CairoEngine cairoEngine;
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
-        private Iterator<Map.Entry<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
+        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
         private long owner;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
-        private Map<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
+        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
         private TableToken tableToken;
         private long timestamp;
         private long txn;
-
-        public ReaderPoolCursor(CairoEngine cairoEngine) {
-            this.cairoEngine = cairoEngine;
-        }
 
         @Override
         public void close() {
@@ -95,7 +90,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             return tryAdvance();
         }
 
-        public void of(Map<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
+        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
             this.readerPoolEntries = readerPoolEntries;
             toTop();
         }
@@ -115,7 +110,6 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             iterator = readerPoolEntries.entrySet().iterator();
             allocationIndex = 0;
             poolEntry = null;
-            tableToken = null;
         }
 
         private boolean selectPoolEntry() {
@@ -127,8 +121,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     if (!iterator.hasNext()) {
                         return false;
                     }
-                    Map.Entry<TableToken, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
-                    tableToken = mapEntry.getKey();
+                    Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
                     poolEntry = mapEntry.getValue();
                     return true;
                 } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {
@@ -161,6 +154,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                 allocationIndex++;
             } while (reader == null);
             txn = reader.getTxn();
+            tableToken = reader.getTableToken();
             return true;
         }
 
@@ -180,7 +174,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStr(int col) {
                 assert col == TABLE_COLUMN_INDEX;
-                return cairoEngine.getTableName(tableToken);
+                return tableToken.getTableName();
             }
 
             @Override

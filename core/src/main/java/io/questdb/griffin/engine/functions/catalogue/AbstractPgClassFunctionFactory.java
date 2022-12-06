@@ -31,12 +31,8 @@ import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-
-import java.util.Iterator;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
@@ -44,7 +40,6 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 public abstract class AbstractPgClassFunctionFactory implements FunctionFactory {
     private static final int INDEX_OID = 0;
     private static final int INDEX_RELNAME = 1;
-    private static final Log LOG = LogFactory.getLog(AbstractPgClassFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String[] relNames = {"pg_class"};
     private static final int fixedClassLen = relNames.length;
@@ -120,7 +115,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new PgClassRecordCursor(configuration, path, tempMem);
+            this.cursor = new PgClassRecordCursor(configuration);
         }
 
         @Override
@@ -144,23 +139,16 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
     private static class PgClassRecordCursor implements NoRandomAccessRecordCursor {
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final FilesFacade ff;
         private final int[] intValues = new int[28];
-        private final Path path;
-        private final int plimit;
         private final DelegatingRecord record = new DelegatingRecord();
         private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
-        private final long tempMem;
+        private final ObjList<TableToken> tableBucket = new ObjList<>();
         private CairoEngine engine;
         private int fixedRelPos = -1;
+        private int tableIndex = -1;
         private String tableName;
-        private Iterator<TableToken> tableTokens;
 
-        public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
-            this.ff = configuration.getFilesFacade();
-            this.path = path;
-            this.path.of(configuration.getRoot()).$();
-            this.plimit = this.path.length();
+        public PgClassRecordCursor(CairoConfiguration configuration) {
             this.record.of(staticReadingRecord);
             // oid
             this.intValues[0] = 0; // OID
@@ -184,7 +172,6 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             this.intValues[12] = 0;
             // relrewrite
             this.intValues[27] = 0;
-            this.tempMem = tempMem;
         }
 
         @Override
@@ -203,39 +190,18 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             record.of(diskReadingRecord);
-            if (tableTokens == null) {
-                tableTokens = engine.getTableTokens().iterator();
+            if (tableIndex < 0) {
+                engine.getTableTokens(tableBucket, false);
+                tableIndex = 0;
             }
 
-            do {
-                boolean hasNext = tableTokens.hasNext();
-                if (!hasNext) {
-                    tableTokens = null;
-                } else {
-                    TableToken tableToken = tableTokens.next();
-
-                    if (engine.isLiveTable(tableToken)
-                            && ff.exists(path.trimTo(plimit).concat(tableToken).concat(TableUtils.META_FILE_NAME).$())) {
-
-                        tableName = tableToken.getTableName();
-
-                        // open metadata file and read id
-                        long fd = ff.openRO(path);
-                        if (fd > -1) {
-                            if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
-                                ff.close(fd);
-                                return true;
-                            }
-                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                            ff.close(fd);
-                        }
-                    } else {
-                        tableName = null;
-                    }
-                }
-            } while (tableTokens != null && tableName == null);
-            return tableTokens != null;
+            if (tableIndex == tableBucket.size()) {
+                return false;
+            }
+            TableToken token = tableBucket.get(tableIndex++);
+            tableName = token.getTableName();
+            intValues[INDEX_OID] = token.getTableId();
+            return true;
         }
 
         public void of(CairoEngine engine) {
@@ -251,7 +217,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         public void toTop() {
             fixedRelPos = -1;
             record.of(staticReadingRecord);
-            tableTokens = null;
+            tableIndex = -1;
         }
 
         private class DiskReadingRecord implements Record {

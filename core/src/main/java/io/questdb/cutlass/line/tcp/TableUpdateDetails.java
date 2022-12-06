@@ -375,7 +375,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         private SymbolLookup addSymbolCache(int colWriterIndex) {
-            try (TableReader reader = engine.getReaderByTableToken(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and

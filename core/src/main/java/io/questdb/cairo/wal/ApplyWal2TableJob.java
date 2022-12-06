@@ -88,12 +88,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return Long.MAX_VALUE;
                 }
 
-                if (!tableToken.isWal()) {
+                if (!engine.isWalTable(tableToken)) {
                     LOG.info().$("table '").utf8(tableToken.getDirName()).$("' does not exist, skipping WAL application").$();
                     return 0;
                 }
 
-                try (TableWriter writer = engine.getWriterByTableToken(AllowAllCairoSecurityContext.INSTANCE, tableToken, WAL_2_TABLE_WRITE_REASON)) {
+                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                if (updatedToken == null) {
+                    // Table is dropped, make a spin to hanle it
+                    continue;
+                }
+
+                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableId;
                     applyOutstandingWalTransactions(tableToken, writer, engine, sqlToOperation, tempPath);
                     lastAppliedSeqTxn = writer.getSeqTxn();
@@ -227,7 +233,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final CairoConfiguration configuration = engine.getConfiguration();
                 if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
                     try {
-                        writer = writerToClose = engine.getWriterByTableToken(AllowAllCairoSecurityContext.INSTANCE, tableToken, WAL_2_TABLE_WRITE_REASON);
+                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (CairoException ex) {
                         // Ignore it, table can be half deleted.
                     }

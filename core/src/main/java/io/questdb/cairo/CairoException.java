@@ -96,6 +96,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(NON_CRITICAL);
     }
 
+    public static CairoException tableDoesNotExist(CharSequence tableName) {
+        return nonCritical().put("table does not exist [table=").put(tableName).put(']');
+    }
+
     public boolean errnoPathDoesNotExist() {
         return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
@@ -156,6 +160,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException put(CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException put(Sinkable sinkable) {
+        sinkable.toSink(message);
         return this;
     }
 
