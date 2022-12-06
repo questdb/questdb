@@ -32,7 +32,6 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -90,13 +89,13 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return null;
+            public long getMicrosecondTimestamp() {
+                return 0L;
             }
 
             @Override
             public long getNow() {
-                return 0;
+                return 0L;
             }
 
             @Override
@@ -111,7 +110,7 @@ public final class AllowAllSqlSecurityContext {
 
             @Override
             public long getRequestFd() {
-                return 0;
+                return 0L;
             }
 
             @Override
@@ -144,10 +143,6 @@ public final class AllowAllSqlSecurityContext {
 
             @Override
             public void pushTimestampRequiredFlag(boolean flag) {
-            }
-
-            @Override
-            public void resetNowAndClock() {
             }
 
             @Override

@@ -146,8 +146,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return clock;
+    public long getMicrosecondTimestamp() {
+        return clock.getTicks();
     }
 
     @Override
@@ -208,12 +208,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
         timestampRequiredStack.push(flag ? 1 : 0);
-    }
-
-    @Override
-    public void resetNowAndClock() {
-        now = 0;
-        clock = cairoConfiguration.getMicrosecondClock();
     }
 
     @Override

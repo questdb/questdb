@@ -35,7 +35,6 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
@@ -135,6 +134,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             try {
                 try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                     try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                         } // drain cursor until exception
                         Assert.fail();
@@ -163,6 +163,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             try {
                 try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                     try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                         } // drain cursor until exception
                         Assert.fail();
@@ -853,8 +854,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return sqlExecutionContext.getMicrosecondClock();
+        public long getMicrosecondTimestamp() {
+            return sqlExecutionContext.getMicrosecondTimestamp();
         }
 
         @Override
@@ -910,11 +911,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         @Override
         public void pushTimestampRequiredFlag(boolean flag) {
             sqlExecutionContext.pushTimestampRequiredFlag(flag);
-        }
-
-        @Override
-        public void resetNowAndClock() {
-            sqlExecutionContext.resetNowAndClock();
         }
 
         @Override
