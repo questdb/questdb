@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 
 public class BinaryAlterSerializer implements MemorySerializer {
     @Override
-    public void fromSink(Object instance, MemoryCR memory, long offset) {
-        ((AlterOperation) instance).deserializeBody(memory, offset);
+    public void fromSink(Object instance, MemoryCR memory, long offsetLo, long offsetHi) {
+        ((AlterOperation) instance).deserializeBody(memory, offsetLo, offsetHi);
     }
 
     @Override

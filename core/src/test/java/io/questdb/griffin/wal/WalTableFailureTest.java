@@ -82,8 +82,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 try {
                     twa.apply(dodgyAlter, true);
                     Assert.fail("Expected exception is missing");
-                } catch (IndexOutOfBoundsException ex) {
+                } catch (CairoException ex) {
                     //expected
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter table command");
                 }
             }
 
@@ -175,42 +176,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testApplyJobFailsToApplyStructureChange() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                AlterOperation dodgyAlter = new AlterOperation() {
-                    @Override
-                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        tableWriter.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean isStructureChange() {
-                        return true;
-                    }
-
-                    @Override
-                    public void serializeBody(MemoryA sink) {
-                    }
-                };
-
-                twa.apply(dodgyAlter, true);
-            }
-
-            drainWalQueue();
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef', null)");
-
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
-        });
-    }
-
-    @Test
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -238,16 +203,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
             AlterOperation alterOperation = alterBuilder.ofDropColumn("non_existing_column").build();
 
-            int badWriterId;
             try (
                     TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
                     TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
             ) {
 
-                walIdSet.remove(badWriterId = ((WalWriter) insertWriter).getWalId());
-
                 // Serialize into WAL sequencer a drop column operation of non-existing column
-                // So that it will fail during application to other WAL writers
+                // So that it will fail during application to WAL sequencer
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
                     public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
@@ -266,18 +228,17 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
                 };
 
-                alterWriter.apply(dodgyAlter, true);
+                try {
+                    alterWriter.apply(dodgyAlter, true);
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "Column not found: non_existing_column");
+                }
 
                 TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
                 row.putLong(0, 123L);
                 row.append();
+                insertWriter.commit();
 
-                try {
-                    insertWriter.commit();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains("column 'non_existing_column' does not exists", e.getFlyweightMessage());
-                }
             } finally {
                 Misc.free(alterOperation);
             }
@@ -292,8 +253,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     Assert.assertTrue(walIdSet.contains(walWriter2.getWalId()));
 
                     try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                        Assert.assertTrue(walIdSet.excludes(walWriter3.getWalId()));
-                        Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
+                        Assert.assertTrue(walIdSet.contains(walWriter3.getWalId()));
                     }
                 }
             }
@@ -411,9 +371,50 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     twa.apply(dodgyAlter, true);
                     Assert.fail();
                 } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "applying structure change to WAL table failed " +
-                                    "[table=testDodgyAddColumDoesNotChangeMetadata, oldVersion: 0, newVersion: 0]");
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter table command [code=0]");
+                }
+            }
+
+            drainWalQueue();
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+        });
+    }
+
+    @Test
+    public void testDodgyAlterSerializesBrokenStructureChange() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                AlterOperation dodgyAlter = new AlterOperation() {
+                    @Override
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                        tableWriter.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isStructureChange() {
+                        return true;
+                    }
+
+                    @Override
+                    public void serializeBody(MemoryA sink) {
+                        // Do nothing, deserialization should fail
+                    }
+                };
+
+                try {
+                    twa.apply(dodgyAlter, true);
+                    Assert.fail("Dodgy alter application should fail");
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read alter statement serialized, data is too short to read 10 bytes header");
                 }
             }
 

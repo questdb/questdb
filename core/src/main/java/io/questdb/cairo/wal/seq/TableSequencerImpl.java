@@ -26,11 +26,13 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -45,6 +47,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
+    private final MicrosecondClock microClock;
     private final int mkDirMode;
     private final Path path;
     private final int rootLen;
@@ -73,6 +76,7 @@ public class TableSequencerImpl implements TableSequencer {
             sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableName);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             tableTransactionLog = new TableTransactionLog(ff);
+            microClock = engine.getConfiguration().getMicrosecondClock();
         } catch (Throwable th) {
             LOG.critical().$("could not create sequencer [name=").$(tableName)
                     .$(", error=").$(th.getMessage())
@@ -196,9 +200,12 @@ public class TableSequencerImpl implements TableSequencer {
         long txn;
         try {
             if (metadata.getStructureVersion() == expectedStructureVersion) {
-                long offset = tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change);
+                tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());
 
-                applyToMetadata(change);
+                // Re-read serialised change to ensure it can be read.
+                AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);
+
+                applyToMetadata(deserializedAlter);
                 if (metadata.getStructureVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
                             .put("applying structure change to WAL table failed [table=").put(tableName)
@@ -206,7 +213,8 @@ public class TableSequencerImpl implements TableSequencer {
                             .put(", newVersion: ").put(metadata.getStructureVersion())
                             .put(']');
                 }
-                txn = tableTransactionLog.endMetadataChangeEntry(expectedStructureVersion + 1, offset);
+                metadata.syncToDisk();
+                txn = tableTransactionLog.endMetadataChangeEntry();
             } else {
                 return NO_TXN;
             }
@@ -225,12 +233,12 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn) {
+    public long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         long txn;
         try {
-            if (metadata.getStructureVersion() == expectedSchemaVersion) {
+            if (metadata.getStructureVersion() == expectedStructureVersion) {
                 txn = nextTxn(walId, segmentId, segmentTxn);
             } else {
                 return NO_TXN;
@@ -306,8 +314,8 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
     }
 
-    private long nextTxn(int walId, int segmentId, long segmentTxn) {
-        return tableTransactionLog.addEntry(walId, segmentId, segmentTxn);
+    private long nextTxn(int walId, int segmentId, int segmentTxn) {
+        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, microClock.getTicks());
     }
 
     void create(int tableId, TableStructure model) {
