@@ -590,6 +590,11 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
     }
 
     @Test
+    public void testUpdateViaWal_Now() throws Exception {
+        testUpdateToNowFunction("now");
+    }
+
+    @Test
     public void testUpdateViaWal_Random() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         currentMicros = rnd.nextLong();
@@ -713,33 +718,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
 
     @Test
     public void testUpdateViaWal_SysTimestamp() throws Exception {
-        // regardless of randomised clocks tables on each node should be identical
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        forEachNode(node -> node.getConfigurationOverrides().setCurrentMicros(rnd.nextPositiveLong()));
-
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
-
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
-            int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
-
-            final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
-                walName = walWriter.getWalName();
-            }
-
-            executeOperation("UPDATE " + tableName + " SET LONG=2*systimestamp()-systimestamp()", CompiledQuery.UPDATE);
-            drainWalQueue();
-            replicateAndApplyToAllNodes(tableName, walName);
-
-            executeOperation("UPDATE " + tableCopyName + " SET LONG=2*systimestamp()-systimestamp()", CompiledQuery.UPDATE);
-            TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
-        });
+        testUpdateToNowFunction("systimestamp");
     }
 
     @Test
@@ -931,6 +910,36 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                 .col("label", ColumnType.SYMBOL)
                 .col("bin", ColumnType.BINARY)
                 .timestamp("ts");
+    }
+
+    private void testUpdateToNowFunction(String nowName) throws Exception {
+        // regardless of randomised clocks tables on each node should be identical
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        forEachNode(node -> node.getConfigurationOverrides().setCurrentMicros(rnd.nextPositiveLong()));
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                walName = walWriter.getWalName();
+            }
+
+            executeOperation("UPDATE " + tableName + " SET LONG=2*" + nowName + "()-" + nowName + "()", CompiledQuery.UPDATE);
+            drainWalQueue();
+            replicateAndApplyToAllNodes(tableName, walName);
+
+            executeOperation("UPDATE " + tableCopyName + " SET LONG=2*" + nowName + "()-" + nowName + "()", CompiledQuery.UPDATE);
+            TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
+        });
     }
 
     private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {
