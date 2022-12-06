@@ -267,7 +267,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void resumeTable() {
         metadata.resumeTable();
-        engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, tableTransactionLog.lastTxn());
+        engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, Long.MAX_VALUE);
     }
 
     @TestOnly

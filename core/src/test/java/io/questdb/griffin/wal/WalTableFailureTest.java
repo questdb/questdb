@@ -925,6 +925,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t1\t4\n");
 
             compile("alter table " + tableName + " resume wal from 3");
+            compile("alter table " + tableName + " resume wal"); // ignored
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
 
             drainWalQueue();

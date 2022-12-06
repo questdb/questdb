@@ -536,9 +536,6 @@ public class SqlCompiler implements Closeable {
                             throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
                         }
                     }
-                    if (!engine.getTableSequencerAPI().isSuspended(tableName)) {
-                        throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' is not suspended");
-                    }
                     return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
@@ -1047,20 +1044,14 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableResume(int tableNamePosition, String tableName, long resumeFromTxn, SqlExecutionContext executionContext) throws SqlException {
-        try (TableWriter tableWriter = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "table resume")) {
-            long seqTxn = tableWriter.getSeqTxn();
-            if (resumeFromTxn > seqTxn) {
-                tableWriter.setSeqTxn(resumeFromTxn);
-            }
-            engine.getTableSequencerAPI().resumeTable(tableName);
+        try {
+            engine.getTableSequencerAPI().resumeTable(tableName, resumeFromTxn, executionContext.getCairoSecurityContext());
             return compiledQuery.ofTableResume();
-        } catch (EntryUnavailableException tableBusy) {
-            throw SqlException.position(tableNamePosition).put("table resume, busy [table=`").put(tableName).put("`]");
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableName)
-                .$(", error=").$(ex.getFlyweightMessage())
-                .$(", errno=").$(ex.getErrno())
-                .I$();
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
             throw SqlException.position(tableNamePosition).put(ex.getFlyweightMessage()).put("[errno=").put(ex.getErrno()).put(']');
         }
     }
