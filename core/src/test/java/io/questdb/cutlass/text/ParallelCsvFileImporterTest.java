@@ -2665,7 +2665,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         );
     }
 
-    private void testStatusLogCleanup(int daysToKeep) throws SqlException, IOException {
+    private void testStatusLogCleanup(int daysToKeep) throws SqlException {
         String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         compiler.compile("create table " + backlogTableName + " as " +
                 "(" +
@@ -2683,7 +2683,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 " long_sequence(5)" +
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
-        parallelImportStatusLogKeepNDays = daysToKeep;
+        configOverrideParallelImportStatusLogKeepNDays(daysToKeep);
         new TextImportRequestJob(engine, 1, null).close();
         assertQuery("count\n" + daysToKeep + "\n",
                 "select count() from " + backlogTableName,
