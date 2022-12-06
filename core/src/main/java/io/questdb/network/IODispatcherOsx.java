@@ -35,7 +35,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private final int capacity;
     private final Kqueue kqueue;
     // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1)
-    private long idSeq = 0;
+    private long idSeq = 1;
 
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
@@ -160,6 +160,11 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             kqueue.writeFD(context.getFd(), opId);
         }
         registerWithKQueue(1);
+
+        LOG.info().$("de-registered suspend event and resumed operation [fd=").$(context.getFd())
+                .$(", opId=").$(opId)
+                .$(", eventId=").$(pendingEvents.get(eventsRow, EVM_ID)).I$();
+
         pendingEvents.deleteRow(eventsRow);
     }
 
@@ -202,10 +207,8 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ) {
                 kqueue.readFD(context.getFd(), opId);
-                LOG.debug().$("kq [op=1, fd=").$(context.getFd()).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             } else {
                 kqueue.writeFD(context.getFd(), opId);
-                LOG.debug().$("kq [op=2, fd=").$(context.getFd()).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             }
             offset += KqueueAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
@@ -242,7 +245,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final long opId = nextOpId();
             final int fd = context.getFd();
             int operation = requestedOperation;
-            LOG.debug().$("processing registration [fd=").$(fd)
+            LOG.info().$("processing registration [fd=").$(fd)
                     .$(", op=").$(operation)
                     .$(", id=").$(opId).I$();
 
@@ -274,7 +277,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             if (suspendEvent != null) {
                 // ok, the operation was suspended, so we need to track the suspend event
                 final long eventId = nextEventId();
-                LOG.debug().$("registering suspend event [fd=").$(fd)
+                LOG.info().$("registering suspend event [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", eventId=").$(eventId)
                         .$(", suspendedOpId=").$(opId)
