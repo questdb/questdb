@@ -132,7 +132,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void resetChangesFlag() {
+    public void reset() {
+        this.version = readUnsafe();
         this.hasChanges = false;
     }
 
