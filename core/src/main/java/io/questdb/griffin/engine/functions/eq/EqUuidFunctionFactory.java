@@ -103,7 +103,7 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    public static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 

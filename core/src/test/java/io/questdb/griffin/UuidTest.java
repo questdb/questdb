@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.MutableUuid;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -66,13 +67,6 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastingConstUUIDtoString() throws Exception {
-        assertQuery("column\n" +
-                        "true\n",
-                "select cast (cast ('11111111-1111-1111-1111-111111111111' as uuid) as string) = '11111111-1111-1111-1111-111111111111' from long_sequence(1)", null, null, true, true, true);
-    }
-
-    @Test
     public void testCastingNullUUIDtoString() throws Exception {
         assertCompile("create table x (u uuid)");
         assertCompile("insert into x values (null)");
@@ -81,6 +75,13 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("column\n" +
                         "true\n",
                 "select s is null from y", null, null, true, true, true);
+    }
+
+    @Test
+    public void testCompareConstantNullStringWithUuid() throws Exception {
+        assertQuery("column\n" +
+                        "true\n",
+                "select cast (null as string) = cast (null as uuid) from long_sequence(1)", null, null, true, true, true);
     }
 
     @Test
@@ -172,6 +173,45 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("count_distinct\n" +
                         "3\n",
                 "select count_distinct(u) from x", null, null, false, true, true);
+    }
+
+    @Test
+    public void testEqConstStringToUuid() throws Exception {
+        assertQuery("column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\n" +
+                        "true\tfalse\ttrue\tfalse\tfalse\n",
+                "select " +
+                        "cast (null as string) = cast (null as uuid), " +
+                        "cast (null as string) = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                        "'11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                        "'not a uuid' = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                        "'11111111-1111-1111-1111-111111111111' = rnd_uuid4()" +
+                        "from long_sequence(1)", null, null, true, true, true);
+    }
+
+    @Test
+    @Ignore("TODO - fix this, failing due to internal usage of explicit casting which is lenient")
+    public void testEqVarBadStringToVarNullUuid() throws Exception {
+        assertCompile("create table x (s STRING, u UUID)");
+        assertCompile("insert into x values ('not a uuid', null)");
+        assertQuery("column\n" +
+                        "false\n",
+                "select s = u from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testEqVarStringToUuid() throws Exception {
+        assertCompile("create table x (s1 STRING, s2 STRING, s3 STRING, s4 STRING, s5 STRING)");
+        assertCompile("insert into x values (null, null, '11111111-1111-1111-1111-111111111111', 'not a uuid', '11111111-1111-1111-1111-111111111111')");
+
+        assertQuery("column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\n" +
+                        "true\tfalse\ttrue\tfalse\tfalse\n",
+                "select " +
+                        "s1 = cast (null as uuid), " +
+                        "s2 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                        "s3 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                        "s4 = cast ('11111111-1111-1111-1111-111111111111' as uuid), " +
+                        "s5 = rnd_uuid4() " +
+                        "from x", null, null, true, true, true);
     }
 
     @Test
@@ -360,6 +400,13 @@ public class UuidTest extends AbstractGriffinTest {
         assertCompile("create table x (l long)");
         assertCompile("insert into x values (42)");
         assertFailure("select cast(l as uuid) from x", null, 7, "unexpected argument for function");
+    }
+
+    //    @Test
+    public void testLongSearch() throws Exception {
+        assertCompile("create table test_table as (select rnd_uuid4() u from long_sequence(200000000))");
+        assertQuery("foo",
+                "select * from test_table where u = '728c0233-a7a7-45fc-8bd3-bd20446812dc'", null, null, true, true, false);
     }
 
     @Test
