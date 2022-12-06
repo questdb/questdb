@@ -58,6 +58,10 @@ public final class UuidColumn extends UuidFunction implements ScalarFunction {
 
     @Override
     public boolean isReadThreadSafe() {
+        // the UUID column is thread-safe
+
+        // it's only when casting to string (=common operation) then it's not thread-safe
+        // the CastUuidToStr function indicate it's not thead-safe 
         return true;
     }
 

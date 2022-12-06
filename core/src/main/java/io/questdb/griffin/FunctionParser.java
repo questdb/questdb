@@ -765,6 +765,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.UUID) {
                 // todo: optimize for constants
                 args.setQuick(k, new CastStrToUuidFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
+                args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
@@ -784,6 +786,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
+            case ColumnType.UUID:
+                if (toType == ColumnType.STRING) {
+                    return new CastUuidToStrFunctionFactory.Func(function);
                 }
                 break;
             default:
