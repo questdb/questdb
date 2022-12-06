@@ -427,6 +427,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastCharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory,
 //                  cast str to ...,
             io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory,
