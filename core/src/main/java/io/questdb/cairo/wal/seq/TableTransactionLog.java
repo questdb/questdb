@@ -340,7 +340,7 @@ public class TableTransactionLog implements Closeable {
             if (fd > -1) {
                 ff.close(fd);
             }
-            ff.munmap(address, getMappedLen(), MemoryTag.NATIVE_DEFAULT);
+            ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
         }
 
         @Override
@@ -379,7 +379,7 @@ public class TableTransactionLog implements Closeable {
                 final long oldSize = getMappedLen();
                 txnCount = newTxnCount;
                 final long newSize = getMappedLen();
-                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
+                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
 
                 return hasNext(newSize);
             }
@@ -405,7 +405,7 @@ public class TableTransactionLog implements Closeable {
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
             this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
-                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
+                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             }
             txn = txnLo;
