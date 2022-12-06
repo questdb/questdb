@@ -145,10 +145,15 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             return;
         }
 
+        final long eventId = pendingEvents.get(eventsRow, EVM_ID);
         final int operation = (int) pending.get(row, OPM_OPERATION);
         final C context = pending.get(row);
         final SuspendEvent suspendEvent = context.getSuspendEvent();
         assert suspendEvent != null;
+
+        LOG.debug().$("handling triggered suspend event and resuming original operation [fd=").$(context.getFd())
+                .$(", opId=").$(opId)
+                .$(", eventId=").$(eventId).I$();
 
         context.clearSuspendEvent();
         kqueue.setWriteOffset(0);
@@ -158,10 +163,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             kqueue.writeFD(context.getFd(), opId);
         }
         registerWithKQueue(1);
-
-        LOG.info().$("de-registered suspend event and resumed operation [fd=").$(context.getFd())
-                .$(", opId=").$(opId)
-                .$(", eventId=").$(pendingEvents.get(eventsRow, EVM_ID)).I$();
 
         pendingEvents.deleteRow(eventsRow);
     }
@@ -197,7 +198,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final long opId = nextOpId();
             final int fd = context.getFd();
             int operation = requestedOperation;
-            LOG.info().$("processing registration [fd=").$(fd)
+            LOG.debug().$("processing registration [fd=").$(fd)
                     .$(", op=").$(operation)
                     .$(", id=").$(opId).I$();
 
@@ -206,6 +207,13 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 // if the operation was suspended, we request a read to be able to detect a client disconnect 
                 operation = IOOperation.READ;
             }
+
+            int opRow = pending.addRow();
+            pending.set(opRow, OPM_TIMESTAMP, timestamp);
+            pending.set(opRow, OPM_FD, fd);
+            pending.set(opRow, OPM_ID, opId);
+            pending.set(opRow, OPM_OPERATION, requestedOperation);
+            pending.set(opRow, context);
 
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ) {
@@ -219,17 +227,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 count = offset = 0;
             }
 
-            int r = pending.addRow();
-            pending.set(r, OPM_TIMESTAMP, timestamp);
-            pending.set(r, OPM_FD, fd);
-            pending.set(r, OPM_ID, opId);
-            pending.set(r, OPM_OPERATION, requestedOperation);
-            pending.set(r, context);
-
             if (suspendEvent != null) {
                 // ok, the operation was suspended, so we need to track the suspend event
                 final long eventId = nextEventId();
-                LOG.info().$("registering suspend event [fd=").$(fd)
+                LOG.debug().$("registering suspend event [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", eventId=").$(eventId)
                         .$(", suspendedOpId=").$(opId)
@@ -281,7 +282,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 registerWithKQueue(index);
                 index = offset = 0;
             }
-            pending.deleteRow(pendingRow);
 
             // Next, close the event and resume the original operation.
             context.clearSuspendEvent();
@@ -324,9 +324,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
     @Override
     protected boolean runSerially() {
+        boolean useful = false;
+
         final long timestamp = clock.getTicks();
         processDisconnects(timestamp);
-        boolean useful = false;
         final int n = kqueue.poll();
         int watermark = pending.size();
         int offset = 0;

@@ -186,6 +186,13 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 operation = IOOperation.READ;
             }
 
+            int opRow = pending.addRow();
+            pending.set(opRow, OPM_TIMESTAMP, timestamp);
+            pending.set(opRow, OPM_FD, fd);
+            pending.set(opRow, OPM_ID, opId);
+            pending.set(opRow, OPM_OPERATION, requestedOperation);
+            pending.set(opRow, context);
+
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
             final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
@@ -193,13 +200,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 LOG.error().$("epoll_ctl modify operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
             }
-
-            int opRow = pending.addRow();
-            pending.set(opRow, OPM_TIMESTAMP, timestamp);
-            pending.set(opRow, OPM_FD, fd);
-            pending.set(opRow, OPM_ID, opId);
-            pending.set(opRow, OPM_OPERATION, requestedOperation);
-            pending.set(opRow, context);
 
             if (suspendEvent != null) {
                 // ok, the operation was suspended, so we need to track the suspend event
