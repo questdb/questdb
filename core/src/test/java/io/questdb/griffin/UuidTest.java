@@ -402,13 +402,6 @@ public class UuidTest extends AbstractGriffinTest {
         assertFailure("select cast(l as uuid) from x", null, 7, "unexpected argument for function");
     }
 
-    //    @Test
-    public void testLongSearch() throws Exception {
-        assertCompile("create table test_table as (select rnd_uuid4() u from long_sequence(200000000))");
-        assertQuery("foo",
-                "select * from test_table where u = '728c0233-a7a7-45fc-8bd3-bd20446812dc'", null, null, true, true, false);
-    }
-
     @Test
     public void testNegatedEqualityComparisonExplicitCast() throws Exception {
         MutableUuid uuid = new MutableUuid();
