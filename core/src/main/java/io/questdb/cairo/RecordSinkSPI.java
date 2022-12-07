@@ -69,7 +69,7 @@ public interface RecordSinkSPI {
 
     void putTimestamp(long value);
 
-    void putUuid(long msb, long lsb);
+    void putUuid(long hi, long lo);
 
     void skip(int bytes);
 }
