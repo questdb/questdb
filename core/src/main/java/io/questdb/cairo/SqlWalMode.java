@@ -22,25 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal.seq;
+package io.questdb.cairo;
 
-import java.io.Closeable;
-
-public interface TransactionLogCursor extends Closeable {
-    @Override
-    void close();
-
-    long getCommitTimestamp();
-
-    int getSegmentId();
-
-    long getSegmentTxn();
-
-    long getStructureVersion();
-
-    long getTxn();
-
-    int getWalId();
-
-    boolean hasNext();
+public final class SqlWalMode {
+    public static final int WAL_DISABLED = 0;
+    public static final int WAL_ENABLED = 1;
+    public static final int WAL_NOT_SET = -1;
 }
