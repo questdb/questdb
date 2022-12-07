@@ -39,6 +39,11 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function uuidFun = args.getQuick(0);
         Function strFun = args.getQuick(1);

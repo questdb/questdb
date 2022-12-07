@@ -278,6 +278,50 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIn() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values ('22222222-2222-2222-2222-222222222222')");
+        assertCompile("insert into x values ('33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values ('44444444-4444-4444-4444-444444444444')");
+        assertCompile("insert into x values (null)");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "22222222-2222-2222-2222-222222222222\n" +
+                        "33333333-3333-3333-3333-333333333333\n",
+                "select * from x where u in ('11111111-1111-1111-1111-111111111111', 'not uuid', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))", null, true, false, true);
+    }
+
+    @Test
+    public void testIn_constant() throws Exception {
+        assertQuery("x\n" +
+                        "1\n",
+                "select * from long_sequence(1) where cast ('11111111-1111-1111-1111-111111111111' as uuid) in ('11111111-1111-1111-1111-111111111111')", null, true, false, true);
+
+        assertQuery("x\n",
+                "select * from long_sequence(1) where cast (null as uuid) in ('11111111-1111-1111-1111-111111111111')", null, false, false, true);
+    }
+
+    @Test
+    public void testIn_null() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+
+        assertFailure("select * from x where u in (cast (null as UUID))", null, 28, "NULL is not allowed in IN list");
+        assertFailure("select * from x where u in (cast (null as String))", null, 28, "NULL is not allowed in IN list");
+        assertFailure("select * from x where u in (null)", null, 28, "NULL is not allowed in IN list");
+    }
+
+    @Test
+    public void testIn_unexpectedType() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+
+        assertFailure("select * from x where u in (42)", null, 28, "STRING or UUID constant expected in IN list");
+    }
+
+    @Test
     public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
         // testing O3 insert when uuid columnTop > 0
         assertCompile("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");

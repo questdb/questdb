@@ -476,6 +476,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
 //                  'agg' group by function
