@@ -26,10 +26,10 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.NumericException;
 import io.questdb.std.UuidUtil;
@@ -72,7 +72,7 @@ final class UuidEqUtils {
             if (uuidFun.isConstant()) {
                 return BooleanConstant.of(hi == uuidFun.getUuidHi(null) && lo == uuidFun.getUuidHi(null));
             } else {
-                return new ConstStrFunction(hi, lo, uuidFun);
+                return new ConstStrFun(hi, lo, uuidFun);
             }
         } else {
             if (uuidFun.isConstant()) {
@@ -81,20 +81,23 @@ final class UuidEqUtils {
                 if (UuidUtil.isNull(hi, lo)) {
                     return new EqStrFunctionFactory.NullCheckFunc(strFun);
                 } else {
-                    return new ConstUuidFunction(hi, lo, strFun);
+                    return new ConstUuidFun(hi, lo, strFun);
                 }
             } else {
-                return new EqUuidFunctionFactory.Func(new CastStrToUuidFunctionFactory.Func(strFun), uuidFun);
+                return new Fun(strFun, uuidFun);
             }
         }
     }
 
-    private static class ConstStrFunction extends NegatableBooleanFunction implements UnaryFunction {
+    /**
+     * The string function is constant and the UUID function is not constant.
+     */
+    private static class ConstStrFun extends NegatableBooleanFunction implements UnaryFunction {
         private final long constStrHi;
         private final long constStrLo;
         private final Function fun;
 
-        public ConstStrFunction(long constStrHi, long constStrLo, Function fun) {
+        private ConstStrFun(long constStrHi, long constStrLo, Function fun) {
             this.constStrHi = constStrHi;
             this.constStrLo = constStrLo;
             this.fun = fun;
@@ -111,12 +114,15 @@ final class UuidEqUtils {
         }
     }
 
-    private static class ConstUuidFunction extends NegatableBooleanFunction implements UnaryFunction {
+    /**
+     * The UUID function is constant and the string function is not constant.
+     */
+    private static class ConstUuidFun extends NegatableBooleanFunction implements UnaryFunction {
         private final long constUuidHi;
         private final long constUuidLo;
         private final Function fun;
 
-        public ConstUuidFunction(long constUuidHi, long constUuidLo, Function fun) {
+        private ConstUuidFun(long constUuidHi, long constUuidLo, Function fun) {
             this.constUuidHi = constUuidHi;
             this.constUuidLo = constUuidLo;
             this.fun = fun;
@@ -140,6 +146,45 @@ final class UuidEqUtils {
             } catch (NumericException e) {
                 return negated;
             }
+        }
+    }
+
+    /**
+     * The string function is not constant and the UUID function is not constant either.
+     */
+    private static class Fun extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function strFunction;
+        private final Function uuidFunction;
+
+        private Fun(Function strFunction, Function uuidFunction) {
+            this.strFunction = strFunction;
+            this.uuidFunction = uuidFunction;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence str = strFunction.getStr(rec);
+            long hi = uuidFunction.getUuidHi(rec);
+            long lo = uuidFunction.getUuidLo(rec);
+            if (str == null) {
+                return negated != UuidUtil.isNull(hi, lo);
+            }
+            try {
+                UuidUtil.checkDashesAndLength(str);
+                return negated != (hi == UuidUtil.parseHi(str) && lo == UuidUtil.parseLo(str));
+            } catch (NumericException e) {
+                return negated;
+            }
+        }
+
+        @Override
+        public Function getLeft() {
+            return strFunction;
+        }
+
+        @Override
+        public Function getRight() {
+            return uuidFunction;
         }
     }
 }

@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.MutableUuid;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -189,7 +188,6 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore("TODO - fix this, failing due to internal usage of explicit casting which is lenient")
     public void testEqVarBadStringToVarNullUuid() throws Exception {
         assertCompile("create table x (s STRING, u UUID)");
         assertCompile("insert into x values ('not a uuid', null)");
