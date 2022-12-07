@@ -158,7 +158,7 @@ public final class Hash {
             } while (p <= lim);
 
             h64 = Long.rotateLeft(v1, 1) + Long.rotateLeft(v2, 7)
-                + Long.rotateLeft(v3, 12) + Long.rotateLeft(v4, 18);
+                    + Long.rotateLeft(v3, 12) + Long.rotateLeft(v4, 18);
 
             v1 *= XXH_PRIME64_2;
             v1 = Long.rotateLeft(v1, 31);

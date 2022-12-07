@@ -118,11 +118,11 @@ public final class TestUtils {
     }
 
     public static void assertEquals(
-        RecordCursor cursorExpected,
-        RecordMetadata metadataExpected,
-        RecordCursor cursorActual,
-        RecordMetadata metadataActual,
-        boolean symbolsAsStrings
+            RecordCursor cursorExpected,
+            RecordMetadata metadataExpected,
+            RecordCursor cursorActual,
+            RecordMetadata metadataActual,
+            boolean symbolsAsStrings
     ) {
         assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
         Record r = cursorExpected.getRecord();
@@ -162,13 +162,13 @@ public final class TestUtils {
                     // check if we can bail out early because current record timestamps do not match
                     if (tsL != tsR) {
                         throw new AssertionError(
-                            String.format(
-                                "Row %d column %s[%s] %s",
-                                rowIndex,
-                                metadataActual.getColumnName(timestampIndex),
-                                ColumnType.TIMESTAMP,
-                                "timestamp mismatch"
-                            )
+                                String.format(
+                                        "Row %d column %s[%s] %s",
+                                        rowIndex,
+                                        metadataActual.getColumnName(timestampIndex),
+                                        ColumnType.TIMESTAMP,
+                                        "timestamp mismatch"
+                                )
                         );
                     }
 
@@ -330,9 +330,9 @@ public final class TestUtils {
                             strp++;
                             if (b != bb) {
                                 Assert.fail(
-                                    "expected: '" + (char) (bb) + "'(" + bb + ")" +
-                                        ", actual: '" + (char) (b) + "'(" + b + ")" +
-                                        ", at: " + (offset + i - 1));
+                                        "expected: '" + (char) (bb) + "'(" + bb + ")" +
+                                                ", actual: '" + (char) (b) + "'(" + b + ")" +
+                                                ", at: " + (offset + i - 1));
                             }
                         }
 
@@ -412,16 +412,16 @@ public final class TestUtils {
     }
 
     public static void assertEquals(
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        String expectedSql,
-        String actualSql
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expectedSql,
+            String actualSql
     ) throws SqlException {
         try (
-            RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-            RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-            RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-            RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
         ) {
             assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
@@ -567,26 +567,26 @@ public final class TestUtils {
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
         assertCursor(
-            expected,
-            reader.getCursor(),
-            reader.getMetadata(),
-            true,
-            sink
+                expected,
+                reader.getCursor(),
+                reader.getMetadata(),
+                true,
+                sink
         );
     }
 
     public static void assertSql(
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        CharSequence sql,
-        MutableCharSink sink,
-        CharSequence expected
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
     ) throws SqlException {
         printSql(
-            compiler,
-            sqlExecutionContext,
-            sql,
-            sink
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
         );
         assertEquals(expected, sink);
     }
@@ -665,17 +665,17 @@ public final class TestUtils {
     }
 
     public static void assertSqlWithTypes(
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        CharSequence sql,
-        MutableCharSink sink,
-        CharSequence expected
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink,
+            CharSequence expected
     ) throws SqlException {
         printSqlWithTypes(
-            compiler,
-            sqlExecutionContext,
-            sql,
-            sink
+                compiler,
+                sqlExecutionContext,
+                sql,
+                sink
         );
         assertEquals(expected, sink);
     }
@@ -721,51 +721,51 @@ public final class TestUtils {
     }
 
     public static void createPopulateTable(
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        TableModel tableModel,
-        int totalRows,
-        String startDate,
-        int partitionCount
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException, SqlException {
         createPopulateTable(
-            tableModel.getTableName(),
-            compiler,
-            sqlExecutionContext,
-            tableModel,
-            totalRows,
-            startDate,
-            partitionCount
-        );
-    }
-
-    public static void createPopulateTable(
-        CharSequence tableName,
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        TableModel tableModel,
-        int totalRows,
-        String startDate,
-        int partitionCount
-    ) throws NumericException, SqlException {
-        compiler.compile(
-            createPopulateTableStmt(
-                tableName,
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
                 tableModel,
                 totalRows,
                 startDate,
                 partitionCount
-            ),
-            sqlExecutionContext
+        );
+    }
+
+    public static void createPopulateTable(
+            CharSequence tableName,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
+        compiler.compile(
+                createPopulateTableStmt(
+                        tableName,
+                        tableModel,
+                        totalRows,
+                        startDate,
+                        partitionCount
+                ),
+                sqlExecutionContext
         );
     }
 
     public static String createPopulateTableStmt(
-        CharSequence tableName,
-        TableModel tableModel,
-        int totalRows,
-        String startDate,
-        int partitionCount
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
@@ -871,17 +871,17 @@ public final class TestUtils {
     }
 
     public static void execute(
-        @Nullable WorkerPool pool,
-        CustomisableRunnable runnable,
-        CairoConfiguration configuration,
-        Metrics metrics,
-        Log log
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration,
+            Metrics metrics,
+            Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-            final CairoEngine engine = new CairoEngine(configuration, metrics, 2);
-            final SqlCompiler compiler = new SqlCompiler(engine);
-            final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                final CairoEngine engine = new CairoEngine(configuration, metrics, 2);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
             try {
                 if (pool != null) {
@@ -901,10 +901,10 @@ public final class TestUtils {
     }
 
     public static void execute(
-        @Nullable WorkerPool pool,
-        CustomisableRunnable runner,
-        CairoConfiguration configuration,
-        Log log
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration,
+            Log log
     ) throws Exception {
         execute(pool, runner, configuration, Metrics.disabled(), log);
     }
@@ -982,10 +982,10 @@ public final class TestUtils {
     }
 
     public static String insertFromSelectPopulateTableStmt(
-        TableModel tableModel,
-        int totalRows,
-        String startDate,
-        int partitionCount
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
@@ -1146,10 +1146,10 @@ public final class TestUtils {
     }
 
     public static void printSql(
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        CharSequence sql,
-        MutableCharSink sink
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1159,10 +1159,10 @@ public final class TestUtils {
     }
 
     public static void printSqlWithTypes(
-        SqlCompiler compiler,
-        SqlExecutionContext sqlExecutionContext,
-        CharSequence sql,
-        MutableCharSink sink
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1175,11 +1175,11 @@ public final class TestUtils {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
                 byte[] buffer
-                    = new byte[(int) fis.getChannel().size()];
+                        = new byte[(int) fis.getChannel().size()];
                 int totalRead = 0;
                 int read;
                 while (totalRead < buffer.length
-                    && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                        && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
                     totalRead += read;
                 }
                 return new String(buffer, Files.UTF_8);
@@ -1242,12 +1242,12 @@ public final class TestUtils {
     }
 
     private static void assertColumnValues(
-        RecordMetadata metadataExpected,
-        RecordMetadata metadataActual,
-        Record lr,
-        Record rr,
-        long rowIndex,
-        boolean symbolsAsStrings
+            RecordMetadata metadataExpected,
+            RecordMetadata metadataActual,
+            Record lr,
+            Record rr,
+            long rowIndex,
+            boolean symbolsAsStrings
     ) {
         int columnType = 0;
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
@@ -1334,9 +1334,9 @@ public final class TestUtils {
         }
 
         if (expected.getLong0() != actual.getLong0()
-            || expected.getLong1() != actual.getLong1()
-            || expected.getLong2() != actual.getLong2()
-            || expected.getLong3() != actual.getLong3()) {
+                || expected.getLong1() != actual.getLong1()
+                || expected.getLong2() != actual.getLong2()
+                || expected.getLong3() != actual.getLong3()) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
@@ -1357,10 +1357,10 @@ public final class TestUtils {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0, n = src.getColumnCount(); i < n; i++) {
             metadata.add(
-                new TableColumnMetadata(
-                    src.getColumnName(i),
-                    src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
-                )
+                    new TableColumnMetadata(
+                            src.getColumnName(i),
+                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
+                    )
             );
         }
         metadata.setTimestampIndex(src.getTimestampIndex());
@@ -1391,9 +1391,9 @@ public final class TestUtils {
 
     private static String toHexString(Long256 expected) {
         return Long.toHexString(expected.getLong0()) + " " +
-            Long.toHexString(expected.getLong1()) + " " +
-            Long.toHexString(expected.getLong2()) + " " +
-            Long.toHexString(expected.getLong3());
+                Long.toHexString(expected.getLong1()) + " " +
+                Long.toHexString(expected.getLong2()) + " " +
+                Long.toHexString(expected.getLong3());
     }
 
     @FunctionalInterface

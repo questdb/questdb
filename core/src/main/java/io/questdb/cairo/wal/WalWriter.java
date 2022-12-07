@@ -152,10 +152,10 @@ public class WalWriter implements TableWriterAPI {
                     if (metadataValidator.structureVersion != metadata.getStructureVersion() + 1) {
                         retry = false;
                         throw CairoException.nonCritical()
-                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                " are currently not supported for WAL tables [table=").put(tableName)
-                            .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                            .put(", newStructureVersion=").put(metadataValidator.structureVersion).put(']');
+                                .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
+                                        " are currently not supported for WAL tables [table=").put(tableName)
+                                .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                                .put(", newStructureVersion=").put(metadataValidator.structureVersion).put(']');
                     }
                 } catch (CairoException e) {
                     if (retry) {
@@ -318,9 +318,9 @@ public class WalWriter implements TableWriterAPI {
             return true;
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableName)
-                .$(", walId=").$(walId)
-                .$(", errno=").$(e.getErrno())
-                .$(", error=").$((Throwable) e).I$();
+                    .$(", walId=").$(walId)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", error=").$((Throwable) e).I$();
             distressed = true;
             return false;
         }
@@ -394,8 +394,8 @@ public class WalWriter implements TableWriterAPI {
             try {
                 final int timestampIndex = metadata.getTimestampIndex();
                 LOG.info().$("rolling uncommitted rows to new segment [wal=")
-                    .$(path).$(Files.SEPARATOR).$(newSegmentId)
-                    .$(", rowCount=").$(uncommittedRows).I$();
+                        .$(path).$(Files.SEPARATOR).$(newSegmentId)
+                        .$(", rowCount=").$(uncommittedRows).I$();
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
@@ -405,17 +405,17 @@ public class WalWriter implements TableWriterAPI {
                         final String columnName = metadata.getColumnName(columnIndex);
 
                         CopyWalSegmentUtils.rollColumnToSegment(ff,
-                            configuration.getWriterFileOpenOpts(),
-                            primaryColumn,
-                            secondaryColumn,
-                            path,
-                            newSegmentId,
-                            columnName,
-                            columnIndex == timestampIndex ? -columnType : columnType,
-                            currentTxnStartRowNum,
-                            uncommittedRows,
-                            newColumnFiles,
-                            columnIndex
+                                configuration.getWriterFileOpenOpts(),
+                                primaryColumn,
+                                secondaryColumn,
+                                path,
+                                newSegmentId,
+                                columnName,
+                                columnIndex == timestampIndex ? -columnType : columnType,
+                                currentTxnStartRowNum,
+                                uncommittedRows,
+                                newColumnFiles,
+                                columnIndex
                         );
                     } else {
                         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
@@ -455,9 +455,9 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public String toString() {
         return "WalWriter{" +
-            "name=" + walName +
-            ", table=" + tableName +
-            '}';
+                "name=" + walName +
+                ", table=" + tableName +
+                '}';
     }
 
     @Override
@@ -558,7 +558,7 @@ public class WalWriter implements TableWriterAPI {
                 if (++metadataVersion != getStructureVersion()) {
                     distressed = true;
                     throw CairoException.critical(0)
-                        .put("could not apply table definition changes to the current transaction, version unchanged");
+                            .put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
         }
@@ -583,8 +583,8 @@ public class WalWriter implements TableWriterAPI {
             return;
         }
         throw CairoException.critical(0)
-            .put("WAL writer is distressed and cannot be used any more [table=").put(tableName)
-            .put(", wal=").put(walId).put(']');
+                .put("WAL writer is distressed and cannot be used any more [table=").put(tableName)
+                .put(", wal=").put(walId).put(']');
     }
 
     private void cleanupSymbolMapFiles(Path path, int rootLen, CharSequence columnName) {
@@ -647,10 +647,10 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void configureSymbolMapWriter(
-        int columnWriterIndex,
-        CharSequence columnName,
-        int symbolCount,
-        long columnNameTxn
+            int columnWriterIndex,
+            CharSequence columnName,
+            int symbolCount,
+            long columnNameTxn
     ) {
         if (symbolCount == 0) {
             configureEmptySymbol(columnWriterIndex);
@@ -669,9 +669,9 @@ public class WalWriter implements TableWriterAPI {
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link offset file [from=").$(tempPath)
-                .$(", to=").$(path)
-                .$(", errno=").$(ff.errno())
-                .I$();
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
             configureEmptySymbol(columnWriterIndex);
             return;
         }
@@ -683,9 +683,9 @@ public class WalWriter implements TableWriterAPI {
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link char file [from=").$(tempPath)
-                .$(", to=").$(path)
-                .$(", errno=").$(ff.errno())
-                .I$();
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
             cleanupSymbolMapFiles(path, rootLen, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
@@ -698,9 +698,9 @@ public class WalWriter implements TableWriterAPI {
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link key file [from=").$(tempPath)
-                .$(", to=").$(path)
-                .$(", errno=").$(ff.errno())
-                .I$();
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
             cleanupSymbolMapFiles(path, rootLen, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
@@ -713,9 +713,9 @@ public class WalWriter implements TableWriterAPI {
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link value file [from=").$(tempPath)
-                .$(", to=").$(path)
-                .$(", errno=").$(ff.errno())
-                .I$();
+                    .$(", to=").$(path)
+                    .$(", errno=").$(ff.errno())
+                    .I$();
             cleanupSymbolMapFiles(path, rootLen, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
@@ -723,11 +723,11 @@ public class WalWriter implements TableWriterAPI {
 
         path.trimTo(rootLen);
         SymbolMapReader symbolMapReader = new SymbolMapReaderImpl(
-            configuration,
-            path,
-            columnName,
-            COLUMN_NAME_TXN_NONE,
-            symbolCount
+                configuration,
+                path,
+                columnName,
+                COLUMN_NAME_TXN_NONE,
+                symbolCount
         );
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
@@ -923,24 +923,24 @@ public class WalWriter implements TableWriterAPI {
             final MemoryMA mem1 = getPrimaryColumn(columnIndex);
             mem1.close(true, Vm.TRUNCATE_TO_POINTER);
             mem1.of(ff,
-                dFile(path.trimTo(pathTrimToLen), name),
-                configuration.getDataAppendPageSize(),
-                -1,
-                MemoryTag.MMAP_TABLE_WRITER,
-                configuration.getWriterFileOpenOpts(),
-                Files.POSIX_MADV_RANDOM
+                    dFile(path.trimTo(pathTrimToLen), name),
+                    configuration.getDataAppendPageSize(),
+                    -1,
+                    MemoryTag.MMAP_TABLE_WRITER,
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_RANDOM
             );
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
                 mem2.close(true, Vm.TRUNCATE_TO_POINTER);
                 mem2.of(ff,
-                    iFile(path.trimTo(pathTrimToLen), name),
-                    configuration.getDataAppendPageSize(),
-                    -1,
-                    MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts(),
-                    Files.POSIX_MADV_RANDOM
+                        iFile(path.trimTo(pathTrimToLen), name),
+                        configuration.getDataAppendPageSize(),
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
                 mem2.putLong(0L);
             }
@@ -1239,13 +1239,13 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential
+                CharSequence columnName,
+                int columnType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential
         ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
@@ -1274,12 +1274,12 @@ public class WalWriter implements TableWriterAPI {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 throw CairoException.nonCritical().put("cannot remove column, column does not exists [table=").put(tableName)
-                    .put(", column=").put(columnName).put(']');
+                        .put(", column=").put(columnName).put(']');
             }
 
             if (columnIndex == metadata.getTimestampIndex()) {
                 throw CairoException.nonCritical().put("cannot remove designated timestamp column [table=").put(tableName)
-                    .put(", column=").put(columnName);
+                        .put(", column=").put(columnName);
             }
             structureVersion++;
         }
@@ -1289,17 +1289,17 @@ public class WalWriter implements TableWriterAPI {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex < 0) {
                 throw CairoException.nonCritical().put("cannot rename column, column does not exists [table=").put(tableName)
-                    .put(", column=").put(columnName).put(']');
+                        .put(", column=").put(columnName).put(']');
             }
             if (columnIndex == metadata.getTimestampIndex()) {
                 throw CairoException.nonCritical().put("cannot rename designated timestamp column [table=").put(tableName)
-                    .put(", column=").put(columnName).put(']');
+                        .put(", column=").put(columnName).put(']');
             }
 
             int columnIndexNew = metadata.getColumnIndexQuiet(newName);
             if (columnIndexNew > -1) {
                 throw CairoException.nonCritical().put("cannot rename column, column with the name already exists [table=").put(tableName)
-                    .put(", newName=").put(newName).put(']');
+                        .put(", newName=").put(newName).put(']');
             }
             if (!TableUtils.isValidColumnName(newName, newName.length())) {
                 throw CairoException.nonCritical().put("invalid column name: ").put(newName);
@@ -1510,13 +1510,13 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential
+                CharSequence columnName,
+                int columnType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
@@ -1556,7 +1556,7 @@ public class WalWriter implements TableWriterAPI {
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
-                        .put("' was added, cannot apply commit because of concurrent table definition change");
+                            .put("' was added, cannot apply commit because of concurrent table definition change");
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
@@ -1612,7 +1612,7 @@ public class WalWriter implements TableWriterAPI {
                         LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
-                            .put("' was removed, cannot apply commit because of concurrent table definition change");
+                                .put("' was removed, cannot apply commit because of concurrent table definition change");
                     }
                 }
             } else {
@@ -1655,7 +1655,7 @@ public class WalWriter implements TableWriterAPI {
                         LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
-                            .put("' was removed, cannot apply commit because of concurrent table definition change");
+                                .put("' was removed, cannot apply commit because of concurrent table definition change");
                     }
                 }
             } else {

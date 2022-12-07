@@ -68,11 +68,11 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     }
 
     private static BooleanConstant createConstant(Function a, Function b) {
-        long aMsb = a.getUuidHi(null);
-        long aLsb = a.getUuidLo(null);
-        long bMsb = b.getUuidHi(null);
-        long bLsb = b.getUuidLo(null);
-        return BooleanConstant.of(aMsb == bMsb && aLsb == bLsb);
+        long aHi = a.getUuidHi(null);
+        long aLo = a.getUuidLo(null);
+        long bHi = b.getUuidHi(null);
+        long bLo = b.getUuidLo(null);
+        return BooleanConstant.of(aHi == bHi && aLo == bLo);
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
@@ -81,13 +81,13 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final long lsbConstant;
-        private final long msbConstant;
+        private final long hiConstant;
+        private final long loConstant;
 
-        public ConstCheckFunc(Function arg, long msbConstant, long lsbConstant) {
+        public ConstCheckFunc(Function arg, long hiConstant, long loConstant) {
             this.arg = arg;
-            this.msbConstant = msbConstant;
-            this.lsbConstant = lsbConstant;
+            this.hiConstant = hiConstant;
+            this.loConstant = loConstant;
         }
 
         @Override
@@ -97,9 +97,9 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long msb = arg.getUuidHi(rec);
-            long lsb = arg.getUuidLo(rec);
-            return negated != (msb == msbConstant && lsb == lsbConstant);
+            long hi = arg.getUuidHi(rec);
+            long lo = arg.getUuidLo(rec);
+            return negated != (hi == hiConstant && lo == loConstant);
         }
     }
 
@@ -114,11 +114,11 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long leftMsb = left.getUuidHi(rec);
-            final long leftLsb = left.getUuidLo(rec);
-            final long rightMsb = right.getUuidHi(rec);
-            final long rightLsb = right.getUuidLo(rec);
-            return negated != (leftMsb == rightMsb && leftLsb == rightLsb);
+            final long leftHi = left.getUuidHi(rec);
+            final long leftLo = left.getUuidLo(rec);
+            final long rightHi = right.getUuidHi(rec);
+            final long rightLo = right.getUuidLo(rec);
+            return negated != (leftHi == rightHi && leftLo == rightLo);
         }
 
         @Override

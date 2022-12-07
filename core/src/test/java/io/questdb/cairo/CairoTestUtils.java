@@ -33,11 +33,11 @@ public class CairoTestUtils {
 
     public static void create(TableModel model) {
         TableUtils.createTable(
-            model.getConfiguration(),
-            model.getMem(),
-            model.getPath(),
-            model,
-            1
+                model.getConfiguration(),
+                model.getMem(),
+                model.getPath(),
+                model,
+                1
         );
     }
 
@@ -65,23 +65,23 @@ public class CairoTestUtils {
 
     public static void createTable(TableModel model, int version) {
         TableUtils.createTable(
-            model.getConfiguration(),
-            model.getMem(),
-            model.getPath(),
-            model,
-            version,
-            1
+                model.getConfiguration(),
+                model.getMem(),
+                model.getPath(),
+                model,
+                version,
+                1
         );
     }
 
     public static void createTableWithVersionAndId(TableModel model, int version, int tableId) {
         TableUtils.createTable(
-            model.getConfiguration(),
-            model.getMem(),
-            model.getPath(),
-            model,
-            version,
-            tableId
+                model.getConfiguration(),
+                model.getMem(),
+                model.getPath(),
+                model,
+                version,
+                tableId
         );
     }
 
@@ -92,19 +92,19 @@ public class CairoTestUtils {
     public static void createTestTable(CairoConfiguration configuration, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.SHORT)
-                .col("c", ColumnType.INT)
-                .col("d", ColumnType.LONG)
-                .col("e", ColumnType.DATE)
-                .col("f", ColumnType.TIMESTAMP)
-                .col("g", ColumnType.FLOAT)
-                .col("h", ColumnType.DOUBLE)
-                .col("i", ColumnType.STRING)
-                .col("j", ColumnType.SYMBOL)
-                .col("k", ColumnType.BOOLEAN)
-                .col("l", ColumnType.BINARY)
-                .col("m", ColumnType.UUID);
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID);
             create(model);
         }
 
@@ -184,45 +184,45 @@ public class CairoTestUtils {
 
     public static TableModel getAllTypesModel(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "all", partitionBy)
-            .col("int", ColumnType.INT)
-            .col("short", ColumnType.SHORT)
-            .col("byte", ColumnType.BYTE)
-            .col("double", ColumnType.DOUBLE)
-            .col("float", ColumnType.FLOAT)
-            .col("long", ColumnType.LONG)
-            .col("str", ColumnType.STRING)
-            .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
-            .col("bool", ColumnType.BOOLEAN)
-            .col("bin", ColumnType.BINARY)
-            .col("date", ColumnType.DATE);
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE);
     }
 
     public static TableModel getAllTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "all2", partitionBy)
-            .col("int", ColumnType.INT)
-            .col("short", ColumnType.SHORT)
-            .col("byte", ColumnType.BYTE)
-            .col("double", ColumnType.DOUBLE)
-            .col("float", ColumnType.FLOAT)
-            .col("long", ColumnType.LONG)
-            .col("str", ColumnType.STRING)
-            .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
-            .col("bool", ColumnType.BOOLEAN)
-            .col("bin", ColumnType.BINARY)
-            .col("date", ColumnType.DATE)
-            .col("long256", ColumnType.LONG256)
-            .col("chr", ColumnType.CHAR)
-            .timestamp()
-            ;
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)
+                .col("long256", ColumnType.LONG256)
+                .col("chr", ColumnType.CHAR)
+                .timestamp()
+                ;
 
     }
 
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
         return new TableModel(configuration, "allgeo", partitionBy)
-            .col("hb", ColumnType.getGeoHashTypeWithBits(6))
-            .col("hs", ColumnType.getGeoHashTypeWithBits(12))
-            .col("hi", ColumnType.getGeoHashTypeWithBits(27))
-            .col("hl", ColumnType.getGeoHashTypeWithBits(44))
-            .timestamp();
+                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
+                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
+                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
+                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
+                .timestamp();
     }
 }

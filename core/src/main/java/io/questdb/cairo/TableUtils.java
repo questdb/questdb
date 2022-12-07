@@ -190,9 +190,9 @@ public final class TableUtils {
 
     @NotNull
     public static Function createCursorFunction(
-        FunctionParser functionParser,
-        @NotNull QueryModel model,
-        @NotNull SqlExecutionContext executionContext
+            FunctionParser functionParser,
+            @NotNull QueryModel model,
+            @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
         final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
         if (!ColumnType.isCursor(function.getType())) {
@@ -202,22 +202,22 @@ public final class TableUtils {
     }
 
     public static void createTable(
-        CairoConfiguration configuration,
-        MemoryMARW memory,
-        Path path,
-        TableStructure structure,
-        int tableId
+            CairoConfiguration configuration,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableId
     ) {
         createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
-        CairoConfiguration configuration,
-        MemoryMARW memory,
-        Path path,
-        TableStructure structure,
-        int tableVersion,
-        int tableId
+            CairoConfiguration configuration,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
@@ -226,28 +226,28 @@ public final class TableUtils {
     }
 
     public static void createTable(
-        FilesFacade ff,
-        CharSequence root,
-        int mkDirMode,
-        MemoryMARW memory,
-        Path path,
-        TableStructure structure,
-        int tableVersion,
-        int tableId
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
     ) {
         createTable(ff, root, mkDirMode, memory, path, structure.getTableName(), structure, tableVersion, tableId);
     }
 
     public static void createTable(
-        FilesFacade ff,
-        CharSequence root,
-        int mkDirMode,
-        MemoryMARW memory,
-        Path path,
-        CharSequence tableName,
-        TableStructure structure,
-        int tableVersion,
-        int tableId
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableName,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
     ) {
         LOG.debug().$("create table [name=").$(tableName).$(']').$();
         path.of(root).concat(tableName);
@@ -268,7 +268,7 @@ public final class TableUtils {
             mem.putInt(structure.getPartitionBy());
             int timestampIndex = structure.getTimestampIndex();
             assert timestampIndex == -1 ||
-                (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
             mem.putInt(timestampIndex);
             mem.putInt(tableVersion);
             mem.putInt(tableId);
@@ -306,13 +306,13 @@ public final class TableUtils {
             for (int i = 0; i < count; i++) {
                 if (ColumnType.isSymbol(structure.getColumnType(i))) {
                     createSymbolMapFiles(
-                        ff,
-                        mem,
-                        path.trimTo(rootLen),
-                        structure.getColumnName(i),
-                        COLUMN_NAME_TXN_NONE,
-                        structure.getSymbolCapacity(i),
-                        structure.getSymbolCacheFlag(i)
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            structure.getColumnName(i),
+                            COLUMN_NAME_TXN_NONE,
+                            structure.getSymbolCapacity(i),
+                            structure.getSymbolCacheFlag(i)
                     );
                     symbolMapCount++;
                 }
@@ -331,9 +331,9 @@ public final class TableUtils {
             if (dirFd > 0) {
                 if (ff.fsync(dirFd) != 0) {
                     LOG.error()
-                        .$("could not fsync [fd=").$(dirFd)
-                        .$(", errno=").$(ff.errno())
-                        .$(']').$();
+                            .$("could not fsync [fd=").$(dirFd)
+                            .$(", errno=").$(ff.errno())
+                            .$(']').$();
                 }
                 ff.close(dirFd);
             }
@@ -341,8 +341,8 @@ public final class TableUtils {
     }
 
     public static long createTransitionIndex(
-        MemoryR masterMeta,
-        AbstractRecordMetadata slaveMeta
+            MemoryR masterMeta,
+            AbstractRecordMetadata slaveMeta
     ) {
         int slaveColumnCount = slaveMeta.columnCount;
         int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
@@ -388,9 +388,9 @@ public final class TableUtils {
                 }
             } else {
                 if (
-                    slaveIndex < slaveColumnCount
-                        && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
-                        && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
+                        slaveIndex < slaveColumnCount
+                                && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
+                                && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
                 ) {
                     // reuse
                     Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
@@ -523,8 +523,8 @@ public final class TableUtils {
         if (isMetaFileMissingFileSystemError(ex)) {
             if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").$(tableName)
-                    .$(", errno=").$(ex.getErrno())
-                    .$(", error=").$(ex.getFlyweightMessage()).I$();
+                        .$(", errno=").$(ex.getErrno())
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
                 LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
@@ -705,13 +705,13 @@ public final class TableUtils {
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.critical(ff.errno())
-                .put("could not mmap ")
-                .put(" [size=").put(size)
-                .put(", offset=").put(offset)
-                .put(", fd=").put(fd)
-                .put(", memUsed=").put(Unsafe.getMemUsed())
-                .put(", fileLen=").put(ff.length(fd))
-                .put(']');
+                    .put("could not mmap ")
+                    .put(" [size=").put(size)
+                    .put(", offset=").put(offset)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(ff.length(fd))
+                    .put(']');
         }
         return address;
     }
@@ -757,25 +757,25 @@ public final class TableUtils {
     }
 
     public static long mremap(
-        FilesFacade ff,
-        long fd,
-        long prevAddress,
-        long prevSize,
-        long newSize,
-        int mapMode,
-        int memoryTag) {
+            FilesFacade ff,
+            long fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            int mapMode,
+            int memoryTag) {
         return mremap(ff, fd, prevAddress, prevSize, newSize, 0L, mapMode, memoryTag);
     }
 
     public static long mremap(
-        FilesFacade ff,
-        long fd,
-        long prevAddress,
-        long prevSize,
-        long newSize,
-        long offset,
-        int mapMode,
-        int memoryTag) {
+            FilesFacade ff,
+            long fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            long offset,
+            int mapMode,
+            int memoryTag) {
         final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
@@ -929,9 +929,9 @@ public final class TableUtils {
         while (true) {
             if (txReader.unsafeLoadAll()) {
                 LOG.debug().$("loaded clean txn, version ").$(txReader.getVersion())
-                    .$(", offset=").$(txReader.getBaseOffset())
-                    .$(", size=").$(txReader.getRecordSize())
-                    .$(", txn=").$(txReader.getTxn()).$();
+                        .$(", offset=").$(txReader.getBaseOffset())
+                        .$(", size=").$(txReader.getRecordSize())
+                        .$(", txn=").$(txReader.getTxn()).$();
                 // All good, snapshot read
                 return;
             }
@@ -1031,11 +1031,11 @@ public final class TableUtils {
      * @param partitionNameTxn Partition txn suffix
      */
     public static void setPathForPartition(
-        Path tablePath,
-        int tableRootLen,
-        int partitionBy,
-        long timestamp,
-        long partitionNameTxn
+            Path tablePath,
+            int tableRootLen,
+            int partitionBy,
+            long timestamp,
+            long partitionNameTxn
     ) {
         tablePath.trimTo(tableRootLen);
         TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);
@@ -1079,9 +1079,9 @@ public final class TableUtils {
     }
 
     public static void validateMeta(
-        MemoryMR metaMem,
-        LowerCaseCharSequenceIntHashMap nameIndex,
-        int expectedVersion
+            MemoryMR metaMem,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
@@ -1140,9 +1140,9 @@ public final class TableUtils {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
             throw validationException(metaMem)
-                .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
-                .put(", actual=").put(metaVersion)
-                .put(']');
+                    .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
+                    .put(", actual=").put(metaVersion)
+                    .put(']');
         }
     }
 
@@ -1169,11 +1169,11 @@ public final class TableUtils {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno())
-                .put("could not write 8 bytes [path=").put(path)
-                .put(", fd=").put(fd)
-                .put(", offset=").put(offset)
-                .put(", value=").put(value)
-                .put(']');
+                    .put("could not write 8 bytes [path=").put(path)
+                    .put(", fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", value=").put(value)
+                    .put(']');
         }
     }
 
@@ -1181,11 +1181,11 @@ public final class TableUtils {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.critical(ff.errno())
-                .put("could not write 8 bytes [path=").put(path)
-                .put(", fd=").put(fd)
-                .put(", offset=").put(offset)
-                .put(", value=").put(value)
-                .put(']');
+                    .put("could not write 8 bytes [path=").put(path)
+                    .put(", fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", value=").put(value)
+                    .put(']');
         }
     }
 
@@ -1254,15 +1254,15 @@ public final class TableUtils {
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?
                         LOG.error()
-                            .$("could not open swap [file=").$(path)
-                            .$(", errno=").$(e.getErrno())
-                            .$(']').$();
+                                .$("could not open swap [file=").$(path)
+                                .$(", errno=").$(e.getErrno())
+                                .$(']').$();
                     }
                 } else {
                     LOG.error()
-                        .$("could not remove swap [file=").$(path)
-                        .$(", errno=").$(ff.errno())
-                        .$(']').$();
+                            .$("could not remove swap [file=").$(path)
+                            .$(", errno=").$(ff.errno())
+                            .$(']').$();
                 }
             } while (++index < retryCount);
             throw CairoException.critical(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);

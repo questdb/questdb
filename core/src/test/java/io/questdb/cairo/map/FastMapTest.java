@@ -154,12 +154,12 @@ public class FastMapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             int N = 10;
             try (FastMap map = new FastMap(
-                Numbers.SIZE_1MB,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                N / 2,
-                0.5f,
-                1)) {
+                    Numbers.SIZE_1MB,
+                    new SingleColumnType(ColumnType.STRING),
+                    new SingleColumnType(ColumnType.LONG),
+                    N / 2,
+                    0.5f,
+                    1)) {
                 ObjList<String> keys = new ObjList<>();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
@@ -316,22 +316,22 @@ public class FastMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (FastMap map = new FastMap(
-                    Numbers.SIZE_1MB,
-                    new SymbolAsStrTypes(reader.getMetadata()),
-                    new ArrayColumnTypes()
-                        .add(ColumnType.LONG)
-                        .add(ColumnType.INT)
-                        .add(ColumnType.SHORT)
-                        .add(ColumnType.BYTE)
-                        .add(ColumnType.FLOAT)
-                        .add(ColumnType.DOUBLE)
-                        .add(ColumnType.DATE)
-                        .add(ColumnType.TIMESTAMP)
-                        .add(ColumnType.BOOLEAN)
-                        .add(ColumnType.UUID)
-                    ,
-                    N,
-                    0.9f, 1)) {
+                        Numbers.SIZE_1MB,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
+                        ,
+                        N,
+                        0.9f, 1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
                     // this random will be populating values
@@ -548,22 +548,22 @@ public class FastMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (FastMap map = new FastMap(
-                    Numbers.SIZE_1MB,
-                    new SymbolAsStrTypes(reader.getMetadata()),
-                    new ArrayColumnTypes()
-                        .add(ColumnType.LONG)
-                        .add(ColumnType.INT)
-                        .add(ColumnType.SHORT)
-                        .add(ColumnType.BYTE)
-                        .add(ColumnType.FLOAT)
-                        .add(ColumnType.DOUBLE)
-                        .add(ColumnType.DATE)
-                        .add(ColumnType.TIMESTAMP)
-                        .add(ColumnType.BOOLEAN)
-                        .add(ColumnType.UUID)
-                    ,
-                    N,
-                    0.9f, 1)) {
+                        Numbers.SIZE_1MB,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
+                        ,
+                        N,
+                        0.9f, 1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -649,26 +649,26 @@ public class FastMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (FastMap map = new FastMap(
-                    Numbers.SIZE_1MB,
-                    new SymbolAsStrTypes(reader.getMetadata()),
-                    new ArrayColumnTypes()
-                        .add(ColumnType.LONG)
-                        .add(ColumnType.INT)
-                        .add(ColumnType.SHORT)
-                        .add(ColumnType.BYTE)
-                        .add(ColumnType.FLOAT)
-                        .add(ColumnType.DOUBLE)
-                        .add(ColumnType.DATE)
-                        .add(ColumnType.TIMESTAMP)
-                        .add(ColumnType.BOOLEAN)
-                        .add(ColumnType.getGeoHashTypeWithBits(5))
-                        .add(ColumnType.getGeoHashTypeWithBits(10))
-                        .add(ColumnType.getGeoHashTypeWithBits(20))
-                        .add(ColumnType.getGeoHashTypeWithBits(40))
-                    ,
-                    N,
-                    0.9f,
-                    1)) {
+                        Numbers.SIZE_1MB,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.getGeoHashTypeWithBits(5))
+                                .add(ColumnType.getGeoHashTypeWithBits(10))
+                                .add(ColumnType.getGeoHashTypeWithBits(20))
+                                .add(ColumnType.getGeoHashTypeWithBits(40))
+                        ,
+                        N,
+                        0.9f,
+                        1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
@@ -725,22 +725,22 @@ public class FastMapTest extends AbstractCairoTest {
                 }
 
                 try (FastMap map = new FastMap(
-                    Numbers.SIZE_1MB,
-                    new SymbolAsIntTypes().of(reader.getMetadata()),
-                    new ArrayColumnTypes()
-                        .add(ColumnType.LONG)
-                        .add(ColumnType.INT)
-                        .add(ColumnType.SHORT)
-                        .add(ColumnType.BYTE)
-                        .add(ColumnType.FLOAT)
-                        .add(ColumnType.DOUBLE)
-                        .add(ColumnType.DATE)
-                        .add(ColumnType.TIMESTAMP)
-                        .add(ColumnType.BOOLEAN)
-                    ,
-                    N,
-                    0.9f,
-                    1)) {
+                        Numbers.SIZE_1MB,
+                        new SymbolAsIntTypes().of(reader.getMetadata()),
+                        new ArrayColumnTypes()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
+                        N,
+                        0.9f,
+                        1)) {
 
                     RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
 
@@ -990,19 +990,19 @@ public class FastMapTest extends AbstractCairoTest {
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.SHORT)
-                .col("c", ColumnType.INT)
-                .col("d", ColumnType.LONG)
-                .col("e", ColumnType.DATE)
-                .col("f", ColumnType.TIMESTAMP)
-                .col("g", ColumnType.FLOAT)
-                .col("h", ColumnType.DOUBLE)
-                .col("i", ColumnType.STRING)
-                .col("j", ColumnType.SYMBOL)
-                .col("k", ColumnType.BOOLEAN)
-                .col("l", ColumnType.BINARY)
-                .col("m", ColumnType.UUID);
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID);
             CairoTestUtils.create(model);
         }
 
@@ -1130,10 +1130,10 @@ public class FastMapTest extends AbstractCairoTest {
             int N = 100000;
             int M = 25;
             try (FastMap map = new FastMap(
-                Numbers.SIZE_1MB,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                N / 4, 0.5f, maxResizes)) {
+                    Numbers.SIZE_1MB,
+                    new SingleColumnType(ColumnType.STRING),
+                    new SingleColumnType(ColumnType.LONG),
+                    N / 4, 0.5f, maxResizes)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(M);
                     MapKey key = map.withKey();
