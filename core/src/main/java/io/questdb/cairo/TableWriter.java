@@ -819,15 +819,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return commit(commitMode, 0);
     }
 
-    @TestOnly
-    public void commitSetPartitionReadOnly(long partitionTimestamp, boolean isRO) {
-        // the read-only flag is only set when a partition is attached from soft link
-        // this method exists for testing purposes only.
-        txWriter.setPartitionReadOnlyByTimestamp(partitionTimestamp, isRO);
-        txWriter.bumpTruncateVersion();
-        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-    }
-
     @Override
     public AttachDetachStatus detachPartition(long timestamp) {
         // Should be checked by SQL compiler
@@ -1074,6 +1065,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return commitInterval;
     }
 
+    @TestOnly
+    public ObjList<MapWriter> getDenseSymbolMapWriters() {
+        return denseSymbolMapWriters;
+    }
+
     public String getDesignatedTimestampColumnName() {
         return designatedTimestampColumnName;
     }
@@ -1162,6 +1158,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     public long getTruncateVersion() {
         return txWriter.getTruncateVersion();
+    }
+
+    @TestOnly
+    public TxWriter getTxWriter() {
+        return txWriter;
     }
 
     public long getTxn() {
@@ -3862,11 +3863,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
                     if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
-                        int errno = Files.unlinkRemove(ff, other, LOG);
+                        int errno = ff.unlinkRemove(other, LOG);
                         if (!(errno == 0 || errno == -1)) {
                             LOG.info()
                                     .$("could not purge partition version, async purge will be scheduled [path=")
-                                    .$(other)
+                                    .utf8(other)
                                     .$(", errno=").$(errno).I$();
                             scheduleAsyncPurge = true;
                         }
@@ -5180,7 +5181,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
                     !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
                     !Chars.startsWith(fileNameSink, SEQ_DIR)) {
-                Files.unlinkRemove(ff, path, checkedType, LOG);
+                ff.unlinkRemove(path, checkedType, LOG);
             }
         } finally {
             path.trimTo(rootLen);
@@ -5216,7 +5217,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
                     return;
                 }
-                Files.unlinkRemove(ff, path, checkedType, LOG);
+                ff.unlinkRemove(path, checkedType, LOG);
             }
         } finally {
             path.trimTo(rootLen);

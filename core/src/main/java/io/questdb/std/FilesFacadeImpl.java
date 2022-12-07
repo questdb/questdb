@@ -25,8 +25,10 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public class FilesFacadeImpl implements FilesFacade {
 
@@ -44,11 +46,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long append(long fd, long buf, int len) {
         return Files.append(fd, buf, len);
-    }
-
-    @Override
-    public long getDiskSize(LPSZ path) {
-        return Files.getDiskSize(path);
     }
 
     @Override
@@ -132,6 +129,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int fsync(long fd) {
         return Files.fsync(fd);
+    }
+
+    @Override
+    public long getDiskSize(LPSZ path) {
+        return Files.getDiskSize(path);
     }
 
     @Override
@@ -329,6 +331,36 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int unlink(LPSZ softLink) {
         return Files.unlink(softLink);
+    }
+
+    @Override
+    public int unlinkRemove(Path path, Log LOG) {
+        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        return unlinkRemove(path, checkedType, LOG);
+    }
+
+    @Override
+    public int unlinkRemove(Path path, int checkedType, Log LOG) {
+        if (checkedType == Files.DT_LNK) {
+            // in windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (unlink(path) == 0) {
+                LOG.info().$("purged by unlink [path=").utf8(path).I$();
+                return 0;
+            } else {
+                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
+            }
+        }
+
+        int errno;
+        if ((errno = rmdir(path)) == 0) {
+            LOG.info().$("removed [path=").utf8(path).I$();
+        } else {
+            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
+        }
+        return errno;
     }
 
     public void walk(Path path, FindVisitor func) {

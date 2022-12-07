@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -89,7 +88,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
-    // TODO test in mac
     public void testDetachPartitionAttachedFromSoftLink() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
@@ -495,7 +493,23 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
 
-                        runColumnPurgeOperator(tableName);
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                        try (
+                                ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine, null);
+                                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
+                        ) {
+                            TxReader txReader = reader.getTxFile();
+                            Assert.assertTrue(txReader.unsafeLoadAll());
+                            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
+                            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
+                            if (Os.isWindows()) {
+                                engine.releaseInactive();
+                            }
+                            purgeJob.run(0);
+                        } catch (SqlException unexpected) {
+                            Assert.fail(unexpected.getMessage());
+                        }
 
                         // check that the column files still exist within the partition folder (attached from soft link)
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
@@ -688,40 +702,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         });
     }
 
-    private static void runColumnPurgeOperator(String tableName) {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        try (
-                ColumnPurgeOperator purgeOperator = new ColumnPurgeOperator(configuration);
-                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
-        ) {
-            TxReader txReader = reader.getTxFile();
-            Assert.assertTrue(txReader.unsafeLoadAll());
-            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
-            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
-
-            ColumnPurgeTask purgeTask = new ColumnPurgeTask();
-            LongList updatedColumnInfo = new LongList(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
-            updatedColumnInfo.setPos(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_COLUMN_VERSION, txReader.getPartitionColumnVersion(0));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP, txReader.getPartitionTimestamp(0));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN, txReader.getPartitionNameTxn(0));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_UPDATE_ROW_ID, 314159L);
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_COLUMN_VERSION, txReader.getPartitionColumnVersion(1));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP, txReader.getPartitionTimestamp(1));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN, txReader.getPartitionNameTxn(1));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID, 628218L);
-            purgeTask.of(tableName, "s", 1, 0, ColumnType.SYMBOL, PartitionBy.DAY, 1, updatedColumnInfo);
-            purgeOperator.purgeExternal(purgeTask, txReader);
-            LongList purgedRowIds = purgeOperator.getCompletedRowIds();
-            Assert.assertNotNull(purgedRowIds);
-            int idx0 = purgedRowIds.indexOf(314159L);
-            int idx1 = purgedRowIds.indexOf(628218L);
-            Assert.assertTrue(idx0 > -1);
-            Assert.assertTrue(idx1 > -1);
-        }
-    }
-
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -849,8 +829,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     private void createTableWithReadOnlyPartition(String tableName, Runnable test) throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             createTable(tableName);
+            // the read-only flag is only set when a partition is attached from soft link
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
-                writer.commitSetPartitionReadOnly(partitionTimestamp, true);
+                TxWriter txWriter = writer.getTxWriter();
+                txWriter.setPartitionReadOnlyByTimestamp(partitionTimestamp, true);
+                txWriter.bumpTruncateVersion();
+                txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
             }
             engine.releaseAllReaders();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {

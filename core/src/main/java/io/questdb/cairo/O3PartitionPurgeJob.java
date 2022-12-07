@@ -142,7 +142,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
                 LOG.info().$("purging dropped partition directory [path=").utf8(path).I$();
-                Files.unlinkRemove(ff, path, LOG);
+                ff.unlinkRemove(path, LOG);
                 lastTxn = nameTxn;
             } else {
                 LOG.info().$("cannot purge partition directory, locked for reading [path=").utf8(path).I$();
@@ -228,7 +228,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
                     LOG.info().$("purging overwritten partition directory [path=").utf8(path).I$();
-                    Files.unlinkRemove(ff, path, LOG);
+                    ff.unlinkRemove(path, LOG);
                 } else {
                     LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").utf8(path).I$();
                 }

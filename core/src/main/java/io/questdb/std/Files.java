@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -101,6 +100,21 @@ public final class Files {
         return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
     }
 
+    public static int checkIsDirOrSoftLinkNoDots(Path path, long pUtf8NameZ, long type, StringSink nameSink) {
+        if (notDots(pUtf8NameZ)) {
+            nameSink.clear();
+            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            path.concat(pUtf8NameZ).$();
+            if (type == DT_DIR) {
+                return DT_DIR;
+            }
+            if (type == DT_LNK) {
+                return DT_LNK;
+            }
+        }
+        return DT_UNKNOWN;
+    }
+
     public static int close(long fd) {
         assert auditClose(fd);
         int res = close0(fd);
@@ -161,6 +175,14 @@ public final class Files {
 
     public static native int fsync(long fd);
 
+    public static long getDiskSize(LPSZ path) {
+        if (path != null) {
+            return getDiskSize(path.address());
+        }
+        // current directory
+        return getDiskSize(0);
+    }
+
     /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.
@@ -205,55 +227,6 @@ public final class Files {
             return notDots(nameSink);
         }
         return false;
-    }
-
-    public static int checkIsDirOrSoftLinkNoDots(Path path, long pUtf8NameZ, long type, StringSink nameSink) {
-        if (notDots(pUtf8NameZ)) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            path.concat(pUtf8NameZ).$();
-
-            if (type == DT_DIR) {
-                return DT_DIR;
-            }
-
-            if (type == DT_LNK) { // TODO: test this in mac
-                return DT_LNK;
-            }
-
-            if (isSoftLink(path)) {
-                return DT_LNK;
-            }
-        }
-        return DT_UNKNOWN;
-    }
-
-    public static int unlinkRemove(FilesFacade ff, Path path, Log LOG) {
-        int checkedType = ff.isSoftLink(path) ? DT_LNK : DT_UNKNOWN;
-        return unlinkRemove(ff, path, checkedType, LOG);
-    }
-
-    public static int unlinkRemove(FilesFacade ff, Path path, int checkedType, Log LOG) {
-        if (checkedType == Files.DT_LNK) {
-            // in windows ^ ^ will return DT_DIR, but that is ok as the behaviour
-            // is to delete the link, not the contents of the target. in *nix
-            // systems we can simply unlink, which deletes the link and leaves
-            // the contents of the target intact
-            if (ff.unlink(path) == 0) {
-                LOG.info().$("purged by unlink [path=").utf8(path).I$();
-                return 0;
-            } else {
-                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
-            }
-        }
-
-        int errno;
-        if ((errno = ff.rmdir(path)) == 0) {
-            LOG.info().$("removed [path=").utf8(path).I$();
-        } else {
-            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
-        }
-        return errno;
     }
 
     public static boolean isDir(long pUtf8NameZ, long type) {
@@ -468,16 +441,6 @@ public final class Files {
         return unlink(softLink.address());
     }
 
-    public static  long getDiskSize(LPSZ path) {
-        if (path != null) {
-            return getDiskSize(path.address());
-        }
-        // current directory
-        return getDiskSize(0);
-    }
-    
-    private static native long getDiskSize(long lpszPath);
-
     public native static long write(long fd, long address, long len, long offset);
 
     private native static int close0(long fd);
@@ -486,6 +449,8 @@ public final class Files {
 
     //caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
+
+    private static native long getDiskSize(long lpszPath);
 
     private static native int getFileSystemStatus(long lpszName);
 

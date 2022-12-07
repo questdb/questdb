@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -35,8 +36,6 @@ public interface FilesFacade {
     long append(long fd, long buf, int len);
 
     boolean close(long fd);
-
-    long getDiskSize(LPSZ path);
 
     int copy(LPSZ from, LPSZ to);
 
@@ -63,6 +62,8 @@ public interface FilesFacade {
     int findType(long findPtr);
 
     int fsync(long fd);
+
+    long getDiskSize(LPSZ path);
 
     long getLastModified(LPSZ path);
 
@@ -133,6 +134,10 @@ public interface FilesFacade {
     boolean truncate(long fd, long size);
 
     int unlink(LPSZ softLink);
+
+    int unlinkRemove(Path path, Log LOG);
+
+    int unlinkRemove(Path path, int checkedType, Log LOG);
 
     void walk(Path src, FindVisitor func);
 
