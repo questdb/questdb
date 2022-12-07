@@ -39,6 +39,7 @@ import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXNLOG_FILE_NAME;
+import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.SEQ_META_TABLE_ID;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
@@ -109,8 +110,8 @@ public class TableSequencerAPI implements QuietCloseable {
                                 long fdMeta = -1;
                                 long fdTxn = -1;
                                 try {
-                                    fdMeta = TableUtils.openFileRO(ff, path, META_FILE_NAME);
-                                    fdTxn = TableUtils.openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                    fdMeta = TableUtils.openRO(ff, path, META_FILE_NAME);
+                                    fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME);
                                     tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
                                     lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
                                 } finally {
@@ -308,10 +309,11 @@ public class TableSequencerAPI implements QuietCloseable {
                     return;
                 }
                 if (resumeFromTxn != -1) {
-                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableName, "wal resume")) {
+                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableName, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getSeqTxn();
                         if (resumeFromTxn > seqTxn) {
-                            tableWriter.setSeqTxn(resumeFromTxn);
+                            // including resumeFromTxn 
+                            tableWriter.setSeqTxn(resumeFromTxn - 1, true);
                         }
                     }
                 }

@@ -51,6 +51,7 @@ import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final int WAL_APPLY_FAILED = -2;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
@@ -85,7 +86,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 applyOutstandingWalTransactions(writer, engine, sqlToOperation);
                 lastAppliedSeqTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
-                if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                boolean equalsReason = WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) ||
+                        WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason());
+                if (!equalsReason) {
                     LOG.critical().$("unsolicited table lock [table=").$(tableName).$(", lock_reason=").$(tableBusy.getReason()).I$();
                     return WAL_APPLY_FAILED;
                 }

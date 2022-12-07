@@ -1392,7 +1392,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         updateIndexes();
         columnVersionWriter.commit();
-        txWriter.setSeqTxn(seqTxn);
+        txWriter.setSeqTxn(seqTxn, false);
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
 
@@ -1723,8 +1723,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
+    public void setSeqTxn(long seqTxn, boolean persist) {
+        txWriter.setSeqTxn(seqTxn, persist);
+    }
+
     public void setSeqTxn(long seqTxn) {
-        txWriter.setSeqTxn(seqTxn);
+        txWriter.setSeqTxn(seqTxn, false);
     }
 
     public long size() {

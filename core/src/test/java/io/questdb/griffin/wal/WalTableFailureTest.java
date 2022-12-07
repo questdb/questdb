@@ -874,10 +874,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(filesFacade, () -> {
 
             String tableName = testName.getMethodName();
+            //1
             createStandardWalTable(tableName);
-
+            //2 fail
             compile("update " + tableName + " set x = 1111");
+            //3
             compile("update " + tableName + " set sym = 'XXX'");
+            //4
             compile("update " + tableName + " set sym2 = 'YYY'");
 
             drainWalQueue();
@@ -886,11 +889,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
-            compile("alter table " + tableName + " resume wal from 3");
+            compile("alter table " + tableName + " resume wal from txn 3");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
-
+            engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tYYY\n");
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
         });
     }
 
@@ -967,10 +970,14 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(filesFacade, () -> {
 
             String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
 
+            //1
+            createStandardWalTable(tableName);
+            //2 fail
             compile("update " + tableName + " set x = 1111");
+            //3
             compile("update " + tableName + " set sym = 'XXX'");
+            //4
             compile("update " + tableName + " set sym2 = 'YYY'");
 
             drainWalQueue();
@@ -981,12 +988,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t1\t4\n");
 
-            compile("alter table " + tableName + " resume wal from 3");
-            compile("alter table " + tableName + " resume wal"); // ignored
+            compile("alter table " + tableName + " resume wal");
+            compile("alter table " + tableName + " resume wal from transaction 0"); // ignored
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
 
+            engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tYYY\n");
+            assertSql(tableName, "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
             assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\tfalse\t4\t4\n");
         });
     }
