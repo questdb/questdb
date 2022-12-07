@@ -804,7 +804,7 @@ public final class TableUtils {
         return openRW(ff, path, LOG, opts);
     }
 
-    public static long openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+    public static long openRO(FilesFacade ff, Path path, CharSequence fileName) {
         final int rootLen = path.length();
         path.concat(fileName).$();
         try {
