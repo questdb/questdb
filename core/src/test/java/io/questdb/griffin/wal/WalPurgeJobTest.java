@@ -222,28 +222,26 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testInterval() {
-        TracingFilesFacade ff = new TracingFilesFacade();
-
-        MicrosecondClockMock clock = new MicrosecondClockMock();
+        final TracingFilesFacade ff = new TracingFilesFacade();
         final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
-        clock.timestamp = interval + 1;  // Set to some point in time that's not 0.
+        currentMicros = interval + 1;  // Set to some point in time that's not 0.
 
-        try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, clock)) {
+        try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, configuration.getMicrosecondClock())) {
             walPurgeJob.delayByHalfInterval();
             walPurgeJob.run(0);
             Assert.assertEquals(0, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += interval / 2 + 1;
+            currentMicros += interval / 2 + 1;
             walPurgeJob.run(0);
             Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += interval / 2 + 1;
+            currentMicros += interval / 2 + 1;
             walPurgeJob.run(0);
             walPurgeJob.run(0);
             walPurgeJob.run(0);
             Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += interval;
+            currentMicros += interval;
             walPurgeJob.run(0);
             Assert.assertEquals(2, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += 10 * interval;
+            currentMicros += 10 * interval;
             walPurgeJob.run(0);
             Assert.assertEquals(3, TracingFilesFacade.iterateDirCount);
         }
@@ -615,15 +613,13 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
             engine.releaseInactive();
 
-            MicrosecondClockMock clock = new MicrosecondClockMock();
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
-            clock.timestamp = interval + 1;  // Set to some point in time that's not 0.
-            try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), clock)) {
-
-                SimpleWaitingLock lock = job.getRunLock();
-                //noinspection StatementWithEmptyBody
+            currentMicros = interval + 1;  // Set to some point in time that's not 0.
+            try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                final SimpleWaitingLock lock = job.getRunLock();
                 try {
                     lock.lock();
+                    //noinspection StatementWithEmptyBody
                     while (job.run(0)) {
                         // run until empty
                     }
@@ -633,7 +629,8 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     assertWalExistence(true, tableName, 1);
                 }
 
-                clock.timestamp += 2 * interval;
+                currentMicros += 2 * interval;
+                //noinspection StatementWithEmptyBody
                 while (job.run(0)) {
                     // run until empty
                 }
