@@ -895,6 +895,62 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalTableSuspendResumeSql() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+            try {
+                compile("alter table " + tableName + " resum wal");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[41] 'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wall");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[48] 'wal' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal frol");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[52] 'from' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[56] 'transaction' or 'txn' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from tx");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[57] 'transaction' or 'txn' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from txn");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[60] transaction value expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from txn -10");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[62] invalid value [value=-]");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from txn 10AA");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[65] invalid value [value=10AA]");
+            }
+        });
+    }
+
+    @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
         FilesFacade filesFacade = new FilesFacadeImpl() {
             private int attempt = 0;

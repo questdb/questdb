@@ -1794,6 +1794,17 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'l';
     }
 
+    public static boolean isTxnKeyword(CharSequence tok) {
+        if (tok.length() != 3) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
     public static boolean isWeekKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;

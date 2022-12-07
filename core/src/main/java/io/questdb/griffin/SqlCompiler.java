@@ -518,14 +518,18 @@ public class SqlCompiler implements Closeable {
                 } else if (SqlKeywords.isResumeKeyword(tok)) {
                     tok = expectToken(lexer, "'wal'");
                     if (!SqlKeywords.isWalKeyword(tok)) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
+                        throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
                     }
 
                     tok = SqlUtil.fetchNext(lexer); // optional from part
                     long fromTxn = -1;
                     if (tok != null) {
                         if (SqlKeywords.isFromKeyword(tok)) {
-                            CharSequence txnValue = expectToken(lexer, "txn value");
+                            tok = expectToken(lexer, "'transaction' or 'txn'");
+                            if (!(SqlKeywords.isTransactionKeyword(tok) || SqlKeywords.isTxnKeyword(tok))) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
+                            }
+                            CharSequence txnValue = expectToken(lexer, "transaction value");
                             final int valuePosition = lexer.getPosition();
                             try {
                                 fromTxn = Numbers.parseLong(txnValue);
@@ -538,7 +542,7 @@ public class SqlCompiler implements Closeable {
                     }
                     return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Throwable) e).$();
