@@ -132,6 +132,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final int walId = transactionLogCursor.getWalId();
                     final int segmentId = transactionLogCursor.getSegmentId();
                     final long segmentTxn = transactionLogCursor.getSegmentTxn();
+                    final long commitTimestamp = transactionLogCursor.getCommitTimestamp();
                     final long seqTxn = transactionLogCursor.getTxn();
 
                     if (seqTxn != writer.getSeqTxn() + 1) {
@@ -149,12 +150,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (walId != TableTransactionLog.STRUCTURAL_CHANGE_WAL_ID) {
                         // Always set full path when using thread static path
                         tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName()).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                        // fix the clock for WAL SQL events so all nodes will be in sync when now() or systimestamp() used
+                        sqlToOperation.setNowAndFixClock(commitTimestamp);
                         processWalCommit(writer, tempPath, segmentTxn, sqlToOperation, seqTxn);
                     } else {
                         // This is metadata change
                         // to be taken from TableSequencer directly
-                        // This may look odd, but on metadata change record, segment ID means structure version.
-                        @SuppressWarnings("UnnecessaryLocalVariable") final int newStructureVersion = segmentId;
+                        final long newStructureVersion = transactionLogCursor.getStructureVersion();
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
                                     .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
@@ -227,6 +229,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
+        sqlToOperation.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
         sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
         AbstractOperation operation = null;
         try {

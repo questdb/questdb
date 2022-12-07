@@ -22,20 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.QuestDBNode;
+import org.junit.BeforeClass;
 
-public class BinaryAlterSerializer implements MemorySerializer {
-    @Override
-    public void fromSink(Object instance, MemoryCR memory, long offsetLo, long offsetHi) {
-        ((AlterOperation) instance).deserializeBody(memory, offsetLo, offsetHi);
-    }
+public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
 
-    @Override
-    public void toSink(Object obj, MemoryA sink) {
-        ((AlterOperation) obj).serializeBody(sink);
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractGriffinTest.setUpStatic();
+        final QuestDBNode node2 = newNode(2);
+        node2.initGriffin();
+        final QuestDBNode node3 = newNode(3);
+        node3.initGriffin();
     }
 }

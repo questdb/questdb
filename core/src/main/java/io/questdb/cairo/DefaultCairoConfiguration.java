@@ -32,11 +32,8 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
@@ -323,16 +320,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
-    }
-
-    @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return MicrosecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public MillisecondClock getMillisecondClock() {
-        return MillisecondClockImpl.INSTANCE;
     }
 
     @Override
