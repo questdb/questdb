@@ -42,8 +42,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final CairoConfiguration configuration;
     private final Function hiFunction;
     private final Function loFunction;
-    //initialization delayed to getCursor() because lo/hi need to be evaluated
-    private DelegatingRecordCursor cursor;//LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
+    // initialization delayed to getCursor() because lo/hi need to be evaluated
+    private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
 
     public LimitedSizeSortedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -63,15 +63,22 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = base.getCursor(executionContext);
+        boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        // Forcefully disable column pre-touch for all downstream async filtered factories
+        // to avoid redundant disk reads for LIMIT K,N queries.
+        executionContext.setColumnPreTouchEnabled(false);
+        RecordCursor baseCursor = null;
         try {
+            baseCursor = base.getCursor(executionContext);
             initialize(executionContext, baseCursor);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
-            baseCursor.close();
+            Misc.free(baseCursor);
             Misc.free(cursor);
             throw ex;
+        } finally {
+            executionContext.setColumnPreTouchEnabled(preTouchEnabled);
         }
     }
 
