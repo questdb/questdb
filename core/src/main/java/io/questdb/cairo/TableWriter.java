@@ -1655,7 +1655,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 this.txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
-                columnVersionWriter.reset();
+                columnVersionWriter.readUnsafe();
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -1669,10 +1669,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 distressed = true;
             }
         }
-    }
-
-    public void rollbackUpdate() {
-        columnVersionWriter.readUnsafe();
     }
 
     public void setExtensionListener(ExtensionListener listener) {

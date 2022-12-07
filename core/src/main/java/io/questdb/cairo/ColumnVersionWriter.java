@@ -132,9 +132,10 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    public void reset() {
-        this.version = readUnsafe();
+    @Override
+    long readUnsafe() {
         this.hasChanges = false;
+        return this.version = super.readUnsafe();
     }
 
     public void truncate(boolean isPartitioned) {

@@ -301,10 +301,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void reopen() {
-        closed = false;
-    }
-
     public void resumeTable(final CharSequence tableName, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
             try {
