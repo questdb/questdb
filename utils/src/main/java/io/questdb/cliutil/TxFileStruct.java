@@ -72,21 +72,17 @@ class TxFileStruct {
         long AVAILABLE2;
         long DATA_TX;
         long MASK;
+        long MASKED_SIZE;
         long NAME_TX;
-        long SIZE;
         long TS;
 
         @Override
         public String toString() {
             return "AttachedPartition{" +
                     "TS=" + TS +
-                    ", SIZE=" + SIZE +
+                    ", MASKED_SIZE=" + MASKED_SIZE +
                     ", NAME_TX=" + NAME_TX +
                     ", DATA_TX=" + DATA_TX +
-                    ", MASK=" + MASK +
-                    ", AVAILABLE0=" + AVAILABLE0 +
-                    ", AVAILABLE1=" + AVAILABLE1 +
-                    ", AVAILABLE2=" + AVAILABLE2 +
                     '}';
         }
     }
