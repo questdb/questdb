@@ -133,7 +133,7 @@ public class EngineMigration {
                     path.concat(pUtf8NameZ);
                     copyPath.trimTo(rootLen);
                     copyPath.concat(pUtf8NameZ);
-                    final int tablePLen = path.length();
+                    final int tablePlen = path.length();
 
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                         final long fdMeta = openFileRWOrFail(ff, path, context.getConfiguration().getWriterFileOpenOpts());
@@ -146,10 +146,10 @@ public class EngineMigration {
                                         .$(", toVersion=").$(latestVersion)
                                         .I$();
 
-                                copyPath.trimTo(tablePLen);
+                                copyPath.trimTo(tablePlen);
                                 backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
 
-                                path.trimTo(tablePLen);
+                                path.trimTo(tablePlen);
                                 context.of(path, copyPath, fdMeta);
 
                                 for (int ver = currentTableVersion + 1; ver <= latestVersion; ver++) {
@@ -160,26 +160,26 @@ public class EngineMigration {
                                                     .$(", toVersion=").$(ver)
                                                     .I$();
                                             migration.migrate(context);
-                                            path.trimTo(tablePLen);
-                                            copyPath.trimTo(tablePLen);
+                                            path.trimTo(tablePlen);
+                                            copyPath.trimTo(tablePlen);
                                         } catch (Throwable e) {
-                                            LOG.error().$("failed to upgrade table [path=").utf8(path.trimTo(tablePLen))
+                                            LOG.error().$("failed to upgrade table [path=").utf8(path.trimTo(tablePlen))
                                                     .$(", e=").$(e)
                                                     .I$();
                                             throw e;
                                         }
                                     }
 
-                                    path.trimTo(tablePLen).concat(TableUtils.META_FILE_NAME).$();
+                                    path.trimTo(tablePlen).concat(TableUtils.META_FILE_NAME).$();
                                     LOG.info().$("upgrading table _meta [path=").utf8(path).$(", toVersion=").$(ver).I$();
                                     TableUtils.writeIntOrFail(ff, fdMeta, META_OFFSET_VERSION, ver, mem, path);
-                                    path.trimTo(tablePLen);
+                                    path.trimTo(tablePlen);
                                 }
                             }
                         } finally {
                             ff.close(fdMeta);
-                            path.trimTo(tablePLen);
-                            copyPath.trimTo(tablePLen);
+                            path.trimTo(tablePlen);
+                            copyPath.trimTo(tablePlen);
                         }
                     }
                 }
@@ -222,6 +222,5 @@ public class EngineMigration {
         MIGRATIONS.put(424, Mig609::migrate);
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
-        MIGRATIONS.put(427, Mig662::migrate); // extends partition table segment from 4 to 8 longs per attached partition
     }
 }

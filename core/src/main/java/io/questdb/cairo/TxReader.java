@@ -37,23 +37,20 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
     protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
-    protected static final int PARTITION_AVAILABLE0_OFFSET = 5;
-    protected static final int PARTITION_AVAILABLE1_OFFSET = 6;
-    protected static final int PARTITION_AVAILABLE2_OFFSET = 7;
     protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
-    // PARTITION_MASK_OFFSET is a 64bit mask with this layout:
-    //
-    // | RO    | Available bits |
-    // +-------+----------------+
-    // | 1 bit |    63 bits     |
-    // +-------+----------------+
-    // when RO bit is set, the partition is read only
-    //
-    // there are 3 available slots in the partition table for future use.
-    protected static final int PARTITION_MASK_OFFSET = 4;
-    protected static final int PARTITION_MASK_RO_BIT_OFFSET = 63;
+    protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
+    protected static final long PARTITION_MASK_MASK = 0x7FFFF00000000000L;
+    protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
-    protected static final int PARTITION_SIZE_OFFSET = 1;
+    protected static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
+    // PARTITION_MASKED_SIZE_OFFSET
+    // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
+    //
+    // | sign-bit | read-only | available bits | partition size |
+    // +----------+-----------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  18 bits       |      44 bits   |
+    //
+    // when read-only bit is set, the partition is read only
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
     protected final AtomicLong structureVersion = new AtomicLong();
@@ -170,18 +167,6 @@ public class TxReader implements Closeable, Mutable {
         return minTimestamp;
     }
 
-    public long getPartitionAvailable0(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_AVAILABLE0_OFFSET);
-    }
-
-    public long getPartitionAvailable1(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_AVAILABLE1_OFFSET);
-    }
-
-    public long getPartitionAvailable2(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_AVAILABLE2_OFFSET);
-    }
-
     public long getPartitionColumnVersion(int i) {
         return getPartitionColumnVersionByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -202,8 +187,8 @@ public class TxReader implements Closeable, Mutable {
         return -1;
     }
 
-    public long getPartitionMask(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASK_OFFSET);
+    public long getPartitionMaskedSize(int i) {
+        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET);
     }
 
     public long getPartitionNameTxn(int i) {
@@ -231,13 +216,13 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionSizeByIndex(int index) {
-        return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
+        return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
     }
 
     public long getPartitionSizeByPartitionTimestamp(long ts) {
         final int index = findAttachedPartitionIndex(ts);
         if (index > -1) {
-            return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
+            return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
         }
         return -1;
     }
@@ -297,14 +282,13 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean isPartitionReadOnly(int i) {
-        return ((getPartitionMask(i) >>> PARTITION_MASK_RO_BIT_OFFSET) & 1L) == 1;
+        return isPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public boolean isPartitionReadOnlyByPartitionTimestamp(long ts) {
-        int baseOffset = findAttachedPartitionIndex(ts);
-        if (baseOffset > -1) {
-            long partitionMask = attachedPartitions.getQuick(baseOffset + PARTITION_MASK_OFFSET);
-            return ((partitionMask >>> PARTITION_MASK_RO_BIT_OFFSET) & 1L) == 1;
+        int index = findAttachedPartitionIndex(ts);
+        if (index > -1) {
+            return isPartitionReadOnlyByIndex(index);
         }
         return false;
     }
@@ -408,13 +392,18 @@ public class TxReader implements Closeable, Mutable {
     }
 
     private int getInt(long readOffset) {
-        assert readOffset + 4 <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
+        assert readOffset + Integer.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getInt(baseOffset + readOffset);
     }
 
     private long getLong(long readOffset) {
         assert readOffset + Long.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getLong(baseOffset + readOffset);
+    }
+
+    private boolean isPartitionReadOnlyByIndex(int index) {
+        long maskedSize = attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET);
+        return ((maskedSize >>> PARTITION_MASK_READ_ONLY_BIT_OFFSET) & 1L) == 1;
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -444,10 +433,8 @@ public class TxReader implements Closeable, Mutable {
                         );
                     }
                 }
-                attachedPartitions.setQuick(
-                        txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET,
-                        transientRowCount
-                );
+                int offset = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET;
+                attachedPartitions.setQuick(offset, transientRowCount & PARTITION_SIZE_MASK);
                 attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {
                 attachedPartitionsSize = 0;
@@ -493,13 +480,9 @@ public class TxReader implements Closeable, Mutable {
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn, long columnVersion) {
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
-        attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
+        attachedPartitions.setQuick(index + PARTITION_MASKED_SIZE_OFFSET, partitionSize & PARTITION_SIZE_MASK);
         attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);
         attachedPartitions.setQuick(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
-        attachedPartitions.setQuick(index + PARTITION_MASK_OFFSET, 0L); // by default RW
-        attachedPartitions.setQuick(index + PARTITION_AVAILABLE0_OFFSET, 0L);
-        attachedPartitions.setQuick(index + PARTITION_AVAILABLE1_OFFSET, 0L);
-        attachedPartitions.setQuick(index + PARTITION_AVAILABLE2_OFFSET, 0L);
     }
 
     protected void switchRecord(int readBaseOffset, long readRecordSize) {

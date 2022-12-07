@@ -46,8 +46,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private static final String expectedMaxTimestamp = "2022-10-18T23:59:59.000000Z";
     private static final String expectedMinTimestamp = "2022-10-17T00:00:17.279900Z";
-    private static final String readOnlyPartitionName = "2022-10-17";
     private static final long partitionTimestamp;
+    private static final String readOnlyPartitionName = "2022-10-17";
 
     @Override
     @Before
@@ -166,26 +166,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
-    public void testDropPartitionWindows() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
-            createTableWithReadOnlyPartition(tableName, () -> {
-                        try {
-                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
-                                    "min\tmax\tcount\n" +
-                                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
-                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5",
-                                    "l\ti\ts\tts\n");
-                        } catch (SqlException ex) {
-                            Assert.fail(ex.getMessage());
-                        }
-                    }
-            );
-        });
-    }
-
-    @Test
     public void testDropPartition() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
@@ -281,6 +261,26 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             // in windows if this was a real soft link to a folder, the link would be deleted
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
                             Assert.assertTrue(ff.exists(path.trimTo(plen).concat("2022-10-18").$()));
+                        } catch (SqlException ex) {
+                            Assert.fail(ex.getMessage());
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testDropPartitionWindows() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            createTableWithReadOnlyPartition(tableName, () -> {
+                        try {
+                            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5",
+                                    "l\ti\ts\tts\n");
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -688,6 +688,50 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         });
     }
 
+    private static void runColumnPurgeOperator(String tableName) {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        try (
+                ColumnPurgeOperator purgeOperator = new ColumnPurgeOperator(configuration);
+                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
+        ) {
+            TxReader txReader = reader.getTxFile();
+            Assert.assertTrue(txReader.unsafeLoadAll());
+            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
+            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
+
+            ColumnPurgeTask purgeTask = new ColumnPurgeTask();
+            LongList updatedColumnInfo = new LongList(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
+            updatedColumnInfo.setPos(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
+            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_COLUMN_VERSION, txReader.getPartitionColumnVersion(0));
+            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP, txReader.getPartitionTimestamp(0));
+            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN, txReader.getPartitionNameTxn(0));
+            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_UPDATE_ROW_ID, 314159L);
+            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_COLUMN_VERSION, txReader.getPartitionColumnVersion(1));
+            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP, txReader.getPartitionTimestamp(1));
+            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN, txReader.getPartitionNameTxn(1));
+            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID, 628218L);
+            purgeTask.of(tableName, "s", 1, 0, ColumnType.SYMBOL, PartitionBy.DAY, 1, updatedColumnInfo);
+            purgeOperator.purgeExternal(purgeTask, txReader);
+            LongList purgedRowIds = purgeOperator.getCompletedRowIds();
+            Assert.assertNotNull(purgedRowIds);
+            int idx0 = purgedRowIds.indexOf(314159L);
+            int idx1 = purgedRowIds.indexOf(628218L);
+            Assert.assertTrue(idx0 > -1);
+            Assert.assertTrue(idx1 > -1);
+        }
+    }
+
+    private static void runO3PartitionPurgeJob() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
+            while (purgeJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
     private void assertInsertFailsBecausePartitionIsReadOnly(String insertStmt, String tableName, String partitionName) {
         try {
             executeInsert(insertStmt);
@@ -806,7 +850,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             createTable(tableName);
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
-                Assert.assertTrue(writer.commitSetPartitionReadOnly(partitionTimestamp, true));
+                writer.commitSetPartitionReadOnly(partitionTimestamp, true);
             }
             engine.releaseAllReaders();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -820,50 +864,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
             test.run();
         });
-    }
-
-    private static void runO3PartitionPurgeJob() {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-            while (purgeJob.run(0)) {
-                Os.pause();
-            }
-        }
-    }
-
-    private static void runColumnPurgeOperator(String tableName) {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        try (
-                ColumnPurgeOperator purgeOperator = new ColumnPurgeOperator(configuration);
-                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
-        ) {
-            TxReader txReader = reader.getTxFile();
-            Assert.assertTrue(txReader.unsafeLoadAll());
-            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
-            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
-
-            ColumnPurgeTask purgeTask = new ColumnPurgeTask();
-            LongList updatedColumnInfo = new LongList(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
-            updatedColumnInfo.setPos(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_COLUMN_VERSION, txReader.getPartitionColumnVersion(0));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP, txReader.getPartitionTimestamp(0));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN, txReader.getPartitionNameTxn(0));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.OFFSET_UPDATE_ROW_ID, 314159L);
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_COLUMN_VERSION, txReader.getPartitionColumnVersion(1));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP, txReader.getPartitionTimestamp(1));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN, txReader.getPartitionNameTxn(1));
-            updatedColumnInfo.setQuick(ColumnPurgeTask.BLOCK_SIZE + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID, 628218L);
-            purgeTask.of(tableName, "s", 1, 0, ColumnType.SYMBOL, PartitionBy.DAY, 1, updatedColumnInfo);
-            purgeOperator.purgeExternal(purgeTask, txReader);
-            LongList purgedRowIds = purgeOperator.getCompletedRowIds();
-            Assert.assertNotNull(purgedRowIds);
-            int idx0 = purgedRowIds.indexOf(314159L);
-            int idx1 = purgedRowIds.indexOf(628218L);
-            Assert.assertTrue(idx0 > -1);
-            Assert.assertTrue(idx1 > -1);
-        }
     }
 
     static {

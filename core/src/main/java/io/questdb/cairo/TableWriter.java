@@ -141,6 +141,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final Path path;
     private final int rootLen;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
+    private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TxReader slaveTxReader;
@@ -149,7 +150,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final String tableName;
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
-    private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -741,7 +741,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
             if (isSoftLink) {
-                txWriter.setPartitionReadOnly(timestamp, true);
+                txWriter.setPartitionReadOnlyByTimestamp(timestamp, true);
             }
             txWriter.bumpTruncateVersion();
 
@@ -820,15 +820,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @TestOnly
-    public boolean commitSetPartitionReadOnly(long partitionTimestamp, boolean isRO) {
+    public void commitSetPartitionReadOnly(long partitionTimestamp, boolean isRO) {
         // the read-only flag is only set when a partition is attached from soft link
         // this method exists for testing purposes only.
-        boolean changed = txWriter.setPartitionReadOnly(partitionTimestamp, isRO);
-        if (changed) {
-            txWriter.bumpTruncateVersion();
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-        }
-        return changed;
+        txWriter.setPartitionReadOnlyByTimestamp(partitionTimestamp, isRO);
+        txWriter.bumpTruncateVersion();
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
     @Override
@@ -4209,7 +4206,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private void openFirstPartition(long timestamp) {
         final long ts = repairDataGaps(timestamp);
         openPartition(ts);
-        populateDenseIndexerList();
         setAppendPosition(txWriter.getTransientRowCount(), false);
         if (performRecovery) {
             performRecovery();

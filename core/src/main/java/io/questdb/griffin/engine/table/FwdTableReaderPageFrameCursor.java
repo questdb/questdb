@@ -122,7 +122,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void toTop() {
-        this.dataFrameCursor.toTop();
+        dataFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
         columnPageAddress.setAll(columnCount * 2, 0);

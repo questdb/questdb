@@ -285,22 +285,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public boolean setPartitionReadOnly(long timestamp, boolean isRO) {
+    public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
         int index = findAttachedPartitionIndex(timestamp);
         if (index > -1) {
-            int offset = index + PARTITION_MASK_OFFSET;
-            long mask = attachedPartitions.getQuick(offset);
-            if (isRO) {
-                mask |= 1L << PARTITION_MASK_RO_BIT_OFFSET;
+            int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+            long maskedSize = attachedPartitions.getQuick(offset);
+            if (isReadOnly) {
+                maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
             } else {
-                mask &= ~(1L << PARTITION_MASK_RO_BIT_OFFSET);
+                maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
             }
-            if (attachedPartitions.getQuick(offset) != mask) {
-                attachedPartitions.setQuick(offset, mask);
-                return true;
-            }
+            attachedPartitions.setQuick(offset, maskedSize);
         }
-        return false;
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -548,9 +544,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
+        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
             recordStructureVersion++;
-            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+            attachedPartitions.setQuick(offset, (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK));
         }
     }
 
@@ -626,7 +624,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
         recordStructureVersion++;
-        attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+        updatePartitionSizeByIndex(index, partitionSize);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }
