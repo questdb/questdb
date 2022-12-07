@@ -43,7 +43,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), executionContext);
+        boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        // Forcefully disable column pre-touch for all downstream async filtered factories
+        // to avoid redundant disk reads for LIMIT K,N queries.
+        executionContext.setColumnPreTouchEnabled(false);
+        try {
+            cursor.of(base.getCursor(executionContext), executionContext);
+        } finally {
+            executionContext.setColumnPreTouchEnabled(preTouchEnabled);
+        }
         return cursor;
     }
 
