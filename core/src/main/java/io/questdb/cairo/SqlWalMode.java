@@ -24,18 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.griffin.engine.ops.AlterOperation;
-
-public class BinaryAlterSerializer implements MemorySerializer {
-    @Override
-    public void fromSink(Object instance, MemoryCR memory, long offsetLo, long offsetHi) {
-        ((AlterOperation) instance).deserializeBody(memory, offsetLo, offsetHi);
-    }
-
-    @Override
-    public void toSink(Object obj, MemoryA sink) {
-        ((AlterOperation) obj).serializeBody(sink);
-    }
+public final class SqlWalMode {
+    public static final int WAL_DISABLED = 0;
+    public static final int WAL_ENABLED = 1;
+    public static final int WAL_NOT_SET = -1;
 }

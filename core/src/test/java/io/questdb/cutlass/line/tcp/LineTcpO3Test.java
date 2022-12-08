@@ -215,9 +215,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 sharedWorkerPool.halt();
                 mayDrainWalQueue();
 
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("cpu"));
-                }
+                Assert.assertEquals(walEnabled, isWalTable("cpu"));
                 TestUtils.printSql(compiler, sqlExecutionContext, "select * from cpu", sink);
                 readGzResource("selectAll1");
                 DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
@@ -225,7 +223,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 TestUtils.assertEquals(expectedSink.toString(), sink);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
             } finally {
-                engine.setPoolListener(null);
+                engine.clear();
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);
                 sharedWorkerPool.halt();
