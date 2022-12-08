@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -538,6 +539,9 @@ public class SqlCompiler implements Closeable {
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
                         }
+                    }
+                    if (!TableSequencerAPI.isWalTable(tableName, path.of(configuration.getRoot()), ff)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), tableName).put(" is not a WAL table.");
                     }
                     return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
                 } else {

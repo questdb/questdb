@@ -308,4 +308,9 @@ public class CairoTestConfiguration extends DefaultCairoConfiguration {
     public boolean isWalSupported() {
         return true;
     }
+
+    @Override
+    public int getMaxFileNameLength() {
+        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
+    }
 }

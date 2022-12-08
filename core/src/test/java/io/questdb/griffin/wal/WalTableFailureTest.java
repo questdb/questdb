@@ -31,10 +31,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -902,6 +899,21 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
             createStandardWalTable(tableName);
+            String nonWalTable = "W";
+            try {
+                compile("create table " + nonWalTable + " as (" +
+                        "select x, " +
+                        " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                        " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                        " from long_sequence(1)" +
+                        ") timestamp(ts)");
+
+                compile("alter table W resume wal");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[21] " + nonWalTable + " is not a WAL table.");
+            }
             try {
                 compile("alter table " + tableName + " resum wal");
                 Assert.fail();
@@ -949,6 +961,18 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=10AA]");
+            }
+            try {
+                engine.getTableSequencerAPI().suspendTable(tableName);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+                //simulate resumeTable fail
+                node1.getConfigurationOverrides().setMaxFileNameLength(2);
+                compile("alter table " + tableName + " resume wal from txn 2");
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[-1] invalid table name [table=" + tableName + "]");
+            } finally {
+                node1.getConfigurationOverrides().setMaxFileNameLength(-1);
             }
         });
     }
