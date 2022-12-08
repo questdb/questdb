@@ -115,12 +115,8 @@ public class TableSequencerAPI implements QuietCloseable {
                                     tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
                                     lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
                                 } finally {
-                                    if (fdMeta > -1) {
-                                        ff.close(fdMeta);
-                                    }
-                                    if (fdTxn > -1) {
-                                        ff.close(fdTxn);
-                                    }
+                                    ff.closeChecked(fdMeta);
+                                    ff.closeChecked(fdTxn);
                                 }
                             } else {
                                 // Slow path.

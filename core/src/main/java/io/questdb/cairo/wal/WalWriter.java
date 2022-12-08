@@ -607,9 +607,7 @@ public class WalWriter implements TableWriterAPI {
         int halfRecord = NEW_COL_RECORD_SIZE / 2;
         for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += halfRecord) {
             long fd = newColumnFiles.get(fdIndex);
-            if (fd > -1L) {
-                ff.close(fd);
-            }
+            ff.closeChecked(fd);
         }
     }
 
@@ -982,15 +980,13 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void releaseSegmentLock() {
-        if (segmentLockFd != -1L) {
-            ff.close(segmentLockFd);
+        if (ff.closeChecked(segmentLockFd)) {
             segmentLockFd = -1L;
         }
     }
 
     private void releaseWalLock() {
-        if (walLockFd != -1L) {
-            ff.close(walLockFd);
+        if (ff.closeChecked(walLockFd)) {
             walLockFd = -1;
         }
     }

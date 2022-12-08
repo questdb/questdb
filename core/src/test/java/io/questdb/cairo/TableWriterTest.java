@@ -898,6 +898,14 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
+            public boolean closeChecked(long fd) {
+                if (fd == kIndexFd) {
+                    kIndexFd = -1;
+                }
+                return super.closeChecked(fd);
+            }
+
+            @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
                     return kIndexFd = super.openRW(name, opts);

@@ -3924,6 +3924,12 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             @Override
+            public boolean closeChecked(long fd) {
+                fds.remove(fd);
+                return super.closeChecked(fd);
+            }
+
+            @Override
             public long openRO(LPSZ name) {
                 long fd = super.openRO(name);
                 if (Chars.endsWith(name, dcol) || Chars.endsWith(name, icol)) {

@@ -228,12 +228,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         sequencerTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
                     } finally {
                         rootPath.trimTo(rootLen);
-                        if (fdMeta > -1) {
-                            ff.close(fdMeta);
-                        }
-                        if (fdTxn > -1) {
-                            ff.close(fdTxn);
-                        }
+                        ff.closeChecked(fdMeta);
+                        ff.closeChecked(fdTxn);
                     }
 
                     rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();

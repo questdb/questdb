@@ -88,8 +88,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 fd = -1;
             }
         }
-        if (fd != -1) {
-            ff.close(fd);
+        if (ff != null && ff.closeChecked(fd)) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }

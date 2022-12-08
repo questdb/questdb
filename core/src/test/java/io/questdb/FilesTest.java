@@ -1065,9 +1065,7 @@ public class FilesTest {
                     ff.munmap(mem, fileSize, 0);
                 }
 
-                if (fd != -1) {
-                    ff.close(fd);
-                }
+                ff.closeChecked(fd);
 
                 ff.remove(path);
             }

@@ -44,9 +44,7 @@ public class Vm {
                 log.debug().$("closed [fd=").$(fd).$(']').$();
             }
         } finally {
-            if (fd > 0) {
-                ff.close(fd);
-            }
+            ff.closeChecked(fd);
         }
     }
 

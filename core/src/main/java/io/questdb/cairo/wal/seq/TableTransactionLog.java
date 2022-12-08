@@ -310,15 +310,9 @@ public class TableTransactionLog implements Closeable {
 
                 throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
-                if (fdTxn > -1) {
-                    ff.close(fdTxn);
-                }
-                if (fdTxnMeta > -1) {
-                    ff.close(fdTxnMeta);
-                }
-                if (fdTxnMetaIndex > -1) {
-                    ff.close(fdTxnMetaIndex);
-                }
+                ff.closeChecked(fdTxn);
+                ff.closeChecked(fdTxnMeta);
+                ff.closeChecked(fdTxnMetaIndex);
             }
         }
     }
@@ -337,9 +331,7 @@ public class TableTransactionLog implements Closeable {
 
         @Override
         public void close() {
-            if (fd > -1) {
-                ff.close(fd);
-            }
+            ff.closeChecked(fd);
             ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
         }
 
