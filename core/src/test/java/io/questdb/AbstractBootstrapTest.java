@@ -90,7 +90,7 @@ public abstract class AbstractBootstrapTest {
         temp.delete();
     }
 
-    protected static void createDummyConfiguration() throws Exception {
+    protected static void createDummyConfiguration(String... extra) throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
@@ -127,6 +127,13 @@ public abstract class AbstractBootstrapTest {
             writer.println("pg.worker.count=1");
             writer.println("line.tcp.writer.worker.count=1");
             writer.println("line.tcp.io.worker.count=1");
+
+            // extra
+            if (extra != null) {
+                for (int i = 0; i < extra.length; i++) {
+                    writer.println(extra[i]);
+                }
+            }
         }
 
         // mime types

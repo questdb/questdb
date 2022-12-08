@@ -274,6 +274,9 @@ public class TableUpdateDetails implements Closeable {
 
         try {
             writerAPI.ic();
+        } catch (ReadOnlyViolationException readOnly) {
+            // this is inconsequential, we just log the fact, no need to rollback or abort the protocol
+            LOG.error().$(readOnly.getFlyweightMessage()).$();
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableName())

@@ -4473,10 +4473,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
 
                     if (txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                        throw CairoException.nonCritical()
-                                .put("cannot insert into read-only partition [table=").put(tableName)
-                                .put(", partitionTs=").ts(partitionTimestamp)
-                                .put(']');
+                        throw ReadOnlyViolationException.cannotInsert(tableName, partitionTimestamp);
                     }
 
                     // This partition is the last partition.

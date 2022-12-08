@@ -716,12 +716,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         try {
             executeInsert(insertStmt);
             Assert.fail();
-        } catch (CairoException e) {
+        } catch (ReadOnlyViolationException e) {
             TestUtils.assertContains(
-                    "cannot insert into read-only partition [table=" + tableName + ", partitionTs=" + partitionName + "T00:00:00.000Z]",
+                    "cannot insert into read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + ']',
                     e.getFlyweightMessage());
-        } catch (SqlException e) {
-            Assert.fail("not expecting any SqlExceptions: " + e.getFlyweightMessage());
+        } catch (SqlException | CairoException e) {
+            Assert.fail("not expecting any SqlException | CairoException: " + e.getFlyweightMessage());
         }
     }
 
@@ -729,12 +729,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         try {
             executeOperation(updateStmt, CompiledQuery.UPDATE);
             Assert.fail();
-        } catch (CairoException e) {
+        } catch (ReadOnlyViolationException e) {
             TestUtils.assertContains(
-                    "cannot update read-only partition [table=" + tableName + ", partitionIndex=0, partitionTs=" + partitionName + "T00:00:00.000Z]",
+                    "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + ']',
                     e.getFlyweightMessage());
-        } catch (SqlException e) {
-            Assert.fail("not expecting any SqlExceptions: " + e.getFlyweightMessage());
+        } catch (SqlException | CairoException e) {
+            Assert.fail("not expecting any SqlException | CairoException: " + e.getFlyweightMessage());
         }
     }
 

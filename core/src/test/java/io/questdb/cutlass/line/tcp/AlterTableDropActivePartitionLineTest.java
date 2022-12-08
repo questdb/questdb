@@ -243,7 +243,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     }
 
     private LineTcpSender addLine(LineTcpSender sender, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {
-        sender.metric("PurposelessTable")
+        sender.metric(tableName)
                 .tag("favourite_colour", rndOf(rnd, colour))
                 .tag("country", rndOf(rnd, country))
                 .field("uniqueId", uniqueId.getAndIncrement())
