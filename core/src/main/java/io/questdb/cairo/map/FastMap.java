@@ -698,10 +698,10 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void putUuid(long msb, long lsb) {
+        public void putUuid(long hi, long lo) {
             checkSize(16);
-            Unsafe.getUnsafe().putLong(appendAddress, msb);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lsb);
+            Unsafe.getUnsafe().putLong(appendAddress, hi);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
             appendAddress += 16;
             writeOffset();
         }

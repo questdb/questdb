@@ -258,9 +258,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void putUuid(long msb, long lsb) {
-        mem.putLong(msb);
-        mem.putLong(lsb);
+    public void putUuid(long hi, long lo) {
+        mem.putLong(hi);
+        mem.putLong(lo);
     }
 
     @Override
