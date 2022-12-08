@@ -107,6 +107,14 @@ public final class Files {
         return res;
     }
 
+    // If fd is negative, no action occurs.
+    public static int closeChecked(long fd) {
+        if (fd >= 0) {
+            return close(fd);
+        }
+        return -1;
+    }
+
     public static native int copy(long from, long to);
 
     public static int copy(LPSZ from, LPSZ to) {

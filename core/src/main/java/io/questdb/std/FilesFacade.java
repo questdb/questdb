@@ -36,6 +36,10 @@ public interface FilesFacade {
 
     boolean close(long fd);
 
+    default boolean closeChecked(long fd) {
+        return Files.closeChecked(fd) == 0;
+    }
+
     long getDiskSize(LPSZ path);
 
     int copy(LPSZ from, LPSZ to);
