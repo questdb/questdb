@@ -109,7 +109,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_readPipe
         (JNIEnv *e, jclass cl, jint fd) {
     char buf[1];
     ssize_t s;
-    s = read((int) fd, buf, 1);
+    s = read((int) fd, &buf[0], 1);
     if (s != 1) {
         return -1;
     }
@@ -121,7 +121,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_KqueueAccessor_writePipe
     char buf[1];
     ssize_t s;
     buf[0] = 1;
-    s = write((int) fd, buf, 1);
+    s = write((int) fd, &buf[0], 1);
     if (s != 1) {
         return -1;
     }
