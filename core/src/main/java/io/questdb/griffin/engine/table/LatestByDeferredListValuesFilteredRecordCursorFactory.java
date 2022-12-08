@@ -88,7 +88,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     public void toPlan(PlanSink sink) {
         sink.type("LatestByDeferredListValuesFiltered");
         sink.optAttr("filter", filter);
-        sink.optAttr("symbolFunctions", symbolFunctions);
+        sink.optAttr("includedSymbols", includedSymbolFuncs);
+        sink.optAttr("excludedSymbols", excludedSymbolFuncs);
         sink.child(dataFrameCursorFactory);
     }
 

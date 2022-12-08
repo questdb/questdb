@@ -611,7 +611,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "UPDATE table: a\n" +
                         "    VirtualRecord\n" +
                         "      functions: [20,d+rnd_double()]\n" +
-                        "        Async JIT Filter\n" +
+                        "        Async Filter\n" +
                         "          filter: d<100.0\n" +
                         "          workers: 1\n" +
                         "            DataFrame\n" +
@@ -1125,7 +1125,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s",
                 "LatestByDeferredListValuesFiltered\n" +
-                        "  symbolFunctions: ['S1','S2']\n" +
+                        "  includedSymbols: ['S1','S2']\n" +
                         "    Frame backward scan on: a\n");
     }
 
@@ -1209,9 +1209,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testLatestOn14() throws Exception {
         assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2",
-                "LatestByAllFiltered\n" +
+                "LatestByAllSymbolsFiltered\n" +
+                        "  filter: ((s1 in [S1,S2] and s2='S3') and 0<i)\n" +
                         "    Row backward scan\n" +
-                        "      filter: ((s1 in [S1,S2] and s2='S3') and 0<i)\n" +
+                        "      expectedSymbolsCount: 2\n" +
                         "    Frame backward scan on: a\n");
     }
 
@@ -1219,9 +1220,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testLatestOn15() throws Exception {
         assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2",
-                "LatestByAllFiltered\n" +
+                "LatestByAllSymbolsFiltered\n" +
+                        "  filter: (s1 in [S1,S2] and s2='S3')\n" +
                         "    Row backward scan\n" +
-                        "      filter: (s1 in [S1,S2] and s2='S3')\n" +
+                        "      expectedSymbolsCount: 2\n" +
                         "    Frame backward scan on: a\n");
     }
 

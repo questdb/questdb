@@ -161,6 +161,6 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     static {
         METADATA = new GenericRecordMetadata();
-        METADATA.add(new TableColumnMetadata("QUERY PLAN", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("QUERY PLAN", ColumnType.STRING));
     }
 }
