@@ -530,11 +530,10 @@ public class SqlCompiler implements Closeable {
                                 throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
                             }
                             CharSequence txnValue = expectToken(lexer, "transaction value");
-                            final int valuePosition = lexer.getPosition();
                             try {
                                 fromTxn = Numbers.parseLong(txnValue);
                             } catch (NumericException e) {
-                                throw SqlException.$(valuePosition, "invalid value [value=").put(txnValue).put(']');
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(txnValue).put(']');
                             }
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
@@ -546,7 +545,8 @@ public class SqlCompiler implements Closeable {
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Throwable) e).$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' could not be altered: ").put(e);
+                e.position(lexer.lastTokenPosition());
+                throw e;
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -1047,7 +1047,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableResume(int tableNamePosition, String tableName, long resumeFromTxn, SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery alterTableResume(int tableNamePosition, String tableName, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             engine.getTableSequencerAPI().resumeTable(tableName, resumeFromTxn, executionContext.getCairoSecurityContext());
             return compiledQuery.ofTableResume();
@@ -1056,7 +1056,8 @@ public class SqlCompiler implements Closeable {
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
-            throw SqlException.position(tableNamePosition).put(ex.getFlyweightMessage()).put("[errno=").put(ex.getErrno()).put(']');
+            ex.position(tableNamePosition);
+            throw ex;
         }
     }
 

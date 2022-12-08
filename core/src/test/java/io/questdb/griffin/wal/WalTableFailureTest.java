@@ -942,13 +942,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 compile("alter table " + tableName + " resume wal from txn -10");
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[62] invalid value [value=-]");
+                TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=-]");
             }
             try {
                 compile("alter table " + tableName + " resume wal from txn 10AA");
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[65] invalid value [value=10AA]");
+                TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=10AA]");
             }
         });
     }
