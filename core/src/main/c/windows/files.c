@@ -199,10 +199,9 @@ JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
     jbyte result;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 1, &count, NULL)) {
-        if (count != 1) {
-            return -1;
+        if (count == 1) {
+            return result;
         }
-        return result;
     }
     SaveLastError();
     return -1;
@@ -216,10 +215,9 @@ JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
     jshort result;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 2, &count, NULL)) {
-        if (count != 2) {
-            return -1;
+        if (count == 2) {
+            return result;
         }
-        return result;
     }
     SaveLastError();
     return -1;
@@ -233,10 +231,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
     jint result;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
-        if (count != 4) {
-            return -1;
+        if (count == 4) {
+            return result;
         }
-        return result;
     }
     SaveLastError();
     return -1;
@@ -250,10 +247,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
     jlong result;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
-        if (count != 8) {
-            return -1;
+        if (count == 8) {
+            return result;
         }
-        return result;
     }
     SaveLastError();
     return -1;
