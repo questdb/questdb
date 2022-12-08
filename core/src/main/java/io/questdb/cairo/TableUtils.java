@@ -804,11 +804,11 @@ public final class TableUtils {
         return openRW(ff, path, LOG, opts);
     }
 
-    public static long openRO(FilesFacade ff, Path path, CharSequence fileName) {
+    public static long openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
         final int rootLen = path.length();
         path.concat(fileName).$();
         try {
-            return TableUtils.openRO(ff, path, LOG);
+            return TableUtils.openRO(ff, path, log);
         } finally {
             path.trimTo(rootLen);
         }
