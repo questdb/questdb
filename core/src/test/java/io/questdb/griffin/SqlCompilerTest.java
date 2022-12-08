@@ -27,13 +27,16 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -45,8 +48,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.griffin.CompiledQuery.SET;
 
 public class SqlCompilerTest extends AbstractGriffinTest {
+
     private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
-    private final static Path path = new Path();
+    private static Path path;
+
+    @BeforeClass
+    public static void setUpStatic() {
+        path = new Path();
+        AbstractGriffinTest.setUpStatic();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        path = Misc.free(path);
+        AbstractGriffinTest.tearDownStatic();
+    }
 
     @Test
     public void assertCastString() throws SqlException {
@@ -85,14 +101,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCannotCreateTable() throws Exception {
         assertFailure(
                 new FilesFacadeImpl() {
-                    int mkDirCount = 0;
 
                     @Override
                     public int mkdirs(Path path, int mode) {
-                        if (mkDirCount++ > 0) {
-                            return -1;
-                        }
-                        return super.mkdirs(path, mode);
+                        return -1;
                     }
                 },
                 "create table x (a int)",
@@ -2603,19 +2615,19 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                                     "t TIMESTAMP, " +
                                     "y BOOLEAN) " +
                                     "timestamp(t) " +
-                                    "partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;",
+                                    "partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;",
                             sqlExecutionContext);
 
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
                             "x", "testing")) {
                         sink.clear();
-                        TableWriterMetadata metadata = writer.getMetadata();
+                        TableRecordMetadata metadata = writer.getMetadata();
                         metadata.toJson(sink);
                         TestUtils.assertEquals(
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
                                 sink);
                         Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
-                        Assert.assertEquals(250000, metadata.getCommitLag());
+                        Assert.assertEquals(250000, metadata.getO3MaxLag());
                     }
                 }
         );

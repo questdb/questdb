@@ -59,6 +59,6 @@ public class ShowSearchPathCursorFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("search_path", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("search_path", ColumnType.STRING));
     }
 }

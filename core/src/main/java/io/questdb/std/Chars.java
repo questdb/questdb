@@ -25,10 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
+import io.questdb.griffin.engine.functions.str.TrimType;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -176,6 +174,19 @@ public final class Chars {
         return equalsChars(l, r, ll);
     }
 
+    public static boolean equals(String l, String r) {
+        return l.equals(r);
+    }
+
+    public static boolean equals(DirectByteCharSequence l, String r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        return equalsChars(l, r, ll);
+    }
+
     public static boolean equals(CharSequence l, CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
@@ -218,7 +229,7 @@ public final class Chars {
 
     /**
      * Compares two char sequences on assumption and right value is always lower case.
-     * Methods converts every char of right sequence before comparing to left sequence.
+     * Method converts every char of right sequence before comparing to left sequence.
      *
      * @param l left sequence
      * @param r right sequence
@@ -796,6 +807,28 @@ public final class Chars {
         }
     }
 
+    public static void trim(TrimType type, CharSequence str, StringSink sink) {
+        if (str == null) {
+            return;
+        }
+        int startIdx = 0;
+        int endIdx = str.length() - 1;
+        if (type == TrimType.LTRIM || type == TrimType.TRIM) {
+            while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
+                startIdx++;
+            }
+        }
+        if (type == TrimType.RTRIM || type == TrimType.TRIM) {
+            while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
+                endIdx--;
+            }
+        }
+        sink.clear();
+        if (startIdx != endIdx) {
+            sink.put(str, startIdx, endIdx + 1);
+        }
+    }
+
     /* Decodes bytes between lo,hi addresses into sink.
      *  Note: operation might fail in the middle and leave sink in inconsistent  state .
      *  @return true if input is proper utf8 and false otherwise . */
@@ -868,6 +901,15 @@ public final class Chars {
     }
 
     private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (l.charAt(i) != r.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsChars(DirectByteCharSequence l, String r, int len) {
         for (int i = 0; i < len; i++) {
             if (l.charAt(i) != r.charAt(i)) {
                 return false;

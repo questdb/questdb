@@ -28,9 +28,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 
@@ -52,7 +50,7 @@ public interface CompiledQuery {
     short RENAME_TABLE = 12;
     short REPAIR = 5;
     short ROLLBACK = 20;
-    //these values should be covered in both JsonQueryProcessor and PGConnectionContext
+    // these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short SELECT = 1;
     short SET = 6;
     short SNAPSHOT_DB_COMPLETE = 23;
@@ -74,6 +72,8 @@ public interface CompiledQuery {
      */
     OperationFuture execute(SCSequence eventSubSeq) throws SqlException;
 
+    OperationFuture execute(SqlExecutionContext context, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException;
+
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      */
@@ -81,11 +81,7 @@ public interface CompiledQuery {
 
     AlterOperation getAlterOperation();
 
-    <T extends AbstractOperation> OperationDispatcher<T> getDispatcher();
-
     InsertOperation getInsertOperation();
-
-    <T extends AbstractOperation> T getOperation();
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -101,4 +97,6 @@ public interface CompiledQuery {
     UpdateOperation getUpdateOperation();
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
+
+    void withSqlStatement(CharSequence sqlStatement);
 }

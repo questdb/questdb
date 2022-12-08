@@ -283,7 +283,7 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
     }
 
-    protected long parsePartial(final long bytesPtr, final long hi) {
+    protected void parsePartial(final long bytesPtr, final long hi) {
         long p = bytesPtr;
 
         byte lastByte = (byte) 0;
@@ -353,7 +353,6 @@ public class LineUdpLexer implements Mutable, Closeable {
             }
         }
 
-        return p;
     }
 
     protected boolean partialComplete() {
@@ -375,7 +374,7 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
 
         @Override
-        public @NotNull CharSequence subSequence(int start, int end) {
+        protected @NotNull CharSequence _subSequence(int start, int end) {
             FloatingCharSequence fcs = new FloatingCharSequence();
             fcs.lo = this.lo + start * 2L;
             fcs.hi = this.lo + end * 2L;

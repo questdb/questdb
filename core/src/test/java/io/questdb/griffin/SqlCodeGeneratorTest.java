@@ -782,7 +782,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
         assertFailure(
-                "with tab as (x where b in ('BB')) tab latest by b",
+                "with tab as (x where b in ('BB')) select * from tab latest by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -7264,10 +7264,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                                    "1\tпривет от штиблет\t\tNONE\t1000\t0\n"
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                                    "1\tпривет от штиблет\t\tNONE\t1000\t300000000\n"
                     );
 
                     TestUtils.assertSql(
@@ -7332,8 +7332,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         try {
             assertQuery("avg\tsum\n" +
-                            "0.50035043\t834470.437288\n",
-                    "select round(avg(c), 9) avg, round(sum(c), 6) sum from x",
+                            "0.5003504\t834470.437288\n",
+                    "select round(avg(c), 7) avg, round(sum(c), 6) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
                     null,
                     false,

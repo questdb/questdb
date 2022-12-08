@@ -59,6 +59,6 @@ public class ShowMaxIdentifierLengthCursorFactory extends AbstractRecordCursorFa
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("max_identifier_length", 1, ColumnType.INT));
+        METADATA.add(new TableColumnMetadata("max_identifier_length", ColumnType.INT));
     }
 }

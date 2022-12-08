@@ -30,10 +30,36 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
-
+    private final boolean walEnabled;
     private long time;
+
+    public LineTcpTypeConversionTest(WalMode walMode, SymbolAsFieldMode symbolAsFieldMode, StringAsTagMode stringAsTagMode) {
+        walEnabled = (walMode == WalMode.WITH_WAL);
+        symbolAsFieldSupported = (symbolAsFieldMode == SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD);
+        stringAsTagSupported = (stringAsTagMode == StringAsTagMode.WITH_STRINGS_AS_TAG);
+    }
+
+    @Parameterized.Parameters(name = "{0}, {1}, {2}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.WITH_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG},
+                {WalMode.WITH_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.WITH_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.NO_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.NO_STRINGS_AS_TAG},
+                {WalMode.NO_WAL, SymbolAsFieldMode.WITH_SYMBOLS_AS_FIELD, StringAsTagMode.WITH_STRINGS_AS_TAG}
+        });
+    }
 
     @Test
     public void testConversionToBinary() throws Exception {
@@ -165,6 +191,10 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         testConversionToType("SYMBOL", "testCol\ttime\n" +
                 "questdb\t2016-06-13T17:43:50.100401Z\n" +
                 "q\t2016-06-13T17:43:50.100402Z\n" +
+                (stringAsTagSupported
+                    ? "\"questdbb\"\t2016-06-13T17:43:50.100403Z\n" +
+                    "\"q\"\t2016-06-13T17:43:50.100404Z\n"
+                    : "") +
                 "100i\t2016-06-13T17:43:50.100405Z\n" +
                 "-100i\t2016-06-13T17:43:50.100406Z\n" +
                 "0x100i\t2016-06-13T17:43:50.100407Z\n" +
@@ -173,7 +203,22 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "23.3\t2016-06-13T17:43:50.100410Z\n" +
                 "T\t2016-06-13T17:43:50.100411Z\n" +
                 "false\t2016-06-13T17:43:50.100412Z\n" +
-                "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n"
+                "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n" +
+                (symbolAsFieldSupported
+                    ? "questdb\t2016-06-13T17:43:50.100414Z\n" +
+                    "q\t2016-06-13T17:43:50.100415Z\n"
+                    : "") +
+                "questdbb\t2016-06-13T17:43:50.100416Z\n" +
+                "q\t2016-06-13T17:43:50.100417Z\n" +
+                "100\t2016-06-13T17:43:50.100418Z\n" +
+                "-100\t2016-06-13T17:43:50.100419Z\n" +
+                "0x0150\t2016-06-13T17:43:50.100420Z\n" +
+                "123\t2016-06-13T17:43:50.100421Z\n" +
+                "-54\t2016-06-13T17:43:50.100422Z\n" +
+                "23.3\t2016-06-13T17:43:50.100423Z\n" +
+                "T\t2016-06-13T17:43:50.100424Z\n" +
+                "false\t2016-06-13T17:43:50.100425Z\n" +
+                "1465839830101500\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 
@@ -184,6 +229,12 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "1969-12-31T23:59:59.999900Z\t2016-06-13T17:43:50.100419Z\n" +
                 "2016-06-13T17:43:50.101500Z\t2016-06-13T17:43:50.100426Z\n"
         );
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private long nextTime() {
@@ -198,7 +249,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
                 compiler.compile(createTableCmd, sqlExecutionContext);
             } catch (SqlException ex) {
                 throw new RuntimeException(ex);
@@ -210,7 +262,11 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
+            mayDrainWalQueue();
             assertTable(expected, table);
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(table));
+            }
         });
     }
 
@@ -218,7 +274,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         resetTime();
         String table = "convTest";
         testConversion(table,
-                "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time);",
+                "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
                 table + ",testCol=questdb " + nextTime() + "\n" +
                         table + ",testCol=q " + nextTime() + "\n" +
                         table + ",testCol=\"questdbb\" " + nextTime() + "\n" +

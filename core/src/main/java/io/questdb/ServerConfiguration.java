@@ -49,5 +49,7 @@ public interface ServerConfiguration {
 
     PGWireConfiguration getPGWireConfiguration();
 
+    WorkerPoolConfiguration getWalApplyPoolConfiguration();
+
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 }

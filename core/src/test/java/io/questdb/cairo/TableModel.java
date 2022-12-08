@@ -38,10 +38,11 @@ public class TableModel implements TableStructure, Closeable {
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CairoConfiguration configuration;
     private final MemoryMARW mem = Vm.getMARWInstance();
+    private final String name;
     private final int partitionBy;
     private final Path path = new Path();
-    private String name;
     private int timestampIndex = -1;
+    private int walEnabled = -1;
 
     public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
         this.configuration = configuration;
@@ -81,11 +82,6 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return configuration.getRandom().nextLong();
-    }
-
-    @Override
     public CharSequence getColumnName(int index) {
         return columnNames.getQuick(index);
     }
@@ -93,11 +89,6 @@ public class TableModel implements TableStructure, Closeable {
     @Override
     public int getColumnType(int index) {
         return (int) columnBits.getQuick(index * 2);
-    }
-
-    @Override
-    public long getCommitLag() {
-        return configuration.getCommitLag();
     }
 
     public CairoConfiguration getConfiguration() {
@@ -120,6 +111,11 @@ public class TableModel implements TableStructure, Closeable {
 
     public String getName() {
         return name;
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return configuration.getO3MaxLag();
     }
 
     @Override
@@ -175,12 +171,15 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public boolean isWallEnabled() {
-        return configuration.getWallEnabledDefault();
+    public boolean isWalEnabled() {
+        return walEnabled == -1
+                ? configuration.getWalEnabledDefault()
+                : walEnabled == 1;
     }
 
-    public void setName(String name) {
-        this.name = name;
+    public TableModel noWal() {
+        walEnabled = 0;
+        return this;
     }
 
     public TableModel symbolCapacity(int capacity) {
@@ -201,6 +200,11 @@ public class TableModel implements TableStructure, Closeable {
         assert timestampIndex == -1;
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
+        return this;
+    }
+
+    public TableModel wal() {
+        walEnabled = 1;
         return this;
     }
 }

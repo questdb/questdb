@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
@@ -171,7 +170,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeCannotAllocateFailure() throws Exception {
-        int deadline = Os.type == Os.WINDOWS ? 152 : 105;
+        int deadline = Os.type == Os.WINDOWS ? 92 : 105;
         assertMemoryLeak(() -> {
             currentMicros = 0;
             ff = new FilesFacadeImpl() {
@@ -698,7 +697,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeTaskRecycle() throws Exception {
-        columnVersionTaskPoolCapacity = 1;
+        configOverrideColumnVersionTaskPoolCapacity(1);
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3_many as" +
@@ -894,10 +893,8 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     private void executeUpdate(String query) throws SqlException {
         final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (AbstractOperation op = cq.getOperation()) {
-            try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, null)) {
-                fut.await();
-            }
+        try (OperationFuture fut = cq.execute(null)) {
+            fut.await();
         }
     }
 

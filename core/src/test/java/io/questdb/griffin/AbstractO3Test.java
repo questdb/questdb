@@ -95,7 +95,7 @@ public class AbstractO3Test {
             String table,
             CairoEngine engine
     ) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG, true);
+        TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
         TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
     }
 
@@ -116,19 +116,12 @@ public class AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        printSqlResult(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
-                "y where sym = 'googl' order by ts"
+                "y where sym = 'googl' order by ts",
+                "x where sym = 'googl'"
         );
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x where sym = 'googl'",
-                sink2
-        );
-        TestUtils.assertEquals(sink, sink2);
     }
 
     protected static void assertIndexResultAgainstFile(
@@ -213,41 +206,32 @@ public class AbstractO3Test {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
-        // expected outcome
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
-
         compiler.compile(o3InsertSQL, sqlExecutionContext);
 
-        TestUtils.printSql(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
-                "x",
-                sink2
+                "y order by ts",
+                "x"
         );
-
-        TestUtils.assertEquals(sink, sink2);
 
         engine.releaseAllReaders();
 
-        TestUtils.printSql(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
-                "x",
-                sink2
+                "y order by ts",
+                "x"
         );
-
-        TestUtils.assertEquals(sink, sink2);
 
         engine.releaseAllWriters();
 
-        TestUtils.printSql(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
-                "x",
-                sink2
+                "y order by ts",
+                "x"
         );
-
-        TestUtils.assertEquals(sink, sink2);
     }
 
     protected static void assertO3DataCursors(
@@ -266,17 +250,15 @@ public class AbstractO3Test {
             compiler.compile(referenceTableDDL, sqlExecutionContext);
         }
         compiler.compile(o3InsertSQL, sqlExecutionContext);
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
+        TestUtils.assertEquals(compiler, sqlExecutionContext, referenceSQL, assertSQL);
         engine.releaseAllReaders();
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
+        TestUtils.assertEquals(compiler, sqlExecutionContext, referenceSQL, assertSQL);
 
-        TestUtils.assertSqlCursors(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
                 "select count() from " + countReferenceSQL,
-                "select count() from " + countAssertSQL,
-                LOG,
-                false
+                "select count() from " + countAssertSQL
         );
     }
 
@@ -298,7 +280,7 @@ public class AbstractO3Test {
     }
 
     protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select count() from x", "select count() from y", LOG);
+        TestUtils.assertEquals(compiler, sqlExecutionContext, "select count() from x", "select count() from y");
         assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 

@@ -32,7 +32,9 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
 
@@ -88,14 +90,6 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    /**
-     * Default commit lag in microseconds for new tables. This value
-     * can be overridden with 'create table' statement.
-     *
-     * @return commit lag in microseconds
-     */
-    long getCommitLag();
-
     int getCommitMode();
 
     CharSequence getConfRoot(); // same as root/../conf
@@ -148,6 +142,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -166,9 +162,15 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    MicrosecondClock getMicrosecondClock();
+    int getMetadataPoolCapacity();
 
-    MillisecondClock getMillisecondClock();
+    default MicrosecondClock getMicrosecondClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    default MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
 
     long getMiscAppendPageSize();
 
@@ -183,6 +185,24 @@ public interface CairoConfiguration {
     int getO3ColumnMemorySize();
 
     int getO3CopyQueueCapacity();
+
+    default double getO3LagDecreaseFactor() {
+        return 0.5;
+    }
+
+    default double getO3LagIncreaseFactor() {
+        return 1.5;
+    }
+
+    /**
+     * Default commit lag in microseconds for new tables. This value
+     * can be overridden with 'create table' statement.
+     *
+     * @return upper bound of "commit lag" in micros
+     */
+    long getO3MaxLag();
+
+    long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
 
@@ -373,7 +393,15 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    boolean getWallEnabledDefault();
+    boolean getWalEnabledDefault();
+
+    long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
+
+    long getWalSegmentRolloverRowCount();
+
+    int getWalTxnNotificationQueueCapacity();
 
     int getWithClauseModelPoolCapacity();
 
@@ -409,4 +437,6 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isWalSupported();
 }

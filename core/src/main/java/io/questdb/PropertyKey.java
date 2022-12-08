@@ -132,6 +132,7 @@ public enum PropertyKey {
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
     CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
+    CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
@@ -148,6 +149,7 @@ public enum PropertyKey {
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
     CAIRO_MAX_UNCOMMITTED_ROWS("cairo.max.uncommitted.rows"),
     CAIRO_COMMIT_LAG("cairo.commit.lag"),
+    CAIRO_O3_MAX_LAG("cairo.o3.max.lag"),
     CAIRO_O3_QUICKSORT_ENABLED("cairo.o3.quicksort.enabled"),
     CAIRO_RND_MEMORY_PAGE_SIZE("cairo.rnd.memory.page.size"),
     CAIRO_RND_MEMORY_MAX_PAGES("cairo.rnd.memory.max.pages"),
@@ -173,6 +175,7 @@ public enum PropertyKey {
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
     HTTP_MIN_WORKER_SLEEP_THRESHOLD("http.min.worker.sleep.threshold"),
+    HTTP_MIN_WORKER_SLEEP_TIMEOUT("http.min.worker.sleep.timeout"),
     HTTP_MIN_BIND_TO("http.min.bind.to"),
     HTTP_MIN_NET_BIND_TO("http.min.net.bind.to"),
     HTTP_MIN_WORKER_HALT_ON_ERROR("http.min.worker.haltOnError"),
@@ -366,7 +369,19 @@ public enum PropertyKey {
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
-    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default");
+    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
+    CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
+    CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
+    WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
+    WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
+    WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
+    WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
+    WAL_APPLY_WORKER_SLEEP_TIMEOUT("wal.apply.worker.sleep.timeout"),
+    WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
+    CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
+    CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
+    CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
+    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

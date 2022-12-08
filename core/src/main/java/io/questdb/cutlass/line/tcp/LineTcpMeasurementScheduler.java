@@ -50,6 +50,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final LineTcpReceiverConfiguration configuration;
@@ -91,6 +92,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
             netIoJobs[i] = netIoJob;
             ioWorkerPool.assign(i, netIoJob);
+            ioWorkerPool.freeOnExit(netIoJob);
         }
 
         // Worker count is set to 1 because we do not use this execution context
@@ -107,6 +109,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
+        //noinspection unchecked
+        assignedTables = new ObjList[nWriterThreads];
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);
             pubSeq[i] = ps;
@@ -119,9 +123,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lineConfiguration.getTimestampAdapter(),
                             defaultColumnTypes,
                             lineConfiguration.isStringToCharCastAllowed(),
-                            lineConfiguration.isSymbolAsFieldSupported(),
                             lineConfiguration.getMaxFileNameLength(),
-                            lineConfiguration.getAutoCreateNewColumns()
+                            lineConfiguration.getAutoCreateNewColumns(),
+                            engine.getConfiguration().getDefaultSymbolCapacity(),
+                            engine.getConfiguration().getDefaultSymbolCacheFlag()
                     ),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
@@ -132,6 +137,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             SCSequence subSeq = new SCSequence();
             ps.then(subSeq).then(ps);
 
+            assignedTables[i] = new ObjList<>();
+
             final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
                     i,
                     q,
@@ -139,7 +146,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     milliClock,
                     commitIntervalDefault,
                     this,
-                    engine.getMetrics()
+                    engine.getMetrics(),
+                    assignedTables[i]
             );
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
@@ -152,27 +160,29 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void close() {
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            closeLocals(
-                    tableUpdateDetailsUtf16);
-            closeLocals(
-                    idleTableUpdateDetailsUtf16);
+            closeLocals(tableUpdateDetailsUtf16);
+            closeLocals(idleTableUpdateDetailsUtf16);
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
         Misc.free(path);
         Misc.free(ddlMem);
+        for (int i = 0, n = assignedTables.length; i < n; i++) {
+            Misc.freeObjList(assignedTables[i]);
+            assignedTables[i].clear();
+        }
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
     }
 
     public boolean doMaintenance(
-            CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final CharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tab = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (millis - tab.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
@@ -335,7 +345,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails
-                engine.getWriter(securityContext, tableNameUtf16, "tcpIlp"),
+                engine.getTableWriterAPI(securityContext, tableNameUtf16, "tcpIlp"),
                 threadId,
                 netIoJobs,
                 defaultColumnTypes

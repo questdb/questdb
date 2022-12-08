@@ -155,7 +155,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata(TABLE_NAME_COLUMN, 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata(TABLE_NAME_COLUMN, ColumnType.STRING));
         METADATA = metadata;
     }
 }

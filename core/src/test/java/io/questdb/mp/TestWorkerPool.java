@@ -40,7 +40,7 @@ public class TestWorkerPool extends WorkerPool {
         this("testing", workerCount, metrics);
     }
 
-    private TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
+    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
         super(new WorkerPoolConfiguration() {
             @Override
             public String getPoolName() {

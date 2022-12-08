@@ -67,19 +67,23 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void close(boolean truncate) {
+    public void close(boolean truncate, byte truncateMode) {
         if (pageAddress != 0) {
-            long appendOffset = getAppendOffset();
-            // what can we truncate to ?
-            long truncateSize = Files.ceilPageSize(appendOffset);
-            long sz = Math.min(size, truncateSize);
-            if (appendOffset < sz) {
-                Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+            final long truncateSize;
+            if (truncate) {
+                long appendOffset = getAppendOffset();
+                truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
+                long sz = Math.min(size, truncateSize);
+                if (appendOffset < sz) {
+                    Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+                }
+            } else {
+                truncateSize = -1L;
             }
             ff.munmap(pageAddress, size, memoryTag);
             this.pageAddress = 0;
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize);
+                Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);
             } finally {
                 fd = -1;
             }
@@ -134,6 +138,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
+        assert appendAddress <= lim;
     }
 
     @Override
@@ -181,6 +186,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public void skip(long bytes) {
         checkAndExtend(appendAddress + bytes);
         appendAddress += bytes;
+    }
+
+    @Override
+    public void switchTo(long fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
+        this.fd = fd;
+        map(ff, null, offset, memoryTag);
     }
 
     public void sync(boolean async) {

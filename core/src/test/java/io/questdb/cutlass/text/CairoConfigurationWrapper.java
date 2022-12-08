@@ -138,11 +138,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getCommitLag() {
-        return conf.getCommitLag();
-    }
-
-    @Override
     public int getCommitMode() {
         return conf.getCommitMode();
     }
@@ -263,6 +258,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return conf.getInactiveWalWriterTTL();
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return conf.getInactiveWriterTTL();
     }
@@ -308,6 +308,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMetadataPoolCapacity() {
+        return conf.getMetadataPoolCapacity();
+    }
+
+    @Override
     public MicrosecondClock getMicrosecondClock() {
         return conf.getMicrosecondClock();
     }
@@ -340,6 +345,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return conf.getO3CopyQueueCapacity();
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return conf.getO3MaxLag();
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return conf.getO3MinLag();
     }
 
     @Override
@@ -733,8 +748,28 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
-        return conf.getWallEnabledDefault();
+    public boolean getWalEnabledDefault() {
+        return conf.getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalPurgeInterval() {
+        return conf.getWalPurgeInterval();
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return conf.getWalRecreateDistressedSequencerAttempts();
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return conf.getWalSegmentRolloverRowCount();
+    }
+
+    @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return conf.getWalTxnNotificationQueueCapacity();
     }
 
     @Override
@@ -810,5 +845,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return conf.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isWalSupported() {
+        return conf.isWalSupported();
     }
 }

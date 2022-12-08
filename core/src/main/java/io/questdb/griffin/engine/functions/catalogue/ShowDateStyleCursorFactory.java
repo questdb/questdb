@@ -59,6 +59,6 @@ public class ShowDateStyleCursorFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("DateStyle", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("DateStyle", ColumnType.STRING));
     }
 }

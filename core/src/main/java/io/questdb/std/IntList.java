@@ -86,6 +86,10 @@ public class IntList implements Mutable, Sinkable {
         Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
 
+    public boolean contains(int value) {
+        return indexOf(value, 0, pos) > -1;
+    }
+
     public void ensureCapacity(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
@@ -121,7 +125,7 @@ public class IntList implements Mutable, Sinkable {
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
+     * Instead, the responsibility to check bounds is placed on application code,
      * which is often the case anyway, for example in indexed for() loop.
      *
      * @param index of the element
@@ -147,6 +151,11 @@ public class IntList implements Mutable, Sinkable {
 
     public void increment(int index) {
         buffer[index] = buffer[index] + 1;
+    }
+
+    public void increment(int index, int delta) {
+        assert delta > -1;
+        buffer[index] = buffer[index] + delta;
     }
 
     public int indexOf(int v, int low, int high) {
@@ -297,5 +306,4 @@ public class IntList implements Mutable, Sinkable {
         }
         return -(high + 1);
     }
-
 }

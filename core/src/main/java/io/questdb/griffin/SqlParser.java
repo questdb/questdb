@@ -34,11 +34,13 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public final class SqlParser {
-
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
+    private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
+    private static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -317,10 +319,6 @@ public final class SqlParser {
         return expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(name), 0, position);
     }
 
-    private ExpressionNode nextConstant(CharSequence value) {
-        return expressionNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
-    }
-
     private ExpressionNode nextLiteral(CharSequence token, int position) {
         return SqlUtil.nextLiteral(expressionNodePool, token, position);
     }
@@ -499,12 +497,9 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
-        long commitLag = configuration.getCommitLag();
+        long o3MaxLag = configuration.getO3MaxLag();
 
-        final int walNotSet = -1;
-        final int walDisabled = 0;
-        final int walEnabled = 1;
-        int walSetting = walNotSet;
+        int walSetting = WAL_NOT_SET;
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -522,12 +517,12 @@ public final class SqlParser {
                     if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
-                    walSetting = walEnabled;
+                    walSetting = WAL_ENABLED;
                     tok = optTok(lexer);
                 } else if (isBypassKeyword(tok)) {
                     tok = optTok(lexer);
                     if (tok != null && isWalKeyword(tok)) {
-                        walSetting = walDisabled;
+                        walSetting = WAL_DISABLED;
                         tok = optTok(lexer);
                     } else {
                         throw SqlException.position(
@@ -548,8 +543,8 @@ public final class SqlParser {
                             } catch (NumericException e) {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
-                        } else if (isCommitLagKeyword(expr.lhs.token)) {
-                            commitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                        } else if (isO3MaxLagKeyword(expr.lhs.token)) {
+                            o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
@@ -565,10 +560,10 @@ public final class SqlParser {
         }
 
         model.setMaxUncommittedRows(maxUncommittedRows);
-        model.setCommitLag(commitLag);
+        model.setO3MaxLag(o3MaxLag);
         final boolean isWalEnabled =
-                PartitionBy.isPartitioned(model.getPartitionBy()) && (
-                        (walSetting == walNotSet && configuration.getWallEnabledDefault()) || walSetting == walEnabled
+                configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
+                        (walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED
                 );
 
         model.setWalEnabled(isWalEnabled);
@@ -588,7 +583,7 @@ public final class SqlParser {
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
         for (int i = 0, n = columns.size(); i < n; i++) {
-            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
+            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
         }
 
         model.setQueryModel(queryModel);
@@ -662,7 +657,7 @@ public final class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
+            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
 
             CharSequence tok;
             if (ColumnType.isSymbol(type)) {
@@ -875,7 +870,7 @@ public final class SqlParser {
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
                 func.paramCount = 1;
-                func.rhs = nextConstant("1");
+                func.rhs = ONE;
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
@@ -1135,26 +1130,23 @@ public final class SqlParser {
 
                 if (isCalendarKeyword(tok)) {
                     tok = optTok(lexer);
-
-                    if (tok != null && !isSemicolon(tok)) {
-                        if (isTimeKeyword(tok)) {
-                            expectZone(lexer);
-                            model.setSampleByTimezoneName(expectExpr(lexer));
-                            tok = optTok(lexer);
-
-                            if (tok != null && isWithKeyword(tok)) {
-                                tok = parseWithOffset(lexer, model);
-                            } else {
-                                model.setSampleByOffset(nextConstant("'00:00'"));
-                            }
-                        } else if (isWithKeyword(tok)) {
+                    if (tok == null) {
+                        model.setSampleByTimezoneName(null);
+                        model.setSampleByOffset(ZERO_OFFSET);
+                    } else if (isTimeKeyword(tok)) {
+                        expectZone(lexer);
+                        model.setSampleByTimezoneName(expectExpr(lexer));
+                        tok = optTok(lexer);
+                        if (tok != null && isWithKeyword(tok)) {
                             tok = parseWithOffset(lexer, model);
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset' expected");
+                            model.setSampleByOffset(ZERO_OFFSET);
                         }
+                    } else if (isWithKeyword(tok)) {
+                        tok = parseWithOffset(lexer, model);
                     } else {
                         model.setSampleByTimezoneName(null);
-                        model.setSampleByOffset(nextConstant("'00:00'"));
+                        model.setSampleByOffset(ZERO_OFFSET);
                     }
                 } else if (isFirstKeyword(tok)) {
                     expectObservation(lexer);
@@ -1252,10 +1244,10 @@ public final class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
 
-            tok = tok(lexer, "into or commitLag");
-            if (SqlKeywords.isCommitLagKeyword(tok)) {
+            tok = tok(lexer, "into or o3MaxLag");
+            if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
-                model.setCommitLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                model.setO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "into");
             }
         }
@@ -1289,7 +1281,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
-        if (isSelectKeyword(tok) || isWithKeyword(tok)) {
+        if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());
@@ -1757,14 +1749,20 @@ public final class SqlParser {
     private ExecutionModel parseWith(GenericLexer lexer) throws SqlException {
         parseWithClauses(lexer, topLevelWithModel);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
-        if (!isUpdateKeyword(tok)) {
-            // SELECT
+        if (isSelectKeyword(tok)) {
             lexer.unparseLast();
             return parseDml(lexer, null, lexer.lastTokenPosition());
-        } else {
-            // UPDATE
+        }
+
+        if (isUpdateKeyword(tok)) {
             return parseUpdate(lexer);
         }
+
+        if (isInsertKeyword(tok)) {
+            return parseInsert(lexer);
+        }
+
+        throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
     private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {

@@ -41,14 +41,32 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
+@RunWith(Parameterized.class)
 public class UpdateTest extends AbstractGriffinTest {
+    private final boolean walEnabled;
+
+    public UpdateTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
 
     @Test
     public void testInsertAfterFailedUpdate() throws Exception {
@@ -70,7 +88,7 @@ public class UpdateTest extends AbstractGriffinTest {
                             " cast(x as int) x," +
                             " cast(x as int) z" +
                             " from long_sequence(5))" +
-                            " timestamp(ts) partition by DAY", sqlExecutionContext);
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = 1");
 
@@ -123,11 +141,36 @@ public class UpdateTest extends AbstractGriffinTest {
                             " cast(x as int) x," +
                             " cast(x as int) z" +
                             " from long_sequence(5))" +
-                            " timestamp(ts) partition by DAY",
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""),
                     sqlExecutionContext
             );
 
             executeUpdate("UPDATE up SET x = 1 WHERE x > 10");
+
+            assertSql("up", "ts\tv\tx\tz\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\t5\t5\n");
+        });
+    }
+
+    @Test
+    public void testNoRowsUpdated_TrivialNotEqualsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " cast(x as int) v," +
+                            " cast(x as int) x," +
+                            " cast(x as int) z" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""),
+                    sqlExecutionContext
+            );
+
+            executeUpdate("UPDATE up SET x = 1 WHERE 1 != 1");
 
             assertSql("up", "ts\tv\tx\tz\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
@@ -145,7 +188,15 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)" +
-                    "), index(symCol) timestamp(ts)", sqlExecutionContext);
+                    "), index(symCol) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
+            assertSql("up",
+                    "symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n"
+            );
 
             CompiledQuery cq = compiler.compile("up where symCol = 'WCP'", sqlExecutionContext);
             try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
@@ -188,7 +239,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 60*60*1000000L) ts," +
                     " x" +
                     " from long_sequence(5)" +
-                    "), index(symCol) timestamp(ts) Partition by hour", sqlExecutionContext);
+                    "), index(symCol) timestamp(ts) Partition by hour" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             CompiledQuery cq = compiler.compile("up where symCol = 'WCP'", sqlExecutionContext);
             try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
@@ -219,7 +270,7 @@ public class UpdateTest extends AbstractGriffinTest {
                             "timestamp_sequence(0, 2*60*1000000L) ts," +
                             " x" +
                             " from long_sequence(75)" +
-                            ") timestamp(ts) Partition by hour", sqlExecutionContext);
+                            ") timestamp(ts) Partition by hour" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Add indexed column in last partition
             compile("alter table symInd add column sym_index symbol index");
@@ -293,6 +344,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testSymbolsRolledBackOnFailedUpdate() throws Exception {
+        //this test makes sense for non-WAL tables only, WAL tables behave differently
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
@@ -316,10 +370,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 try {
                     CompiledQuery cq = compiler.compile("UPDATE up SET s1 = '11', s2 = '22'", sqlExecutionContext);
                     Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-                    try (
-                            UpdateOperation op = cq.getUpdateOperation();
-                            OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-                    ) {
+                    try (OperationFuture fut = cq.execute(eventSubSequence)) {
                         writer.tick();
                         fut.await();
                     }
@@ -360,6 +411,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdate2ColumnsWith2TableJoinInWithClause() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             createTablesToJoin("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -391,7 +445,7 @@ public class UpdateTest extends AbstractGriffinTest {
                             " (select timestamp_sequence(0, 6*60*60*1000000L) ts," +
                             " cast(x - 1 as int) x" +
                             " from long_sequence(10))" +
-                            " timestamp(ts) partition by DAY",
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""),
                     sqlExecutionContext
             );
 
@@ -446,6 +500,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateAsyncMode() throws Exception {
+        //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
+        Assume.assumeFalse(walEnabled);
+
         testUpdateAsyncMode(tableWriter -> {
                 }, null,
                 "ts\tx\n" +
@@ -458,6 +515,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateAsyncModeAddColumnInMiddle() throws Exception {
+        //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
+        Assume.assumeFalse(walEnabled);
+
         testUpdateAsyncMode(tableWriter -> tableWriter.addColumn("newCol", ColumnType.INT), "cached query plan cannot be used because table schema has changed [table='up']",
                 "ts\tx\tnewCol\n" +
                         "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
@@ -469,6 +529,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateAsyncModeFailed() throws Exception {
+        //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
+        Assume.assumeFalse(walEnabled);
+
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
             @Override
             public Rnd getAsyncRandom() {
@@ -495,6 +558,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateAsyncModeRemoveColumnInMiddle() throws Exception {
+        //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
+        Assume.assumeFalse(walEnabled);
+
         testUpdateAsyncMode(tableWriter -> tableWriter.removeColumn("x"), "cached query plan cannot be used because table schema has changed [table='up']",
                 "ts\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
@@ -513,7 +579,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET bin1 = cast(null as binary) WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
@@ -543,7 +609,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             compile("alter table up add column bin2 binary", sqlExecutionContext);
             compile("insert into up select * from " +
@@ -586,7 +652,7 @@ public class UpdateTest extends AbstractGriffinTest {
                             " cast(x as int) xint," +
                             " cast(x as boolean) xbool" +
                             " from long_sequence(5))" +
-                            " timestamp(ts) partition by DAY",
+                            " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""),
                     sqlExecutionContext
             );
 
@@ -615,7 +681,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
@@ -630,6 +696,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateColumnsTypeMismatch() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             createTablesToJoin("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -665,7 +734,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as boolean) xbool," +
                     " cast(x as long256) xl256" +
                     " from long_sequence(2))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // All combinations to update xint
             executeUpdateFails("UPDATE up SET xint = xdouble", 21, "inconvertible types: DOUBLE -> INT [from=, to=xint]");
@@ -757,20 +826,23 @@ public class UpdateTest extends AbstractGriffinTest {
             executeUpdate("UPDATE up SET xint=xshort, xfloat=xint, xdouble=xfloat, xshort=xbyte, xlong=xts, xts=xlong");
             assertSql("up", expected);
 
-            // Update without conversion
-            executeUpdate("UPDATE up" +
-                    " SET xint=up2.xint," +
-                    " xfloat=up2.xfloat," +
-                    " xdouble=up2.xdouble," +
-                    " xshort=up2.xshort," +
-                    " xlong=up2.xlong," +
-                    " xts=up2.xts, " +
-                    " xchar=up2.xchar, " +
-                    " xbool=up2.xbool, " +
-                    " xbyte=up2.xbyte " +
-                    " FROM up up2 " +
-                    " WHERE up.ts = up2.ts AND up.ts = '1970-01-01'");
-            assertSql("up", expected);
+            //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+            if (!walEnabled) {
+                // Update without conversion
+                executeUpdate("UPDATE up" +
+                        " SET xint=up2.xint," +
+                        " xfloat=up2.xfloat," +
+                        " xdouble=up2.xdouble," +
+                        " xshort=up2.xshort," +
+                        " xlong=up2.xlong," +
+                        " xts=up2.xts, " +
+                        " xchar=up2.xchar, " +
+                        " xbool=up2.xbool, " +
+                        " xbyte=up2.xbyte " +
+                        " FROM up up2 " +
+                        " WHERE up.ts = up2.ts AND up.ts = '1970-01-01'");
+                assertSql("up", expected);
+            }
         });
     }
 
@@ -784,7 +856,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " rnd_geohash(25) g5c," +
                     " rnd_geohash(35) g7c" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up " +
                     "SET " +
@@ -813,7 +885,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " rnd_geohash(25) g5c," +
                     " rnd_geohash(35) g7c" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up " +
                     "SET " +
@@ -841,7 +913,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             compile("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
             compile("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
@@ -886,7 +958,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " rnd_geohash(15) as geo3," +
                     " rnd_geohash(25) as geo5 " +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
@@ -906,7 +978,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = x WHERE x > 1 and x < 4");
 
@@ -926,9 +998,9 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 25000000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
-            compile("alter table up add column y long", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
+            compile("alter table up add column y long", sqlExecutionContext);
             executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
             assertSql("up", "ts\tx\ty\n" +
@@ -988,7 +1060,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 25000000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
             compile("alter table up add column y long", sqlExecutionContext);
@@ -1058,7 +1130,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = 1");
 
@@ -1073,14 +1145,19 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateNoFilterOnAlteredTable() throws Exception {
+        //this test makes sense for non-WAL tables only, WAL tables behave differently
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(1))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n");
 
-            CompiledQuery cc = compiler.compile("UPDATE up SET x = 1", sqlExecutionContext);
+            CompiledQuery cc = compiler.compile("UPDATE up SET x = 2", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
             try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
@@ -1098,6 +1175,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateNonPartitionedTable() throws Exception {
+        //this test makes sense for non-WAL tables only, WAL table has to be partitioned
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1106,10 +1186,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts)", sqlExecutionContext);
 
             CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(3, fut.getAffectedRowsCount());
             }
@@ -1130,16 +1207,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(1))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
             compile("alter table up add column y long", sqlExecutionContext);
             compile("alter table up drop column y", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET x = 1");
+            executeUpdate("UPDATE up SET x = 44");
 
             assertSql("up", "ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\n");
+                    "1970-01-01T00:00:00.000000Z\t44\n");
         });
     }
 
@@ -1150,16 +1227,13 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
 
             try {
                 CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                try (
-                        UpdateOperation op = cq.getUpdateOperation();
-                        OperationFuture fut = cq.getDispatcher().execute(op, roExecutionContext, null)
-                ) {
+                try (OperationFuture fut = cq.execute(null)) {
                     fut.await();
                     Assert.fail();
                 }
@@ -1176,7 +1250,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x - 1 as int) x" +
                     " from long_sequence(10))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
             compile("alter table up add column y long", sqlExecutionContext);
@@ -1214,7 +1288,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x - 1 as int) x" +
                     " from long_sequence(10))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
             compile("alter table up add column y long", sqlExecutionContext);
@@ -1252,7 +1326,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 100000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
             compile("alter table up add column y long", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
@@ -1278,7 +1352,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x - 1 as int) x" +
                     " from long_sequence(10))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             // Bump table version
             compile("alter table up add column y long", sqlExecutionContext);
@@ -1318,7 +1392,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET str1 = concat('questdb', str1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
@@ -1345,7 +1419,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
@@ -1372,7 +1446,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(100000)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
             assertSql("select count() from up where str1 = 'questdb'", "count\n" +
@@ -1391,7 +1465,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             compile("alter table up add column str2 string", sqlExecutionContext);
 
@@ -1437,7 +1511,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " x as lng2" +
                     " from long_sequence(10)" +
                     " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             compile("alter table up add column str2 string", sqlExecutionContext);
             compile("insert into up select * from " +
@@ -1475,13 +1549,16 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
-                    " timestamp(ts)", sqlExecutionContext);
+                    " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
 
             CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(2, fut.getAffectedRowsCount());
             }
@@ -1501,7 +1578,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE \"віт ер\" SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
@@ -1516,6 +1593,10 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateTableWithoutDesignatedTimestamp() throws Exception {
+        //this test makes sense for non-WAL tables only, WAL table has to be partitioned
+        // and table cannot be partitioned without designated timestamp
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1540,7 +1621,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdateFails("UPDATE up SET ts = 1", 14, "Designated timestamp column cannot be updated");
         });
@@ -1553,7 +1634,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET ts1 = '1970-02-01' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
@@ -1574,7 +1655,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000) ts1, " +
                     " cast(to_str(timestamp_sequence(1000000, 1000000), 'yyyy-MM-ddTHH:mm:ss.SSSz') as symbol) as sym" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET ts1 = sym WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
@@ -1594,7 +1675,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(2))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             sqlExecutionContext.getBindVariableService().setInt(0, 100);
             executeUpdate("UPDATE up SET x = $1 WHERE x > 1 and x < 4");
@@ -1612,7 +1693,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
@@ -1632,7 +1713,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
-                    " timestamp(ts)", sqlExecutionContext);
+                    " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             assertSql("up", "symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -1660,8 +1741,10 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWith2TableJoinInWithClause() throws Exception {
-        assertMemoryLeak(() -> {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
 
+        assertMemoryLeak(() -> {
             createTablesToJoin("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " rnd_symbol('a', 'b', 'c', null) s," +
@@ -1690,7 +1773,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(2))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             sqlExecutionContext.getBindVariableService().setInt(0, 2);
             executeUpdate("UPDATE up SET x = 100 WHERE x < $1");
@@ -1709,7 +1792,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x," +
                     " x as y" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET y = 10L * x WHERE x > 1 and x < 4");
 
@@ -1730,7 +1813,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x," +
                     " x as y" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
 
             executeUpdate("UPDATE up SET y = 10 * x WHERE x > 1 and x < 4");
 
@@ -1745,6 +1828,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWithFullCrossJoin() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1773,6 +1859,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWithJoin() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1801,6 +1890,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWithJoinAndPostJoinFilter() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1829,6 +1921,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWithJoinNoVirtual() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1857,6 +1952,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWithJoinNotEquals() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
@@ -1890,7 +1988,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
-                    " timestamp(ts)", sqlExecutionContext);
+                    " timestamp(ts)" + (walEnabled ? "partition by DAY WAL" : ""), sqlExecutionContext);
 
             assertSql("up", "symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -1923,7 +2021,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
-                    " timestamp(ts)", sqlExecutionContext);
+                    " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             assertSql("up", "symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -1943,7 +2041,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
-                    " timestamp(ts)", sqlExecutionContext);
+                    " timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             assertSql("up", "symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -1971,6 +2069,9 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateWithSymbolJoin() throws Exception {
+        //this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
@@ -1999,10 +2100,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "\t1970-01-01T00:00:04.000000Z\t5\n");
 
             CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(1, fut.getAffectedRowsCount());
             }
@@ -2015,7 +2113,8 @@ public class UpdateTest extends AbstractGriffinTest {
         });
     }
 
-    private void applyUpdate(UpdateOperation updateOperation) throws SqlException {
+    private void applyUpdate(UpdateOperation updateOperation) {
+        updateOperation.withContext(sqlExecutionContext);
         try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableName(), "UPDATE")) {
             updateOperation.apply(tableWriter, false);
         }
@@ -2024,7 +2123,7 @@ public class UpdateTest extends AbstractGriffinTest {
     private void createTablesToJoin(String createTableSql) throws SqlException {
         compiler.compile(createTableSql, sqlExecutionContext);
 
-        compiler.compile("create table down1 (s symbol index, y int)", sqlExecutionContext);
+        compiler.compile("create table down1 (s symbol index, y int)" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
         executeInsert("insert into down1 values ('a', 1)");
         executeInsert("insert into down1 values ('a', 2)");
         executeInsert("insert into down1 values ('b', 3)");
@@ -2032,7 +2131,7 @@ public class UpdateTest extends AbstractGriffinTest {
         executeInsert("insert into down1 values (null, 5)");
         executeInsert("insert into down1 values (null, 6)");
 
-        compiler.compile("create table  down2 (s symbol index, y long)", sqlExecutionContext);
+        compiler.compile("create table  down2 (s symbol index, y long)" + (walEnabled ? " WAL" : ""), sqlExecutionContext);
         executeInsert("insert into down2 values ('a', 100)");
         executeInsert("insert into down2 values ('b', 300)");
         executeInsert("insert into down2 values (null, 500)");
@@ -2048,7 +2147,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        executeOperation(query, CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation);
+        executeOperation(query, CompiledQuery.UPDATE);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {
@@ -2062,6 +2161,9 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void testInsertAfterFailed(boolean closeWriter) throws Exception {
+        //this test makes sense for non-WAL tables only, WAL tables behave differently
+        Assume.assumeFalse(walEnabled);
+
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
@@ -2119,7 +2221,8 @@ public class UpdateTest extends AbstractGriffinTest {
             compiler.compile("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
-                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
+                    (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             executeUpdate("update up set symCol = 'VTJ' where symCol = 'WCP'");
             assertSql("up", "symCol\tts\tx\n" +
@@ -2150,7 +2253,8 @@ public class UpdateTest extends AbstractGriffinTest {
             compiler.compile("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
-                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
+                    (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
             assertSql("up", "symCol\tts\tx\n" +
@@ -2181,7 +2285,8 @@ public class UpdateTest extends AbstractGriffinTest {
             compiler.compile("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
-                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
+                    (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             executeUpdate("update up set symCol = 'ABC' where symCol is null");
             assertSql("up", "symCol\tts\tx\n" +
@@ -2202,7 +2307,8 @@ public class UpdateTest extends AbstractGriffinTest {
             compiler.compile("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
-                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
+                    (walEnabled ? " partition by DAY WAL" : ""), sqlExecutionContext);
 
             executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
             assertSql("up", "symCol\tts\tx\n" +
@@ -2256,10 +2362,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             barrier.await(); // table is locked
             CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
                 Assert.assertEquals(0, fut.getAffectedRowsCount());
                 barrier.await(); // update is on writer async cmd queue
@@ -2282,5 +2385,13 @@ public class UpdateTest extends AbstractGriffinTest {
 
             assertSql("up", expectedData);
         });
+    }
+
+    @Override
+    protected void assertSql(CharSequence sql, CharSequence expected) throws SqlException {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+        super.assertSql(sql, expected);
     }
 }

@@ -36,12 +36,12 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
+    private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private final CairoConfiguration cairoConfiguration;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
-    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private CharSequence tableName;
     private int timestampIndex = -1;
 
@@ -55,11 +55,6 @@ class TableStructureAdapter implements TableStructure {
     public int getColumnCount() {
         final int size = entities.size();
         return timestampIndex == -1 ? size + 1 : size;
-    }
-
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return cairoConfiguration.getRandom().nextLong();
     }
 
     @Override
@@ -84,11 +79,6 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getCommitLag() {
-        return cairoConfiguration.getCommitLag();
-    }
-
-    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
     }
@@ -96,6 +86,11 @@ class TableStructureAdapter implements TableStructure {
     @Override
     public int getMaxUncommittedRows() {
         return cairoConfiguration.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return cairoConfiguration.getO3MaxLag();
     }
 
     @Override
@@ -134,14 +129,15 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isWallEnabled() {
-        return cairoConfiguration.getWallEnabledDefault();
+    public boolean isWalEnabled() {
+        return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
         entityNamesUtf16.clear();
         entities.clear();
+        timestampIndex = -1;
         final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);

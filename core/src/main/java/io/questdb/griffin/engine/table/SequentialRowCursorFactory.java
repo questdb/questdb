@@ -42,17 +42,19 @@ import io.questdb.std.ObjList;
 public class SequentialRowCursorFactory implements RowCursorFactory {
     private final SequentialRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
+    private final int[] cursorFactoriesIdx;
     private final ObjList<RowCursor> cursors;
 
-    public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories) {
+    public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
         this.cursor = new SequentialRowCursor();
+        this.cursorFactoriesIdx = cursorFactoriesIdx;
     }
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+        for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
         }
         cursor.init();
@@ -88,7 +90,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
                 return true;
             }
 
-            while (cursorIndex < cursorFactories.size() - 1) {
+            while (cursorIndex < cursorFactoriesIdx[0] - 1) {
                 currentCursor = cursors.getQuick(++cursorIndex);
                 if (currentCursor.hasNext()) {
                     return true;
@@ -105,7 +107,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
         private void init() {
             this.cursorIndex = 0;
-            if (cursorIndex < cursorFactories.size()) {
+            if (cursorIndex < cursorFactoriesIdx[0]) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }
         }

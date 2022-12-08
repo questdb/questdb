@@ -46,7 +46,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final MicrosecondClock clock;
     private final int sharedWorkerCount;
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final IntStack timestampRequiredStack = new IntStack();
@@ -54,13 +53,17 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
+    private boolean columnPreTouchEnabled = true;
     private int jitMode;
     private long now;
+    private final MicrosecondClock nowClock = () -> now;
     private Rnd random;
     private long requestFd = -1;
     private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private Sequence telemetryPubSeq;
+    private boolean walApplication;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
@@ -78,6 +81,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
+        walApplication = false;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -142,6 +146,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getMicrosecondTimestamp() {
+        return clock.getTicks();
+    }
+
+    @Override
     public long getNow() {
         return now;
     }
@@ -173,12 +182,22 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
+        now = clock.getTicks();
+    }
+
+    @Override
+    public boolean isColumnPreTouchEnabled() {
+        return columnPreTouchEnabled;
     }
 
     @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+    }
+
+    @Override
+    public boolean isWalApplication() {
+        return walApplication;
     }
 
     @Override
@@ -197,8 +216,19 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+        this.columnPreTouchEnabled = columnPreTouchEnabled;
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setNowAndFixClock(long now) {
+        this.now = now;
+        clock = nowClock;
     }
 
     @Override
@@ -219,14 +249,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        walApplication = false;
         return this;
     }
 
-    public SqlExecutionContextImpl with(
-            long requestFd
-    ) {
+    public void with(long requestFd) {
         this.requestFd = requestFd;
-        return this;
     }
 
     public SqlExecutionContextImpl with(
@@ -241,6 +269,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        walApplication = false;
+        return this;
+    }
+
+    public SqlExecutionContext withWalApplication() {
+        walApplication = true;
         return this;
     }
 

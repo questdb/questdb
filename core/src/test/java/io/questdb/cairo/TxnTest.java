@@ -129,7 +129,7 @@ public class TxnTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             String tableName = "testTxReadWriteConcurrent";
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -166,7 +166,7 @@ public class TxnTest extends AbstractCairoTest {
                     partitionCountCheck,
                     truncateIteration
             );
-            Rnd readerRnd = TestUtils.generateRandom();
+            Rnd readerRnd = TestUtils.generateRandom(LOG);
 
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
@@ -236,7 +236,7 @@ public class TxnTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             String tableName = "testTxReadWriteConcurrent";
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -273,7 +273,7 @@ public class TxnTest extends AbstractCairoTest {
                     Integer.MAX_VALUE
             );
 
-            Rnd readerRnd = TestUtils.generateRandom();
+            Rnd readerRnd = TestUtils.generateRandom(LOG);
 
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
@@ -298,7 +298,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.txn,
-                                            txReader.structureVersion,
+                                            txReader.structureVersion.get(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );
@@ -312,7 +312,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.txn,
-                                            txReader.structureVersion,
+                                            txReader.structureVersion.get(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );

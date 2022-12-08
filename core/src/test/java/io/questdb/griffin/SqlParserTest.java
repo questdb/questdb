@@ -1979,14 +1979,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableWitInvalidCommitLag() throws Exception {
-        assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH commitLag=asif,",
-                90,
-                "invalid interval qualifier asif");
-    }
-
-    @Test
     public void testCreateTableWitInvalidMaxUncommittedRows() throws Exception {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
@@ -1995,17 +1987,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableWitInvalidO3MaxLag() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
+                89,
+                "invalid interval qualifier asif");
+    }
+
+    @Test
     public void testCreateTableWithGeoHash1() throws Exception {
         assertCreateTable(
                 "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
     }
 
     @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
                 "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
     }
 
     @Test
@@ -2054,7 +2054,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithInvalidParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x commitLag=250ms",
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
                 "unexpected token: x");
     }
@@ -2063,22 +2063,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
     }
 
     @Test
     public void testCreateTableWithPartialParameter1() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=",
-                106,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=",
+                105,
                 "too few arguments for '=' [found=1,expected=2]");
     }
 
     @Test
     public void testCreateTableWithPartialParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag",
-                106,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag",
+                105,
                 "expected parameter after WITH");
     }
 
@@ -2159,7 +2159,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose c.customerId customerId, c.name name, c.age age, c1.customerId customerId1, c1.name name1, c1.age age1 from (select [customerId, name, age] from (select-choose [customerId, name, age] customerId, name, age from (select [customerId, name, age] from customers where name ~ 'X')) c cross join select [customerId, name, age] from (select-choose [customerId, name, age] customerId, name, age from (select [customerId, name, age] from customers where name ~ 'X' and age = 30)) c1) c limit 10",
                 "with" +
                         " cust as (customers where name ~ 'X')" +
-                        " cust c cross join cust c1 where c1.age = 30 " +
+                        " select * from cust c cross join cust c1 where c1.age = 30 " +
                         " limit 10",
                 modelOf("customers")
                         .col("customerId", ColumnType.INT)
@@ -3045,7 +3045,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInsertAsSelectBatchSizeAndLag() throws SqlException {
         assertModel(
                 "insert batch 10000 lag 100000 into x select-choose c, d from (select [c, d] from y)",
-                "insert batch 10000 commitLag 100ms into x select * from y",
+                "insert batch 10000 o3MaxLag 100ms into x select * from y",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -3112,8 +3112,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInsertAsSelectNegativeLag() throws Exception {
         assertSyntaxError(
-                "insert batch 2 commitLag -4s into x select * from y",
-                26, "invalid interval qualifier -",
+                "insert batch 2 o3MaxLag -4s into x select * from y",
+                25, "invalid interval qualifier -",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
@@ -4057,7 +4057,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
                         "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
                         "\n" +
-                        "(select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                        "select * from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
                 modelOf("telemetry_users")
                         .col("id", ColumnType.LONG256)
                         .col("created", ColumnType.TIMESTAMP)
@@ -4110,7 +4110,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinWith() throws SqlException {
         assertQuery(
                 "select-choose x.y y, x1.y y1, x2.y y2 from (select [y] from (select-choose [y] y from (select [y] from tab)) x cross join select [y] from (select-choose [y] y from (select [y] from tab)) x1 cross join select [y] from (select-choose [y] y from (select [y] from tab)) x2) x",
-                "with x as (select * from tab) x cross join x x1 cross join x x2",
+                "with x as (select * from tab) select * from x cross join x x1 cross join x x2",
                 modelOf("tab").col("y", ColumnType.INT)
         );
     }
@@ -4122,7 +4122,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
-                        " cust outer join ord on (customerId) " +
+                        " select * from cust outer join ord on (customerId) " +
                         " where ord.customerId != null" +
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
@@ -4137,7 +4137,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
-                        " cust c outer join ord o on (customerId) " +
+                        " select * from cust c outer join ord o on (customerId) " +
                         " where o.customerId != null" +
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
@@ -4716,7 +4716,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " join suppliers on products.supplier = suppliers.supplier" +
                         " join products on d.productId = products.productId and orders.orderId = products.productId" +
                         " where orders.orderId = suppliers.supplier)" +
-                        " x cross join y",
+                        " select * from x cross join y",
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
@@ -7482,6 +7482,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWithFollowedByInvalidToken() throws Exception {
+        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
+    }
+
+    @Test
     public void testWithRecursive() throws SqlException {
         assertQuery(
                 "select-choose a from (select-choose [a] a from (select-choose [a] a from (select [a] from tab)) x) y",
@@ -7509,7 +7514,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a from (select-choose [a] a from (select [a] from tab)) x",
                 "with x as (" +
                         " select a from tab" +
-                        ") x",
+                        ") select * from x",
                 modelOf("tab").col("a", ColumnType.INT)
         );
     }

@@ -41,7 +41,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -95,7 +94,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 preTouchColumnTypes.add(columnType);
             }
         }
-        this.filterAtom = new AsyncJitFilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions, preTouchColumnTypes);
+        this.filterAtom = new AsyncJitFilterAtom(
+                configuration,
+                filter,
+                perWorkerFilters,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                preTouchColumnTypes
+        );
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -105,7 +112,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
 
@@ -264,6 +271,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final CompiledFilter compiledFilter;
 
         public AsyncJitFilterAtom(
+                CairoConfiguration configuration,
                 Function filter,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
@@ -271,7 +279,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 ObjList<Function> bindVarFunctions,
                 @Nullable IntList preTouchColumnTypes
         ) {
-            super(filter, perWorkerFilters, preTouchColumnTypes);
+            super(configuration, filter, perWorkerFilters, preTouchColumnTypes);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;

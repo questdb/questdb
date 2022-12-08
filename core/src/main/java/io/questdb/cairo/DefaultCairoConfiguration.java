@@ -32,11 +32,8 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
@@ -153,11 +150,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return getColumnPurgeQueueCapacity();
-    }
-
-    @Override
-    public long getCommitLag() {
-        return 0;
     }
 
     @Override
@@ -281,6 +273,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return 60_000;
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return -10000;
     }
@@ -326,13 +323,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return MicrosecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public MillisecondClock getMillisecondClock() {
-        return MillisecondClockImpl.INSTANCE;
+    public int getMetadataPoolCapacity() {
+        return getSqlModelPoolCapacity();
     }
 
     @Override
@@ -358,6 +350,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        // 5 min
+        return 300_000_000L;
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return 1_000_000;
     }
 
     @Override
@@ -482,7 +485,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAnalyticStorePageSize() {
-        return 4 * 1024;
+        return 1024 * 1024;
     }
 
     @Override
@@ -753,8 +756,28 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
+    public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public long getWalPurgeInterval() {
+        return 30_000;
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return 200000;
+    }
+
+    @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return 4096;
     }
 
     @Override
@@ -834,5 +857,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isWalSupported() {
+        return false;
     }
 }

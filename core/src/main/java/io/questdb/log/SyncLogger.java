@@ -35,7 +35,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.File;
 
-public class SyncLogger implements LogRecord, Log {
+public final class SyncLogger implements LogRecord, Log {
     private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
@@ -114,8 +114,8 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(long x) {
-        sink().put(x);
+    public LogRecord $(long l) {
+        sink().put(l);
         return this;
     }
 
@@ -238,11 +238,6 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public Sequence getCriticalSequence() {
-        return criticalSeq;
-    }
-
-    @Override
     public LogRecord info() {
         return addTimestamp(xinfo(), LogLevel.INFO_HEADER);
     }
@@ -286,19 +281,19 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     public LogRecord xAdvisoryW() {
-        return next(infoSeq, infoRing, LogLevel.ADVISORY);
+        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
     }
 
     public LogRecord xCriticalW() {
-        return next(infoSeq, infoRing, LogLevel.CRITICAL);
+        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
     public LogRecord xDebugW() {
-        return next(infoSeq, infoRing, LogLevel.DEBUG);
+        return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
     public LogRecord xErrorW() {
-        return next(infoSeq, infoRing, LogLevel.ERROR);
+        return next(errorSeq, errorRing, LogLevel.ERROR);
     }
 
     /**
@@ -337,11 +332,9 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
-
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }
-
         return this;
     }
 

@@ -83,8 +83,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs); // because it does not exist
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains("[26] could not remove partition '2023-10-15'", ex.getFlyweightMessage());
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition [table=testCannotDropActivePartitionWhenO3HasARowFromTheFuture, partitionTimestamp=2023-10-15");
                     }
 
                     assertTableX(tableName, TableHeader +
@@ -128,7 +128,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropPartition(tableName, LastPartitionTs);
                         Assert.fail();
                     } catch (EntryUnavailableException ex) {
-                        TestUtils.assertContains("[-1] table busy [reason=testing]", ex.getFlyweightMessage());
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "table busy [reason=testing]");
                         Misc.free(workerPool);
                     }
                 }
@@ -208,7 +208,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
         FilesFacade myFf = new FilesFacadeImpl() {
             @Override
-            public long readULong(long fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return 17;
             }
         };
@@ -227,8 +227,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
-                    } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. invalid timestamp column data in detached partition");
+                    } catch (CairoException | SqlException ex) { // the latter is due to an assertion in SqlException.position
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp column data in detached partition");
                         TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         Misc.free(workerPool);
                     }
@@ -241,7 +241,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
         FilesFacade myFf = new FilesFacadeImpl() {
             @Override
-            public long readULong(long fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return -1L;
             }
         };
@@ -260,8 +260,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
-                    } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. cannot read min, max timestamp from the column");
+                    } catch (CairoException | SqlException ex) { // the latter is due to an assertion in SqlException.position
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read min, max timestamp from the column");
                         Misc.free(workerPool);
                     }
                 }
@@ -598,12 +598,16 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropAllPartitionsButThereAreNoPartitions() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(() -> {
                     final String tableName = testName.getMethodName();
-                    createTableX(tableName, TableHeader); // empty table
-                    Assert.assertEquals(ALTER,
-                            compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
-                    assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
+                    createTableX(tableName, TableHeader);
+                    try {
+                        compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
+                    } catch (SqlException e) {
+                        Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "no partitions matched WHERE clause");
+                    }
+                    Misc.free(workerPool);
                 }
         );
     }
@@ -747,6 +751,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
             CairoTestUtils.create(model);
         }
         txn = 0;
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = insertStmt.length; i < n; i++) {
             insert(insertStmt[i]);
         }
@@ -759,6 +764,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         workerPool.start(); // closed by assertTableX
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void detachPartition(String tableName, String partitionName) throws SqlException {
         Assert.assertEquals(ALTER,
                 compile("alter table " + tableName + " detach partition list '" + partitionName + "'", sqlExecutionContext).getType());

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
@@ -52,12 +51,12 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long frameRowIndex;
     private PageFrameSequence<?> frameSequence;
     private boolean isOpen;
-    // the OG rows remaining, used to reset the counter when re-running cursor from top();
+    // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
     private PageAddressCacheRecord recordB;
     private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
-    // It is typically copied from LIMIT clause on SQL statement
+    // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
@@ -73,6 +72,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     .$("closing [shard=").$(frameSequence.getShard())
                     .$(", frameIndex=").$(frameIndex)
                     .$(", frameCount=").$(frameLimit)
+                    .$(", frameId=").$(frameSequence.getId())
                     .$(", cursor=").$(cursor)
                     .I$();
 
@@ -113,24 +113,29 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        // check for the first hasNext call
+        // Check for the first hasNext call.
         if (frameIndex == -1 && frameLimit > -1) {
             fetchNextFrame();
         }
 
-        // we have rows in the current frame we still need to dispatch
+        // Check for already reached row limit.
+        if (rowsRemaining < 0) {
+            return false;
+        }
+
+        // We have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             record.setRowIndex(rows.get(rowIndex()));
             frameRowIndex++;
             return checkLimit();
         }
 
-        // Release previous queue item.
+        // Release the previous queue item.
         // There is no identity check here because this check
-        // had been done when 'cursor' was assigned
+        // had been done when 'cursor' was assigned.
         collectCursor(false);
 
-        // do we have more frames?
+        // Do we have more frames?
         if (frameIndex < frameLimit) {
             fetchNextFrame();
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
@@ -164,10 +169,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        // check if we at the top already and there is nothing to do
+        // Check if we at the top already and there is nothing to do.
         if (frameIndex == 0 && frameRowIndex == 0) {
             return;
         }
+        collectCursor(false);
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
@@ -205,6 +211,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$("collected [shard=").$(frameSequence.getShard())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", frameId=").$(frameSequence.getId())
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
@@ -217,7 +224,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                         record.setFrameIndex(task.getFrameIndex());
                         break;
                     } else {
-                        this.frameRowCount = 0; // force reset frame size if frameSequence was canceled or failed
+                        // Force reset frame size if frameSequence was canceled or failed.
+                        this.frameRowCount = 0;
                         collectCursor(false);
                     }
                 } else {
@@ -234,7 +242,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
-    void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
+    void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
         this.frameIndex = -1;

@@ -59,6 +59,6 @@ public class ShowStandardConformingStringsCursorFactory extends AbstractRecordCu
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("standard_conforming_strings", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("standard_conforming_strings", ColumnType.STRING));
     }
 }

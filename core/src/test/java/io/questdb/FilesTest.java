@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -495,9 +496,9 @@ public class FilesTest {
                     // Check read call works
                     // Check written data
                     Assert.assertEquals(size2Gb, Files.read(fd1, mem, size2Gb, 0));
-                    long long1 = Files.readULong(fd1, 0L);
+                    long long1 = Files.readNonNegativeLong(fd1, 0L);
                     Assert.assertEquals(testValue, long1);
-                    long long2 = Files.readULong(fd1, size2Gb - 8);
+                    long long2 = Files.readNonNegativeLong(fd1, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -558,9 +559,9 @@ public class FilesTest {
                     MatcherAssert.assertThat(result, greaterThanOrEqualTo(0));
 
                     fd2 = Files.openRO(path2.$());
-                    long long1 = Files.readULong(fd2, 0L);
+                    long long1 = Files.readNonNegativeLong(fd2, 0L);
                     Assert.assertEquals(testValue, long1);
-                    long long2 = Files.readULong(fd2, size2Gb - 8);
+                    long long2 = Files.readNonNegativeLong(fd2, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -580,6 +581,66 @@ public class FilesTest {
     }
 
     @Test
+    public void testSendFileOver2GBWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (
+                    Path path1 = new Path().of(temp.getAbsolutePath());
+                    Path path2 = new Path().of(temp.getAbsolutePath())
+            ) {
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2").$();
+                long fd2 = Files.openRW(path2);
+
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long fileSize = (2L << 30) + 2 * 4096;
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, fileSize - 8);
+
+                    // Check copy call works
+                    int offset = 2058;
+                    long copiedLen = Files.copyData(fd1, fd2, offset, -1);
+
+                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+
+                    long long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
+
+                    // Copy with set length
+                    Files.close(fd2);
+                    Files.remove(path2);
+                    fd2 = Files.openRW(path2.$());
+
+                    // Check copy call works
+                    offset = 3051;
+                    copiedLen = Files.copyData(fd1, fd2, offset, fileSize - offset);
+                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+
+                    long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Files.close(fd2);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path1);
+                    Files.remove(path2);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSoftLinkAsciiName() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("some_column.d");
@@ -588,6 +649,7 @@ public class FilesTest {
     @Test
     public void testSoftLinkDoesNotFailWhenSrcDoesNotExist() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("soft");
             String fileName = "いくつかの列.d";
@@ -745,10 +807,10 @@ public class FilesTest {
 
                     // Check written data
                     Assert.assertEquals(size2Gb, Files.write(fd2, mmap, size2Gb, 0));
-                    long long1 = Files.readULong(fd2, 0L);
+                    long long1 = Files.readNonNegativeLong(fd2, 0L);
                     Assert.assertEquals(testValue, long1);
 
-                    long long2 = Files.readULong(fd2, size2Gb - 8);
+                    long long2 = Files.readNonNegativeLong(fd2, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -942,5 +1004,63 @@ public class FilesTest {
                 Assert.assertTrue(Files.remove(softLinkRenamedFilePath));
             }
         });
+    }
+
+    @Test
+    public void testAllocateConcurrent() throws IOException, InterruptedException {
+        // This test allocates (but doesn't write to) potentially very large files
+        // size of which will depend on free disk space of the host OS.
+        // I found that on OSX (m1) with large disk allocate() call is painfully slow and
+        // for that reason (until we understood the problem better) we won't run this test
+        // on OSX
+        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+        String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
+        AtomicInteger errors = new AtomicInteger();
+
+        for (int i = 0; i < 10; i++) {
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
+            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors));
+            th1.start();
+            th2.start();
+            th1.join();
+            th2.join();
+            Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
+        try (
+            Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
+            Path p2 = new Path().of(pathName).$()
+        ) {
+            long fd = -1;
+            long mem = -1;
+            long diskSize = ff.getDiskSize(p2);
+            Assert.assertNotEquals(-1, diskSize);
+            long fileSize = diskSize / 3 * 2;
+            try {
+                fd = ff.openRW(path, CairoConfiguration.O_NONE);
+                assert fd != -1;
+                if (ff.allocate(fd, fileSize)) {
+                    mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
+                    Unsafe.getUnsafe().putLong(mem, 123455);
+                }
+            } finally {
+                if (mem != -1) {
+                    ff.munmap(mem, fileSize, 0);
+                }
+
+                if (fd != -1) {
+                    ff.close(fd);
+                }
+
+                ff.remove(path);
+            }
+        } catch (Throwable e) {
+            e.printStackTrace();
+            errors.incrementAndGet();
+        }
     }
 }

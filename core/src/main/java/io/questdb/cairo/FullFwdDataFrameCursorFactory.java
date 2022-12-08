@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
@@ -38,7 +37,7 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
         if (order == ORDER_ASC || order == ORDER_ANY) {
             return cursor.of(getReader(executionContext));
         }

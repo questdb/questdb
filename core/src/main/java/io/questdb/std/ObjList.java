@@ -140,7 +140,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public T getAndSetQuick(int index, T value) {
-        assert index < pos;
+        assert index < pos : "index out of bounds, " + index + " >= " + pos;
         T v = buffer[index];
         buffer[index] = value;
         return v;
@@ -170,7 +170,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
      */
     @Override
     public T getQuick(int index) {
-        assert index < pos;
+        assert index < pos : "index out of bounds, " + index + " >= " + pos;
         return buffer[index];
     }
 
@@ -203,9 +203,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int indexOf(Object o) {
         if (o == null) {
@@ -241,7 +238,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void remove(int from, int to) {
-        assert from <= to;
+        assert from <= to : "start index is greater than end index, " + from + " > " + to;
         int move = pos - from - (to - from) - 1;
         if (move > 0) {
             System.arraycopy(buffer, to + 1, buffer, from, move);
@@ -282,7 +279,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void setQuick(int index, T value) {
-        assert index < pos;
+        assert index < pos : "index out of bounds, " + index + " >= " + pos;
         buffer[index] = value;
     }
 

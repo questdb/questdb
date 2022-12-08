@@ -47,13 +47,13 @@ import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor implements Plannable {
+    protected final long indexShift = 0;
     protected final DirectLongList prefixes;
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
     protected long aIndex;
     protected long aLimit;
-    protected long indexShift = 0;
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,

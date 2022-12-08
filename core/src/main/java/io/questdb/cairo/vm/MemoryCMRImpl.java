@@ -51,6 +51,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
 
     @Override
     public void close() {
+        clear();
         if (pageAddress != 0) {
             ff.munmap(pageAddress, size, memoryTag);
             LOG.debug().$("unmapped [pageAddress=").$(pageAddress)
@@ -116,12 +117,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         try {
             if (size > 0) {
                 pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
-                ff.madvise(pageAddress, newSize, madviseOpts);
             } else {
                 assert pageAddress == 0;
                 pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
-                ff.madvise(pageAddress, newSize, madviseOpts);
             }
+            ff.madvise(pageAddress, newSize, madviseOpts);
             size = newSize;
         } catch (Throwable e) {
             close();

@@ -50,7 +50,7 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractGriffinTest {
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
@@ -127,7 +127,11 @@ public class BasePGTest extends AbstractGriffinTest {
         }
     }
 
-    protected void assertResultSet(String expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+    protected void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        assertResultSet(null, expected, sink, rs);
+    }
+
+    protected void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
@@ -234,7 +238,7 @@ public class BasePGTest extends AbstractGriffinTest {
             sink.put('\n');
         }
 
-        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertEquals(message, expected, sink);
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {

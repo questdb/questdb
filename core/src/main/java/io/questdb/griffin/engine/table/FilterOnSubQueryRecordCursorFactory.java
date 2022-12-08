@@ -43,6 +43,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final IntList columnIndexes;
     private final DataFrameRecordCursor cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
+    private final int[] cursorFactoriesIdx;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final Function filter;
@@ -64,8 +65,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.factories = factoriesA;
-        cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
+        this.cursorFactories = new ObjList<>();
+        this.cursorFactoriesIdx = new int[]{0};
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         this.func = func;
         this.columnIndexes = columnIndexes;
     }
@@ -151,6 +153,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             return EmptyTableRandomRecordCursor.INSTANCE;
         }
 
+        this.cursorFactoriesIdx[0] = cursorFactories.size();
         this.cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);

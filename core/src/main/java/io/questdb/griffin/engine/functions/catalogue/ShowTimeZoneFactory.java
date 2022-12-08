@@ -59,6 +59,6 @@ public class ShowTimeZoneFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("TimeZone", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("TimeZone", ColumnType.STRING));
     }
 }

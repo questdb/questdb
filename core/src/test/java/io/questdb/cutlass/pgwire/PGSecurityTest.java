@@ -258,14 +258,9 @@ public class PGSecurityTest extends BasePGTest {
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (
-                        // Postgres JDBC clients ignores unknown properties and does not send them to a server
-                        // so have to use a property which actually exists
-                        final Connection connection = getConnectionWithCustomProperty(
-                                server.getPort(), PGProperty.OPTIONS.getName(), "user")
-                ) {
-                    // no need to assert anything, if we manage to create a connection then it's already a success!
-                }
+                // Postgres JDBC clients ignores unknown properties and does not send them to a server
+                // so have to use a property which actually exists
+                getConnectionWithCustomProperty(server.getPort(), PGProperty.OPTIONS.getName()).close();
             }
         });
     }
@@ -294,12 +289,12 @@ public class PGSecurityTest extends BasePGTest {
         }
     }
 
-    protected Connection getConnectionWithCustomProperty(int port, String key, String value) throws SQLException {
+    protected Connection getConnectionWithCustomProperty(int port, String key) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "disable");
-        properties.setProperty(key, value);
+        properties.setProperty(key, "user");
 
 
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));

@@ -25,7 +25,6 @@
 package io.questdb.log;
 
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.Sequence;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
@@ -493,11 +492,6 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public Sequence getCriticalSequence() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public LogRecord info() {
             return logRecord;
         }
@@ -581,7 +575,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $(long x) {
+        public LogRecord $(long l) {
             throw new UnsupportedOperationException();
         }
 

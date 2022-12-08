@@ -176,13 +176,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("column", 1, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("type", 2, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("indexed", 3, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("indexBlockCapacity", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("symbolCached", 5, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("symbolCapacity", 6, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("designated", 7, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("column", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

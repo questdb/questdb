@@ -40,6 +40,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final IntList columnIndexes;
     private final DataFrameRecordCursor cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
+    // Points at the next factory to be reused.
+    private final int[] cursorFactoriesIdx;//used to disable unneeded factories if there are duplicate excluded keys 
     private final boolean dynamicExcludedKeys;
     private final IntHashSet excludedKeys = new IntHashSet();
     private final Function filter;
@@ -48,8 +50,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final int indexDirection;
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final int maxSymbolNotEqualsCount;
-    // Points at the next factory to be reused.
-    private int cursorFactoriesIdx;
 
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -78,11 +78,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         this.keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
+        this.cursorFactoriesIdx = new int[]{0};
         this.cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false, filter, columnIndexes);
+            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
+            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
         this.columnIndexes = columnIndexes;
@@ -94,12 +95,13 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
-        cursorFactoriesIdx = 0;
+        cursorFactoriesIdx[0] = cursorFactories.size();
         excludedKeys.clear();
         if (dynamicExcludedKeys) {
             // In case of bind variable excluded values that may change between
             // query executions the sets have to be subtracted from scratch.
             includedKeys.clear();
+            cursorFactoriesIdx[0] = 0;
         }
 
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
@@ -142,10 +144,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     private void upsertRowCursorFactory(int symbolKey) {
-        if (cursorFactoriesIdx < cursorFactories.size()) {
+        if (cursorFactoriesIdx[0] < cursorFactories.size()) {
             // Reuse the existing factory.
-            cursorFactories.get(cursorFactoriesIdx).of(symbolKey);
-            cursorFactoriesIdx++;
+            cursorFactories.get(cursorFactoriesIdx[0]).of(symbolKey);
+            cursorFactoriesIdx[0]++;
             return;
         }
 
@@ -171,7 +173,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             );
         }
         cursorFactories.add(rowCursorFactory);
-        cursorFactoriesIdx++;
+        cursorFactoriesIdx[0]++;
     }
 
     @Override

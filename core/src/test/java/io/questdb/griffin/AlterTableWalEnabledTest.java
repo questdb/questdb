@@ -24,9 +24,11 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AlterTableWalEnabledTest extends AbstractGriffinTest {
@@ -53,7 +55,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     @Test
     public void testDefaultWalEnabledMode() throws Exception {
         assertMemoryLeak(() -> {
-            defaultTableWriteMode = 1;
+            configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
             createTableWrite("my_table_wal", null, "HOUR");
             assertWalEnabled("my_table_wal", true);
 
@@ -61,13 +63,14 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
             createTableWrite("my_table_wal_none", null, "NONE");
             assertWalEnabled("my_table_wal_none", false);
 
-            defaultTableWriteMode = 0;
+            configOverrideDefaultTableWriteMode(SqlWalMode.WAL_DISABLED);
             createTableWrite("my_table_dir", null, "HOUR");
             assertWalEnabled("my_table_dir", false);
         });
     }
 
     @Test
+    @Ignore
     public void testWalEnabledAddIndex() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "ALTER COLUMN s ADD INDEX";
@@ -76,9 +79,10 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testWalEnabledAndAlterLag() throws Exception {
         assertMemoryLeak(() -> {
-            String alterSuffix = "set param commitLag=100s";
+            String alterSuffix = "set param o3MaxLag=100s";
             checkWalEnabledBeforeAfterAlter(alterSuffix);
         });
     }

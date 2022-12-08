@@ -57,7 +57,7 @@ import java.io.File;
  * structure it should be possible to log between 1,000,000 and 10,000,000 messages per second to SSD device.
  * </p>
  */
-class Logger implements LogRecord, Log {
+public final class Logger implements LogRecord, Log {
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
     private final MicrosecondClock clock;
@@ -136,8 +136,8 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(long x) {
-        sink().put(x);
+    public LogRecord $(long l) {
+        sink().put(l);
         return this;
     }
 
@@ -261,7 +261,6 @@ class Logger implements LogRecord, Log {
         return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
     }
 
-    @Override
     public Sequence getCriticalSequence() {
         return criticalSeq;
     }
@@ -319,7 +318,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord xDebugW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
+        return nextWaiting(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
     public LogRecord xErrorW() {
@@ -367,7 +366,6 @@ class Logger implements LogRecord, Log {
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
-
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }

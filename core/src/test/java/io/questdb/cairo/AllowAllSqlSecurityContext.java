@@ -89,8 +89,13 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public long getMicrosecondTimestamp() {
+                return 0L;
+            }
+
+            @Override
             public long getNow() {
-                return 0;
+                return 0L;
             }
 
             @Override
@@ -105,7 +110,7 @@ public final class AllowAllSqlSecurityContext {
 
             @Override
             public long getRequestFd() {
-                return 0;
+                return 0L;
             }
 
             @Override
@@ -118,7 +123,17 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public boolean isColumnPreTouchEnabled() {
+                return false;
+            }
+
+            @Override
             public boolean isTimestampRequired() {
+                return false;
+            }
+
+            @Override
+            public boolean isWalApplication() {
                 return false;
             }
 
@@ -135,7 +150,15 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+            }
+
+            @Override
             public void setJitMode(int jitMode) {
+            }
+
+            @Override
+            public void setNowAndFixClock(long now) {
             }
 
             @Override

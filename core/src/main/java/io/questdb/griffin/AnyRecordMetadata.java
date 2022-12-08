@@ -24,16 +24,17 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.BaseRecordMetadata;
+import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.ColumnType;
 
-public final class AnyRecordMetadata extends BaseRecordMetadata {
+public final class AnyRecordMetadata extends AbstractRecordMetadata {
     public static final AnyRecordMetadata INSTANCE = new AnyRecordMetadata();
 
     private AnyRecordMetadata() {
         columnCount = 0;
     }
 
+    // this is a hack metadata, which will be able to validate any column name as index 0 and type LONG
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         return 0;

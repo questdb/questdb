@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -42,19 +39,22 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -64,12 +64,10 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.GregorianCalendar;
-import java.util.List;
-import java.util.Properties;
-import java.util.TimeZone;
+import java.util.*;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -86,6 +84,8 @@ import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
+
+@RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
@@ -106,14 +106,33 @@ public class PGJobContextTest extends BasePGTest {
                     | CONN_AWARE_EXTENDED_PREPARED_TEXT
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
+
+    /**
+     * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
+     */
+    public static final boolean SKIP_FAILING_WAL_TESTS = true;
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
 
+    private final boolean walEnabled;
+
+    public PGJobContextTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
+
     @BeforeClass
-    public static void init() {
+    public static void setUpStatic() {
+        BasePGTest.setUpStatic();
         inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -121,6 +140,17 @@ public class PGJobContextTest extends BasePGTest {
                 .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        BasePGTest.tearDownStatic();
+    }
+
+    @Before
+    public void setUp() {
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
+        super.setUp();
     }
 
     @Test
@@ -2364,7 +2394,7 @@ if __name__ == "__main__":
      * }
      * </pre>
      */
-    public void testGoLangBoolean() throws Exception {
+    public void testGolangBoolean() throws Exception {
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
                 ">0000002400030000757365720078797a00646174616261736500706f7374677265730000\n" +
@@ -2376,6 +2406,17 @@ if __name__ == "__main__":
                 ">420000001a006c72757073635f315f30000000000000020001000144000000065000450000000900000000005300000004\n" +
                 "<3200000004540000003500027472756500000000000001000000100001ffffffff000166616c736500000000000002000000100001ffffffff00014400000010000200000001010000000100430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
+    public void testGssApiRequestClosedGracefully() throws Exception {
+        final String script = ">0000000804d21630\n" +
+                "<4e\n";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
@@ -2524,6 +2565,8 @@ if __name__ == "__main__":
 
     @Test
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
+        maySkipOnWalRun();  // Assertion error select is empty. Adding `mayDrainWalQueue()` busy spins and hangs.
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -2544,6 +2587,9 @@ if __name__ == "__main__":
                             "), index(b) timestamp(k) partition by DAY").execute();
 
                     sink.clear();
+
+                    mayDrainWalQueue();
+
                     try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ?")) {
                         ps.setString(1, "VTJW");
                         try (ResultSet rs = ps.executeQuery()) {
@@ -2597,6 +2643,8 @@ if __name__ == "__main__":
 
     @Test
     public void testIndexedSymbolBindVariableNotMultipleValuesMultipleExecutions() throws Exception {
+        maySkipOnWalRun();  // select after create fails. Inserting `mayDrainWalQueue()` hangs the test.
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -2615,6 +2663,8 @@ if __name__ == "__main__":
                             " from" +
                             " long_sequence(1)" +
                             "), index(b) timestamp(k) partition by DAY").execute();
+
+                    mayDrainWalQueue();
 
                     // First we try to filter out not yet existing keys.
                     sink.clear();
@@ -3740,6 +3790,8 @@ nodejs code:
                                 "    )");
                     }
 
+                    mayDrainWalQueue();
+
                     double sum = 0;
                     long count = 0;
                     try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT * FROM recorded_l1_data;")) {
@@ -4471,6 +4523,8 @@ nodejs code:
 
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
+        maySkipOnWalRun();  // Assertion error: java.lang.AssertionError: cannot insert null when the column is designated
+
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
@@ -4490,12 +4544,16 @@ nodejs code:
                         insert.executeUpdate();
                         fail("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
-                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed", expected.getMessage());
+                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
+                                "  Position: 1", expected.getMessage());
                     }
                     // Insert a dud
                     insert.setString(1, "1970-01-01 00:11:22.334455");
                     insert.setNull(2, Types.NULL);
                     insert.executeUpdate();
+
+                    mayDrainWalQueue();
+
                     try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
                         StringSink sink = new StringSink();
                         String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
@@ -4787,7 +4845,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4797,13 +4855,17 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
+                    mayDrainWalQueue();
                     queryTimestampsInRange(connection);
                 }
 
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     queryTimestampsInRange(connection);
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
+
+                    if (isEnabledForWalRun()) {
+                        try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                            statement.execute();
+                        }
                     }
                 }
             }
@@ -4812,7 +4874,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4822,6 +4884,7 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                         statement.execute();
                     }
+                    mayDrainWalQueue();
                     queryTimestampsInRange(connection);
                 }
 
@@ -4838,9 +4901,11 @@ nodejs code:
                     }
                 }
 
-                try (final Connection connection = getConnection(server.getPort(), false, false);
-                     PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                    statement.execute();
+                if (isEnabledForWalRun()) {
+                    try (final Connection connection = getConnection(server.getPort(), false, false);
+                         PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
                 }
                 Assert.assertTrue("Exception is not thrown", caught);
             }
@@ -4849,6 +4914,8 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesTimestampRange() throws Exception {
+        // TODO: Add "assertMemoryLeak(() -> { .. });"  - There seems to be an issue with an open FD that gets closed.
+
         // todo: simple mode doesn't work because PG sends timestamp as:
         //     dateadd('d', -1, '1973-03-12 16:00:00+00')
         //     we don't yet support text argument for the dateadd function.
@@ -4857,17 +4924,21 @@ nodejs code:
                 statement.execute();
             }
 
+            mayDrainWalQueue();
+
             queryTimestampsInRange(connection);
 
-            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                statement.execute();
+            if (isEnabledForWalRun()) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
             }
         });
     }
 
     @Test
     public void testPreparedStatementWithNowFunction() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4890,8 +4961,36 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
-                } finally {
-                    currentMicros = -1;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementWithSystimestampFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "create table xts (ts timestamp) timestamp(ts)")) {
+                        statement.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
+                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                            statement.execute();
+                        }
+                    }
+
+                    queryTimestampsInRange(connection);
+
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
                 }
             }
         });
@@ -4988,6 +5087,132 @@ nodejs code:
                 script,
                 new Port0PGWireConfiguration()
         );
+    }
+
+    @Test
+    public void testQueryAgainstIndexedSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        String no5 = "1\n2\n3\n4\n6\n7\n8\n9\nnull\n";
+        String noNull = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+        String no5AndNull = "1\n2\n3\n4\n6\n7\n8\n9\n";
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+                compiler.compile("drop table if exists tab", sqlExecutionContext);
+                compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
+                compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
+                drainWalQueue();
+
+                ResultProducer sameVal =
+                        (paramVals, isBindVals, bindVals, output) -> {
+                            String value = isBindVals[0] ? bindVals[0] : paramVals[0];
+                            output.put(valMap.get(value)).put('\n');
+                        };
+
+                assertQueryAgainstIndexedSymbol(values, "s = #X", new String[]{"#X"}, connection, tsOption, sameVal);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X)", new String[]{"#X"}, connection, tsOption, sameVal);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X, '10')", new String[]{"#X"}, connection, tsOption, sameVal);
+
+                ResultProducer otherVals = (paramVals, isBindVals, bindVals, output) -> {
+                    String value = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    if (valMap.get(value).equals("5")) {
+                        output.put(no5);
+                    } else {
+                        output.put(noNull);
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s != #X", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s != #X and s != '10'", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X)", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X, '10')", new String[]{"#X"}, connection, tsOption, otherVals);
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S1') and s in (#X2, 'S2')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+
+                ResultProducer otherVals2 = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (!isSame) {
+                        output.put(no5AndNull);
+                    } else {
+                        if (valMap.get(left).equals("5")) {
+                            output.put(no5);
+                        } else {
+                            output.put(noNull);
+                        }
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s != #X2 and s != 'S'", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1) and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, 'S') and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, 'S2') and s not in (#X2, 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+
+                ResultProducer sameValIfParmsDiffer = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (!isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+
+                ResultProducer sameVal2 = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(right)).put('\n');
+                    } else {
+                        output.put("5\nnull\n");
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+            });
+        }
+
     }
 
     @Test
@@ -5339,6 +5564,7 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         assertMemoryLeak(() -> {
+            maySkipOnWalRun(); // Alters do not wait for WAL tables
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
@@ -5752,8 +5978,7 @@ create table tab as (
         compiler.compile("create table tab2 (a double);", sqlExecutionContext);
         executeInsert("insert into 'tab2' values (0.7);");
         executeInsert("insert into 'tab2' values (0.2);");
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
+        engine.clear();
 
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
@@ -5996,6 +6221,8 @@ create table tab as (
                 statement.execute();
             }
 
+            mayDrainWalQueue();
+
             try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
                 sink.clear();
                 String date = "1970-01-01";
@@ -6065,8 +6292,10 @@ create table tab as (
                 }
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                statement.execute();
+            if (isEnabledForWalRun()) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
             }
         });
     }
@@ -6252,6 +6481,21 @@ create table tab as (
 
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public int getBindPort() {
+                            return 0;  // Bind to ANY port.
+                        }
+
+                        @Override
+                        public String getDispatcherLogName() {
+                            return "pg-server";
+                        }
+                    };
+                }
+
+                @Override
                 public int getSendBufferSize() {
                     return 300;
                 }
@@ -6288,8 +6532,10 @@ create table tab as (
                             " rnd_str(5,16,2) l256" +
                             " from long_sequence(10000)" +
                             ") timestamp (ts) partition by DAY");
-                    String sql = "SELECT * FROM x";
 
+                    mayDrainWalQueue();
+
+                    String sql = "SELECT * FROM x";
                     try {
                         statement.execute(sql);
                         Assert.fail();
@@ -6528,7 +6774,7 @@ create table tab as (
 
     @Test
     public void testTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -6541,6 +6787,8 @@ create table tab as (
                     connection.prepareStatement("INSERT INTO ts VALUES(0, '2021-09-27T16:45:03.202345Z')").execute();
                     connection.commit();
                     connection.setAutoCommit(true);
+
+                    mayDrainWalQueue();
 
                     // select the timestamp that we just inserted
                     Timestamp ts;
@@ -6602,6 +6850,8 @@ create table tab as (
                         ps.execute();
                     }
 
+                    mayDrainWalQueue();
+
                     try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
                         sink.clear();
                         try (ResultSet rs = statement.executeQuery()) {
@@ -6617,7 +6867,10 @@ create table tab as (
                             );
                         }
                     }
-                    connection.prepareStatement("drop table ts").execute();
+
+                    if (isEnabledForWalRun()) {
+                        connection.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
@@ -6625,7 +6878,7 @@ create table tab as (
 
     @Test
     public void testTimestampSentEqualsReceived() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
 
             final Timestamp expectedTs = new Timestamp(1632761103202L); // '2021-09-27T16:45:03.202000Z'
             assertEquals(1632761103202L, expectedTs.getTime());
@@ -6653,6 +6906,8 @@ create table tab as (
                         insert.execute();
                     }
 
+                    mayDrainWalQueue();
+
                     // select
                     final Timestamp tsBack;
                     try (ResultSet queryResult = conn.prepareStatement("SELECT * FROM ts").executeQuery()) {
@@ -6664,7 +6919,9 @@ create table tab as (
                     assertEquals(expectedTs, tsBack);
 
                     // cleanup
-                    conn.prepareStatement("drop table ts").execute();
+                    if (isEnabledForWalRun()) {
+                        conn.prepareStatement("drop table ts").execute();
+                    }
                 }
             }
         });
@@ -6714,10 +6971,6 @@ create table tab as (
         testTruncateAndUpdateOnTable("timestamp(ts) partition by DAY");
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     public void testTruncateAndUpdateOnTable(String config) throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (Statement stat = connection.createStatement()) {
@@ -6725,16 +6978,20 @@ create table tab as (
             }
 
             try (Statement stat = connection.createStatement()) {
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("insert into tb values (1, true, now());");
+                stat.execute("update tb set i = 10, b = true;");
                 stat.execute("truncate table tb;");
-                stat.execute("insert into tb values (2, true, cast(0 as timestamp) );");
-                stat.execute("insert into tb values (1, true, now() );");
-                stat.execute("update tb set i = 1, b = true;");
+                stat.execute("insert into tb values (2, true, cast(0 as timestamp));");
+                stat.execute("insert into tb values (1, true, '2022-09-28T17:00:00.000000Z');");
+                stat.execute("update tb set i = 12, b = true;");
 
-                try (ResultSet result = stat.executeQuery("select count(*) cnt from tb")) {
+                mayDrainWalQueue();
+
+                try (ResultSet result = stat.executeQuery("tb")) {
                     StringSink sink = new StringSink();
-                    assertResultSet("cnt[BIGINT]\n2\n", sink, result);
+                    assertResultSet("i[INTEGER],b[BIT],ts[TIMESTAMP]\n" +
+                            "12,true,1970-01-01 00:00:00.0\n" +
+                            "12,true,2022-09-28 17:00:00.0\n", sink, result);
                 }
             }
         });
@@ -6823,6 +7080,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -7086,6 +7347,55 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateWithNowAndSystimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 123678000L;
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false)
+                ) {
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
+                    statement.execute();
+
+                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:02'::timestamp, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                            "('2020-06-01T00:00:06'::timestamp, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                            "('2020-06-01T00:00:12'::timestamp, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                    insert1.execute();
+
+                    final PreparedStatement update1 = connection.prepareStatement("update x set a=now() where b>2.5");
+                    int numOfRowsUpdated1 = update1.executeUpdate();
+                    assertEquals(2, numOfRowsUpdated1);
+
+                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:22'::timestamp, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                            "('2020-06-01T00:00:32'::timestamp, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                    insert2.execute();
+
+                    final PreparedStatement update2 = connection.prepareStatement("update x set a=systimestamp() where b>5.0");
+                    int numOfRowsUpdated2 = update2.executeUpdate();
+                    assertEquals(1, numOfRowsUpdated2);
+
+                    final String expected = "a[TIMESTAMP],b[DOUBLE],ts[TIMESTAMP]\n" +
+                            "2020-06-01 00:00:02.0,2.0,2020-06-01 00:00:02.0\n" +
+                            "1970-01-01 00:02:03.678,2.6,2020-06-01 00:00:06.0\n" +
+                            "1970-01-01 00:02:03.678,3.0,2020-06-01 00:00:12.0\n" +
+                            "2020-06-01 00:00:22.0,4.0,2020-06-01 00:00:22.0\n" +
+                            "1970-01-01 00:02:03.678,6.0,2020-06-01 00:00:32.0\n";
+                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUtf8QueryText() throws Exception {
         testQuery(
                 "rnd_double(4) расход, ",
@@ -7108,6 +7418,34 @@ create table tab as (
             String script,
             PGWireConfiguration configuration
     ) throws Exception {
+
+        /*
+            You can use Wireshark to capture and decode. You can also see executed statements in the logs.
+            From a Wireshark capture you can right-click on a packet and follow conversation:
+
+            ...n....user.xyz.database.qdb.client_encoding.UTF8.DateStyle.ISO.TimeZone.Europe/London.extra_float_digits.2..R........p....oh.R........S....TimeZone.GMT.S....application_name.QuestDB.S....server_version.11.3.S....integer_datetimes.on.S....client_encoding.UTF8.Z....IP...".SET extra_float_digits = 3...B............E...	.....S....1....2....C....SET.Z....IP...7.SET application_name = 'PostgreSQL JDBC Driver'...B............E...	.....S....1....2....C....SET.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...*.select 1,2,3 from long_sequence(1)...B............D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IP...-S_1.select 1,2,3 from long_sequence(1)...B.....S_1.......D....P.E...	.....S....1....2....T...B..1...................2...................3...................D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IB.....S_1.......E...	.....S....2....D..........1....2....3C...
+            SELECT 1.Z....IP...&.select 1 from long_sequence(2)...B............D....P.E...	.....S....1....2....T......1...................D..........1D..........1C...
+            SELECT 2.Z....IX....
+        */
+
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server = createPGServer(configuration);
@@ -7117,6 +7455,69 @@ create table tab as (
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
             }
         });
+    }
+
+    private void assertQueryAgainstIndexedSymbol(String[] values, String whereClause, String[] params, Connection connection, String tsOption, ResultProducer expected) throws Exception {
+        StringSink expSink = new StringSink();
+        StringSink metaSink = new StringSink();
+        String[] paramValues = new String[params.length];
+        boolean[] isBindParam = new boolean[params.length];
+        String[] bindValues = new String[params.length];
+        int nValues = values.length;
+
+        int iterations = 1;
+        for (int i = 0; i < params.length; i++) {
+            iterations *= nValues;
+        }
+
+        for (int iter = 0; iter < iterations; iter++) {
+            int tempIter = iter;
+
+            for (int p = 0; p < params.length; p++) {
+                paramValues[p] = values[tempIter % nValues];
+
+                if (paramValues[p].startsWith("?")) {
+                    isBindParam[p] = true;
+                    bindValues[p] = paramValues[p].substring(1);
+                    paramValues[p] = "?";
+                } else {
+                    isBindParam[p] = false;
+                    bindValues[p] = null;
+                }
+
+                tempIter /= nValues;
+            }
+
+            String where = whereClause;
+            for (int p = 0; p < params.length; p++) {
+                where = where.replace(params[p], paramValues[p]);
+            }
+
+            String query = "select s from tab where " + where;
+
+            sink.clear();
+            expSink.clear();
+            expSink.put("s[VARCHAR]\n");
+            expected.produce(paramValues, isBindParam, bindValues, expSink);
+            metaSink.clear();
+            metaSink.put("query: ").put(query).put("\nvalues: ");
+            for (int p = 0; p < paramValues.length; p++) {
+                metaSink.put(isBindParam[p] ? bindValues[p] : paramValues[p]).put(' ');
+            }
+            metaSink.put("\nts option: ").put(tsOption);
+
+            try (PreparedStatement ps = connection.prepareStatement(query)) {
+                int bindIdx = 1;
+                for (int p = 0; p < paramValues.length; p++) {
+                    if (isBindParam[p]) {
+                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
+                    }
+                }
+                try (ResultSet result = ps.executeQuery()) {
+                    assertResultSet(metaSink.toString(), expSink, sink, result);
+                }
+            }
+        }
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
@@ -7317,6 +7718,24 @@ create table tab as (
                 }
             }
         });
+    }
+
+    private boolean isEnabledForWalRun() {
+        return !SKIP_FAILING_WAL_TESTS || !walEnabled;
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
+
+    /**
+     * Marker method for tests that don't quite work with the WAL yet.
+     * Disables and skips the test.
+     */
+    private void maySkipOnWalRun() {
+        Assume.assumeTrue("Test disabled during WAL run.", !SKIP_FAILING_WAL_TESTS || !walEnabled);
     }
 
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
@@ -7765,6 +8184,8 @@ create table tab as (
     }
 
     private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
+        maySkipOnWalRun();  // Difference in asserted vs expected data.
+
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -7783,6 +8204,8 @@ create table tab as (
                     connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.1, 0)").execute();
                     connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.2, 1)").execute();
                     connection.commit();
+
+                    mayDrainWalQueue();
 
                     // single key value in filter
 
@@ -8546,6 +8969,11 @@ create table tab as (
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
+    }
+
+    @FunctionalInterface
+    interface ResultProducer {
+        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {

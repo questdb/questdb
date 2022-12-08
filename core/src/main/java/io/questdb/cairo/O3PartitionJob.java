@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
@@ -920,9 +921,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             timestampMergeIndexSize = 0;
         }
 
-        final TableWriterMetadata metadata = tableWriter.getMetadata();
+        final TableRecordMetadata metadata = tableWriter.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        columnCounter.set(metadata.getDenseColumnCount());
+        columnCounter.set(TableUtils.compressColumnCount(metadata));
         int columnsInFlight = columnCount;
         if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE || openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
             // Partition will be re-written. Jobs will set new column top values but by default they are 0

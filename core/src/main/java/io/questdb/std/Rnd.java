@@ -44,6 +44,14 @@ public class Rnd {
         reset();
     }
 
+    public long getSeed0() {
+        return s0;
+    }
+
+    public long getSeed1() {
+        return s1;
+    }
+
     public boolean nextBoolean() {
         return nextLong() >>> (64 - 1) != 0;
     }
@@ -52,7 +60,7 @@ public class Rnd {
         return (byte) nextLong();
     }
 
-    //returns random bytes between 'B' and 'Z' for legacy reasons 
+    //returns random bytes between 'B' and 'Z' for legacy reasons
     public byte[] nextBytes(int len) {
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
@@ -188,5 +196,4 @@ public class Rnd {
     private int nextIntForDouble(int bits) {
         return (int) ((nextLong() & mask) >>> (48 - bits));
     }
-
 }

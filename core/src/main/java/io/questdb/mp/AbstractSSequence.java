@@ -38,8 +38,8 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
     @Override
     public void clear() {
         setBarrier(OpenBarrier.INSTANCE);
-        value = -1;
         cache = -1;
+        value = -1;
     }
 
     @Override

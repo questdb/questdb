@@ -36,7 +36,10 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.Iterator;
 import java.util.Set;
@@ -51,28 +54,24 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
-    private static final Path other = new Path();
-    private static final Path path = new Path();
+    private static Path otherPath;
+    private static Path path;
     private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
     public static void setUpStatic() {
         AbstractGriffinTest.setUpStatic();
+        otherPath = new Path();
+        path = new Path();
         purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass
     public static void tearDownStatic() {
         purgeJob = Misc.free(purgeJob);
-        Misc.free(path);
-        Misc.free(other);
+        otherPath = Misc.free(otherPath);
+        path = Misc.free(path);
         AbstractGriffinTest.tearDownStatic();
-    }
-
-    @Override
-    @After
-    public void tearDown() {
-        super.tearDown();
     }
 
     @Test
@@ -80,7 +79,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab143",
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03', '2022-06-03'",
-                "could not detach [statusCode=" + DETACH_ERR_MISSING_PARTITION.name() + ", table=tab143, partition='2022-06-03']"
+                "could not detach partition [table=tab143, detachStatus=DETACH_ERR_MISSING_PARTITION"
         );
     }
 
@@ -90,7 +89,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 null,
                 "tab143",
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
-                "could not detach [statusCode=" + DETACH_ERR_ALREADY_DETACHED.name() + ", table=tab143, partition='2022-06-03']",
+                "could not detach partition [table=tab143, detachStatus=DETACH_ERR_ALREADY_DETACHED",
                 () -> {
                     path.of(configuration.getRoot())
                             .concat("tab143")
@@ -105,7 +104,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachCannotCopy() throws Exception {
         assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
+            configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
             ff = new FilesFacadeImpl() {
@@ -236,11 +235,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        ATTACH_ERR_RENAME.name()
+                        "could not attach partition"
                 );
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        ATTACH_ERR_RENAME.name()
+                        "could not attach partition"
                 );
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
@@ -458,7 +457,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, timestampDay);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                        "failed to attach partition '2022-06-01': " + ATTACH_ERR_PARTITION_EXISTS.name()
+                        "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
                 );
                 assertContent(expected, tableName);
             }
@@ -485,7 +484,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab17",
                 "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
-                "could not detach [statusCode=" + DETACH_ERR_ACTIVE.name() + ", table=tab17, partition='2022-06-05']"
+                "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
         );
     }
 
@@ -505,7 +504,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(ff, () -> {
-
             String tableName = testName.getMethodName();
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
@@ -599,7 +597,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    copyPartitionOnAttach = true;
+                    configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
@@ -658,7 +656,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    copyPartitionOnAttach = true;
+                    configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
@@ -804,13 +802,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 engine.clear();
                 path.of(configuration.getRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
-                Assert.assertTrue(Files.rename(path, other) > -1);
+                otherPath.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
                 // attempt to reattach
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                        "[-100] Detached column [index=3, name=l, attribute=type] does not match current table metadata"
+                        "Detached column [index=3, name=l, attribute=type] does not match current table metadata"
                 );
             }
         });
@@ -833,7 +831,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "x l " +
                         "from long_sequence(100))",
                 "ALTER TABLE tabBrokenTableId2 ADD COLUMN s SHORT",
-                "[-100] Detached partition metadata [table_id] is not compatible with current table metadata"
+                "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
     }
 
@@ -854,7 +852,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts " +
                         "from long_sequence(100))",
                 "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
-                "[-100] Detached partition metadata [timestamp_index] is not compatible with current table metadata"
+                "Detached partition metadata [timestamp_index] is not compatible with current table metadata"
         );
     }
 
@@ -877,7 +875,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        "failed to attach partition '2022-06-01': " + ATTACH_ERR_MISSING_PARTITION.name()
+                        "could not attach partition [table=tabDetachAttachNotAttachable, detachStatus=ATTACH_ERR_MISSING_PARTITION"
                 );
             }
         });
@@ -936,8 +934,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             String tableName = "tabPingPong";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .timestamp("ts")
+                createPopulateTable(
+                        tab.timestamp("ts")
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
@@ -954,7 +952,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             Set<Long> detachedPartitionTimestamps = new ConcurrentSkipListSet<>();
             AtomicInteger detachedCount = new AtomicInteger();
             AtomicInteger attachedCount = new AtomicInteger();
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             Thread detThread = new Thread(() -> {
                 try {
@@ -976,8 +974,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 } finally {
-                    end.countDown();
                     Path.clearThreadLocals();
+                    end.countDown();
                 }
             });
             detThread.start();
@@ -1007,8 +1005,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 } finally {
-                    end.countDown();
                     Path.clearThreadLocals();
+                    end.countDown();
                 }
             });
             attThread.start();
@@ -1030,7 +1028,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDetachAttachSameDrive() throws Exception {
         assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
+            configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
             ff = new FilesFacadeImpl() {
@@ -1193,8 +1191,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
                 path.of(configuration.getRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
-                Assert.assertTrue(Files.rename(path, other) > -1);
+                otherPath.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     writer.attachPartition(timestamp);
@@ -1266,8 +1264,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
                 path.of(configuration.getRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
-                Assert.assertTrue(Files.rename(path, other) > -1);
+                otherPath.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     writer.attachPartition(timestamp);
@@ -1356,15 +1354,15 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                 }
                 path.of(configuration.getRoot()).concat(brokenTableName).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
-                Assert.assertTrue(Files.rename(path, other) > -1);
+                otherPath.of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                Assert.assertTrue(Files.rename(path, otherPath) > -1);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     writer.attachPartition(timestamp);
                 }
 
-                Assert.assertFalse(Files.exists(other.of(configuration.getRoot()).concat(tableName).concat(timestampDay).concat("s.k").$()));
-                Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
+                Assert.assertFalse(Files.exists(otherPath.of(configuration.getRoot()).concat(tableName).concat(timestampDay).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(otherPath.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
             }
@@ -1502,7 +1500,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "x l " +
                         "from long_sequence(100))",
                 "ALTER TABLE tabBrokenIndexCapacity2 ADD COLUMN s SHORT",
-                "[-100] Detached partition metadata [table_id] is not compatible with current table metadata"
+                "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
     }
 
@@ -1870,6 +1868,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
                 // Existing partition but wrong folder name
+                dst = Path.PATH2.get().of(configuration.getRoot()).concat(tableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 Path dst2 = Path.PATH.get().of(configuration.getRoot()).concat(tableName).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash$();
                 Assert.assertEquals(0, ff.rename(dst, dst2));
 
@@ -1916,7 +1915,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab11",
                 "ALTER TABLE tab11 DETACH PARTITION LIST '2022-06-06'",
-                "could not detach [statusCode=" + DETACH_ERR_MISSING_PARTITION.name() + ", table=tab11, partition='2022-06-06']"
+                "could not detach partition [table=tab11, detachStatus=DETACH_ERR_MISSING_PARTITION"
         );
     }
 
@@ -1934,7 +1933,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 },
                 "tab111",
                 "ALTER TABLE tab111 DETACH PARTITION LIST '2022-06-03'",
-                "could not detach [statusCode=" + DETACH_ERR_MISSING_PARTITION_DIR.name() + ", table=tab111, partition='2022-06-03']"
+                "could not detach partition [table=tab111, detachStatus=DETACH_ERR_MISSING_PARTITION_DIR"
         );
     }
 
@@ -2097,13 +2096,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .concat(META_FILE_NAME)
                         .$();
                 Assert.assertTrue(Files.remove(path));
-                other.of(configuration.getRoot())
+                otherPath.of(configuration.getRoot())
                         .concat(brokenTableName)
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
                         .$();
-                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
+                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(otherPath, path));
 
                 renameDetachedToAttachable(tableName, "2022-06-02");
 
@@ -2166,7 +2165,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         try {
             compile(operation, sqlExecutionContext);
             Assert.fail();
-        } catch (SqlException e) {
+        } catch (SqlException | CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), errorMsg);
         }
     }
@@ -2175,12 +2174,12 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         engine.clear();
         // hide the detached partition
         path.of(configuration.getRoot()).concat(tableName).concat(partitionName + ".detached").$();
-        other.of(configuration.getRoot()).concat(tableName).concat(partitionName + ".detached.hide").$();
-        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, other));
+        otherPath.of(configuration.getRoot()).concat(tableName).concat(partitionName + ".detached.hide").$();
+        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, otherPath));
         // drop the latest version of the partition
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
-        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
+        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(otherPath, path));
     }
 
     private void renameDetachedToAttachable(String tableName, long... partitions) {
@@ -2193,21 +2192,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             );
             path.put(DETACHED_DIR_MARKER).$();
             PartitionBy.setSinkForPartition(
-                    other.of(configuration.getRoot()).concat(tableName),
+                    otherPath.of(configuration.getRoot()).concat(tableName),
                     PartitionBy.DAY,
                     partition,
                     false
             );
-            other.put(configuration.getAttachPartitionSuffix()).$();
-            Assert.assertTrue(Files.rename(path, other) > -1);
+            otherPath.put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path, otherPath) > -1);
         }
     }
 
     private void renameDetachedToAttachable(String tableName, String... partitions) {
         for (String partition : partitions) {
             path.of(configuration.getRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
-            other.of(configuration.getRoot()).concat(tableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
-            Assert.assertTrue(Files.rename(path, other) > -1);
+            otherPath.of(configuration.getRoot()).concat(tableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path, otherPath) > -1);
         }
     }
 
