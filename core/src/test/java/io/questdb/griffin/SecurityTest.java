@@ -511,14 +511,14 @@ public class SecurityTest extends AbstractGriffinTest {
                 compiler.setFullFatJoins(true);
                 assertQuery(
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                        "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, sqlExecutionContext);
                 try {
                     assertQuery(
                             memoryRestrictedCompiler,
                             "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                            "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                            "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
                             false, readOnlyExecutionContext);
                     Assert.fail();
@@ -604,14 +604,14 @@ public class SecurityTest extends AbstractGriffinTest {
                     " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
             assertQuery(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false, sqlExecutionContext);
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                        "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
                 Assert.fail();

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
@@ -42,6 +43,62 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class JoinTest extends AbstractGriffinTest {
+
+    @Test
+    public void test2686() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table table_1 (\n" +
+                    "          ts timestamp,\n" +
+                    "          name string,\n" +
+                    "          age int,\n" +
+                    "          member boolean\n" +
+                    "        ) timestamp(ts) PARTITION by month");
+
+            compile("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
+            compile("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
+            compile("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
+
+            compile("create table table_2 (\n" +
+                    "          ts timestamp,\n" +
+                    "          name string,\n" +
+                    "          age int,\n" +
+                    "          address string\n" +
+                    "        ) timestamp(ts) PARTITION by month");
+
+            compile("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
+            compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+        });
+
+        //query "2"
+        assertQuery("name\tage\tmember\taddress\tts\n" +
+                        "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                        "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                        "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                "select a.name, a.age, a.member, b.address, a.ts\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b \n" +
+                        "   on a.ts = b.ts ", null, "ts", false, true, false);
+
+        //query "3"
+        assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                        "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                        "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                        "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b \n" +
+                        "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, true, false);
+
+        //query "4" - same as "3" but between is replaced with >= and <=
+        assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                        "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                        "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                        "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b \n" +
+                        "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)", null, "ts", false, true, false);
+    }
 
     @Test
     public void testAsOfCorrectness() throws Exception {
@@ -1872,6 +1929,36 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsofJoinWithComplexConditionFails1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1=l2+5", "unsupported ASOF join expression [expr='l1 = l2 + 5']", 35);
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithComplexConditionFails2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1>l2", "unsupported ASOF join expression [expr='l1 > l2']", 35);
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithComplexConditionFails3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1=abs(l2)", "unsupported ASOF join expression [expr='l1 = abs(l2)']", 35);
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
@@ -2950,7 +3037,7 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(
                     expected,
-                    "select * from x outer join y on (kk)",
+                    "select * from x left join y on (kk)",
                     null
             );
         });
@@ -3002,7 +3089,7 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(
                     expected,
-                    "select * from x outer join y on (kk)",
+                    "select * from x left join y on (kk)",
                     null
             );
         });
@@ -3049,7 +3136,7 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(
                     expected,
-                    "select * from x outer join y on (kk) order by x.a desc, y.a",
+                    "select * from x left join y on (kk) order by x.a desc, y.a",
                     null,
                     true
             );
@@ -3080,7 +3167,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c", null, false);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x left join y on y.m = x.c", null, false);
 
             compiler.compile("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)", sqlExecutionContext);
             compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -3092,7 +3179,7 @@ public class JoinTest extends AbstractGriffinTest {
                             "13\t244\tNaN\n" +
                             "14\t197\t50\n" +
                             "14\t197\t68\n",
-                    "select x.c, x.a, b from x outer join y on y.m = x.c",
+                    "select x.c, x.a, b from x left join y on y.m = x.c",
                     null
             );
         });
@@ -3106,7 +3193,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinOuterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select x.c, x.a, b, ts from x outer join y on y.m = x.c";
+            final String query = "select x.c, x.a, b, ts from x left join y on y.m = x.c";
             final String expected = "c\ta\tb\tts\n" +
                     "1\t120\tNaN\t2018-03-01T00:00:00.000001Z\n" +
                     "2\t568\t16\t2018-03-01T00:00:00.000002Z\n" +
@@ -3168,6 +3255,480 @@ public class JoinTest extends AbstractGriffinTest {
     public void testJoinWithGeohashFastMap2() throws Exception {
         configOverrideDefaultMapType("fast");
         testJoinWithGeohash2();
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (5), (4), (3), (2), (1);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 3",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\t4\n" +
+                            "5\t5\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition10() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = s1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\t2\tb\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\t4\td\n" +
+                            "5\te\t5\te\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition11() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition12() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\te\n" +
+                            "2\tb\t2\tb\n" +
+                            "2\tb\t2\td\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition13() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\tNaN\t\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition14() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition15() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("create table t2 (j int, s2 string)");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (5), (4), (3), (2), (1);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 5",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (5), (4), (3), (2), (1);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) = 3",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\t3\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (2), (4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) <= 0",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (2), (4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition6() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (2), (4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (j = 2 or i = 4)",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\t2\n" +
+                            "3\tNaN\n" +
+                            "4\t4\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition7() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (-4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (-2), (-4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "-4\t-4\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition8() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = 'a'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "2\tNaN\t\n" +
+                            "3\tNaN\t\n" +
+                            "4\tNaN\t\n" +
+                            "5\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition9() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 ~ '[ad]'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "2\tNaN\t\n" +
+                            "3\tNaN\t\n" +
+                            "4\t4\td\n" +
+                            "5\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and i = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and j = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1 or j = null",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "4\td\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(5))");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+
+            assertSql("select * from t1 left join t2 on t1.i+10 = t2.j",
+                    "i\tj\n" +
+                            "1\t11\n" +
+                            "2\t12\n" +
+                            "3\t13\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(5))");
+            compile("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
+
+            assertSql("select * from t1 left join t2 on t1.i = - t2.j",
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (-2), (3), (-4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-1), (-2), (3), (0), (-5);");
+
+            String query = "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)";
+
+            assertSql(query,
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "-2\t-2\n" +
+                            "3\t3\n" +
+                            "-4\tNaN\n" +
+                            "5\t-5\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
+
+            assertSql("select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\t-4\n" +
+                            "5\t-5\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on i > 4  ",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "5\t-3\n" +
+                            "5\t-2\n" +
+                            "5\t-1\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition6() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on i > 4 and j < -3 ",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition7() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on i*j >= -4 ",
+                    "i\tj\n" +
+                            "1\t-4\n" +
+                            "1\t-3\n" +
+                            "1\t-2\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "2\t-1\n" +
+                            "3\t-1\n" +
+                            "4\t-1\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition8() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4",
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
     }
 
     @Test
@@ -3255,6 +3816,68 @@ public class JoinTest extends AbstractGriffinTest {
                 Assert.assertEquals(65, e.getPosition());
                 Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
             }
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1=l2+5", "unsupported LT join expression [expr='l1 = l2 + 5']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1>l2", "unsupported LT join expression [expr='l1 > l2']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1=abs(l2)", "unsupported LT join expression [expr='l1 = abs(l2)']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithCondition01() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            compile("insert into t2 select x, x::timestamp from long_sequence(3)");
+
+            assertSql("select * from t1 lt join t2 on l1=l2",
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLtJoinWithoutCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            compile("insert into t2 select x, x::timestamp from long_sequence(3)");
+
+            assertSql("select * from t1 lt join t2",
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n");
         });
     }
 
@@ -3871,6 +4494,36 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinWithComplexConditionFails1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1=l2+5", "unsupported SPLICE join expression [expr='l1 = l2 + 5']", 37);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinWithComplexConditionFails2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1>l2", "unsupported SPLICE join expression [expr='l1 > l2']", 37);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinWithComplexConditionFails3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1=abs(l2)", "unsupported SPLICE join expression [expr='l1 = abs(l2)']", 37);
+        });
+    }
+
+    @Test
     public void testSpliceOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -3900,7 +4553,7 @@ public class JoinTest extends AbstractGriffinTest {
                             "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
                             "    SPLICE JOIN\n" +
                             "(select a.ask a, a.ts timeask from asks a) a\n" +
-                            "    ON (b.timebid != a.timeask);";
+                            "WHERE (b.timebid != a.timeask);";
 
             String expected = "timebid\ttimeask\tb\ta\n" +
                     "\t1970-01-01T00:00:00.000000Z\tNaN\t100\n" +
@@ -3943,6 +4596,33 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testUnionCursorLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj");
+    }
+
+    private void assertFailure(String query, String expectedMessage, int position) {
+        try {
+            compile(query, sqlExecutionContext);
+            Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
+        } catch (SqlException | ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            Assert.assertEquals(Chars.toString(query), position, e.getPosition());
+        }
+    }
+
+    private void assertHashJoinSql(String query, String expected) throws SqlException {
+        assertSql(query, expected);
+
+        compiler.setFullFatJoins(true);
+        try {
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    query,
+                    sink
+            );
+            TestUtils.assertEquals("full fat join", expected, sink);
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
     }
 
     private void testFullFat(TestMethod method) throws Exception {

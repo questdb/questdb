@@ -154,6 +154,13 @@ public final class SqlParser {
         }
     }
 
+    //prevent full/right from being used as table aliases
+    private void checkSupportedJoinType(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (tok != null && (Chars.equalsIgnoreCase(tok, "full") || Chars.equalsIgnoreCase(tok, "right"))) {
+            throw SqlException.$((lexer.lastTokenPosition()), "unsupported join type");
+        }
+    }
+
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
         return SqlUtil.createColumnAlias(
                 characterStore,
@@ -986,7 +993,6 @@ public final class SqlParser {
             // do not collapse aliased sub-queries or those that have timestamp()
             // select * from (table) x
             if (tok == null || (tableAliasStop.contains(tok) && !SqlKeywords.isTimestampKeyword(tok))) {
-
                 final QueryModel target = proposedNested.getNestedModel();
                 // when * is artificial, there is no union, there is no "where" clause inside sub-query,
                 // e.g. there was no "select * from" we should collapse sub-query to a regular table
@@ -1036,12 +1042,13 @@ public final class SqlParser {
         }
 
         // expect multiple [[inner | outer | cross] join]
-
         int joinType;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
             model.addJoinModel(parseJoin(lexer, tok, joinType, masterModel.getWithClauses()));
             tok = optTok(lexer);
         }
+
+        checkSupportedJoinType(lexer, tok);
 
         // expect [where]
 
@@ -1294,7 +1301,6 @@ public final class SqlParser {
                 tok = tok(lexer, "join");
                 joinType = QueryModel.JOIN_OUTER;
                 if (isOuterKeyword(tok)) {
-                    // LEFT OUTER
                     tok = tok(lexer, "join");
                 }
             } else {
@@ -1971,6 +1977,7 @@ public final class SqlParser {
     private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null && tableAliasStop.excludes(tok)) {
+            checkSupportedJoinType(lexer, tok);
             if (SqlKeywords.isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
             }
@@ -2156,7 +2163,7 @@ public final class SqlParser {
         joinStartSet.put("left", QueryModel.JOIN_INNER);
         joinStartSet.put("join", QueryModel.JOIN_INNER);
         joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("left", QueryModel.JOIN_OUTER);//only left join is supported currently 
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
