@@ -56,9 +56,9 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMetadataQueryDefaultHysterisysParams() throws Exception {
-        configOverrideMaxUncommittedRows = 83737;
-        configOverrideO3MaxLag = 28291;
+    public void testMetadataQueryDefaultHysteresisParams() throws Exception {
+        configOverrideMaxUncommittedRows(83737);
+        configOverrideO3MaxLag(28291);
 
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);

@@ -344,6 +344,11 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public long getCommitTimestamp() {
+            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        }
+
+        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }

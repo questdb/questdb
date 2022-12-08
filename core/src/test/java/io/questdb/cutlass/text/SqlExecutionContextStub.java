@@ -90,8 +90,13 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public long getMicrosecondTimestamp() {
+        return 0L;
+    }
+
+    @Override
     public long getNow() {
-        return 0;
+        return 0L;
     }
 
     @Override
@@ -106,7 +111,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public long getRequestFd() {
-        return 0;
+        return 0L;
     }
 
     @Override
@@ -151,6 +156,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setJitMode(int jitMode) {
+    }
+
+    @Override
+    public void setNowAndFixClock(long now) {
     }
 
     @Override

@@ -22,25 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal.seq;
+package io.questdb.griffin;
 
-import java.io.Closeable;
+import io.questdb.QuestDBNode;
+import org.junit.BeforeClass;
 
-public interface TransactionLogCursor extends Closeable {
-    @Override
-    void close();
+public abstract class AbstractMultiNodeTest extends AbstractGriffinTest {
 
-    long getCommitTimestamp();
-
-    int getSegmentId();
-
-    long getSegmentTxn();
-
-    long getStructureVersion();
-
-    long getTxn();
-
-    int getWalId();
-
-    boolean hasNext();
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractGriffinTest.setUpStatic();
+        final QuestDBNode node2 = newNode(2);
+        node2.initGriffin();
+        final QuestDBNode node3 = newNode(3);
+        node3.initGriffin();
+    }
 }

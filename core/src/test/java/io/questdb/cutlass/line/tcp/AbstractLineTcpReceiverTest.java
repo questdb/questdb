@@ -89,6 +89,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
+
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public String getAuthDbPath() {

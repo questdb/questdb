@@ -39,8 +39,6 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -80,30 +78,30 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByAllIndexedWithManyWorkersAndMinimalQueue() throws Exception {
-        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
-        });
+        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
     public void testLatestByAllIndexedWithManyWorkersAndRegularQueue() throws Exception {
-        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
-        });
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
     public void testLatestByAllIndexedWithOneWorkerAndMinimalQueue() throws Exception {
-        executeWithPool(1, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
-        });
+        executeWithPool(1, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
     public void testLatestByAllIndexedWithOneWorkerAndRegularQueue() throws Exception {
-        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
-        });
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
@@ -314,7 +312,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInMultiHashJoin() throws Exception {
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(1);
+        circuitBreaker.setTimeout(1);
         try {
             assertTimeout("create table grouptest as " +
                             "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
@@ -373,34 +371,34 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithManyWorkersAndMinimalQueue() throws Exception {
         pageFrameMaxRows = 1000;
-        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithManyWorkersAndRegularQueue() throws Exception {
         pageFrameMaxRows = 1000;
-        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     //keyed
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithOneWorkerAndMinimalQueue() throws Exception {
         pageFrameMaxRows = 1000;
-        executeWithPool(1, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(1, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupByWithOneWorkerAndRegularQueue() throws Exception {
         pageFrameMaxRows = 1000;
-        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     @Test
@@ -411,25 +409,26 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     //non-keyed
     @Test//triggers timeout when processing task in main thread because queue is too small
     public void testTimeoutInVectorizedNonKeyedGroupByWithManyWorkersAndMinimalQueue() throws Exception {
-        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(3, 1, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     @Test//triggers timeout at end of task creation in main thread
     public void testTimeoutInVectorizedNonKeyedGroupByWithManyWorkersAndRegularQueue() throws Exception {
-        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
     @Test//triggers timeout at end of task creation in main thread
     public void testTimeoutInVectorizedNonKeyedGroupByWithOneWorkersAndRegularQueue() throws Exception {
-        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
-        });
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
+            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext)
+        );
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void assertTimeout(String ddl) throws Exception {
         assertTimeout(ddl, null, null);
     }
@@ -488,15 +487,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
             int workerCount,
             int queueSize,
             CustomisableRunnable runnable) throws Exception {
-        executeWithPool(workerCount, queueSize, RostiAllocFacadeImpl.INSTANCE, runnable);
-    }
-
-    private void executeWithPool(
-            int workerCount,
-            int queueSize,
-            RostiAllocFacade rostiAllocFacade,
-            CustomisableRunnable runnable
-    ) throws Exception {
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
                 WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -515,11 +505,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                     @Override
                     public int getLatestByQueueCapacity() {
                         return queueSize;
-                    }
-
-                    @Override
-                    public RostiAllocFacade getRostiAllocFacade() {
-                        return rostiAllocFacade;
                     }
 
                     @Override
@@ -542,10 +527,10 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     }
 
     private void resetTimeout() {
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
+        circuitBreaker.setTimeout(-100);
     }
 
-    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
         assertTimeout("create table x as " +
                         "(" +
                         "select" +
@@ -561,20 +546,20 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                 compiler, sqlExecutionContext);
     }
 
-    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select i, avg(l), max(l) \n" +
                         "from grouptest \n" +
                         "group by i", compiler, sqlExecutionContext);
     }
 
-    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select avg(l), max(l) from grouptest", compiler, sqlExecutionContext);
     }
 
     private void unsetTimeout() {
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(Long.MAX_VALUE);
+        circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
 
     protected static void execute(

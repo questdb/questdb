@@ -1734,16 +1734,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return MicrosecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public MillisecondClock getMillisecondClock() {
-            return MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
         public long getMiscAppendPageSize() {
             return writerMiscAppendPageSize;
         }

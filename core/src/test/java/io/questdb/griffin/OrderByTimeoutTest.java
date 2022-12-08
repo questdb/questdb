@@ -69,7 +69,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     @AfterClass
     public static void tearDownStatic() {
         AbstractGriffinTest.tearDownStatic();
-        circuitBreaker = Misc.free((NetworkSqlExecutionCircuitBreaker) circuitBreaker);
+        circuitBreaker = Misc.free(circuitBreaker);
     }
 
     @After

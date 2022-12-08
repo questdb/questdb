@@ -1295,7 +1295,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
-        sampleByIndexSearchPageSize = 16;
+        configOverrideSampleByIndexSearchPageSize(16);
 
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1647,7 +1647,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByMicro() throws Exception {
-        sampleByIndexSearchPageSize = 256;
+        configOverrideSampleByIndexSearchPageSize(256);
+
         assertSampleByIndexQuery(
                 "k\tfirst\n" +
                         "2021-01-01T00:07:39.760000Z\t15318\n" +

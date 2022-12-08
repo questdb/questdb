@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public class SystimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -42,20 +41,19 @@ public class SystimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(configuration.getMicrosecondClock());
+        return new Func(sqlExecutionContext);
     }
 
     private static class Func extends TimestampFunction implements Function {
+        private final SqlExecutionContext context;
 
-        private final MicrosecondClock clock;
-
-        public Func(MicrosecondClock clock) {
-            this.clock = clock;
+        public Func(SqlExecutionContext context) {
+            this.context = context;
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            return clock.getTicks();
+            return context.getMicrosecondTimestamp();
         }
 
         @Override

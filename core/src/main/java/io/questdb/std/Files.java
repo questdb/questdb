@@ -50,7 +50,7 @@ public final class Files {
     public static final char SEPARATOR;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
+    private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static IntHashSet openFds;
 
     private Files() {
