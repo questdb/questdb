@@ -120,8 +120,6 @@ public interface FilesFacade {
 
     byte readNonNegativeByte(long fd, long offset);
 
-    short readNonNegativeShort(long fd, long offset);
-
     int readNonNegativeInt(long fd, long offset);
 
     long readNonNegativeLong(long fd, long offset);
