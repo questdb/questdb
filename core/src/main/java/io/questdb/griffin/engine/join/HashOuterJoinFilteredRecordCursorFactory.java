@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 //Same as HashOuterJoinRecordCursorFactory but with added filtering (for non-equality or complex join conditions that use functions) 
 public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -57,7 +57,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
             int columnSplit,
-            @Nullable Function filter
+            @NotNull Function filter
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
@@ -130,13 +130,13 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
         masterFactory.close();
         slaveFactory.close();
         cursor.close();
+        filter.close();
     }
 
     private class HashOuterJoinRecordCursor extends AbstractJoinCursor {
         private final Map joinKeyMap;
         private final OuterJoinRecord record;
         private final RecordChain slaveChain;
-        private boolean isMatch;
         private boolean isOpen;
         private Record masterRecord;
         private boolean useSlaveCursor;
@@ -147,7 +147,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
             this.isOpen = true;
-            this.isMatch = true;
         }
 
         @Override
@@ -168,24 +167,13 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
         @Override
         public boolean hasNext() {
             if (useSlaveCursor && slaveChain.hasNext()) {
-                if (filter == null) {
-                    return true;
-                } else {
-                    record.hasSlave(true);//necessary for filter 
-                    do {
-                        if (filter.getBool(record)) {
-                            isMatch = true;
-                            record.hasSlave(true);
-                            return true;
-                        }
-                    } while (slaveChain.hasNext());
-                }
-            }
-
-            if (!isMatch) {
-                isMatch = true;
-                record.hasSlave(false);
-                return true;
+                record.hasSlave(true);//necessary for filter 
+                do {
+                    if (filter.getBool(record)) {
+                        record.hasSlave(true);
+                        return true;
+                    }
+                } while (slaveChain.hasNext());
             }
 
             if (masterCursor.hasNext()) {
@@ -196,16 +184,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
                     slaveChain.of(value.getLong(0));
                     useSlaveCursor = true;
                     record.hasSlave(true);
-
-                    // we know cursor has values, advance to get first value
-                    if (filter == null) {
-                        slaveChain.hasNext();
-                        return true;
-                    }
-
                     while (slaveChain.hasNext()) {
                         if (filter.getBool(record)) {
-                            isMatch = true;
                             record.hasSlave(true);
                             return true;
                         }
@@ -214,7 +194,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
 
                 useSlaveCursor = false;
                 record.hasSlave(false);
-                isMatch = true;//skip isMatch block above on next call
                 return true;
             }
             return false;
@@ -229,7 +208,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
         public void toTop() {
             masterCursor.toTop();
             useSlaveCursor = false;
-            isMatch = true;
         }
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -253,7 +231,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
                 this.slaveChain.setSymbolTableResolver(slaveCursor);
                 record.of(masterRecord, slaveRecord);
                 useSlaveCursor = false;
-                isMatch = true;
             } catch (Throwable e) {
                 this.masterCursor = Misc.free(masterCursor);
                 throw e;

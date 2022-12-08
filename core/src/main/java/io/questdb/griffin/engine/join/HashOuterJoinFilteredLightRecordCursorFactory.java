@@ -38,7 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 //Same as HashOuterJoinLightRecordCursorFactory but with added filtering (for non-equality or complex join conditions that use functions)
 public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -60,7 +60,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            @Nullable Function filter
+            @NotNull Function filter
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
@@ -108,13 +108,13 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
         masterFactory.close();
         slaveFactory.close();
         cursor.close();
+        filter.close();
     }
 
     private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {
         private final Map joinKeyMap;
         private final OuterJoinRecord record;
         private final LongChain slaveChain;
-        private boolean isMatch;
         private boolean isOpen;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
@@ -132,7 +132,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
             this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.isOpen = true;
-            this.isMatch = true;
         }
 
         @Override
@@ -153,28 +152,16 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
         @Override
         public boolean hasNext() {
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
-                if (filter == null) {
+                record.hasSlave(true);
+                while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                    return true;
-                } else {
-                    record.hasSlave(true);
-                    while (slaveChainCursor.hasNext()) {
-                        slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                        if (filter.getBool(record)) {
-                            isMatch = true;
-                            record.hasSlave(true);
-                            return true;
-                        } else {
-                            slaveChainCursor.next();
-                        }
+                    if (filter.getBool(record)) {
+                        record.hasSlave(true);
+                        return true;
+                    } else {
+                        slaveChainCursor.next();
                     }
                 }
-            }
-
-            if (!isMatch) {
-                isMatch = true;
-                record.hasSlave(false);
-                return true;
             }
 
             if (masterCursor.hasNext()) {
@@ -185,17 +172,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
                     slaveChainCursor = slaveChain.getCursor(value.getLong(0));
                     record.hasSlave(true);
 
-                    if (filter == null) {
-                        slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
-                        return true;
-                    }
-
                     // we know cursor has values, advance to get first value
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                         if (filter.getBool(record)) {
-                            isMatch = true;
-                            //record.hasSlave(true);
                             return true;
                         }
                     }
@@ -203,7 +183,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
 
                 slaveChainCursor = null;
                 record.hasSlave(false);
-                isMatch = true;//skip isMatch block above on next call
                 return true;
             }
 
@@ -219,7 +198,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
         public void toTop() {
             masterCursor.toTop();
             slaveChainCursor = null;
-            isMatch = true;
         }
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -257,7 +235,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
             this.slaveRecord = slaveCursor.getRecordB();
             this.record.of(masterRecord, slaveRecord);
             this.slaveChainCursor = null;
-            this.isMatch = true;
         }
     }
 }
