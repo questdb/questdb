@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -43,6 +44,7 @@ import io.questdb.std.Transient;
 public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final IntList columnIndex;
     private final AsOfJoinRecordCursor cursor;
+    private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
     private final RecordCursorFactory slaveFactory;
@@ -60,7 +62,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordSink slaveKeySink,
             int columnSplit,
             RecordValueSink slaveValueSink,
-            IntList columnIndex // this column index will be used to retrieve symbol tables from underlying slave
+            IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
+            JoinContext joinContext
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
@@ -77,6 +80,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveValueSink
         );
         this.columnIndex = columnIndex;
+        this.joinContext = joinContext;
     }
 
     @Override
@@ -113,6 +117,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf join");
+        sink.val("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

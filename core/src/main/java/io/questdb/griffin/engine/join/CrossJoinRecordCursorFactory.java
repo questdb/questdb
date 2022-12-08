@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.std.Misc;
 
+//This plan is actually filter-less Nested Loop  
 public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final CrossJoinRecordCursor cursor;
     private final RecordCursorFactory masterFactory;

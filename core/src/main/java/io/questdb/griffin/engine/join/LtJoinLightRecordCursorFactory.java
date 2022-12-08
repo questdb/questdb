@@ -32,19 +32,20 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
+//merge join of two cursors ordered by timestamp plus additional conditions 
 public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final LtJoinLightRecordCursor cursor;
+    private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
     private final RecordCursorFactory slaveFactory;
@@ -59,12 +60,14 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
             @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
-            int columnSplit) {
+            int columnSplit,
+            JoinContext joinContext) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
+        this.joinContext = joinContext;
 
         Map joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         this.cursor = new LtJoinLightRecordCursor(
@@ -110,6 +113,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Lt join light");
+        sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

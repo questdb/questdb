@@ -37,12 +37,14 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final HashOuterJoinLightRecordCursor cursor;
+    private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
     private final RecordCursorFactory slaveFactory;
@@ -57,7 +59,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
-            int columnSplit
+            int columnSplit,
+            JoinContext context
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
@@ -70,6 +73,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 joinColumnTypes,
                 valueTypes, configuration
         );
+        this.joinContext = context;
     }
 
     @Override
@@ -105,6 +109,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash outer join light");
+        sink.optAttr("condition", joinContext);
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);
     }

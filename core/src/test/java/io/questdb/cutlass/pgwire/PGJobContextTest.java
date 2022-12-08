@@ -2122,6 +2122,15 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testEmptySql() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement("")) {
+                statement.execute();
+            }
+        });
+    }
+
+    @Test
     public void testExplainPlan() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
@@ -2166,7 +2175,6 @@ if __name__ == "__main__":
                                     "Sort light lo: 10\n" +
                                     "    Async Filter\n" +
                                     "      filter: str='\\n'\n" +
-                                    "      preTouch: true\n" +
                                     "      workers: 2\n" +
                                     "        DataFrame\n" +
                                     "            Row forward scan\n" +
@@ -2175,15 +2183,6 @@ if __name__ == "__main__":
                             rs
                     );
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testEmptySql() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (PreparedStatement statement = connection.prepareStatement("")) {
-                statement.execute();
             }
         });
     }

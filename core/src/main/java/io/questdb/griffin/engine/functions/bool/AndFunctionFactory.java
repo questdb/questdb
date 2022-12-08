@@ -99,9 +99,11 @@ public class AndFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
+            sink.val('(');
             sink.val(left);
             sink.put(" and ");
             sink.val(right);
+            sink.val(')');
         }
     }
 }

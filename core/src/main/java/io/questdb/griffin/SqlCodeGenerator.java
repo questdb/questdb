@@ -232,8 +232,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                              RecordSink slaveKeySink,
                                                              int columnSplit,
                                                              RecordValueSink slaveValueSink,
-                                                             IntList columnIndex) {
-        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+                                                             IntList columnIndex,
+                                                             JoinContext joinContext) {
+        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex, joinContext);
     }
 
     private static RecordCursorFactory createFullFatLtJoin(CairoConfiguration configuration,
@@ -247,8 +248,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                            RecordSink slaveKeySink,
                                                            int columnSplit,
                                                            RecordValueSink slaveValueSink,
-                                                           IntList columnIndex) {
-        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex);
+                                                           IntList columnIndex,
+                                                           JoinContext joinContext) {
+        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes, mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex, joinContext);
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
@@ -411,7 +413,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordSink masterKeySink,
             RecordCursorFactory slave,
             RecordSink slaveKeySink,
-            int columnSplit
+            int columnSplit,
+            JoinContext joinContext
     ) {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
@@ -426,7 +429,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 valueTypes,
                 masterKeySink,
                 slaveKeySink,
-                columnSplit
+                columnSplit,
+                joinContext
         );
     }
 
@@ -439,7 +443,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
             int joinPosition,
-            FullFatJoinGenerator generator) throws SqlException {
+            FullFatJoinGenerator generator,
+            JoinContext joinContext
+    ) throws SqlException {
 
         // create hash set of key columns to easily find them
         intHashSet.clear();
@@ -596,7 +602,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ),
                     masterMetadata.getColumnCount(),
                     RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
-                    columnIndex
+                    columnIndex,
+                    joinContext
             );
 
         } catch (Throwable e) {
@@ -609,7 +616,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadata,
             RecordCursorFactory master,
             RecordCursorFactory slave,
-            int joinType
+            int joinType,
+            JoinContext context
     ) {
         /*
          * JoinContext provides the following information:
@@ -653,7 +661,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes,
                         masterKeySink,
                         slaveKeySink,
-                        masterMetadata.getColumnCount()
+                        masterMetadata.getColumnCount(),
+                        context
                 );
             }
 
@@ -666,7 +675,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     valueTypes,
                     masterKeySink,
                     slaveKeySink,
-                    masterMetadata.getColumnCount()
+                    masterMetadata.getColumnCount(),
+                    context
             );
         }
 
@@ -689,7 +699,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterKeySink,
                     slaveKeySink,
                     slaveSink,
-                    masterMetadata.getColumnCount()
+                    masterMetadata.getColumnCount(),
+                    context
             );
         }
 
@@ -703,7 +714,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterKeySink,
                 slaveKeySink,
                 slaveSink,
-                masterMetadata.getColumnCount()
+                masterMetadata.getColumnCount(),
+                context
         );
     }
 
@@ -752,7 +764,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordSink masterKeySink,
             RecordCursorFactory slave,
             RecordSink slaveKeySink,
-            int columnSplit
+            int columnSplit,
+            JoinContext joinContext
     ) {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG);
@@ -767,7 +780,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 valueTypes,
                 masterKeySink,
                 slaveKeySink,
-                columnSplit
+                columnSplit,
+                joinContext
         );
     }
 
@@ -777,7 +791,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordSink masterKeySink,
             RecordCursorFactory slave,
             RecordSink slaveKeySink,
-            int columnSplit
+            int columnSplit,
+            JoinContext context
     ) {
         valueTypes.clear();
         valueTypes.add(ColumnType.LONG); // master previous
@@ -794,7 +809,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 valueTypes,
                 masterKeySink,
                 slaveKeySink,
-                columnSplit
+                columnSplit,
+                context
         );
     }
 
@@ -1480,7 +1496,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         listColumnFilterA,
                                                         true
                                                 ),
-                                                masterMetadata.getColumnCount()
+                                                masterMetadata.getColumnCount(),
+                                                slaveModel.getContext()
                                         );
                                     } else {
                                         master = new AsOfJoinNoKeyRecordCursorFactory(
@@ -1499,7 +1516,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveMetadata,
                                             slaveModel.getName(),
                                             slaveModel.getJoinKeywordPosition(),
-                                            CREATE_FULL_FAT_AS_OF_JOIN
+                                            CREATE_FULL_FAT_AS_OF_JOIN,
+                                            slaveModel.getContext()
                                     );
                                 }
                                 masterAlias = null;
@@ -1528,7 +1546,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         listColumnFilterA,
                                                         true
                                                 ),
-                                                masterMetadata.getColumnCount()
+                                                masterMetadata.getColumnCount(),
+                                                slaveModel.getContext()
                                         );
                                     } else {
                                         master = new LtJoinNoKeyRecordCursorFactory(
@@ -1547,7 +1566,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveMetadata,
                                             slaveModel.getName(),
                                             slaveModel.getJoinKeywordPosition(),
-                                            CREATE_FULL_FAT_LT_JOIN
+                                            CREATE_FULL_FAT_LT_JOIN,
+                                            slaveModel.getContext()
                                     );
                                 }
                                 masterAlias = null;
@@ -1576,7 +1596,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     listColumnFilterA,
                                                     true
                                             ),
-                                            masterMetadata.getColumnCount()
+                                            masterMetadata.getColumnCount(),
+                                            slaveModel.getContext()
                                     );
                                     // if we fail after this step, master will release slave
                                     releaseSlave = false;
@@ -1591,7 +1612,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                         master,
                                         slave,
-                                        joinType
+                                        joinType,
+                                        slaveModel.getContext()
                                 );
                                 masterAlias = null;
                                 break;
@@ -4338,7 +4360,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RecordSink slaveKeySink,
                 int columnSplit,
                 RecordValueSink slaveValueSink,
-                IntList columnIndex
+                IntList columnIndex,
+                JoinContext joinContext
         );
     }
 

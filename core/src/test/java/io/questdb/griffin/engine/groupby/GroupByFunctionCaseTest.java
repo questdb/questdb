@@ -43,53 +43,6 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
     StringSink sqlSink = new StringSink();
 
     @Test
-    public void testGetPlan() throws SqlException {
-        compile("CREATE TABLE spot_trades (\n" +
-                "  id LONG,\n" +
-                "  instrument_key SYMBOL capacity 256 CACHE,\n" +
-                "  venue SYMBOL capacity 256 CACHE,\n" +
-                "  base_ccy SYMBOL capacity 256 CACHE,\n" +
-                "  quote_ccy SYMBOL capacity 256 CACHE,\n" +
-                "  symbol SYMBOL capacity 256 CACHE index capacity 256,\n" +
-                "  created_timestamp TIMESTAMP,\n" +
-                "  trade_timestamp TIMESTAMP,\n" +
-                "  side SYMBOL capacity 256 CACHE,\n" +
-                "  qty DOUBLE,\n" +
-                "  price DOUBLE,\n" +
-                "  trade_id STRING,\n" +
-                "  notional_usd DOUBLE,\n" +
-                "  notional_base_ccy DOUBLE\n" +
-                ") timestamp (trade_timestamp) PARTITION BY DAY;");
-
-        assertPlan("SELECT  \n" +
-                        "    trade_timestamp as candle_st,\n" +
-                        "    venue,\n" +
-                        "    count(*) AS num_ticks,\n" +
-                        "    SUM(qty*price) AS quote_volume,\n" +
-                        "    SUM(qty*price)/SUM(qty) AS vwap\n" +
-                        "  FROM 'spot_trades'\n" +
-                        "  WHERE \n" +
-                        "    instrument_key like 'ETH_USD_S_%'\n" +
-                        "    AND trade_timestamp >= '2022-01-01 00:00'\n" +
-                        "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
-                        "  SAMPLE BY 1h \n" +
-                        "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
-                "VirtualRecord\n" +
-                        "  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
-                        "    SampleByFillNone\n" +
-                        "      groupByFunctions: [count(1),sum(qty*price),sum(qty)]\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter\n" +
-                        "              filter: instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS]\n" +
-                        "              preTouch: true\n" +
-                        "              workers: 1\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Interval forward scan on: spot_trades\n" +
-                        "                      intervals: [static=[1640995200000000,9223372036854775807]\n");
-    }
-
-    @Test
     public void testAggregatesOnColumnWithNoKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
@@ -228,11 +181,59 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testGetPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE spot_trades (\n" +
+                    "  id LONG,\n" +
+                    "  instrument_key SYMBOL capacity 256 CACHE,\n" +
+                    "  venue SYMBOL capacity 256 CACHE,\n" +
+                    "  base_ccy SYMBOL capacity 256 CACHE,\n" +
+                    "  quote_ccy SYMBOL capacity 256 CACHE,\n" +
+                    "  symbol SYMBOL capacity 256 CACHE index capacity 256,\n" +
+                    "  created_timestamp TIMESTAMP,\n" +
+                    "  trade_timestamp TIMESTAMP,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  qty DOUBLE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  trade_id STRING,\n" +
+                    "  notional_usd DOUBLE,\n" +
+                    "  notional_base_ccy DOUBLE\n" +
+                    ") timestamp (trade_timestamp) PARTITION BY DAY;");
+
+            assertPlan("SELECT  \n" +
+                            "    trade_timestamp as candle_st,\n" +
+                            "    venue,\n" +
+                            "    count(*) AS num_ticks,\n" +
+                            "    SUM(qty*price) AS quote_volume,\n" +
+                            "    SUM(qty*price)/SUM(qty) AS vwap\n" +
+                            "  FROM 'spot_trades'\n" +
+                            "  WHERE \n" +
+                            "    instrument_key like 'ETH_USD_S_%'\n" +
+                            "    AND trade_timestamp >= '2022-01-01 00:00'\n" +
+                            "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
+                            "  SAMPLE BY 1h \n" +
+                            "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
+                    "VirtualRecord\n" +
+                            "  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
+                            "    SampleByFillNone\n" +
+                            "      groupByFunctions: [count(1),sum(qty*price),sum(qty)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Async Filter\n" +
+                            "              filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
+                            "              workers: 1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: spot_trades\n" +
+                            "                      intervals: [static=[1640995200000000,9223372036854775807]\n");
+        });
+    }
+
     private static String name(String type) {
         return Character.toUpperCase(type.charAt(0)) + type.substring(1).toLowerCase(Locale.ROOT);
     }
 
-    private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws SqlException {
+    private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws Exception {
         try {
             assertPlan(sink, expectedPlan);
         } catch (AssertionError ae) {

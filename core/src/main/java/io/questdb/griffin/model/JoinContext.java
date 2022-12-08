@@ -24,9 +24,13 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.*;
 
-public class JoinContext implements Mutable {
+
+//Metadata describing join conditions
+public class JoinContext implements Mutable, Plannable {
     public static final ObjectFactory<JoinContext> FACTORY = JoinContext::new;
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;
 
@@ -53,5 +57,15 @@ public class JoinContext implements Mutable {
 
         slaveIndex = -1;
         parents.clear();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        for (int i = 0, n = aNodes.size(); i < n; i++) {
+            if (i > 0) {
+                sink.val(" and ");
+            }
+            sink.val(aNodes.get(i)).val('=').val(bNodes.get(i));
+        }
     }
 }

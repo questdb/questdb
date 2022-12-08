@@ -169,7 +169,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         sink.type("Async Filter");
         sink.optAttr("limit", limitLoFunction);
         sink.attr("filter").val(filterAtom);
-        sink.attr("preTouch").val(preTouchColumns);
         sink.attr("workers").val(workerCount);
         sink.child(base);
     }
