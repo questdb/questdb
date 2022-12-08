@@ -86,6 +86,10 @@ public class IntList implements Mutable {
         Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
 
+    public boolean contains(int value) {
+        return indexOf(value, 0, pos) > -1;
+    }
+
     public void ensureCapacity(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;

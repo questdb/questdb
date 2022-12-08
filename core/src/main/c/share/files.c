@@ -29,20 +29,11 @@
 #include <sys/mman.h>
 #include "sysutil.h"
 
-#ifdef __APPLE__
-
-#include <sys/time.h>
-
-#else
-
-#include <utime.h>
-
-#endif
-
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/errno.h>
 #include <sys/time.h>
+#include <sys/mount.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
@@ -148,17 +139,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
     return result;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
-        (JNIEnv *e, jclass cl, jlong pchar) {
-    struct stat st;
-    int r = stat((const char *) pchar, &st);
-#ifdef __APPLE__
-    return r == 0 ? ((1000 * st.st_mtimespec.tv_sec) + (st.st_mtimespec.tv_nsec / 1000000)) : r;
-#else
-    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
-#endif
-}
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_RDONLY);
@@ -201,7 +181,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
-    (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+        (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
 
     struct stat st;
     if (lstat((const char *) pcharSoftLink, &st) == 0) {
@@ -239,30 +219,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists
     return (jboolean) (r == 0 ? st.st_nlink > 0 : 0);
 }
 
-#ifdef __APPLE__
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
-    struct timeval t[2];
-    gettimeofday(t, NULL);
-    t[1].tv_sec = millis / 1000;
-    t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
-    return (jboolean) (utimes((const char *) lpszName, t) == 0);
-}
-
-#else
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
-    struct timeval t[2];
-    gettimeofday(t, NULL);
-    t[1].tv_sec = millis / 1000;
-    t[1].tv_usec = ((millis % 1000) * 1000);
-    return (jboolean) (utimes((const char *) lpszName, t) == 0);
-}
-
-#endif
-
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) 1;
@@ -282,51 +238,26 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
     // MACOS allocates additional space. Check what size the file currently is
     struct stat st;
-    if (fstat((int) fd, &st) != 0) {
+    int _fd = (int) fd;
+    if (fstat(_fd, &st) != 0) {
         return JNI_FALSE;
     }
-    const jlong  fileLen = st.st_blksize * st.st_blocks;
+    const jlong fileLen = st.st_blksize * st.st_blocks;
     jlong deltaLen = len - fileLen;
     if (deltaLen > 0) {
         // F_ALLOCATECONTIG - try to allocate continuous space.
         fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, deltaLen, 0};
-        int result = fcntl(fd, F_PREALLOCATE, &flags);
+        int result = fcntl(_fd, F_PREALLOCATE, &flags);
         if (result == -1) {
             // F_ALLOCATEALL - try to allocate non-continuous space.
             flags.fst_flags = F_ALLOCATEALL;
-            result = fcntl((int)fd, F_PREALLOCATE, &flags);
+            result = fcntl((int) fd, F_PREALLOCATE, &flags);
             if (result == -1) {
                 return JNI_FALSE;
             }
         }
     }
-    return ftruncate((int)fd, len) == 0;
-}
-
-#else
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
-    int rc = posix_fallocate(fd, 0, len);
-    if (rc == 0) {
-        return JNI_TRUE;
-    }
-    if (rc == EINVAL) {
-        // Some file systems (such as ZFS) do not support posix_fallocate
-        struct stat st;
-        rc = fstat((int) fd, &st);
-        if (rc != 0) {
-            return JNI_FALSE;
-        }
-        if (st.st_size < len) {
-            rc = ftruncate(fd, len);
-            if (rc != 0) {
-                return JNI_FALSE;
-            }
-        }
-        return JNI_TRUE;
-    }
-    return JNI_FALSE;
+    return ftruncate((int) fd, len) == 0;
 }
 
 #endif
@@ -447,7 +378,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
     if (fileSize > 0) {
-        if (flock((int)fd, LOCK_EX | LOCK_NB) == 0) {
+        if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
             // truncate file to 0 byte
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
