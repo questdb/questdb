@@ -89,7 +89,6 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
         if (baseRecord == null) {
             return false;
-
         }
         this.map.clear();
 
@@ -122,6 +121,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                     return createMapCursor();
                 }
             }
+            // TODO(puzpuzpuz): this is non-suspendable
         } while (base.hasNext());
 
         // we ran out of data, make sure hasNext() returns false at the next
@@ -142,6 +142,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     @Override
     public void toTop() {
         super.toTop();
+        // TODO(puzpuzpuz): this is non-suspendable
         if (base.hasNext()) {
             baseRecord = base.getRecord();
             map.clear();

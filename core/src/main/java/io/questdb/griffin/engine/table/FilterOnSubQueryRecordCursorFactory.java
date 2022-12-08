@@ -90,6 +90,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         IntObjHashMap<RowCursorFactory> targetFactories;
         if (factories == factoriesA) {

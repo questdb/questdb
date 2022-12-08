@@ -281,6 +281,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         forEachNode(QuestDBNode::setUpGriffin);
+        sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
     }
 
     @Override

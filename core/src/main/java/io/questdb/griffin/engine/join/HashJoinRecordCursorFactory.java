@@ -166,6 +166,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            // TODO(puzpuzpuz): this is non-suspendable
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.reopen();

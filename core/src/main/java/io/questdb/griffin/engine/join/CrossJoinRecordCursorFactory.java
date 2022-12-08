@@ -54,6 +54,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
@@ -105,11 +106,11 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-
             if (slaveCursor.hasNext()) {
                 return true;
             }
 
+            // TODO(puzpuzpuz): this is non-suspendable
             if (masterCursor.hasNext()) {
                 slaveCursor.toTop();
                 return slaveCursor.hasNext();
@@ -132,6 +133,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             masterCursor.toTop();
+            // TODO(puzpuzpuz): this is non-suspendable
             masterCursor.hasNext();
             slaveCursor.toTop();
         }

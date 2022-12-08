@@ -617,7 +617,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     private void testNoLimit(boolean parallelFilterEnabled, int jitMode, Class<?> expectedFactoryClass) throws Exception {
-        configOverrideParallelFilterEnabled(parallelFilterEnabled);
+        sqlExecutionContext.setParallelFilterEnabled(parallelFilterEnabled);
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
@@ -894,6 +894,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public boolean isParallelFilterEnabled() {
+            return sqlExecutionContext.isParallelFilterEnabled();
+        }
+
+        @Override
         public boolean isTimestampRequired() {
             return sqlExecutionContext.isTimestampRequired();
         }
@@ -931,6 +936,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         @Override
         public void setNowAndFixClock(long now) {
             sqlExecutionContext.setNowAndFixClock(now);
+        }
+
+        @Override
+        public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
+            sqlExecutionContext.setParallelFilterEnabled(parallelFilterEnabled);
         }
 
         @Override

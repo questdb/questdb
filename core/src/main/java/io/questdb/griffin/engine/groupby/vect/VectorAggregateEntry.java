@@ -55,8 +55,8 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
 
     public boolean run(int workerId) {
         if (tryLock()) {
-            if (!circuitBreaker.checkIfTripped() &&
-                    (oomCounter == null || oomCounter.get() == 0)) {
+            if (!circuitBreaker.checkIfTripped()
+                    && (oomCounter == null || oomCounter.get() == 0)) {
                 if (pRosti != null) {
                     long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
                     if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {

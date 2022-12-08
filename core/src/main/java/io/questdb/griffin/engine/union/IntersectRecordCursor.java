@@ -124,6 +124,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
             isOpen = true;
         }
         this.recordB = cursorB.getRecord();
+        // TODO(puzpuzpuz): this is non-suspendable
         hashCursorB();
         recordA = cursorA.getRecord();
         toTop();

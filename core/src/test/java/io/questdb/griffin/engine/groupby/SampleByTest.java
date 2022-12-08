@@ -491,8 +491,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testGroupByFail() throws Exception {
         assertMemoryLeak(() -> {
-
-            compiler.compile("create table x as " +
+            compiler.compile(
+                    "create table x as " +
                             "(" +
                             "select" +
                             " x," +
@@ -529,7 +529,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            cursor.hasNext();
                         }
                         Assert.fail();
                     } catch (CairoException e) {

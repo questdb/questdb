@@ -268,7 +268,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sum(d1) from tb1 where d1 < 0.2",
                         null,
-                        true,
+                        false,
                         readOnlyExecutionContext,
                         true
                 );

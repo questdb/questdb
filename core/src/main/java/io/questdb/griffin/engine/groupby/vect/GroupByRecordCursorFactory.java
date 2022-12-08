@@ -155,6 +155,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
         // clear maps

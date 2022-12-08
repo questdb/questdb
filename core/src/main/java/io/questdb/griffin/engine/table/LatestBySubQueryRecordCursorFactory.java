@@ -94,6 +94,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         symbolKeys.clear();
         try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {

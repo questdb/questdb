@@ -68,7 +68,6 @@ class FilteredRecordCursor implements RecordCursor {
                 return true;
             }
         }
-
         return false;
     }
 

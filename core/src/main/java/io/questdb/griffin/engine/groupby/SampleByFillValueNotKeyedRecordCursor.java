@@ -90,12 +90,14 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         if (setActiveA(expectedLocalEpoch)) {
             return peeker.reset();
         }
+        // TODO(puzpuzpuz): this is non-suspendable
         return notKeyedLoop(simpleMapValue);
     }
 
     @Override
     public void toTop() {
         super.toTop();
+        // TODO(puzpuzpuz): this is non-suspendable
         if (base.hasNext()) {
             baseRecord = base.getRecord();
         }

@@ -60,12 +60,14 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): this is non-suspendable
         return baseRecord != null && notKeyedLoop(simpleMapValue);
     }
 
     @Override
     public void toTop() {
         super.toTop();
+        // TODO(puzpuzpuz): this is non-suspendable
         if (base.hasNext()) {
             baseRecord = base.getRecord();
         }

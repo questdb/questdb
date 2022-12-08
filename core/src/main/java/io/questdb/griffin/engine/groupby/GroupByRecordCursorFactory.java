@@ -121,6 +121,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final Map dataMap;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean dataMapBuilt;
         private boolean isOpen;
 
         public GroupByRecordCursor(
@@ -146,14 +148,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    dataMap.reopen();
-                }
-                final Record baseRecord = baseCursor.getRecord();
-                while (baseCursor.hasNext()) {
+        @Override
+        public boolean hasNext() {
+            // TODO(puzpuzpuz): test suspendability
+            if (!dataMapBuilt) {
+                final Record baseRecord = managedCursor.getRecord();
+                while (managedCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     final MapKey key = dataMap.withKey();
                     mapSink.copy(baseRecord, key);
@@ -164,11 +164,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         groupByFunctionsUpdater.updateExisting(value, baseRecord);
                     }
                 }
-                super.of(baseCursor, dataMap.getCursor());
-            } catch (Throwable e) {
-                close();
-                throw e;
+                super.of(dataMap.getCursor());
+                dataMapBuilt = true;
             }
+            return super.hasNext();
+        }
+
+        public void of(RecordCursor managedCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            if (!isOpen) {
+                isOpen = true;
+                dataMap.reopen();
+            }
+            this.circuitBreaker = circuitBreaker;
+            this.managedCursor = managedCursor;
+            dataMapBuilt = false;
         }
     }
 }

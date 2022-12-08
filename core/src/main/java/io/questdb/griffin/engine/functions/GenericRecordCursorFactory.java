@@ -31,7 +31,7 @@ import io.questdb.griffin.SqlExecutionContext;
 
 /**
  * This factory has limitations. In that it does not differentiate cursor.toTop() from creating new
- * cursor instance. Semantically toTop() does not refresh data snapshot and newInstance() does, or it supposed to.
+ * cursor instance. Semantically toTop() does not refresh data snapshot and newInstance() does, or it's supposed to.
  */
 public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursor cursor;

@@ -71,6 +71,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Function hiFunction;
         private final Function loFunction;
         private RecordCursor base;
+        private boolean incompleteHasNext;
         private long limit;
         private long size;
 
@@ -101,7 +102,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            return limit-- > 0 && base.hasNext();
+            if (!incompleteHasNext && limit-- <= 0) {
+                return false;
+            }
+            incompleteHasNext = true;
+            // TODO(puzpuzpuz): test suspendability
+            boolean baseHasNext = base.hasNext();
+            incompleteHasNext = false;
+            return baseHasNext;
         }
 
         @Override
@@ -138,6 +146,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             base.toTop();
+            incompleteHasNext = false;
             long lo = loFunction.getLong(null);
             if (lo < 0 && hiFunction == null) {
                 // last N rows
@@ -219,6 +228,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             count = 0L;
+            // TODO(puzpuzpuz): this is non-suspendable
             while (base.hasNext()) {
                 count++;
             }

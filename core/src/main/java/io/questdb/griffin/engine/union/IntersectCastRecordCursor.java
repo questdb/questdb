@@ -132,6 +132,7 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
         }
         castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         castRecord.setAb(false);
+        // TODO(puzpuzpuz): this is non-suspendable
         hashCursorB();
         castRecord.setAb(true);
         toTop();

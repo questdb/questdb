@@ -87,6 +87,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        // TODO(puzpuzpuz): this is non-suspendable
         if (!isOpen) {
             chain.reopen();
             isOpen = true;

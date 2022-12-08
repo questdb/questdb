@@ -124,6 +124,7 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
             isOpen = true;
             map.reopen();
         }
+        // TODO(puzpuzpuz): this is non-suspendable
         hashCursorB();
         castRecord.setAb(true);
         toTop();

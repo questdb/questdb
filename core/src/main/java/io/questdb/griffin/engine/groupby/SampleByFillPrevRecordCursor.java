@@ -130,6 +130,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 }
 
                 // carry on with the loop if we still have data
+                // TODO(puzpuzpuz): this is non-suspendable
                 if (base.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     continue;
@@ -164,6 +165,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     @Override
     public void toTop() {
         super.toTop();
+        // TODO(puzpuzpuz): this is non-suspendable
         if (base.hasNext()) {
             baseRecord = base.getRecord();
             int n = groupByFunctions.size();

@@ -290,6 +290,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         testBindVariableWithLike0("like");
     }
 
+    // TODO fix broken test
     @Test
     public void testBug484() throws Exception {
         TestMatchFunctionFactory.clear();
@@ -310,7 +311,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "cc\n" +
                         "cc\n" +
                         "cc\n",
-                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                "select * from x2 where sym in (select distinct sym from x2 where sym in (select distinct sym from x2 where sym = 'cc')) and test_match()",
                 "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
                 null
         );
@@ -909,7 +910,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "24.45295612285482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "97.59534636690222\tHYRX\t1971-01-01T00:00:00.000000Z\n");
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 

@@ -513,7 +513,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        // Disable async offload for in (select ...) sub-queries to avoid infinite loops
+        // due to a base query cursor not able to consume its page frame tasks while
+        // the sub-query cursor is waiting for that to happen.
+        //
+        // See SqlCodeGenerator#testBug484() for an example.
+        boolean current = sqlExecutionContext.isParallelFilterEnabled();
+        sqlExecutionContext.setParallelFilterEnabled(false);
+        try {
+            return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        } finally {
+            sqlExecutionContext.setParallelFilterEnabled(current);
+        }
     }
 
     private Function createFunction(

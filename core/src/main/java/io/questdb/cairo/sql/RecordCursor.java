@@ -64,6 +64,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * @return true if more records may be accessed, otherwise false
+     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
      */
     boolean hasNext();
 
@@ -111,6 +112,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      */
     default void skipTo(long rowCount) {
         toTop();
+        // TODO(puzpuzpuz): this is non-suspendable
         //noinspection StatementWithEmptyBody
         while (rowCount-- > 0 && hasNext()) ;
     }

@@ -72,6 +72,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         if (!cursor.isOpen) {
             cursor.isOpen = true;
             cursor.latestByMap.reopen();

@@ -32,7 +32,7 @@ import static io.questdb.std.Numbers.hexDigits;
 public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
-        //min capacity that works on all platforms is 16  
+        // min capacity that works on all platforms is 16  
         assert capacity >= 16;
 
         final int columnCount = types.getColumnCount();

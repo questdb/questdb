@@ -128,6 +128,11 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public boolean isParallelFilterEnabled() {
+                return false;
+            }
+
+            @Override
             public boolean isTimestampRequired() {
                 return false;
             }
@@ -159,6 +164,10 @@ public final class AllowAllSqlSecurityContext {
 
             @Override
             public void setNowAndFixClock(long now) {
+            }
+
+            @Override
+            public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
             }
 
             @Override

@@ -43,7 +43,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
         Function cursorFunction = args.getQuick(1);
 
@@ -70,6 +76,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Function valueArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
+        private RecordCursor cursor;
         private CharSequenceHashSet valueSet;
 
         public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
@@ -80,7 +87,18 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            cursor = Misc.free(cursor);
+            BinaryFunction.super.close();
+        }
+
+        @Override
         public boolean getBool(Record rec) {
+            // TODO(puzpuzpuz): test suspendability
+            if (cursor != null) {
+                buildValueSet();
+                cursor = Misc.free(cursor);
+            }
             return valueSet.contains(valueArg.getSymbol(rec));
         }
 
@@ -96,6 +114,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            if (cursor != null) {
+                cursor = Misc.free(cursor);
+            }
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
 
@@ -107,28 +128,35 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             }
 
             valueSet.clear();
+            this.valueSet = valueSet;
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    CharSequence value = func.get(record, 0);
-                    if (value == null) {
-                        valueSet.addNull();
-                    } else {
-                        int toIndex = valueSet.keyIndex(value);
-                        if (toIndex > -1) {
-                            int index = this.valueSet.keyIndex(value);
-                            if (index < 0) {
-                                valueSet.addAt(toIndex, this.valueSet.keyAt(index));
-                            } else {
-                                valueSet.addAt(toIndex, Chars.toString(value));
-                            }
+            cursor = factory.getCursor(executionContext);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        private void buildValueSet() {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                CharSequence value = func.get(record, 0);
+                if (value == null) {
+                    valueSet.addNull();
+                } else {
+                    int toIndex = valueSet.keyIndex(value);
+                    if (toIndex > -1) {
+                        int index = this.valueSet.keyIndex(value);
+                        if (index < 0) {
+                            valueSet.addAt(toIndex, this.valueSet.keyAt(index));
+                        } else {
+                            valueSet.addAt(toIndex, Chars.toString(value));
                         }
                     }
                 }
             }
-            this.valueSet = valueSet;
         }
     }
 
@@ -138,6 +166,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Record.CharSequenceFunction func;
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
+        private RecordCursor cursor;
 
         public SymbolInCursorFunction(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -146,7 +175,18 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            cursor = Misc.free(cursor);
+            BinaryFunction.super.close();
+        }
+
+        @Override
         public boolean getBool(Record rec) {
+            // TODO(puzpuzpuz): test suspendability
+            if (cursor != null) {
+                buildSymbolKeys();
+                cursor = Misc.free(cursor);
+            }
             return symbolKeys.keyIndex(valueArg.getInt(rec) + 1) < 0;
         }
 
@@ -162,21 +202,32 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            if (cursor != null) {
+                cursor = Misc.free(cursor);
+            }
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
+
             symbolKeys.clear();
 
+            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
+            cursor = factory.getCursor(executionContext);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        private void buildSymbolKeys() {
             final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();
             assert symbolTable != null;
 
-            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    int key = symbolTable.keyOf(func.get(record, 0));
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
-                        symbolKeys.add(key + 1);
-                    }
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                int key = symbolTable.keyOf(func.get(record, 0));
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    symbolKeys.add(key + 1);
                 }
             }
         }

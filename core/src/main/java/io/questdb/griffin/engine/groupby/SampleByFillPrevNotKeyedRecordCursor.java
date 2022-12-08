@@ -74,12 +74,14 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             this.nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
+        // TODO(puzpuzpuz): this is non-suspendable
         return notKeyedLoop(simpleMapValue);
     }
 
     @Override
     public void toTop() {
         super.toTop();
+        // TODO(puzpuzpuz): this is non-suspendable
         if (base.hasNext()) {
             baseRecord = base.getRecord();
         }

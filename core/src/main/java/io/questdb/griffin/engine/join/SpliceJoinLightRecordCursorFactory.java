@@ -186,6 +186,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            // TODO(puzpuzpuz): this is non-suspendable
             if (dualRecord) {
                 slaveRecordLeads();
                 dualRecord = false;

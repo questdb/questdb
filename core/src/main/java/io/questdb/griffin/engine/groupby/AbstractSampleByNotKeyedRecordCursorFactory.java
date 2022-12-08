@@ -45,6 +45,7 @@ public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends Abstra
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             if (baseCursor.hasNext()) {

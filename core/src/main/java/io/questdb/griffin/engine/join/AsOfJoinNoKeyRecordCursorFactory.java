@@ -117,6 +117,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
+            // TODO(puzpuzpuz): this is non-suspendable
             if (masterCursor.hasNext()) {
                 // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);

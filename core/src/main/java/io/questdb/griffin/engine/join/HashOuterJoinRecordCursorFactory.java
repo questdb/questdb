@@ -103,6 +103,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
             RecordChain slaveChain,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        // TODO(puzpuzpuz): this is non-suspendable
         joinKeyMap.clear();
         slaveChain.clear();
         while (slaveCursor.hasNext()) {
@@ -197,6 +198,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            // TODO(puzpuzpuz): this is non-suspendable
             if (!this.isOpen) {
                 this.isOpen = true;
                 this.joinKeyMap.reopen();

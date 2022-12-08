@@ -75,6 +75,7 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        // TODO(puzpuzpuz): this is non-suspendable
         try {
             if (!isOpen) {
                 this.chain.reopen();

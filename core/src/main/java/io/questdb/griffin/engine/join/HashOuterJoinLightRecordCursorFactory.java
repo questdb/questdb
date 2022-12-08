@@ -209,6 +209,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 this.slaveChain.reopen();
                 this.joinKeyMap.reopen();
             }
+            // TODO(puzpuzpuz): this is non-suspendable
             buildMapOfSlaveRecords(slaveCursor, circuitBreaker);
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

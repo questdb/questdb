@@ -110,7 +110,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.topNextDst = nextDstUTC;
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
         this.sampleLocalEpoch = this.nextSampleLocalEpoch = localEpoch;
-        circuitBreaker = executionContext.getCircuitBreaker();
+        this.circuitBreaker = executionContext.getCircuitBreaker();
     }
 
     @Override
@@ -188,6 +188,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected boolean notKeyedLoop(MapValue mapValue) {
+        // TODO(puzpuzpuz): this is non-suspendable
         long next = timestampSampler.nextTimestamp(this.localEpoch);
         this.sampleLocalEpoch = this.localEpoch;
         this.nextSampleLocalEpoch = this.localEpoch;

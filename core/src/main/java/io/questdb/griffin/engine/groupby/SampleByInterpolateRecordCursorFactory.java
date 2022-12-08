@@ -151,6 +151,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         if (!cursor.isOpen) {
             cursor.isOpen = true;
             cursor.recordKeyMap.reopen();
@@ -458,7 +459,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     }
 
     private void interpolateBoundaryRange(long x1, long x2, Record record) throws SqlException {
-        //interpolating boundary
+        // interpolating boundary
         for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
             GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
             MapValue startValue = findDataMapValue2(record, x1);
@@ -490,7 +491,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         Misc.free(cursor);
     }
 
-    class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
+    private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
 
         protected final Map recordKeyMap;
         private final Map dataMap;

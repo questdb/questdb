@@ -102,6 +102,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
+        // TODO(puzpuzpuz): this is non-suspendable
         if (!isOpen) {
             chain.reopen();
             isOpen = true;
