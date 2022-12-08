@@ -334,7 +334,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
         assertFailure("ALTER TABLE X PARAM o3MaxLag = 111ms",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 14,
-                "'set' or 'rename' expected");
+                "'set', 'rename' or 'resume' expected");
     }
 
     @Test
