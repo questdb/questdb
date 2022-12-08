@@ -1492,15 +1492,28 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
+        createPopulateTable(tableId, tableModel, 1, totalRows, startDate, partitionCount);
+    }
+
+    protected void createPopulateTable(
+            int tableId,
+            TableModel tableModel,
+            int insertIterations,
+            int totalRowsPerIteration,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
                 Path path = new Path().of(configuration.getRoot()).concat(tableModel.getTableName())
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId);
-            compiler.compile(
-                    TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
-                    sqlExecutionContext
-            );
+            for (int i = 0; i < insertIterations; i++) {
+                compiler.compile(
+                        TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount),
+                        sqlExecutionContext
+                );
+            }
         }
     }
 
