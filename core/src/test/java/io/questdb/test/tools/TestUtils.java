@@ -996,7 +996,7 @@ public final class TestUtils {
             CharSequence colName = tableModel.getColumnName(i);
             switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
                 case ColumnType.INT:
-                    insertFromSelect.append("cast(x as int) ").append(colName);
+                    insertFromSelect.append("CAST(x as INT) ").append(colName);
                     break;
                 case ColumnType.STRING:
                     insertFromSelect.append("CAST(x as STRING) ").append(colName);
