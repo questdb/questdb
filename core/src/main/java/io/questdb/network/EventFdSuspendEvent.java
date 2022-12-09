@@ -36,7 +36,7 @@ public class EventFdSuspendEvent extends SuspendEvent {
         this.epf = epf;
         int fd = epf.eventFd();
         if (fd < 0) {
-            throw NetworkError.instance(epf.errno(), "cannot create eventfd event");
+            throw NetworkError.instance(epf.errno(), "could not create EventFdSuspendEvent");
         }
         this.fd = fd;
         epf.getNetworkFacade().bumpFdCount(fd);

@@ -64,7 +64,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             // these ref ids are monotonically growing
             int eventRow = pendingEvents.binarySearch(id, EVM_OPERATION_ID);
             if (eventRow < 0) {
-                LOG.error().$("internal error: suspend event not found [id=").$(id).I$();
+                LOG.critical().$("internal error: suspend event not found [id=").$(id).I$();
             } else {
                 final long eventId = pendingEvents.get(eventRow, EVM_ID);
                 if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
@@ -100,7 +100,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         // 2. remove row from pending, remaining rows will be timed out
         final int row = pending.binarySearch(id, OPM_ID);
         if (row < 0) {
-            LOG.error().$("internal error: epoll returned unexpected id [id=").$(id).I$();
+            LOG.critical().$("internal error: epoll returned unexpected id [id=").$(id).I$();
             return false;
         }
 
@@ -127,14 +127,14 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private void handleSuspendEvent(long id) {
         final int eventsRow = pendingEvents.binarySearch(id, EVM_ID);
         if (eventsRow < 0) {
-            LOG.error().$("internal error: epoll returned unexpected event id [eventId=").$(id).I$();
+            LOG.critical().$("internal error: epoll returned unexpected event id [eventId=").$(id).I$();
             return;
         }
 
         final long opId = pendingEvents.get(eventsRow, EVM_OPERATION_ID);
         final int row = pending.binarySearch(opId, OPM_ID);
         if (row < 0) {
-            LOG.error().$("internal error: suspended operation not found [id=").$(opId).$(", eventId=").$(id).I$();
+            LOG.critical().$("internal error: suspended operation not found [id=").$(opId).$(", eventId=").$(id).I$();
             return;
         }
 
@@ -197,7 +197,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             // because we have to remove FD from epoll
             final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
             if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_MOD, epollOp) < 0) {
-                LOG.error().$("epoll_ctl modify operation failure [id=").$(opId)
+                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
             }
 
@@ -216,7 +216,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
 
                 if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-                    LOG.error().$("epoll_ctl add suspend event failure [id=").$(eventId)
+                    LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
                             .$(", err=").$(nf.errno()).I$();
                 }
             }
@@ -231,7 +231,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
             final int pendingRow = pending.binarySearch(opId, OPM_ID);
             if (pendingRow < 0) {
-                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
+                LOG.critical().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
                 continue;
             }
             // First, remove the suspend event from the epoll interest list.
@@ -240,7 +240,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             assert suspendEvent != null;
             if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                LOG.error().$("epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
                         .$(", err=").$(nf.errno()).I$();
             }
             // Next, resume the original operation and close the event.
@@ -259,7 +259,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
                 ) < 0
         ) {
-            LOG.error().$("epoll_ctl operation mod failure [id=").$(id)
+            LOG.critical().$("internal error: epoll_ctl operation mod failure [id=").$(id)
                     .$(", err=").$(nf.errno()).I$();
         }
         context.clearSuspendEvent();

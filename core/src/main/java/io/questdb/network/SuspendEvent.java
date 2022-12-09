@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -75,6 +76,7 @@ public abstract class SuspendEvent implements Closeable {
      */
     public abstract int getFd();
 
+    @TestOnly
     public boolean isClosedByAtLeastOneSide() {
         return refCount <= 1;
     }

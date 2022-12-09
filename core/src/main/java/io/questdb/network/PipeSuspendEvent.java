@@ -37,7 +37,7 @@ public class PipeSuspendEvent extends SuspendEvent {
         this.kqf = kqf;
         long fds = kqf.pipe();
         if (fds < 0) {
-            throw NetworkError.instance(kqf.getNetworkFacade().errno(), "cannot create eventfd event");
+            throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create PipeSuspendEvent");
         }
         this.readEndFd = (int) (fds >>> 32);
         this.writeEndFd = (int) fds;

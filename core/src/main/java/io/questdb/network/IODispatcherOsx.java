@@ -66,7 +66,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             // these ref ids are monotonically growing
             int eventRow = pendingEvents.binarySearch(id, EVM_OPERATION_ID);
             if (eventRow < 0) {
-                LOG.error().$("internal error: suspend event not found [id=").$(id).I$();
+                LOG.critical().$("internal error: suspend event not found [id=").$(id).I$();
             } else {
                 kqueue.setWriteOffset(0);
                 kqueue.removeFD(suspendEvent.getFd());
@@ -107,7 +107,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         // 2. remove row from pending, remaining rows will be timed out
         final int row = pending.binarySearch(id, OPM_ID);
         if (row < 0) {
-            LOG.error().$("internal error: kqueue returned unexpected id [id=").$(id).I$();
+            LOG.critical().$("internal error: kqueue returned unexpected id [id=").$(id).I$();
             return false;
         }
 
@@ -134,14 +134,14 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private void handleSuspendEvent(long id) {
         final int eventsRow = pendingEvents.binarySearch(id, EVM_ID);
         if (eventsRow < 0) {
-            LOG.error().$("internal error: kqueue returned unexpected event id [eventId=").$(id).I$();
+            LOG.critical().$("internal error: kqueue returned unexpected event id [eventId=").$(id).I$();
             return;
         }
 
         final long opId = pendingEvents.get(eventsRow, EVM_OPERATION_ID);
         final int row = pending.binarySearch(opId, OPM_ID);
         if (row < 0) {
-            LOG.error().$("internal error: suspended operation not found [id=").$(opId).$(", eventId=").$(id).I$();
+            LOG.critical().$("internal error: suspended operation not found [id=").$(opId).$(", eventId=").$(id).I$();
             return;
         }
 
@@ -266,7 +266,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
             final int pendingRow = pending.binarySearch(opId, OPM_ID);
             if (pendingRow < 0) {
-                LOG.error().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
+                LOG.critical().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
                 continue;
             }
 
