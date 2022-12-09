@@ -141,7 +141,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public String getReadOnlyPassword() {
-        return "quest_readonly";
+        return "quest";
     }
 
     @Override

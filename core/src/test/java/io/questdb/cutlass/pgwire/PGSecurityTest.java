@@ -340,7 +340,7 @@ public class PGSecurityTest extends BasePGTest {
     protected Connection getConnectionWithReadOnlyUser(int port) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "user");
-        properties.setProperty("password", "quest_readonly");
+        properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", "true");
         properties.setProperty("preferQueryMode", Mode.SIMPLE.value);
