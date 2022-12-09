@@ -1016,8 +1016,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
-                    // name txn is -1 because the parent call sets up partition name for us
-                    indexReader.of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
+                    if (indexReader != null) {
+                        // name txn is -1 because the parent call sets up partition name for us
+                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
+                    }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                     Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
