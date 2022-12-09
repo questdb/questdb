@@ -35,19 +35,19 @@ import static org.junit.Assert.fail;
 public class UdpLineChannelTest {
     private static final NetworkFacade FAILS_SET_SET_TTL_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastTtl(long fd, int ttl) {
+        public int setMulticastTtl(int fd, int ttl) {
             return -1;
         }
     };
     private static final NetworkFacade FAILS_TO_SET_MULTICAST_IFACE_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastInterface(long fd, int ipv4Address) {
+        public int setMulticastInterface(int fd, int ipv4Address) {
             return -1;
         }
     };
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public long socketUdp() {
+        public int socketUdp() {
             return -1;
         }
     };

@@ -109,7 +109,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         return mem.getFd();
     }
 

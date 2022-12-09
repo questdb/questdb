@@ -37,7 +37,7 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
     private final long buffer = Unsafe.malloc(bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     private final long limit = buffer + bufferCapacity;
     private long ptr = buffer;
-    private final long stdout = Files.getStdOutFd();
+    private final int stdout = Files.getStdOutFd();
 
     @Override
     public void close() {

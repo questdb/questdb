@@ -32,7 +32,7 @@ import io.questdb.network.NetworkFacade;
 
 public final class PlainTcpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
-    private final long fd;
+    private final int fd;
     private final NetworkFacade nf;
     private final long sockaddr;
 

@@ -103,6 +103,8 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
 
+        context.resumeResponseSend();
+
         final HttpRawSocket socket = context.getRawResponseSocket();
         long address = socket.getBufferAddress();
         int size = socket.getBufferSize();
@@ -216,7 +218,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             LPSZ path, CharSequence contentType,
             boolean asAttachment
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        long fd = ff.openRO(path);
+        int fd = ff.openRO(path);
         if (fd == -1) {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
             sendStatusWithDefaultMessage(context, 404);

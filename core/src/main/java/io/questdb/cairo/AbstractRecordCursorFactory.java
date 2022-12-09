@@ -36,7 +36,7 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
     }
 
     @Override
-    final public void close() {
+    public final void close() {
         assert !closed;
         _close();
         closed = true;
