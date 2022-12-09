@@ -26,7 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -157,6 +156,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (!configuration.checkConnection()) {
             return false;
         }
-        return NetworkUtils.testConnection(nf, fd, buffer, bufferSize);
+        return nf.testConnection(fd, buffer, bufferSize);
     }
 }

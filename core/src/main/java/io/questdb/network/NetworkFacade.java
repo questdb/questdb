@@ -123,4 +123,9 @@ public interface NetworkFacade {
     int socketTcp(boolean blocking);
 
     int socketUdp();
+
+    /**
+     * Returns true if a disconnect happened, false otherwise.
+     */
+    boolean testConnection(int fd, long buffer, int bufferSize);
 }

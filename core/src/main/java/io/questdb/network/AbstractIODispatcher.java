@@ -349,7 +349,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected abstract void registerListenerFd();
 
     protected boolean testConnection(int fd) {
-        return NetworkUtils.testConnection(nf, fd, testConnectionBuf, testConnectionBufSize);
+        return nf.testConnection(fd, testConnectionBuf, testConnectionBufSize);
     }
 
     protected abstract void unregisterListenerFd();
