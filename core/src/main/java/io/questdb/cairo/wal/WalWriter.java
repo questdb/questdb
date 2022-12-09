@@ -86,7 +86,7 @@ public class WalWriter implements TableWriterAPI {
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
-    private long lastSegmentTxn = -1L;
+    private int lastSegmentTxn = -1;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
@@ -173,7 +173,7 @@ public class WalWriter implements TableWriterAPI {
                 }
 
                 try {
-                    txn = tableSequencerAPI.nextStructureTxn(tableToken, getStructureVersion(), operation);
+                    txn = tableSequencerAPI.nextStructureTxn(tableToken, metadata.getStructureVersion(), operation);
                     if (txn == NO_TXN) {
                         applyMetadataChangeLog(Long.MAX_VALUE);
                     }
@@ -565,7 +565,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
-        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableToken, getStructureVersion())) {
+        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableToken, metadata.getStructureVersion())) {
             long metadataVersion = getStructureVersion();
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();
@@ -932,7 +932,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void mayRollSegmentOnNextRow() {
-        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())) {
+        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount()) || lastSegmentTxn > Integer.MAX_VALUE - 2) {
             rollSegmentOnNextRow = true;
         }
     }

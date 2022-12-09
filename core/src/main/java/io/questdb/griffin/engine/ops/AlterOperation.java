@@ -157,7 +157,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
         tableToken = event.getTableToken();
         long readPtr = event.getData();
-        final long hi = readPtr + event.getDataSize();
+        long length = event.getDataSize();
+        final long hi = readPtr + length;
 
         // This is not hot path, do safe deserialization
         if (readPtr + 10 >= hi) {
@@ -167,17 +168,22 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         if (deserializeMem == null) {
             deserializeMem = new MemoryFCRImpl();
         }
-        deserializeMem.of(readPtr, event.getDataSize());
-        deserializeBody(deserializeMem, 0L);
+        deserializeMem.of(readPtr, length);
+        deserializeBody(deserializeMem, 0L, length);
         return this;
     }
 
-    public void deserializeBody(MemoryCR buffer, long offset) {
+    public void deserializeBody(MemoryCR buffer, long offsetLo, long offsetHi) {
         clear();
-        long readPtr = offset;
-        long hi = buffer.size();
-        if (readPtr + 10 > hi) {
-            throw CairoException.critical(0).put("cannot read alter statement serialized, data is too short to read 10 bytes header [offset=").put(offset).put(", size=").put(hi);
+        long readPtr = offsetLo;
+        if (readPtr + 10 > offsetHi) {
+            throw CairoException
+                    .critical(0)
+                    .put("cannot read alter statement serialized, data is too short to read 10 bytes header [offset=")
+                    .put(offsetLo)
+                    .put(", size=")
+                    .put(offsetHi - offsetLo)
+                    .put(']');
         }
         command = buffer.getShort(readPtr);
         readPtr += 2;
@@ -185,7 +191,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         readPtr += 4;
         int longSize = buffer.getInt(readPtr);
         readPtr += 4;
-        if (longSize < 0 || readPtr + longSize * 8L >= hi) {
+        if (longSize < 0 || readPtr + longSize * 8L >= offsetHi) {
             throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [2]");
         }
         longList.clear();
@@ -193,7 +199,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             longList.add(buffer.getLong(readPtr));
             readPtr += 8;
         }
-        directCharList.of(buffer, readPtr, hi);
+        directCharList.of(buffer, readPtr, offsetHi);
         charSequenceList = directCharList;
     }
 

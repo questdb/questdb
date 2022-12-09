@@ -471,7 +471,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testCairoExceptionOnCommit() throws Exception {
         String table = "commitException";
-        configOverrideMaxUncommittedRows = 1;
+        configOverrideMaxUncommittedRows(1);
         netMsgBufferSize.set(60);
         runInContext(
                 new TestFilesFacadeImpl() {

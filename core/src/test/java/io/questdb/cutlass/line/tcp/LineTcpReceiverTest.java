@@ -120,7 +120,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Override
     public void setUp() {
         super.setUp();
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         path = new Path();
     }
 

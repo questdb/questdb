@@ -2822,13 +2822,13 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testJoinOnGeohashCompactMap() throws Exception {
-        defaultMapType = "compact";
+        configOverrideDefaultMapType("compact");
         testJoinOnGeohash();
     }
 
     @Test
     public void testJoinOnGeohashFastMap() throws Exception {
-        defaultMapType = "fast";
+        configOverrideDefaultMapType("fast");
         testJoinOnGeohash();
     }
 
@@ -3147,25 +3147,25 @@ public class JoinTest extends AbstractGriffinTest {
 
     @Test
     public void testJoinWithGeohashCompactMap() throws Exception {
-        defaultMapType = "compact";
+        configOverrideDefaultMapType("compact");
         testJoinWithGeoHash();
     }
 
     @Test
     public void testJoinWithGeohashCompactMap2() throws Exception {
-        defaultMapType = "compact";
+        configOverrideDefaultMapType("compact");
         testJoinWithGeohash2();
     }
 
     @Test
     public void testJoinWithGeohashFastMap() throws Exception {
-        defaultMapType = "fast";
+        configOverrideDefaultMapType("fast");
         testJoinWithGeoHash();
     }
 
     @Test
     public void testJoinWithGeohashFastMap2() throws Exception {
-        defaultMapType = "fast";
+        configOverrideDefaultMapType("fast");
         testJoinWithGeohash2();
     }
 

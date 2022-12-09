@@ -80,6 +80,8 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
+    long getMicrosecondTimestamp();
+
     default TableRecordMetadata getMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
         return engine.getMetadata(getCairoSecurityContext(), tableToken);
@@ -149,6 +151,8 @@ public interface SqlExecutionContext extends Closeable {
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
 
     void setJitMode(int jitMode);
+
+    void setNowAndFixClock(long now);
 
     void setRandom(Rnd rnd);
 

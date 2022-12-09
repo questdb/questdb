@@ -709,7 +709,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeTaskRecycle() throws Exception {
-        columnVersionTaskPoolCapacity = 1;
+        configOverrideColumnVersionTaskPoolCapacity(1);
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3_many as" +

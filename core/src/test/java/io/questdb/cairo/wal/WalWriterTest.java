@@ -39,9 +39,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
-import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -58,17 +56,6 @@ import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp() {
-        super.setUp();
-    }
-
-    @After
-    public void tearDown() {
-        super.tearDown();
-        currentMicros = -1L;
-    }
 
     @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {
@@ -1059,7 +1046,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final int numOfRows = 4000;
             final int maxRowCount = 500;
-            walSegmentRolloverRowCount = maxRowCount;
+            configOverrideWalSegmentRolloverRowCount(maxRowCount);
             Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;
@@ -1290,8 +1277,6 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testLargeSegmentRollover() throws Exception {
-        currentMicros = -1;  // Don't mock MicrosecondClock.
-
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             TableToken tableToken;

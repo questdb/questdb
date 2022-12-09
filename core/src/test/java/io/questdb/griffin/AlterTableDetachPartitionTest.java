@@ -104,7 +104,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachCannotCopy() throws Exception {
         assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
+            configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
             ff = new TestFilesFacadeImpl() {
@@ -597,7 +597,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    copyPartitionOnAttach = true;
+                    configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
@@ -656,7 +656,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    copyPartitionOnAttach = true;
+                    configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
@@ -1034,7 +1034,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDetachAttachSameDrive() throws Exception {
         assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
+            configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
             ff = new TestFilesFacadeImpl() {

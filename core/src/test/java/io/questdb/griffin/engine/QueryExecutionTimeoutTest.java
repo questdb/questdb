@@ -36,8 +36,6 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -72,7 +70,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
             {
                 setTimeout(-100);//trigger timeout on first check
             }
-
         };
         AbstractGriffinTest.setUpStatic();
     }
@@ -313,7 +310,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
     @Test
     public void testTimeoutInMultiHashJoin() throws Exception {
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(1);
+        circuitBreaker.setTimeout(1);
         try {
             assertTimeout("create table grouptest as " +
                             "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
@@ -429,6 +426,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                         testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext));
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void assertTimeout(String ddl) throws Exception {
         assertTimeout(ddl, null, null);
     }
@@ -487,15 +485,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
             int workerCount,
             int queueSize,
             CustomisableRunnable runnable) throws Exception {
-        executeWithPool(workerCount, queueSize, RostiAllocFacadeImpl.INSTANCE, runnable);
-    }
-
-    private void executeWithPool(
-            int workerCount,
-            int queueSize,
-            RostiAllocFacade rostiAllocFacade,
-            CustomisableRunnable runnable
-    ) throws Exception {
         assertMemoryLeak(() -> {
             if (workerCount > 0) {
                 WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
@@ -514,11 +503,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                     @Override
                     public int getLatestByQueueCapacity() {
                         return queueSize;
-                    }
-
-                    @Override
-                    public RostiAllocFacade getRostiAllocFacade() {
-                        return rostiAllocFacade;
                     }
 
                     @Override
@@ -541,10 +525,10 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
     }
 
     private void resetTimeout() {
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
+        circuitBreaker.setTimeout(-100);
     }
 
-    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
         assertTimeout("create table x as " +
                         "(" +
                         "select" +
@@ -562,20 +546,20 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
         );
     }
 
-    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select i, avg(l), max(l) \n" +
                         "from grouptest \n" +
                         "group by i", compiler, context);
     }
 
-    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
         assertTimeout("create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select avg(l), max(l) from grouptest", compiler, context);
     }
 
     private void unsetTimeout() {
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(Long.MAX_VALUE);
+        circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
 
     protected static void execute(

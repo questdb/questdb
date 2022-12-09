@@ -24,13 +24,12 @@
 
 package io.questdb.griffin;
 
+import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -41,10 +40,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -54,7 +50,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     private final static double EPSILON = 0.000001;
     private static final LongList rows = new LongList();
     protected static BindVariableService bindVariableService;
-    protected static SqlExecutionCircuitBreaker circuitBreaker;
+    protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlCompiler compiler;
     protected static SqlExecutionContext sqlExecutionContext;
     protected final SCSequence eventSubSequence = new SCSequence();
@@ -264,22 +260,16 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine, null, snapshotAgent);
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        circuitBreaker);
-        bindVariableService.clear();
+        node1.initGriffin(circuitBreaker);
+        compiler = node1.getSqlCompiler();
+        bindVariableService = node1.getBindVariableService();
+        sqlExecutionContext = node1.getSqlExecutionContext();
     }
 
     @AfterClass
     public static void tearDownStatic() {
         AbstractCairoTest.tearDownStatic();
-        compiler.close();
+        forEachNode(QuestDBNode::closeGriffin);
         circuitBreaker = null;
     }
 
@@ -287,7 +277,14 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        bindVariableService.clear();
+        forEachNode(QuestDBNode::setUpGriffin);
+    }
+
+    @Override
+    @After
+    public void tearDown() {
+        super.tearDown();
+        forEachNode(QuestDBNode::tearDownGriffin);
     }
 
     private static void assertQueryNoVerify(
@@ -1510,16 +1507,41 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
+        createPopulateTable(tableId, tableModel, 1, totalRows, startDate, partitionCount);
+    }
+
+    protected void createPopulateTable(
+            int tableId,
+            TableModel tableModel,
+            int insertIterations,
+            int totalRowsPerIteration,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
         TableToken tableToken = registerTableName(tableModel.getTableName());
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
                 Path path = new Path().of(configuration.getRoot()).concat(tableToken)
         ) {
             TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
-            compiler.compile(
-                    TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRows, startDate, partitionCount),
-                    sqlExecutionContext
-            );
+            for (int i = 0; i < insertIterations; i++) {
+                compiler.compile(
+                        TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount),
+                        sqlExecutionContext
+                );
+            }
+        }
+    }
+
+    protected void executeOperation(
+            QuestDBNode node,
+            String query,
+            int opType
+    ) throws SqlException {
+        CompiledQuery cq = node.getSqlCompiler().compile(query, node.getSqlExecutionContext());
+        Assert.assertEquals(opType, cq.getType());
+        try (OperationFuture fut = cq.execute(eventSubSequence)) {
+            fut.await();
         }
     }
 
@@ -1527,11 +1549,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             String query,
             int opType
     ) throws SqlException {
-        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(opType, cq.getType());
-        try (OperationFuture fut = cq.execute(eventSubSequence)) {
-            fut.await();
-        }
+        executeOperation(node1, query, opType);
     }
 
     protected PlanSink getPlan(CharSequence query) throws SqlException {

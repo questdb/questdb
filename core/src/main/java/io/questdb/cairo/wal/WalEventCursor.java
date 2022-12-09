@@ -314,9 +314,19 @@ public class WalEventCursor {
     public class SqlInfo {
         private final StringSink sql = new StringSink();
         private int cmdType;
+        private long rndSeed0;
+        private long rndSeed1;
 
         public int getCmdType() {
             return cmdType;
+        }
+
+        public long getRndSeed0() {
+            return rndSeed0;
+        }
+
+        public long getRndSeed1() {
+            return rndSeed1;
         }
 
         public CharSequence getSql() {
@@ -449,6 +459,8 @@ public class WalEventCursor {
             cmdType = readInt();
             sql.clear();
             sql.put(readStr());
+            rndSeed0 = readLong();
+            rndSeed1 = readLong();
         }
     }
 }

@@ -230,7 +230,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, long segmentTxn) {
+    public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
@@ -239,6 +239,17 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockWrite();
             }
             return txn;
+        }
+    }
+
+    @TestOnly
+    public void openSequencer(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.open();
+            } finally {
+                sequencer.unlockWrite();
+            }
         }
     }
 

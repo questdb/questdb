@@ -39,7 +39,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class VacuumColumnVersionTest extends AbstractGriffinTest {
-    private int iteration = 1;
+    private int iteration;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -48,11 +48,12 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     @Before
-    public void setUpUpdates() {
+    public void setUp() {
         iteration = 1;
         currentMicros = 0;
         columnPurgeRetryDelay = 1;
         columnVersionPurgeQueueCapacity = 2;
+        super.setUp();
     }
 
     @Test
