@@ -73,8 +73,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int INIT_CANCEL_REQUEST = 80877102;
-    private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_GSS_REQUEST = 80877104;
+    private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
@@ -127,6 +127,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final CharSequenceObjHashMap<TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
+    @Nullable
+    private final PGAuthenticator roUserAuthenticator;
     private final IntList selectColumnTypes = new IntList();
     private final int sendBufferSize;
     private final String serverVersion;
@@ -207,6 +209,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
+        this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
+                ? new PGBasicAuthenticator(configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true)
+                : null;
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
@@ -1169,13 +1174,24 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void doAuthentication(long msgLo, long msgLimit)
-            throws
-            BadProtocolException,
-            PeerDisconnectedException,
-            PeerIsSlowToReadException,
-            AuthenticationException {
-        final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+    private void doAuthentication(
+            long msgLo,
+            long msgLimit
+    ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException {
+
+        CairoSecurityContext cairoSecurityContext = null;
+        // First, try to authenticate as the read-only user if it's configured.
+        if (roUserAuthenticator != null) {
+            try {
+                cairoSecurityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
+            } catch (AuthenticationException ignore) {
+                // Wrong user, never mind.
+            }
+        }
+        // Next, authenticate as the primary user if we failed to recognize the read-only user.
+        if (cairoSecurityContext == null) {
+            cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+        }
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
             authenticationRequired = false;
@@ -1667,6 +1683,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         characterStore.clear();
     }
 
+    private void prepareGssResponse() {
+        responseAsciiSink.put('N');
+    }
+
     private void prepareLoginOk() {
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
@@ -1756,10 +1776,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void prepareSslResponse() {
-        responseAsciiSink.put('N');
-    }
-
-    private void prepareGssResponse() {
         responseAsciiSink.put('N');
     }
 

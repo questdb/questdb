@@ -310,9 +310,9 @@ public abstract class BasePGTest extends AbstractGriffinTest {
 
     protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
         if (simple) {
-            return getConnection(Mode.Simple, port, binary, -2);
+            return getConnection(Mode.SIMPLE, port, binary, -2);
         } else {
-            return getConnection(Mode.Extended, port, binary, -2);
+            return getConnection(Mode.EXTENDED, port, binary, -2);
         }
     }
 
@@ -322,7 +322,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        properties.setProperty("preferQueryMode", simple ? Mode.Simple.value : Mode.Extended.value);
+        properties.setProperty("preferQueryMode", simple ? Mode.SIMPLE.value : Mode.EXTENDED.value);
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
@@ -336,13 +336,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
         properties.setProperty("preferQueryMode", mode.value);
-        if (prepareThreshold > -2) {//-1 has special meaning in pg jdbc ...
+        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
             properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
         }
 
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        //use this line to switch to local postgres
-        //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
     }
@@ -406,13 +406,15 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     }
 
     enum Mode {
-        Simple("simple"), Extended("extended"), ExtendedForPrepared("extendedForPrepared"), ExtendedCacheEverything("extendedCacheEverything");
+        SIMPLE("simple"),
+        EXTENDED("extended"),
+        EXTENDED_FOR_PREPARED("extendedForPrepared"),
+        EXTENDED_CACHE_EVERYTHING("extendedCacheEverything");
 
-        private final String value;
+        final String value;
 
         Mode(String value) {
             this.value = value;
         }
     }
-
 }

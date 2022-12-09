@@ -232,7 +232,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -249,7 +249,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     pstmt.close();
                 }
 
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), true, -1);
                      PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable")) {
 
                     boolean hasResult = pstmt.execute();
@@ -270,7 +270,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -289,7 +289,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), true, 1);
                      Statement ignored = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -925,7 +925,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, -1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -944,7 +944,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), true, -1);
                      Statement ignored = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -982,7 +982,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 

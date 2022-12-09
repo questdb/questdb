@@ -29,6 +29,8 @@ import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
@@ -36,12 +38,15 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
 
+@RunWith(Parameterized.class)
 public class PGSecurityTest extends BasePGTest {
 
     private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
@@ -50,8 +55,27 @@ public class PGSecurityTest extends BasePGTest {
             return true;
         }
     };
+    private static final PGWireConfiguration READ_ONLY_USER_CONF = new Port0PGWireConfiguration() {
+        @Override
+        public boolean isReadOnlyUserEnabled() {
+            return true;
+        }
+    };
     @ClassRule
     public static TemporaryFolder backup = new TemporaryFolder();
+
+    private final ReadOnlyMode readOnlyMode;
+
+    public PGSecurityTest(ReadOnlyMode readOnlyMode) {
+        this.readOnlyMode = readOnlyMode;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {ReadOnlyMode.FULL_RO}, {ReadOnlyMode.RO_USER}
+        });
+    }
 
     @BeforeClass
     public static void init() {
@@ -276,12 +300,14 @@ public class PGSecurityTest extends BasePGTest {
 
     private void executeWithPg(String query) throws Exception {
         try (
-                final PGWireServer server = createPGServer(READ_ONLY_CONF);
+                final PGWireServer server = createPGServer(readOnlyMode == ReadOnlyMode.FULL_RO ? READ_ONLY_CONF : READ_ONLY_USER_CONF);
                 final WorkerPool workerPool = server.getWorkerPool()
         ) {
             workerPool.start(LOG);
             try (
-                    final Connection connection = getConnection(server.getPort(), false, true);
+                    final Connection connection = readOnlyMode == ReadOnlyMode.FULL_RO
+                            ? getConnection(server.getPort(), false, true)
+                            : getConnectionWithReadOnlyUser(server.getPort());
                     final Statement statement = connection.createStatement()
             ) {
                 statement.execute(query);
@@ -296,11 +322,29 @@ public class PGSecurityTest extends BasePGTest {
         properties.setProperty("sslmode", "disable");
         properties.setProperty(key, "user");
 
-
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         //use this line to switch to local postgres
         //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
+    }
+
+    protected Connection getConnectionWithReadOnlyUser(int port) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "user");
+        properties.setProperty("password", "quest_readonly");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", "true");
+        properties.setProperty("preferQueryMode", Mode.SIMPLE.value);
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    protected enum ReadOnlyMode {
+        FULL_RO, RO_USER
     }
 }

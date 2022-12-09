@@ -140,6 +140,16 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public String getReadOnlyPassword() {
+        return "quest_readonly";
+    }
+
+    @Override
+    public String getReadOnlyUsername() {
+        return "user";
+    }
+
+    @Override
     public int getRecvBufferSize() {
         return 1024 * 1024;
     }
@@ -182,6 +192,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public boolean isInsertCacheEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isReadOnlyUserEnabled() {
+        return false;
     }
 
     @Override
