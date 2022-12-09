@@ -1217,6 +1217,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
+    public boolean isPartitionReadOnlyByTimestamp(long timestamp) {
+        return partitionFloorMethod != null && txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionFloorMethod.floor(timestamp));
+    }
+
+    @Override
     public Row newRow() {
         return newRow(0L);
     }
@@ -4472,14 +4477,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                     final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
 
-                    if (txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                        throw ReadOnlyViolationException.cannotInsert(tableName, partitionTimestamp);
-                    }
-
                     // This partition is the last partition.
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
 
                     srcOoo = srcOooHi + 1;
+
+                    if (txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                        throw ReadOnlyViolationException.cannotInsert(tableName, partitionTimestamp);
+                    }
 
                     final long srcDataMax;
                     final long srcNameTxn;

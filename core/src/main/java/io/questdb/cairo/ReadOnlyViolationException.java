@@ -48,7 +48,7 @@ public class ReadOnlyViolationException extends RuntimeException implements Sink
         ex.message.put("cannot insert into read-only partition [table=").put(tableName)
                 .put(", partitionTimestamp=");
         TimestampFormatUtils.appendDate(ex.message, partitionTimestamp);
-        ex.message.put(']');
+        ex.message.put("]");
         return ex;
     }
 
