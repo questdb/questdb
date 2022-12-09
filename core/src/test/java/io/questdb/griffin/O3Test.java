@@ -89,7 +89,7 @@ public class O3Test extends AbstractO3Test {
     // test case is contributed by Zhongwei Yao
     public void testAddColumnO3Fuzz() throws Exception {
         executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             final String tableName = "ABC";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("productId", ColumnType.INT)

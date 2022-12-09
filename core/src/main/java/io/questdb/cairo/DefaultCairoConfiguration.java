@@ -875,7 +875,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean manglePrivateTableNames() {
+    public boolean mangleTableDirNames() {
         return false;
     }
 }

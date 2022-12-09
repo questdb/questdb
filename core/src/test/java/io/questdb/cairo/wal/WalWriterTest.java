@@ -1201,7 +1201,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
 
@@ -1359,7 +1359,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
-                return Files.openRW(name, opts);
+                return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
             }
         };
 
@@ -1392,7 +1392,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         return -1;
                     }
                 }
-                return Files.openRO(name);
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
             }
         };
 

@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -270,7 +270,7 @@ public class LatestByParallelTest {
     }
 
     protected static void executeVanilla(LatestByRunnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
+        executeVanilla(() -> execute(null, code, new DefaultTestCairoConfiguration(root)));
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
@@ -287,7 +287,7 @@ public class LatestByParallelTest {
 
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return TestFilesFacadeImpl.INSTANCE;
@@ -297,7 +297,7 @@ public class LatestByParallelTest {
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return TestFilesFacadeImpl.INSTANCE;

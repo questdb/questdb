@@ -40,6 +40,7 @@ import org.junit.Test;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalWriterTest.createTable;
 import static io.questdb.cairo.wal.WalWriterTest.removeColumn;
@@ -604,7 +605,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
+            TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
             long tsIncrement = Timestamps.SECOND_MICROS;
             long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
@@ -612,7 +613,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 walName = walWriter.getWalName();
             }
@@ -866,17 +867,18 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
 
     @SuppressWarnings("SameParameterValue")
     private TableToken createTableAndCopy(String tableName, String tableCopyName) {
-        TableToken tableToken;
+        AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
         try (TableModel model = createTableModel(tableName).wal()) {
             forEachNode(node ->
-                    node.getEngine().createTable(
+                    tableToken.set(node.getEngine().createTable(
                             AllowAllCairoSecurityContext.INSTANCE,
                             model.getMem(),
                             model.getPath(),
                             false,
                             model,
-                            false
+                            false)
+                    )
             );
         }
 
@@ -891,7 +893,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                     false
             );
         }
-        return tableToken;
+        return tableToken.get();
     }
 
     private TableModel createTableModel(String tableName) {
@@ -927,7 +929,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
+            TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
             long tsIncrement = Timestamps.SECOND_MICROS;
             long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
@@ -935,7 +937,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
 
             final String walName;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 walName = walWriter.getWalName();
             }

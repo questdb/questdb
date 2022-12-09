@@ -30,8 +30,8 @@ import io.questdb.Metrics;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
@@ -451,13 +451,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableIdGenerator;
     }
 
-    public String getTableNameAsString(CharSequence tableName) {
-        // In Table Name Registry TableToken has up to date tableName === TableToken.getLoggingName(),
-        // even after rename, Table Name Registry values are updated, that's why it's safe to use
-        // TableToken.getLoggingName() as table name here.
-        return getTableToken(tableName).getTableName();
-    }
-
     public TableSequencerAPI getTableSequencerAPI() {
         return tableSequencerAPI;
     }
@@ -584,10 +577,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
-    public boolean isLiveTable(TableToken tableToken) {
-        return tableToken != TableNameRegistry.LOCKED_TOKEN && !tableNameRegistry.isTableDropped(tableToken);
-    }
-
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
     }
@@ -637,15 +626,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Nullable
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
-        String publicTableName = Chars.toString(tableName);
-        String privateTableName = Chars.toString(tableName);
-        if (isWal) {
-            privateTableName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            privateTableName += tableId;
-        } else if (configuration.manglePrivateTableNames()) {
-            privateTableName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        }
-        return tableNameRegistry.lockTableName(publicTableName, privateTableName, tableId, isWal);
+        String tableNameStr = Chars.toString(tableName);
+        final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
     public CharSequence lockWriter(CairoSecurityContext securityContext, TableToken tableToken, String lockReason) {

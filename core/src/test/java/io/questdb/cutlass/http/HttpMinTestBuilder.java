@@ -25,8 +25,8 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
@@ -54,7 +54,7 @@ public class HttpMinTestBuilder {
 
             final WorkerPool workerPool = new TestWorkerPool(1);
 
-            DefaultCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());

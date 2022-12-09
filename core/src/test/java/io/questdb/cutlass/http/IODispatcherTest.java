@@ -5302,7 +5302,7 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -5457,7 +5457,7 @@ public class IODispatcherTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -5602,7 +5602,7 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
                     NetworkFacadeImpl.INSTANCE,
                     baseDir,
@@ -7032,7 +7032,7 @@ public class IODispatcherTest {
 
     private void assertColumn(CharSequence expected, int index) {
         final String baseDir = temp.getRoot().getAbsolutePath();
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         TableToken tememetryTableName = new TableToken("telemetry", "telemetry", 0, false);
         try (TableReader reader = new TableReader(configuration, tememetryTableName)) {
@@ -7052,13 +7052,15 @@ public class IODispatcherTest {
             long expectedO3MaxLag,
             int expectedMaxUncommittedRows,
             int expectedImportedRows,
-            String expectedData
+            String expectedData,
+            boolean mangleTableDirNames
     ) {
         final String baseDir = temp.getRoot().getAbsolutePath();
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
-        TableToken telemetryTableName = new TableToken(tableName, tableName, 1, false);
-        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+        String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
+        TableToken tableToken = new TableToken(tableName, dirName, 1, false);
+        try (TableReader reader = new TableReader(configuration, tableToken)) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
@@ -7135,7 +7137,7 @@ public class IODispatcherTest {
     ) throws Exception {
         final AtomicInteger msyncCallCount = new AtomicInteger();
         final String baseDir = temp.getRoot().getAbsolutePath();
-        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
             public FilesFacade getFilesFacade() {
                 return new TestFilesFacadeImpl() {
@@ -7225,7 +7227,8 @@ public class IODispatcherTest {
                 expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 1,
-                "2021-01-01T00:01:00.000000Z\t1\n"
+                "2021-01-01T00:01:00.000000Z\t1\n",
+                true
         );
     }
 
@@ -7302,7 +7305,8 @@ public class IODispatcherTest {
                 expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
-                expectedData);
+                expectedData,
+                false);
     }
 
     private void testHttpQueryGeoHashColumnChars(String request, String expectedResponse) throws Exception {
@@ -7663,7 +7667,7 @@ public class IODispatcherTest {
             Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
         }
 
-        Files.close(fd);
+        TestFilesFacadeImpl.INSTANCE.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }

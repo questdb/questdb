@@ -207,7 +207,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
-                newTableReader(new DefaultCairoConfiguration(root) {
+                newTableReader(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;

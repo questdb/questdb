@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -354,7 +353,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     if (Chars.endsWith(name, "s1.d.1") && Chars.contains(name, "1970-01-03")) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
             compiler.compile(
@@ -2172,7 +2171,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     if (Chars.endsWith(name, "x.d.1") && Chars.contains(name, "1970-01-03")) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
             compiler.compile(

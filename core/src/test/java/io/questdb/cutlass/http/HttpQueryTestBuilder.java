@@ -124,7 +124,7 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public boolean manglePrivateTableNames() {
+                    public boolean mangleTableDirNames() {
                         return false;
                     }
                 };

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -38,14 +39,19 @@ public class CopyNoMangleTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        mangleTablePrivateName = false;
         inputRoot = TestUtils.getCsvRoot();
         try {
             inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
+        configOverrideMangleTableDirNames(false);
+
+        node1.initGriffin(circuitBreaker);
+        compiler = node1.getSqlCompiler();
+        bindVariableService = node1.getBindVariableService();
+        sqlExecutionContext = node1.getSqlExecutionContext();
     }
 
     @Test

@@ -25,7 +25,6 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -110,7 +109,6 @@ public class PGJobContextTest extends BasePGTest {
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
-    public static final boolean SKIP_FAILING_WAL_TESTS = false;
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
@@ -156,7 +154,7 @@ public class PGJobContextTest extends BasePGTest {
     @After
     public void tearDown() {
         super.tearDown();
-        defaultTableWriteMode = -1;
+        configOverrideDefaultTableWriteMode(-1);
     }
 
     @Test
@@ -2387,17 +2385,6 @@ if __name__ == "__main__":
                 ">420000001a006c72757073635f315f30000000000000020001000144000000065000450000000900000000005300000004\n" +
                 "<3200000004540000003500027472756500000000000001000000100001ffffffff000166616c736500000000000002000000100001ffffffff00014400000010000200000001010000000100430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                script,
-                getHexPgWireConfig()
-        );
-    }
-
-    @Test
-    public void testGssApiRequestClosedGracefully() throws Exception {
-        final String script = ">0000000804d21630\n" +
-                "<4e\n";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
@@ -7585,55 +7572,6 @@ create table tab as (
     }
 
     @Test
-    public void testUpdateWithNowAndSystimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            currentMicros = 123678000L;
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), true, false)
-                ) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
-                    statement.execute();
-
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                            "('2020-06-01T00:00:02'::timestamp, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                            "('2020-06-01T00:00:06'::timestamp, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "('2020-06-01T00:00:12'::timestamp, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
-
-                    final PreparedStatement update1 = connection.prepareStatement("update x set a=now() where b>2.5");
-                    int numOfRowsUpdated1 = update1.executeUpdate();
-                    assertEquals(2, numOfRowsUpdated1);
-
-                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
-                            "('2020-06-01T00:00:22'::timestamp, 4.0, '2020-06-01T00:00:22'::timestamp)," +
-                            "('2020-06-01T00:00:32'::timestamp, 6.0, '2020-06-01T00:00:32'::timestamp)");
-                    insert2.execute();
-
-                    final PreparedStatement update2 = connection.prepareStatement("update x set a=systimestamp() where b>5.0");
-                    int numOfRowsUpdated2 = update2.executeUpdate();
-                    assertEquals(1, numOfRowsUpdated2);
-
-                    final String expected = "a[TIMESTAMP],b[DOUBLE],ts[TIMESTAMP]\n" +
-                            "2020-06-01 00:00:02.0,2.0,2020-06-01 00:00:02.0\n" +
-                            "1970-01-01 00:02:03.678,2.6,2020-06-01 00:00:06.0\n" +
-                            "1970-01-01 00:02:03.678,3.0,2020-06-01 00:00:12.0\n" +
-                            "2020-06-01 00:00:22.0,4.0,2020-06-01 00:00:22.0\n" +
-                            "1970-01-01 00:02:03.678,6.0,2020-06-01 00:00:32.0\n";
-                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testUpdatePreparedRenameUpdate() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -7679,6 +7617,55 @@ create table tab as (
                                 sink,
                                 rs
                         );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithNowAndSystimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 123678000L;
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false)
+                ) {
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
+                    statement.execute();
+
+                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:02'::timestamp, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                            "('2020-06-01T00:00:06'::timestamp, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                            "('2020-06-01T00:00:12'::timestamp, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                    insert1.execute();
+
+                    final PreparedStatement update1 = connection.prepareStatement("update x set a=now() where b>2.5");
+                    int numOfRowsUpdated1 = update1.executeUpdate();
+                    assertEquals(2, numOfRowsUpdated1);
+
+                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:22'::timestamp, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                            "('2020-06-01T00:00:32'::timestamp, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                    insert2.execute();
+
+                    final PreparedStatement update2 = connection.prepareStatement("update x set a=systimestamp() where b>5.0");
+                    int numOfRowsUpdated2 = update2.executeUpdate();
+                    assertEquals(1, numOfRowsUpdated2);
+
+                    final String expected = "a[TIMESTAMP],b[DOUBLE],ts[TIMESTAMP]\n" +
+                            "2020-06-01 00:00:02.0,2.0,2020-06-01 00:00:02.0\n" +
+                            "1970-01-01 00:02:03.678,2.6,2020-06-01 00:00:06.0\n" +
+                            "1970-01-01 00:02:03.678,3.0,2020-06-01 00:00:12.0\n" +
+                            "2020-06-01 00:00:22.0,4.0,2020-06-01 00:00:22.0\n" +
+                            "1970-01-01 00:02:03.678,6.0,2020-06-01 00:00:32.0\n";
+                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
                     }
                 }
             }

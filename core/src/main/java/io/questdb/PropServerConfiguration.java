@@ -2280,7 +2280,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean manglePrivateTableNames() {
+        public boolean mangleTableDirNames() {
             return false;
         }
     }

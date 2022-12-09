@@ -313,7 +313,7 @@ public class AbstractO3Test {
             if (workerCount > 0) {
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
@@ -333,7 +333,7 @@ public class AbstractO3Test {
                 TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();

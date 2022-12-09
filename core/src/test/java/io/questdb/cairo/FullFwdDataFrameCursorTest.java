@@ -1016,15 +1016,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 boolean invoked = false;
 
                 @Override
-                public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, ".lock")) {
-                        invoked = true;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
                 public boolean closeRemove(long fd, LPSZ name) {
                     if (Chars.endsWith(name, ".lock")) {
                         invoked = true;
@@ -1032,6 +1023,15 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         return false;
                     }
                     return super.closeRemove(fd, name);
+                }
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (Chars.endsWith(name, ".lock")) {
+                        invoked = true;
+                        return false;
+                    }
+                    return super.remove(name);
                 }
 
                 @Override
@@ -1144,7 +1144,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
@@ -1300,7 +1300,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -1379,7 +1379,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     throw new RuntimeException("Unsupported test");
             }
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public int getParallelIndexThreshold() {
                     return 1;
@@ -1478,7 +1478,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;

@@ -518,7 +518,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
                 execute(pool, runnable, configuration1);
             } else {
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root);
+                final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root);
                 execute(null, runnable, configuration1);
             }
         });

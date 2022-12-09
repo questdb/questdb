@@ -159,7 +159,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
         };
 
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -900,7 +900,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
         };
 
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;

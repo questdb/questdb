@@ -3962,7 +3962,7 @@ public class JoinTest extends AbstractGriffinTest {
                     if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 

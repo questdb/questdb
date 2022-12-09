@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -57,7 +54,7 @@ public class EmbeddedApiTest {
     @Test
     public void testConcurrentReadsAndCreateTableIfNotExists() throws Exception {
         final int N = 100;
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -87,7 +84,7 @@ public class EmbeddedApiTest {
 
     @Test
     public void testConcurrentSQLExec() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
         final Log log = LogFactory.getLog("testConcurrentSQLExec");
 
         TestUtils.assertMemoryLeak(() -> {
@@ -136,7 +133,7 @@ public class EmbeddedApiTest {
 
     @Test
     public void testReadWrite() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
             // write part

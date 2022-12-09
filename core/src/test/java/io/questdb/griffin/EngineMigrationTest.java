@@ -77,7 +77,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        mangleTablePrivateName = false;
+        configOverrideMangleTableDirNames(false);
         AbstractGriffinTest.setUpStatic();
     }
 

@@ -904,7 +904,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             } while (recvBuffer.length() > 0);
             closeContext();
             mayDrainWalQueue();
-            try (TableReader reader = newTableReader(new DefaultCairoConfiguration(root), table)) {
+            try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), table)) {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });

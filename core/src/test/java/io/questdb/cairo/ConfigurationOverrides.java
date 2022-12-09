@@ -128,6 +128,8 @@ public interface ConfigurationOverrides {
 
     Boolean isParallelFilterEnabled();
 
+    boolean mangleTableDirNames();
+
     void reset();
 
     void setAttachableDirSuffix(String attachableDirSuffix);
@@ -171,6 +173,8 @@ public interface ConfigurationOverrides {
     void setIoURingEnabled(Boolean ioURingEnabled);
 
     void setJitMode(int jitMode);
+
+    void setMangleTableDirNames(boolean mangle);
 
     void setMaxUncommittedRows(int configOverrideMaxUncommittedRows);
 

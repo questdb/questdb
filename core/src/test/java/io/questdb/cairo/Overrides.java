@@ -55,6 +55,7 @@ public class Overrides implements ConfigurationOverrides {
     private String inputWorkRoot = null;
     private Boolean ioURingEnabled = null;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
+    private boolean mangleTableDirNames = true;
     private int maxUncommittedRows = -1;
     private long o3MaxLag = -1;
     private boolean o3QuickSortEnabled = false;
@@ -323,6 +324,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public boolean mangleTableDirNames() {
+        return mangleTableDirNames;
+    }
+
+    @Override
     public void reset() {
         hideTelemetryTable = false;
         maxUncommittedRows = -1;
@@ -361,6 +367,7 @@ public class Overrides implements ConfigurationOverrides {
         dataAppendPageSize = -1;
         o3QuickSortEnabled = false;
         walSegmentRolloverRowCount = -1;
+        mangleTableDirNames = true;
     }
 
     @Override
@@ -466,6 +473,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setMangleTableDirNames(boolean mangle) {
+        this.mangleTableDirNames = mangle;
     }
 
     @Override

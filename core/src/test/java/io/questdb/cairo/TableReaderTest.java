@@ -1922,9 +1922,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     @Override
                     public long openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
-                            return Files.openRO(temp);
+                            return TestFilesFacadeImpl.INSTANCE.openRO(temp);
                         }
-                        return Files.openRO(name);
+                        return TestFilesFacadeImpl.INSTANCE.openRO(name);
                     }
                 };
 
@@ -1977,9 +1977,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     @Override
                     public long openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
-                            return metaFd = Files.openRO(name);
+                            return metaFd = TestFilesFacadeImpl.INSTANCE.openRO(name);
                         }
-                        return Files.openRO(name);
+                        return TestFilesFacadeImpl.INSTANCE.openRO(name);
                     }
                 };
 
@@ -2752,7 +2752,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -2913,7 +2913,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3012,7 +3012,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3131,7 +3131,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3230,7 +3230,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3339,7 +3339,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3444,7 +3444,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3549,7 +3549,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3940,7 +3940,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 CairoTestUtils.createAllTable(engine, partitionBy);
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
-                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;

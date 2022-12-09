@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -47,7 +46,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -77,7 +76,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -108,7 +107,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -139,7 +138,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -172,7 +171,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -203,7 +202,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -244,7 +243,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
             compile("create table t as (" +
@@ -283,7 +282,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01") || Chars.contains(name, "1970-01-02")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
@@ -326,7 +325,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
@@ -362,7 +361,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
@@ -396,7 +395,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
@@ -577,7 +576,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
@@ -611,7 +610,7 @@ public class LatestByTest extends AbstractGriffinTest {
                 if (Chars.contains(name, "1970-01-01")) {
                     return -1;
                 }
-                return Files.openRO(name);
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
             }
         };
 
@@ -660,7 +659,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 
@@ -693,7 +692,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     if (Chars.contains(name, "1970-01-01")) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 

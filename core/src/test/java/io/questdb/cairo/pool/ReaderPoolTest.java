@@ -494,7 +494,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 reader.close();
             }
 
-        }, new DefaultCairoConfiguration(root) {
+        }, new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;

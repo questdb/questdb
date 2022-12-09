@@ -444,5 +444,5 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
-    boolean manglePrivateTableNames();
+    boolean mangleTableDirNames();
 }

@@ -67,6 +67,17 @@ public class TableSequencerAPI implements QuietCloseable {
         releaseAll();
     }
 
+    @TestOnly
+    public void closeSequencer(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                sequencer.close();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public void dropTable(TableToken tableToken, boolean failedCreate) {
         LOG.info().$("dropping wal table [name=").$(tableToken).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
@@ -243,8 +254,8 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @TestOnly
-    public void openSequencer(String tableName) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+    public void openSequencer(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 sequencer.open();
             } finally {

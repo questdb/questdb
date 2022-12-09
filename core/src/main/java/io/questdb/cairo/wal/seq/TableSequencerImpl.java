@@ -108,7 +108,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void dropTable() {
         checkDropped();
-        tableTransactionLog.addEntry(WalUtils.DROP_TABLE_WALID, 0, 0);
+        tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
         metadata.dropTable();
         engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, Integer.MAX_VALUE);
     }
@@ -294,7 +294,7 @@ public class TableSequencerImpl implements TableSequencer {
     public long rename(TableToken newTableToken) {
         checkDropped();
         tableToken = newTableToken;
-        long txn = tableTransactionLog.addEntry(RENAME_TABLE_WALID, 0, 0);
+        long txn = tableTransactionLog.addEntry(getStructureVersion(), RENAME_TABLE_WALID, 0, 0, microClock.getTicks());
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
         }

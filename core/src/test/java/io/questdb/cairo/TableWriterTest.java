@@ -68,7 +68,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         PRODUCT_FS = PRODUCT;
-        if (configuration.manglePrivateTableNames()) {
+        if (configuration.mangleTableDirNames()) {
             PRODUCT_FS += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
     }
@@ -444,7 +444,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+        try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -575,7 +575,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             X ff = new X();
 
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -634,7 +634,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -659,7 +659,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -803,7 +803,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             X ff = new X();
 
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -854,7 +854,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int N = 94;
             create(ff, PartitionBy.DAY, N);
             long increment = 60 * 60000 * 1000L;
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -1131,7 +1131,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
 
-            DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                 populateProducts(writer, rnd, ts, 1, 0);
@@ -1197,7 +1197,7 @@ public class TableWriterTest extends AbstractCairoTest {
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
             try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+                try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -1314,7 +1314,7 @@ public class TableWriterTest extends AbstractCairoTest {
             };
 
             try {
-                newTableWriter(new DefaultCairoConfiguration(root) {
+                newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -1685,7 +1685,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
             long increment = 60000L * 1000;
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataAppendPageSize() {
                     return 1024 * 1024; //1MB
@@ -1979,7 +1979,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testO3PartitionTruncate() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
         final String tableName = "testO3PartitionTruncate";
 
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -2670,7 +2670,7 @@ public class TableWriterTest extends AbstractCairoTest {
         long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
         final long increment = 60000L * 1000;
         Rnd rnd = new Rnd();
-        try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+        try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -2721,7 +2721,7 @@ public class TableWriterTest extends AbstractCairoTest {
         long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
         final long increment = 60000L * 1000;
         Rnd rnd = new Rnd();
-        try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+        try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -2974,7 +2974,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testTableWriterCustomPageSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             create(FF, PartitionBy.DAY, 10000);
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataAppendPageSize() {
                     return getFilesFacade().getPageSize();
@@ -3073,7 +3073,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(ff, PartitionBy.NONE, 4);
             try {
                 ff.count = 0;
-                newTableWriter(new DefaultCairoConfiguration(root) {
+                newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -3297,7 +3297,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void create(FilesFacade ff, int partitionBy, int N) {
-        try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
+        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -3366,7 +3366,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private long populateTable0(FilesFacade ff, int N) throws NumericException {
-        try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+        try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -3404,7 +3404,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             Rnd rnd = new Rnd();
 
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3450,7 +3450,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             Rnd rnd = new Rnd();
 
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3507,7 +3507,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3543,7 +3543,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3577,7 +3577,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3645,7 +3645,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private long testAppendNulls(Rnd rnd, long ts) {
         final int blobLen = 64 * 1024;
         long blob = Unsafe.malloc(blobLen, MemoryTag.NATIVE_DEFAULT);
-        try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+        try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return TableWriterTest.FF;
@@ -3713,7 +3713,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 create(ff, PartitionBy.NONE, 4);
             }
             try {
-                newTableWriter(new DefaultCairoConfiguration(root) {
+                newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -3868,7 +3868,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, 10000);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3961,7 +3961,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, 10000);
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -4043,7 +4043,7 @@ public class TableWriterTest extends AbstractCairoTest {
             final X ff = new X();
             testAppendNulls(new Rnd(), TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z"));
             try {
-                newTableWriter(new DefaultCairoConfiguration(root) {
+                newTableWriter(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -4193,7 +4193,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(ff, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
             final long increment = 60 * 60000 * 1000L;
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -4245,7 +4245,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testTruncateOnClose(TestFilesFacade ff, int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -4288,7 +4288,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testUnrecoverableRemoveColumn(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -4319,7 +4319,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testUnrecoverableRenameColumn(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;

@@ -778,9 +778,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         engine.clear();
                         TableToken tableToken = engine.getTableToken(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
-                        long fd = Files.openRW(path);
+                        long fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 4);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Column file is too small"
             );
@@ -845,9 +845,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         engine.clear();
                         TableToken tableToken = engine.getTableToken(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
-                        long fd = Files.openRW(path);
+                        long fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 2);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Symbol file does not match symbol column"
             );
@@ -924,9 +924,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         engine.clear();
                         TableToken tableToken = engine.getTableToken(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.d").$();
-                        long fd = Files.openRW(path);
+                        long fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Column file is too small"
             );

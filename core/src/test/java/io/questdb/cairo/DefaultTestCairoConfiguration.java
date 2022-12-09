@@ -43,7 +43,7 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public boolean manglePrivateTableNames() {
+    public boolean mangleTableDirNames() {
         return true;
     }
 }

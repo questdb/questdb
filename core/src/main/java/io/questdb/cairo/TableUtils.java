@@ -510,6 +510,31 @@ public final class TableUtils {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
+    @NotNull
+    public static String getTableDir(boolean mangleDirNames, @NotNull String tableName, int tableId, boolean isWal) {
+        String dirName = tableName;
+        if (isWal) {
+            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            dirName += tableId;
+        } else if (mangleDirNames) {
+            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        }
+        return dirName;
+    }
+
+    public static String getTableNameFromDirName(String privateName) {
+        int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            return privateName;
+        }
+
+        if (suffixIndex != privateName.length() - 1) {
+            // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
+            return null;
+        }
+        return privateName.substring(0, suffixIndex);
+    }
+
     public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
@@ -1055,19 +1080,6 @@ public final class TableUtils {
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
-    }
-
-    public static String getTableNameFromDirName(String privateName) {
-        int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);
-        if (suffixIndex == -1) {
-            return privateName;
-        }
-
-        if (suffixIndex != privateName.length() - 1) {
-            // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
-            return null;
-        }
-        return privateName.substring(0, suffixIndex);
     }
 
     public static void txnPartition(CharSink path, long txn) {

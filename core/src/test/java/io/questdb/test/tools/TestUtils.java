@@ -256,12 +256,12 @@ public final class TestUtils {
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            long fda = Files.openRO(path);
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
                 path.of(b.getAbsolutePath()).$();
-                long fdb = Files.openRO(path);
+                long fdb = TestFilesFacadeImpl.INSTANCE.openRO(path);
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -293,10 +293,10 @@ public final class TestUtils {
                         Unsafe.free(bufb, 4096, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Files.close(fdb);
+                    TestFilesFacadeImpl.INSTANCE.close(fdb);
                 }
             } finally {
-                Files.close(fda);
+                TestFilesFacadeImpl.INSTANCE.close(fda);
             }
         }
     }
@@ -304,7 +304,7 @@ public final class TestUtils {
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            long fda = Files.openRO(path);
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -345,7 +345,7 @@ public final class TestUtils {
                     Unsafe.free(str, actual.length(), MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Files.close(fda);
+                TestFilesFacadeImpl.INSTANCE.close(fda);
             }
         }
     }

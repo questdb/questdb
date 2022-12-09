@@ -71,14 +71,14 @@ public class InsertTest extends AbstractGriffinTest {
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? 1 : 0);
         super.setUp();
     }
 
     @After
     public void tearDown() {
         super.tearDown();
-        defaultTableWriteMode = -1;
+        configOverrideDefaultTableWriteMode(-1);
     }
 
     @Test

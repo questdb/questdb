@@ -124,7 +124,7 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public long openRW(LPSZ name, long opts) {
             long fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
+            if (Chars.endsWith(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
                 theFd = fd;
             }
             return fd;
@@ -255,7 +255,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                long fd = Files.openRW(name, opts);
+                long fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
                     theFd = fd;
                     return fd;
@@ -294,7 +294,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                long fd = Files.openRW(name, opts);
+                long fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 if (theFd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
                     theFd = fd;
                     return fd;
@@ -737,7 +737,7 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         long fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                        if (Chars.endsWith(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
                             if (counter.decrementAndGet() == 0) {
                                 theFd = fd;
                             }
@@ -3794,7 +3794,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private void executeWithoutPool(CustomisableRunnable runnable, FilesFacade ff) throws Exception {
         executeVanilla(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;

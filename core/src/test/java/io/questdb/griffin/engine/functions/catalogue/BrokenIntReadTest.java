@@ -135,7 +135,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     }
 
     private void createTables(FilesFacade ff) {
-        try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
+        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -149,7 +149,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
             CairoTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
         }
 
-        try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
+        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -164,7 +164,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
             CairoTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
         }
 
-        try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
+        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
