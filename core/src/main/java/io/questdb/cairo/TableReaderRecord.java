@@ -25,10 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Rows;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class TableReaderRecord implements Record, Sinkable {
@@ -266,7 +263,7 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUuidHi(int col) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES * 2;
+        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
@@ -274,7 +271,7 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUuidLo(int col) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES * 2;
+        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }

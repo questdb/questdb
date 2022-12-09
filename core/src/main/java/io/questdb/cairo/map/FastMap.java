@@ -702,7 +702,7 @@ public class FastMap implements Map, Reopenable {
             checkSize(16);
             Unsafe.getUnsafe().putLong(appendAddress, hi);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
-            appendAddress += 16;
+            appendAddress += UuidUtil.BYTES;
             writeOffset();
         }
 

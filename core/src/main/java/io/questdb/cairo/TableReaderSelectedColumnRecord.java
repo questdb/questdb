@@ -299,7 +299,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     public long getUuidHi(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * 16;
+        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
         return column.getLong(offset);
@@ -309,7 +309,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     public long getUuidLo(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * 16;
+        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
         return column.getLong(offset + Long.BYTES);
