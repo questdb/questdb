@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+#include <fcntl.h>
 #include <sys/event.h>
 #include <sys/time.h>
 #include <stddef.h>
