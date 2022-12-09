@@ -47,43 +47,78 @@ import java.util.Arrays;
  * | opcode | options | payload |
  * | int    | int     | long    |
  * </pre>
+ *
+ * The IR language uses stack machine semantics. It is as if each instruction
+ * pushes its result onto a virtual stack, and each instruction that requires
+ * inputs pops those off the stack. For example, the following expression:
+ *
+ * <pre>
+ * 1 + 2 != 3
+ * </pre>
+ *
+ * ... could be represented in the IR language as
+ *
+ * <pre>
+ * imm 1    ; push the number 1 onto the stack
+ * imm 2    ; push the number 2 onto the stack
+ * add      ; pops 1 and 2, adds them, pushes 3
+ * imm 3    ; push the number 3 onto the stack
+ * neq      ; pops 3 and 3, compares them, pushes false
+ * </pre>
+ *
+ * At the end of this program, there is only one value (false) on the stack,
+ * representing the result of the program. Because the IR language is used for
+ * SQL filters, which are boolean expressions, the result of an IR language
+ * program must always be a boolean.
+ *
+ * The stack used to pass around intermediate values is compiled away in the
+ * second phase of compilation, in which the IR program is compiled into native
+ * machine code. During this process, the stack machine semantics of the IR
+ * program are converted to the native processor's register machine model. As
+ * such, the final program uses registers and the call stack to track
+ * intermediate values.
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
-    static final int ADD = 14;  // a + b
-    static final int AND = 6;   // a && b
-    static final int DIV = 17;  // a / b
-    static final int EQ = 8;   // a == b
-    static final int F4_TYPE = 3;
-    static final int F8_TYPE = 5;
-    static final int GE = 13;  // a >= b
-    static final int GT = 12;  // a >  b
-    // Options:
-    // Data types
-    static final int I1_TYPE = 0;
-    static final int I2_TYPE = 1;
-    static final int I4_TYPE = 2;
-    static final int I8_TYPE = 4;
-    // Constants
-    static final int IMM = 1;
-    static final int LE = 11;  // a <= b
-    static final int LT = 10;  // a <  b
-    // Columns
-    static final int MEM = 2;
-    static final int MUL = 16;  // a * b
-    static final int NE = 9;   // a != b
-    // Operator codes
-    static final int NEG = 4;   // -a
-    static final int NOT = 5;   // !a
-    static final int OR = 7;   // a || b
-    // Opcodes:
-    // Return code. Breaks the loop
-    static final int RET = 0; // ret
-    static final int SUB = 15;  // a - b
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+
+    // Opcodes:
+    // Return code. Breaks the loop
+    static final int RET   = 0; // ret
+    // Constants
+    static final int IMM   = 1;
+    // Columns
+    static final int MEM   = 2;
     // Bind variables and deferred symbols
-    static final int VAR = 3;
+    static final int VAR   = 3;
+    // Operator codes
+    static final int NEG   = 4;  // -a
+    static final int NOT   = 5;  // !a
+    static final int AND   = 6;  // a && b
+    static final int OR    = 7;  // a || b
+    static final int EQ    = 8;  // a == b
+    static final int NE    = 9;  // a != b
+    static final int LT    = 10; // a <  b
+    static final int LE    = 11; // a <= b
+    static final int GT    = 12; // a >  b
+    static final int GE    = 13; // a >= b
+    static final int ADD   = 14; // a + b
+    static final int SUB   = 15; // a - b
+    static final int MUL   = 16; // a * b
+    static final int DIV   = 17; // a / b
+    static final int TO128 = 18; // to_long128(a, b)
+
+    // Options:
+    // Data types
+    static final int I1_TYPE  = 0;
+    static final int I2_TYPE  = 1;
+    static final int I4_TYPE  = 2;
+    static final int F4_TYPE  = 3;
+    static final int I8_TYPE  = 4;
+    static final int F8_TYPE  = 5;
+    static final int I16_TYPE = 6;
+
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     private final PredicateContext predicateContext = new PredicateContext();
@@ -94,6 +129,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private boolean forceScalarMode;
     private MemoryCARW memory;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
+    private final IntStack functionArgumentType = new IntStack(1);
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
 
@@ -105,6 +141,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         forceScalarMode = false;
         predicateContext.clear();
         backfillNodes.clear();
+        functionArgumentType.clear();
     }
 
     @Override
@@ -115,6 +152,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(node.token);
         }
 
+        // Check if we're entering a function with well-known argument types.
+        // This allows us to skip constant backfilling, since we know their types up front
+        if (node.type == ExpressionNode.FUNCTION) {
+            if (Chars.equalsIgnoreCase(node.token, "to_long128")) {
+                functionArgumentType.push(I8_TYPE);
+            }
+        }
+
         // Check if we're at the start of an arithmetic expression
         predicateContext.onNodeDescended(node);
 
@@ -122,8 +167,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                // Store negation node for later backfilling
-                serializeConstantStub(node);
+                if (functionArgumentType.notEmpty()) {
+                    serializeConstantInFunctionCall(nextNode, true);
+                } else {
+                    // Store negation node for later backfilling
+                    serializeConstantStub(node);
+                }
                 return false;
             }
         }
@@ -156,9 +205,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      * <li>1 LSB - debug flag</li>
-     * <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B</li>
-     * <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
-     * <li>6 LSB - flag to include null checks for column values into compiled filter</li>
+     * <li>2-4 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B</li>
+     * <li>5-6 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     * <li>7 LSB - flag to include null checks for column values into compiled filter</li>
      * </ul>
      * <p>
      * Examples:
@@ -182,10 +231,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (!scalar && !forceScalarMode) {
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
-            options = options | (executionHint << 3);
+            options = options | (executionHint << 4);
         }
 
-        options = options | ((nullChecks ? 1 : 0) << 5);
+        options = options | ((nullChecks ? 1 : 0) << 6);
 
         return options;
     }
@@ -202,14 +251,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     serializeBindVariable(node);
                     break;
                 case ExpressionNode.CONSTANT:
-                    // Write stub values to be backfilled later
-                    serializeConstantStub(node);
+                    if (functionArgumentType.notEmpty()) {
+                        serializeConstantInFunctionCall(node, false);
+                    } else {
+                        // Write stub values to be backfilled later
+                        serializeConstantStub(node);
+                    }
                     break;
                 default:
                     throw SqlException.position(node.position)
                             .put("unsupported token: ")
                             .put(node.token);
             }
+        } else if (node.type == ExpressionNode.FUNCTION) {
+            serializeFunctionCall(node);
         } else {
             serializeOperator(node.position, node.token, argCount);
         }
@@ -258,6 +313,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return I8_TYPE;
             case ColumnType.DOUBLE:
                 return F8_TYPE;
+            case ColumnType.LONG128: // not supported for vars, but supported for columns
             default:
                 return UNDEFINED_CODE;
         }
@@ -286,6 +342,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return I8_TYPE;
             case ColumnType.DOUBLE:
                 return F8_TYPE;
+            case ColumnType.LONG128:
+                return I16_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -641,6 +699,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
     }
 
+    private void serializeFunctionCall(final ExpressionNode node) throws SqlException {
+        if (Chars.equalsIgnoreCase(node.token, "to_long128")) {
+            putOperand(TO128, 0, 0);
+            functionArgumentType.pop(); // all arguments now serialized
+            forceScalarMode = true; // to_long128 cannot be vectorized because it mixes 64-bit inputs with 128-bit outputs
+            return;
+        }
+
+        throw SqlException.position(node.position)
+                .put("unsupported token: ")
+                .put(node.token);
+    }
+
+    private void serializeConstantInFunctionCall(final ExpressionNode node, boolean negated) throws SqlException {
+        long offset = memory.getAppendOffset();
+        putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
+        int typeCode = functionArgumentType.peek();
+        serializeNumber(offset, node.position, node.token, typeCode, negated);
+    }
+
     private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {
         try {
             switch (typeCode) {
@@ -889,13 +967,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private static class TypesObserver implements Mutable {
 
-        private static final int F4_INDEX = 3;
-        private static final int F8_INDEX = 5;
-        private static final int I1_INDEX = 0;
-        private static final int I2_INDEX = 1;
-        private static final int I4_INDEX = 2;
-        private static final int I8_INDEX = 4;
-        private static final int TYPES_COUNT = F8_INDEX + 1;
+        private static final int I1_INDEX  = 0;
+        private static final int I2_INDEX  = 1;
+        private static final int I4_INDEX  = 2;
+        private static final int F4_INDEX  = 3;
+        private static final int I8_INDEX  = 4;
+        private static final int F8_INDEX  = 5;
+        private static final int I16_INDEX = 6;
+        private static final int TYPES_COUNT = I16_INDEX + 1;
 
         private final byte[] sizes = new byte[TYPES_COUNT];
 
@@ -970,6 +1049,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case F8_TYPE:
                     sizes[F8_INDEX] = 8;
                     break;
+                case I16_TYPE:
+                    sizes[I16_INDEX] = 16;
+                    break;
             }
         }
 
@@ -987,6 +1069,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     return I8_TYPE;
                 case F8_INDEX:
                     return F8_TYPE;
+                case I16_INDEX:
+                    return I16_TYPE;
             }
             return UNDEFINED_CODE;
         }

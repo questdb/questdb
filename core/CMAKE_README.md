@@ -13,9 +13,13 @@ cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
 cmake --build build/release --config Release
 ```
 
+Then you must **rebuild the jar** as described in CONTRIBUTING.md in the root
+of this repository. Otherwise your changes will not take effect.
+
 Building the native code will update dynamic link libraries under
-`core/src/main/resources/io/questdb/bin/**` which will in turn be loaded by
-Java through JNI.
+`core/src/main/resources/io/questdb/bin/**` which will in turn be packaged as
+resources in QuestDB's jar. At runtime, QuestDB extracts the appropriate
+library from the jar and loads it using Java JNI.
 
 ### Installing and compiling on FreeBSD
 

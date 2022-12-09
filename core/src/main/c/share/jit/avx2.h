@@ -111,6 +111,7 @@ namespace questdb::avx2 {
             case data_type_t::i16:
             case data_type_t::i32:
             case data_type_t::i64:
+            case data_type_t::i128:
                 c.vmovdqu(row_data, m);
                 break;
             case data_type_t::f32:

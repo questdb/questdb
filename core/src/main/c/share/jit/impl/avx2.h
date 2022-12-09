@@ -72,6 +72,21 @@ namespace questdb::avx2 {
         return r.as<Gpd>();
     }
 
+    inline Gpd to_bits2(Compiler &c, const Ymm &mask) {
+        Gp r = c.newInt32();
+        c.vmovmskpd(r, mask);
+
+        Gp lo = c.newInt32();
+        c.mov(lo, r);
+        c.and_(lo, 1);
+
+        c.shr(r, 1);
+        c.and_(r, 2);
+        c.or_(r, lo);
+
+        return r.as<Gpd>();
+    }
+
     inline Gpd to_bits(Compiler &c, const Ymm &mask, uint32_t step) {
         switch (step) {
             case 32:
@@ -80,8 +95,12 @@ namespace questdb::avx2 {
                 return to_bits16(c, mask);
             case 8:
                 return to_bits8(c, mask);
-            default:
+            case 4:
                 return to_bits4(c, mask);
+            case 2:
+                return to_bits2(c, mask);
+            default:
+                __builtin_unreachable();
         }
     }
 
@@ -256,6 +275,13 @@ namespace questdb::avx2 {
                 break;
             case data_type_t::i64: {
                 c.vpcmpeqq(dst, lhs, rhs);
+            }
+                break;
+            case data_type_t::i128: {
+                Ymm r = c.newYmm();
+                c.vpcmpeqq(r, lhs, rhs);
+                c.vpermq(dst, r, (1 << 0) | (0 << 2) | (3 << 4) | (2 << 6));
+                c.vpand(dst, dst, r);
             }
                 break;
             case data_type_t::f32: {

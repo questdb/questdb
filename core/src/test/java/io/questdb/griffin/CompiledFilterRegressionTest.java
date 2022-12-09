@@ -425,6 +425,40 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLong128Comparisons() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() as i64_1," +
+                " rnd_long() as i64_2," +
+                " to_long128(rnd_long(), rnd_long()) i128_1," +
+                " to_long128(rnd_long(), rnd_long()) i128_2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i128_1", "to_long128(i64_1, i64_2)", "to_long128(i64_1, 0)", "to_long128(2 * i64_1, -i64_2 + 7)")
+                .withAnyOf("=", "!=")
+                .withAnyOf("i128_2", "to_long128(i64_2, i64_1)", "to_long128(0, 0)", "to_long128(i64_2, 0)");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    // Since the JIT currently simulates a 128-bit comparison with two 64-bit comparisons,
+    // try to confuse it with comparisons where only the high or low 64-bits match
+    @Test
+    public void testLong128PartialMatches() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " to_long128(7, rnd_long()) as zero_lo_1," +
+                " to_long128(7, rnd_long()) as zero_lo_2," +
+                " to_long128(rnd_long(), 9) as zero_hi_1," +
+                " to_long128(rnd_long(), 9) as zero_hi_2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("zero_lo_1", "zero_hi_1")
+                .withAnyOf("=", "!=")
+                .withAnyOf("zero_lo_2", "zero_hi_2");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
     public void testOrderByAsc() throws Exception {
         testOrderBy("order by ts asc");
     }

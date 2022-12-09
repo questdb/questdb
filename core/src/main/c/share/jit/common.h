@@ -34,6 +34,7 @@ enum class data_type_t : uint8_t {
     f32,
     i64,
     f64,
+    i128,
 };
 
 enum class data_kind_t : uint8_t {
@@ -61,6 +62,7 @@ enum class opcodes : int32_t {
     Sub,
     Mul,
     Div,
+    To128,
     Rem,
 };
 
@@ -115,6 +117,8 @@ inline uint32_t type_shift(data_type_t type) {
         case data_type_t::i64:
         case data_type_t::f64:
             return 3;
+        case data_type_t::i128:
+            return 4;
         default:
             __builtin_unreachable();
     }

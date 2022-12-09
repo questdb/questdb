@@ -91,6 +91,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     .col("atimestamp", ColumnType.TIMESTAMP)
                     .col("adouble", ColumnType.DOUBLE)
                     .col("astring", ColumnType.STRING)
+                    .col("along128", ColumnType.LONG128)
                     .timestamp();
             CairoTestUtils.create(model);
         }
@@ -201,6 +202,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
         typeToColumn.put("f32", new String[]{"afloat"});
         typeToColumn.put("f64", new String[]{"adouble"});
+        typeToColumn.put("i128", new String[]{"along128"});
 
         for (String type : typeToColumn.keySet()) {
             for (String col : typeToColumn.get(type)) {
@@ -360,6 +362,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLong128Operator() throws Exception {
+        String[][] columns = new String[][] {
+            { "along", "along" },
+            { "0L",    "0L" },
+            { "along", "0L" },
+            { "along", "-1L" },
+        };
+
+        for (String[] col : columns) {
+            final String lo = col[0];
+            final String hi = col[1];
+            serialize("along128 != to_long128(" + lo + ", " + hi + ")");
+            assertIR("(i64 " + hi + ")(i64 " + lo + ")(to128)(i128 along128)(<>)(ret)");
+        }
+
+        serialize("along128 != to_long128(1 + 2, 3 * 4)");
+        assertIR("(i64 4L)(i64 3L)(*)(i64 2L)(i64 1L)(+)(to128)(i128 along128)(<>)(ret)");
+    }
+
+    @Test
     public void testOperationPriority() throws Exception {
         serialize("(anint + 1) / (3 * anint) - 42.5 > 0.5");
         assertIR("(f32 0.5D)(f32 42.5D)(i32 anint)(i32 3L)(*)(i32 1L)(i32 anint)(+)(/)(-)(>)(ret)");
@@ -452,6 +474,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("atimestamp <> null", 8);
         filterToOptions.put("adouble = 0", 8);
         filterToOptions.put("adouble = 0 and along = 0", 8);
+        // 16B
+        filterToOptions.put("along128 = along128", 16);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
@@ -643,17 +667,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private void assertOptionsHint(String msg, int options, OptionsHint expectedHint) {
-        int code = (options >> 3) & 0b11;
+        int code = (options >> 4) & 0b11;
         Assert.assertEquals(msg, expectedHint.code, code);
     }
 
     private void assertOptionsNullChecks(int options, boolean expectedFlag) {
-        int f = (options >> 5) & 1;
+        int f = (options >> 6) & 1;
         Assert.assertEquals(expectedFlag ? 1 : 0, f);
     }
 
     private void assertOptionsSize(String msg, int options, int expectedSize) {
-        int size = 1 << ((options >> 1) & 0b11);
+        int size = 1 << ((options >> 1) & 0b111);
         Assert.assertEquals(msg, expectedSize, size);
     }
 
@@ -814,6 +838,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "/";
                 case RET:
                     return "ret";
+                case TO128:
+                    return "to128";
                 default:
                     return "unknown";
             }
@@ -833,6 +859,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "f32";
                 case F8_TYPE:
                     return "f64";
+                case I16_TYPE:
+                    return "i128";
                 default:
                     return "unknown: " + type;
             }

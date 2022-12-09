@@ -44,7 +44,14 @@ namespace questdb::x86 {
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
+        if (type_size <= 8) {
+            return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
+        } else {
+            Gp offset = c.newInt64("row_offset");
+            c.mov(offset, type_size);
+            c.imul(offset, input_index);
+            return {Mem(column_address, offset, 0, 0, type_size), type, data_kind_t::kMemory};
+        }
     }
 
     jit_value_t mem2reg(Compiler &c, const jit_value_t &v) {
@@ -69,6 +76,11 @@ namespace questdb::x86 {
             case data_type_t::i64: {
                 Gp row_data = c.newGpq("i64_mem");
                 c.mov(row_data, mem);
+                return {row_data, type, data_kind_t::kMemory};
+            }
+            case data_type_t::i128: {
+                Xmm row_data = c.newXmm("i128_mem");
+                c.movdqu(row_data, mem);
                 return {row_data, type, data_kind_t::kMemory};
             }
             case data_type_t::f32: {
@@ -236,6 +248,8 @@ namespace questdb::x86 {
                 return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
+            case data_type_t::i128:
+                return {int128_eq(c, lhs.xmm(), rhs.xmm()), data_type_t::i128, dk};
             case data_type_t::f32:
                 return {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
@@ -255,6 +269,8 @@ namespace questdb::x86 {
                 return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
             case data_type_t::i64:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
+            case data_type_t::i128:
+                return {int128_ne(c, lhs.xmm(), rhs.xmm()), data_type_t::i128, dk};
             case data_type_t::f32:
                 return {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
@@ -416,6 +432,31 @@ namespace questdb::x86 {
         }
     }
 
+    Gpq convert_to_int64(Compiler &c, const jit_value_t &val) {
+        switch (val.dtype()) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return int32_to_int64(c, val.gp().r32(), false /* checkNull */);
+            default:
+                return val.gp().r64();
+        }
+    }
+
+    jit_value_t to128(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        Xmm hi = c.newXmm("hi");
+        Xmm result = c.newXmm("lo");
+
+        Gpq l = convert_to_int64(c, lhs);
+        Gpq r = convert_to_int64(c, rhs);
+
+        c.movq(hi, l);
+        c.movq(result, r);
+        c.punpcklqdq(result, hi);
+
+        return { result, data_type_t::i128, data_kind_t::kMemory };
+    }
+
     inline bool cvt_null_check(data_type_t type) {
         return !(type == data_type_t::i8 || type == data_type_t::i16);
     }
@@ -526,6 +567,9 @@ namespace questdb::x86 {
                         __builtin_unreachable();
                 }
                 break;
+            case data_type_t::i128:
+                // Integer promotion not supported on long128s
+                return std::make_pair(lhs, rhs);
             default:
                 __builtin_unreachable();
         }
@@ -584,6 +628,9 @@ namespace questdb::x86 {
                 break;
             case opcodes::Div:
                 values.append(div(c, lhs, rhs, null_check));
+                break;
+            case opcodes::To128:
+                values.append(to128(c, lhs, rhs));
                 break;
             default:
                 __builtin_unreachable();
