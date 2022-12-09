@@ -403,7 +403,7 @@ public class TxReader implements Closeable, Mutable {
 
     private boolean isPartitionReadOnlyByIndex(int index) {
         long maskedSize = attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET);
-        return ((maskedSize >>> PARTITION_MASK_READ_ONLY_BIT_OFFSET) & 1L) == 1;
+        return ((maskedSize >>> PARTITION_MASK_READ_ONLY_BIT_OFFSET) & 1) == 1;
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {

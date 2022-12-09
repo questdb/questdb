@@ -45,8 +45,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private static final String expectedMaxTimestamp = "2022-10-18T23:59:59.000000Z";
     private static final String expectedMinTimestamp = "2022-10-17T00:00:17.279900Z";
-    private static final long partitionTimestamp;
     private static final String readOnlyPartitionName = "2022-10-17";
+    private static final long readOnlyPartitionTimestamp;
 
     @Override
     @Before
@@ -284,6 +284,149 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         }
                     }
             );
+        });
+    }
+
+    @Test
+    public void testInsertLastPartitionIsReadOnly() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+
+            final String tableName = testName.getMethodName();
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .timestamp("ts"),
+                        10000,
+                        "2022-10-17",
+                        5 // "2022-10-17" .. "2022-10-21", 2K-ish rows each
+                );
+            }
+
+            // make all partitions, but last, read-only
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionCount = txWriter.getPartitionCount();
+                Assert.assertEquals(5, partitionCount);
+                for (int i = 0, n = partitionCount - 1; i < n; i++) {
+                    txWriter.setPartitionReadOnly(i, true);
+                }
+                txWriter.bumpTruncateVersion();
+                txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                int partitionCount = txFile.getPartitionCount();
+                Assert.assertEquals(5, partitionCount);
+                for (int i = 0, n = partitionCount - 1; i < n; i++) {
+                    Assert.assertTrue(txFile.isPartitionReadOnly(i));
+                }
+                Assert.assertFalse(txFile.isPartitionReadOnly(partitionCount - 1));
+            }
+
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
+                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
+                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
+
+
+            String lastReadOnlyPartitionName = "2022-10-20";
+            assertSql(tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT 5",
+                    "l\ti\ts\tts\n" +
+                            "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
+                            "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
+                            "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
+                            "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n" +
+                            "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n");
+            assertSql(tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT -5",
+                    "l\ti\ts\tts\n" +
+                            "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
+                            "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
+                            "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
+                            "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
+                            "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
+
+            assertInsertFailsBecausePartitionIsReadOnly(
+                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + lastReadOnlyPartitionName + "T23:59:59.500001Z')",
+                    tableName,
+                    lastReadOnlyPartitionName
+            );
+
+            assertUpdateFailsBecausePartitionIsReadOnly(
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T23:59:16.000100Z'",
+                    tableName,
+                    lastReadOnlyPartitionName
+            );
+
+            assertInsertFailsBecausePartitionIsReadOnly(
+                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100005Z')",
+                    tableName,
+                    lastReadOnlyPartitionName
+            );
+
+            assertUpdateFailsBecausePartitionIsReadOnly(
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T00:02:08.999700Z'",
+                    tableName,
+                    lastReadOnlyPartitionName
+            );
+
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
+                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
+                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
+
+            // drop active partition
+            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-10-21'", sqlExecutionContext);
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
+                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n");
+
+            // the previously read-only partition becomes now writeable, because it is the active partition
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertTrue(txFile.isPartitionReadOnly(i));
+                }
+                Assert.assertFalse(txFile.isPartitionReadOnly(3));
+            }
+            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100002Z')");
+            executeOperation("UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T23:59:59.200000Z'", CompiledQuery.UPDATE);
+            assertSql(tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5",
+                    "l\ti\ts\tts\n" +
+                            "-1\t-1\tµ\t2022-10-20T00:00:00.100002Z\n" +
+                            "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
+                            "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
+                            "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
+                            "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n");
+            assertSql(tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5",
+                    "l\ti\ts\tts\n" +
+                            "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
+                            "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
+                            "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
+                            "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
+                            "13\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
+                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2001\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n");
+
         });
     }
 
@@ -832,14 +975,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             // the read-only flag is only set when a partition is attached from soft link
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
                 TxWriter txWriter = writer.getTxWriter();
-                txWriter.setPartitionReadOnlyByTimestamp(partitionTimestamp, true);
+                txWriter.setPartitionReadOnlyByTimestamp(readOnlyPartitionTimestamp, true);
                 txWriter.bumpTruncateVersion();
                 txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
             }
+            engine.releaseAllWriters();
             engine.releaseAllReaders();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TxReader txFile = reader.getTxFile();
-                Assert.assertTrue(txFile.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp));
+                Assert.assertTrue(txFile.isPartitionReadOnlyByPartitionTimestamp(readOnlyPartitionTimestamp));
                 Assert.assertTrue(txFile.isPartitionReadOnly(0));
                 Assert.assertFalse(txFile.isPartitionReadOnly(1));
             }
@@ -852,7 +996,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     static {
         try {
-            partitionTimestamp = TimestampFormatUtils.parseTimestamp(readOnlyPartitionName + "T00:00:00.000Z");
+            readOnlyPartitionTimestamp = TimestampFormatUtils.parseTimestamp(readOnlyPartitionName + "T00:00:00.000Z");
         } catch (NumericException impossible) {
             throw new RuntimeException(impossible);
         }

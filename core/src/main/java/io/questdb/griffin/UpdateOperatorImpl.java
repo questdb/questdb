@@ -70,7 +70,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws ReaderOutOfDateException {
 
-        LOG.info().$("updating [table=").$(tableWriter.getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
+        LOG.info().$("updating [table=").utf8(tableWriter.getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
 
         try {
             final int tableId = op.getTableId();
@@ -81,7 +81,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
             final String tableName = tableWriter.getTableName();
             if (tableWriter.inTransaction()) {
-                LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).$(" instance=").$(op.getCorrelationId()).I$();
+                LOG.info().$("committing current transaction before UPDATE execution [table=").utf8(tableName).$(" instance=").$(op.getCorrelationId()).I$();
                 tableWriter.commit();
             }
 
@@ -118,9 +118,6 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             op.forceTestTimeout();
             // Row by row updates for now
             // This should happen parallel per file (partition and column)
-            // TODO: getCursor will open partitions where their path may be a soft link to the partition in
-            //  cold storage, which we want to keep read only. For now updates on such partitions do not fail,
-            //  i.e. they go through and modify the cold storage file system.
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                 Record masterRecord = recordCursor.getRecord();
 
@@ -146,7 +143,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
                     if (rowPartitionIndex != partitionIndex) {
 
-                        if (rowPartitionIndex > -1 && tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
+                        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
                             throw ReadOnlyViolationException.cannotUpdate(tableName, tableWriter.getPartitionTimestamp(rowPartitionIndex));
                         }
 

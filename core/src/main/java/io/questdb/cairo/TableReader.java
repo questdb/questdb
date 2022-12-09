@@ -380,7 +380,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (openPartitionSize != newPartitionSize) {
                             if (openPartitionSize > -1L) {
                                 reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
-                                updatePartitionSizeByIndex(index, newPartitionSize);
+                                TxWriter.updatePartitionSizeByIndex(openPartitionInfo, index, newPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                             }
                             changed = true;
@@ -511,12 +511,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
+            LOG.debugW().$("close outdated partition files [table=").utf8(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).I$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             for (int i = 0; i < this.columnCount; i++) {
                 closePartitionColumnFile(oldBase, i);
             }
-            openPartitionInfo.setQuick(offset + PARTITION_MASKED_SIZE_OFFSET, PARTITION_SIZE_MASK);
+            long maskedSize = openPartitionInfo.getQuick(offset + PARTITION_MASKED_SIZE_OFFSET);
+            openPartitionInfo.setQuick(offset + PARTITION_MASKED_SIZE_OFFSET,
+                    TxWriter.updatePartitionSize(maskedSize, PARTITION_SIZE_MASK)); // preserves current mask
             return -1;
         }
         pathGenPartitioned(partitionIndex);
@@ -903,7 +905,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
                             if (openPartitionSize != txPartitionSize) {
                                 reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
-                                updatePartitionSizeByIndex(index, txPartitionSize);
+                                TxWriter.updatePartitionSizeByIndex(openPartitionInfo, index, txPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(index)).I$();
                             }
                         } else {
@@ -1269,14 +1271,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // New instance
                 symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
             }
-        }
-    }
-
-    private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
-        long maskedSize = openPartitionInfo.getQuick(offset);
-        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
-            openPartitionInfo.setQuick(offset, (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK));
         }
     }
 

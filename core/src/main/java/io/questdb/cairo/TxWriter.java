@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -285,18 +286,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
-        int index = findAttachedPartitionIndex(timestamp);
+    public void setPartitionReadOnly(int i, boolean isReadOnly) {
+        setPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
+    }
+
+    public void setPartitionReadOnlyByIndex(int index, boolean isReadOnly) {
         if (index > -1) {
             int offset = index + PARTITION_MASKED_SIZE_OFFSET;
             long maskedSize = attachedPartitions.getQuick(offset);
-            if (isReadOnly) {
-                maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
-            } else {
-                maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
-            }
-            attachedPartitions.setQuick(offset, maskedSize);
+            attachedPartitions.setQuick(offset, updatePartitionIsReadOnly(maskedSize, isReadOnly));
         }
+    }
+
+    public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
+        setPartitionReadOnlyByIndex(findAttachedPartitionIndex(timestamp), isReadOnly);
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -544,11 +547,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
-        long maskedSize = attachedPartitions.getQuick(offset);
-        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
+        if (updatePartitionSizeByIndex(attachedPartitions, index, partitionSize)) {
             recordStructureVersion++;
-            attachedPartitions.setQuick(offset, (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK));
         }
     }
 
@@ -557,6 +557,29 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);
         assert recordOffset + Integer.BYTES <= readRecordSize;
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
+    }
+
+    static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
+        if (isReadOnly) {
+            maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
+        } else {
+            maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+        }
+        return maskedSize;
+    }
+
+    static long updatePartitionSize(long maskedSize, long partitionSize) {
+        return (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK);
+    }
+
+    static boolean updatePartitionSizeByIndex(LongList partitionTable, int index, long partitionSize) {
+        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = partitionTable.getQuick(offset);
+        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
+            partitionTable.setQuick(offset, updatePartitionSize(maskedSize, partitionSize));
+            return true;
+        }
+        return false;
     }
 
     void bumpPartitionTableVersion() {

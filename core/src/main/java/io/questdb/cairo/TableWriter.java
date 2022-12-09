@@ -1213,7 +1213,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     public boolean isPartitionReadOnly(int partitionIndex) {
-        return partitionIndex > -1 && txWriter.isPartitionReadOnly(partitionIndex);
+        return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
     @Override
