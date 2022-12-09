@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
@@ -51,7 +52,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             RecordCursorFactory base,
             RecordComparator comparator,
             Function loFunc,
-            Function hiFunc
+            @Nullable Function hiFunc
     ) {
         super(metadata);
         this.base = base;
@@ -64,9 +65,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
-        // Forcefully disable column pre-touch for all downstream async filtered factories
-        // to avoid redundant disk reads for LIMIT K,N queries.
-        executionContext.setColumnPreTouchEnabled(false);
+        // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
+        // async filtered factories to avoid redundant disk reads.
+        executionContext.setColumnPreTouchEnabled(preTouchEnabled && hiFunction == null);
         RecordCursor baseCursor = null;
         try {
             baseCursor = base.getCursor(executionContext);
