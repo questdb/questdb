@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableReaderRecordCursor;
@@ -104,7 +105,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
     }
 

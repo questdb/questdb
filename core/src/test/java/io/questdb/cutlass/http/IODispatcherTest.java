@@ -214,20 +214,22 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    while (serverRunning.get()) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> {
-                                    if (operation == IOOperation.WRITE) {
-                                        Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                    try {
+                        while (serverRunning.get()) {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> {
+                                        if (operation == IOOperation.WRITE) {
+                                            Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
+                                            context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                        }
                                     }
-                                }
-                        );
+                            );
+                        }
+                    } finally {
+                        serverHaltLatch.countDown();
                     }
-                    serverHaltLatch.countDown();
                 }).start();
-
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -331,14 +333,16 @@ public class IODispatcherTest {
                 SOCountDownLatch dispatcherHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    while (dispatcherRunning.get()) {
-                        dispatcher.run(0);
+                    try {
+                        while (dispatcherRunning.get()) {
+                            dispatcher.run(0);
+                        }
+                    } finally {
+                        dispatcherHaltLatch.countDown();
                     }
-                    dispatcherHaltLatch.countDown();
                 }).start();
 
                 try {
-
                     long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
                     long fd = Net.socketTcp(true);
                     try {
@@ -355,7 +359,6 @@ public class IODispatcherTest {
                         Net.close(fd);
                         Net.freeSockAddr(socketAddr);
                     }
-
                 } finally {
                     dispatcherRunning.set(false);
                     dispatcherHaltLatch.await();
@@ -431,16 +434,17 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-
-                    while (serverRunning.get()) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
+                    try {
+                        while (serverRunning.get()) {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                            );
+                        }
+                    } finally {
+                        serverHaltLatch.countDown();
                     }
-                    serverHaltLatch.countDown();
                 }).start();
-
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -2251,6 +2255,47 @@ public class IODispatcherTest {
                         "2,2014-03-01 00:00:21,2014-03-01 00:21:36,N,1,-73.957740783691406,40.729896545410156,-73.92779541015625,40.697731018066406,1,3.95,17,0.5,0.5,4.38,0,,22.38,1,1,,\r\n" +
                         "2,2014-03-01 00:00:22,2014-03-01 00:01:53,N,1,-73.94354248046875,40.820354461669922,-73.949432373046875,40.812416076660156,1,.45,3.5,0.5,0.5,0,0,,4.5,2,1,,\r\n" +
                         "1,2014-03-01 00:00:22,2014-03-01 00:07:17,N,1,-73.9451904296875,40.689888000488281,-73.937591552734375,40.680465698242187,1,1.00,6.5,0.5,0.5,0,0,,7.5,2,,,\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
+        );
+    }
+
+    @Test
+    public void testImportWithSingleCharacterColumnName() throws Exception {
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "c2\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"test\",\"rowsRejected\":0,\"rowsImported\":1,\"header\":false,\"columns\":[{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0},{\"name\":\"a\",\"type\":\"CHAR\",\"size\":2,\"errors\":0}]}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload?fmt=json&overwrite=true&forceHeader=false&name=test&timestamp=ts&partitionBy=MONTH HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "ts,a\r\n" +
+                        "2022-11-01T22:34:49.273814+0000,\"a\"\r\n" +
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
@@ -5835,15 +5880,17 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    while (serverRunning.get()) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
+                    try {
+                        while (serverRunning.get()) {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                            );
+                        }
+                    } finally {
+                        serverHaltLatch.countDown();
                     }
-                    serverHaltLatch.countDown();
                 }).start();
-
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -6008,13 +6055,16 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    while (serverRunning.get()) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
+                    try {
+                        while (serverRunning.get()) {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                            );
+                        }
+                    } finally {
+                        serverHaltLatch.countDown();
                     }
-                    serverHaltLatch.countDown();
                 }).start();
 
                 long fd = Net.socketTcp(true);
@@ -6162,13 +6212,16 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    while (serverRunning.get()) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
+                    try {
+                        while (serverRunning.get()) {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                            );
+                        }
+                    } finally {
+                        serverHaltLatch.countDown();
                     }
-                    serverHaltLatch.countDown();
                 }).start();
 
                 long fd = Net.socketTcp(true);
@@ -6704,7 +6757,12 @@ public class IODispatcherTest {
             final AtomicBoolean finished = new AtomicBoolean(false);
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration(),
+                    new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return true;
+                        }
+                    },
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
             )) {
 
@@ -6780,15 +6838,17 @@ public class IODispatcherTest {
                                 }
                             };
 
-                            while (serverRunning.get()) {
-                                dispatcher.run(0);
-                                dispatcher.processIOQueue(
-                                        (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                                );
+                            try {
+                                while (serverRunning.get()) {
+                                    dispatcher.run(0);
+                                    dispatcher.processIOQueue(
+                                            (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                    );
+                                }
+                            } finally {
+                                Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
+                                serverHaltLatch.countDown();
                             }
-
-                            Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
-                            serverHaltLatch.countDown();
                         }).start();
                     }
 
@@ -7447,31 +7507,32 @@ public class IODispatcherTest {
                     @Override
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        try {
-                            IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
-                                long fd = context.getFd();
-                                int rc;
-                                switch (operation) {
-                                    case IOOperation.READ:
-                                        rc = Net.recv(fd, smem, 1);
-                                        if (rc == 1) {
-                                            dispatcher.registerChannel(context, IOOperation.WRITE);
-                                        } else {
-                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                        }
-                                        break;
-                                    case IOOperation.WRITE:
-                                        rc = Net.send(fd, smem, 1);
-                                        if (rc == 1) {
-                                            dispatcher.registerChannel(context, IOOperation.READ);
-                                        } else {
-                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                        }
-                                        break;
-                                    default:
+                        IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
+                            long fd = context.getFd();
+                            int rc;
+                            switch (operation) {
+                                case IOOperation.READ:
+                                    rc = Net.recv(fd, smem, 1);
+                                    if (rc == 1) {
+                                        dispatcher.registerChannel(context, IOOperation.WRITE);
+                                    } else {
                                         dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                }
-                            };
+                                    }
+                                    break;
+                                case IOOperation.WRITE:
+                                    rc = Net.send(fd, smem, 1);
+                                    if (rc == 1) {
+                                        dispatcher.registerChannel(context, IOOperation.READ);
+                                    } else {
+                                        dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                    }
+                                    break;
+                                default:
+                                    dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                            }
+                        };
+
+                        try {
                             do {
                                 dispatcher.run(0);
                                 dispatcher.processIOQueue(requestProcessor);

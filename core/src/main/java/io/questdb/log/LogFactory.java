@@ -50,7 +50,7 @@ public class LogFactory implements Closeable {
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
-    // name of default logging configuration file (in jar and in $root/conf/ dir )
+    // name of default logging configuration file (in jar and in $root/conf/ dir)
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -845,7 +845,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(long x) {
+        public LogRecord $(long l) {
             return this;
         }
 

@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -50,6 +47,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -151,7 +149,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
     }
 
@@ -2351,6 +2349,17 @@ if __name__ == "__main__":
                 ">420000001a006c72757073635f315f30000000000000020001000144000000065000450000000900000000005300000004\n" +
                 "<3200000004540000003500027472756500000000000001000000100001ffffffff000166616c736500000000000002000000100001ffffffff00014400000010000200000001010000000100430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
+    public void testGssApiRequestClosedGracefully() throws Exception {
+        final String script = ">0000000804d21630\n" +
+                "<4e\n";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
@@ -4895,8 +4904,36 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
-                } finally {
-                    currentMicros = -1;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementWithSystimestampFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "create table xts (ts timestamp) timestamp(ts)")) {
+                        statement.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
+                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                            statement.execute();
+                        }
+                    }
+
+                    queryTimestampsInRange(connection);
+
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
                 }
             }
         });
@@ -4993,6 +5030,132 @@ nodejs code:
                 script,
                 new Port0PGWireConfiguration()
         );
+    }
+
+    @Test
+    public void testQueryAgainstIndexedSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        String no5 = "1\n2\n3\n4\n6\n7\n8\n9\nnull\n";
+        String noNull = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+        String no5AndNull = "1\n2\n3\n4\n6\n7\n8\n9\n";
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+                compiler.compile("drop table if exists tab", sqlExecutionContext);
+                compiler.compile("create table tab (s symbol index, ts timestamp) " + tsOption, sqlExecutionContext);
+                compiler.compile("insert into tab select case when x = 10 then null::string else x::string end, x::timestamp from long_sequence(10) ", sqlExecutionContext);
+                drainWalQueue();
+
+                ResultProducer sameVal =
+                        (paramVals, isBindVals, bindVals, output) -> {
+                            String value = isBindVals[0] ? bindVals[0] : paramVals[0];
+                            output.put(valMap.get(value)).put('\n');
+                        };
+
+                assertQueryAgainstIndexedSymbol(values, "s = #X", new String[]{"#X"}, connection, tsOption, sameVal);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X)", new String[]{"#X"}, connection, tsOption, sameVal);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X, '10')", new String[]{"#X"}, connection, tsOption, sameVal);
+
+                ResultProducer otherVals = (paramVals, isBindVals, bindVals, output) -> {
+                    String value = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    if (valMap.get(value).equals("5")) {
+                        output.put(no5);
+                    } else {
+                        output.put(noNull);
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s != #X", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s != #X and s != '10'", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X)", new String[]{"#X"}, connection, tsOption, otherVals);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X, '10')", new String[]{"#X"}, connection, tsOption, otherVals);
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S1') and s in (#X2, 'S2')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s = #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+
+                ResultProducer otherVals2 = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (!isSame) {
+                        output.put(no5AndNull);
+                    } else {
+                        if (valMap.get(left).equals("5")) {
+                            output.put(no5);
+                        } else {
+                            output.put(noNull);
+                        }
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s != #X2 and s != 'S'", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s != #X1 and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1) and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, 'S') and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, 'S2') and s not in (#X2, 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+                assertQueryAgainstIndexedSymbol(values, "s not in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, otherVals2);
+
+                ResultProducer sameValIfParmsDiffer = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (!isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, 'S') and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s not in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s not in (#X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+                assertQueryAgainstIndexedSymbol(values, "s = #X1 and s != #X2", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParmsDiffer);
+
+                ResultProducer sameVal2 = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(right)).put('\n');
+                    } else {
+                        output.put("5\nnull\n");
+                    }
+                };
+
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+            });
+        }
+
     }
 
     @Test
@@ -7127,6 +7290,55 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateWithNowAndSystimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 123678000L;
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false)
+                ) {
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
+                    statement.execute();
+
+                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:02'::timestamp, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                            "('2020-06-01T00:00:06'::timestamp, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                            "('2020-06-01T00:00:12'::timestamp, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                    insert1.execute();
+
+                    final PreparedStatement update1 = connection.prepareStatement("update x set a=now() where b>2.5");
+                    int numOfRowsUpdated1 = update1.executeUpdate();
+                    assertEquals(2, numOfRowsUpdated1);
+
+                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:22'::timestamp, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                            "('2020-06-01T00:00:32'::timestamp, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                    insert2.execute();
+
+                    final PreparedStatement update2 = connection.prepareStatement("update x set a=systimestamp() where b>5.0");
+                    int numOfRowsUpdated2 = update2.executeUpdate();
+                    assertEquals(1, numOfRowsUpdated2);
+
+                    final String expected = "a[TIMESTAMP],b[DOUBLE],ts[TIMESTAMP]\n" +
+                            "2020-06-01 00:00:02.0,2.0,2020-06-01 00:00:02.0\n" +
+                            "1970-01-01 00:02:03.678,2.6,2020-06-01 00:00:06.0\n" +
+                            "1970-01-01 00:02:03.678,3.0,2020-06-01 00:00:12.0\n" +
+                            "2020-06-01 00:00:22.0,4.0,2020-06-01 00:00:22.0\n" +
+                            "1970-01-01 00:02:03.678,6.0,2020-06-01 00:00:32.0\n";
+                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUtf8QueryText() throws Exception {
         testQuery(
                 "rnd_double(4) расход, ",
@@ -7186,6 +7398,69 @@ create table tab as (
                 NetUtils.playScript(clientNf, script, "127.0.0.1", server.getPort());
             }
         });
+    }
+
+    private void assertQueryAgainstIndexedSymbol(String[] values, String whereClause, String[] params, Connection connection, String tsOption, ResultProducer expected) throws Exception {
+        StringSink expSink = new StringSink();
+        StringSink metaSink = new StringSink();
+        String[] paramValues = new String[params.length];
+        boolean[] isBindParam = new boolean[params.length];
+        String[] bindValues = new String[params.length];
+        int nValues = values.length;
+
+        int iterations = 1;
+        for (int i = 0; i < params.length; i++) {
+            iterations *= nValues;
+        }
+
+        for (int iter = 0; iter < iterations; iter++) {
+            int tempIter = iter;
+
+            for (int p = 0; p < params.length; p++) {
+                paramValues[p] = values[tempIter % nValues];
+
+                if (paramValues[p].startsWith("?")) {
+                    isBindParam[p] = true;
+                    bindValues[p] = paramValues[p].substring(1);
+                    paramValues[p] = "?";
+                } else {
+                    isBindParam[p] = false;
+                    bindValues[p] = null;
+                }
+
+                tempIter /= nValues;
+            }
+
+            String where = whereClause;
+            for (int p = 0; p < params.length; p++) {
+                where = where.replace(params[p], paramValues[p]);
+            }
+
+            String query = "select s from tab where " + where;
+
+            sink.clear();
+            expSink.clear();
+            expSink.put("s[VARCHAR]\n");
+            expected.produce(paramValues, isBindParam, bindValues, expSink);
+            metaSink.clear();
+            metaSink.put("query: ").put(query).put("\nvalues: ");
+            for (int p = 0; p < paramValues.length; p++) {
+                metaSink.put(isBindParam[p] ? bindValues[p] : paramValues[p]).put(' ');
+            }
+            metaSink.put("\nts option: ").put(tsOption);
+
+            try (PreparedStatement ps = connection.prepareStatement(query)) {
+                int bindIdx = 1;
+                for (int p = 0; p < paramValues.length; p++) {
+                    if (isBindParam[p]) {
+                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
+                    }
+                }
+                try (ResultSet result = ps.executeQuery()) {
+                    assertResultSet(metaSink.toString(), expSink, sink, result);
+                }
+            }
+        }
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
@@ -8637,6 +8912,11 @@ create table tab as (
     @FunctionalInterface
     interface OnTickAction {
         void run(TableWriter writer);
+    }
+
+    @FunctionalInterface
+    interface ResultProducer {
+        void produce(String[] paramVals, boolean[] isBindVals, String[] bindVals, CharSink output);
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {

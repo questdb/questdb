@@ -25,9 +25,10 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
+import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
@@ -410,6 +411,22 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expectedSql,
+            String actualSql
+    ) throws SqlException {
+        try (
+                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        ) {
+            assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+        }
+    }
+
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -606,6 +623,42 @@ public final class TestUtils {
                         }
                     }
                     throw e;
+                }
+            }
+        }
+    }
+
+    public static void assertSqlCursors(QuestDBNode node, ObjList<QuestDBNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
+        try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
+            for (int i = 0, n = nodes.size(); i < n; i++) {
+                final QuestDBNode dbNode = nodes.get(i);
+                try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
+                    try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
+                        try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
+                            assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
+                        }
+                    } catch (AssertionError e) {
+                        log.error().$(e).$();
+                        try (RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext())) {
+                            try (RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())) {
+                                log.xDebugW().$();
+
+                                LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                                LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
+                                printer.printHeaderNoNl(factory.getMetadata(), recordSinkAdapter.of(record));
+                                record.$();
+                                printer.print(expectedCursor, factory.getMetadata(), false, log);
+
+                                record = log.xDebugW().$("> but was:<");
+                                printer.printHeaderNoNl(factory2.getMetadata(), recordSinkAdapter.of(record));
+                                record.$();
+
+                                printer.print(actualCursor, factory2.getMetadata(), false, log);
+                                log.xDebugW().$(">").$();
+                            }
+                        }
+                        throw e;
+                    }
                 }
             }
         }
@@ -857,26 +910,15 @@ public final class TestUtils {
     }
 
     @NotNull
-    public static Rnd generateRandom() {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        return new Rnd(s0, s1);
+    public static Rnd generateRandom(Log log) {
+        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
     }
 
-    public static void assertEquals(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String expectedSql,
-            String actualSql
-    ) throws SqlException {
-        try (
-                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-        ) {
-            assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
-        }
+    @NotNull
+    public static Rnd generateRandom(Log log, long s0, long s1) {
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        return new Rnd(s0, s1);
     }
 
     public static String getCsvRoot() {
@@ -954,7 +996,7 @@ public final class TestUtils {
             CharSequence colName = tableModel.getColumnName(i);
             switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
                 case ColumnType.INT:
-                    insertFromSelect.append("cast(x as int) ").append(colName);
+                    insertFromSelect.append("CAST(x as INT) ").append(colName);
                     break;
                 case ColumnType.STRING:
                     insertFromSelect.append("CAST(x as STRING) ").append(colName);
@@ -1137,8 +1179,9 @@ public final class TestUtils {
     }
 
     public static void removeTestPath(CharSequence root) {
-        Path path = Path.getThreadLocal(root);
-        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+        final Path path = Path.getThreadLocal(root);
+        final int rc = Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
@@ -1297,15 +1340,6 @@ public final class TestUtils {
             columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
-    }
-
-    @NotNull
-    public static Rnd generateRandom(Log log) {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
-        return new Rnd(s0, s1);
     }
 
     private static RecordMetadata copySymAstStr(RecordMetadata src) {

@@ -37,7 +37,10 @@ public interface TableSequencer extends QuietCloseable {
 
     int getTableId();
 
-    void getTableMetadata(TableRecordMetadataSink sink);
+    /**
+     * @return current transaction number
+     */
+    long getTableMetadata(TableRecordMetadataSink sink);
 
     // return txn cursor to apply transaction from given point
     TransactionLogCursor getTransactionLogCursor(long seqTxn);
@@ -49,7 +52,7 @@ public interface TableSequencer extends QuietCloseable {
     long nextStructureTxn(long structureVersion, TableMetadataChange change);
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn);
+    long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn);
 
     void suspendTable();
 }

@@ -32,8 +32,8 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -222,28 +222,26 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testInterval() {
-        TracingFilesFacade ff = new TracingFilesFacade();
-
-        MicrosecondClockMock clock = new MicrosecondClockMock();
+        final TracingFilesFacade ff = new TracingFilesFacade();
         final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
-        clock.timestamp = interval + 1;  // Set to some point in time that's not 0.
+        currentMicros = interval + 1;  // Set to some point in time that's not 0.
 
-        try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, clock)) {
+        try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, configuration.getMicrosecondClock())) {
             walPurgeJob.delayByHalfInterval();
             walPurgeJob.run(0);
             Assert.assertEquals(0, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += interval / 2 + 1;
+            currentMicros += interval / 2 + 1;
             walPurgeJob.run(0);
             Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += interval / 2 + 1;
+            currentMicros += interval / 2 + 1;
             walPurgeJob.run(0);
             walPurgeJob.run(0);
             walPurgeJob.run(0);
             Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += interval;
+            currentMicros += interval;
             walPurgeJob.run(0);
             Assert.assertEquals(2, TracingFilesFacade.iterateDirCount);
-            clock.timestamp += 10 * interval;
+            currentMicros += 10 * interval;
             walPurgeJob.run(0);
             Assert.assertEquals(3, TracingFilesFacade.iterateDirCount);
         }
@@ -590,6 +588,60 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalPurgeJobLock() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            drainWalQueue();
+
+            assertWalExistence(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
+
+            engine.releaseInactive();
+
+            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
+            currentMicros = interval + 1;  // Set to some point in time that's not 0.
+            try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                final SimpleWaitingLock lock = job.getRunLock();
+                try {
+                    lock.lock();
+                    //noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // run until empty
+                    }
+                } finally {
+                    lock.unlock();
+                    assertSegmentExistence(true, tableName, 1, 0);
+                    assertWalExistence(true, tableName, 1);
+                }
+
+                currentMicros += 2 * interval;
+                //noinspection StatementWithEmptyBody
+                while (job.run(0)) {
+                    // run until empty
+                }
+
+                assertSegmentExistence(false, tableName, 1, 0);
+                assertWalExistence(false, tableName, 1);
+            }
+        });
+    }
+
+    @Test
     public void testWalPurgedAfterUpdateZeroRecordsTransaction() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -625,15 +677,6 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
-    }
-
-    static class MicrosecondClockMock implements MicrosecondClock {
-        public long timestamp = 0;
-
-        @Override
-        public long getTicks() {
-            return timestamp;
-        }
     }
 
     static class TracingFilesFacade extends FilesFacadeImpl {

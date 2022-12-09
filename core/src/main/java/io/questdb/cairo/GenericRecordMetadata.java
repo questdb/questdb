@@ -100,6 +100,12 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
+    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        copyColumns(that, metadata);
+        return metadata;
+    }
+
     public static GenericRecordMetadata deepCopyOf(RecordMetadata that) {
         if (that != null) {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -120,12 +126,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             return metadata;
         }
         return null;
-    }
-
-    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        copyColumns(that, metadata);
-        return metadata;
     }
 
     public static RecordMetadata removeTimestamp(RecordMetadata that) {

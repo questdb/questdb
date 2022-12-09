@@ -29,16 +29,26 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
+
+import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class DatabaseSnapshotAgent implements Closeable {
 
@@ -47,14 +57,18 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final ReentrantLock lock = new ReentrantLock(); // protects below fields
+    private final WalWriterMetadata metadata;
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
+    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
+    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
+        this.metadata = new WalWriterMetadata(ff);
     }
 
     public static void recoverSnapshot(CairoEngine engine) {
@@ -67,102 +81,158 @@ public class DatabaseSnapshotAgent implements Closeable {
         final CharSequence root = configuration.getRoot();
         final CharSequence snapshotRoot = configuration.getSnapshotRoot();
 
-        try (Path path = new Path(); Path copyPath = new Path()) {
-            path.of(snapshotRoot).concat(configuration.getDbDirectory());
-            final int snapshotRootLen = path.length();
-            copyPath.of(root);
-            final int rootLen = copyPath.length();
+        try (Path srcPath = new Path(); Path dstPath = new Path(); MemoryCMARW memFile = Vm.getCMARWInstance()) {
+            srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
+            final int snapshotRootLen = srcPath.length();
+            dstPath.of(root);
+            final int rootLen = dstPath.length();
 
             // Check if the snapshot dir exists.
-            if (!ff.exists(path.slash$())) {
+            if (!ff.exists(srcPath.slash$())) {
                 return;
             }
 
             // Check if the snapshot metadata file exists.
-            path.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-            if (!ff.exists(path)) {
+            srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
+            if (!ff.exists(srcPath)) {
                 return;
             }
 
             // Check if the snapshot instance id is different from what's in the snapshot.
-            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            memFile.smallFile(ff, srcPath, MemoryTag.MMAP_DEFAULT);
 
-                final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
-                final CharSequence snapshotInstanceId = mem.getStr(0);
-                if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
-                    return;
-                }
-
-                LOG.info()
-                        .$("starting snapshot recovery [currentId=`").$(currentInstanceId)
-                        .$("`, previousId=`").$(snapshotInstanceId)
-                        .$("`]").$();
+            final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
+            final CharSequence snapshotInstanceId = memFile.getStr(0);
+            if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
+                return;
             }
+
+            LOG.info()
+                    .$("starting snapshot recovery [currentId=`").$(currentInstanceId)
+                    .$("`, previousId=`").$(snapshotInstanceId)
+                    .$("`]").$();
 
             // OK, we need to recover from the snapshot.
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
             AtomicInteger recoveredTxnFiles = new AtomicInteger();
             AtomicInteger recoveredCVFiles = new AtomicInteger();
-            path.trimTo(snapshotRootLen).$();
-            final int snapshotDbLen = path.length();
-            ff.iterateDir(path, (pUtf8NameZ, type) -> {
+            AtomicInteger recoveredWalFiles = new AtomicInteger();
+            srcPath.trimTo(snapshotRootLen).$();
+            final int snapshotDbLen = srcPath.length();
+            ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
                 if (Files.isDir(pUtf8NameZ, type)) {
-                    path.trimTo(snapshotDbLen).concat(pUtf8NameZ);
-                    copyPath.trimTo(rootLen).concat(pUtf8NameZ);
-                    final int plen = path.length();
-                    final int cplen = copyPath.length();
+                    srcPath.trimTo(snapshotDbLen).concat(pUtf8NameZ);
+                    dstPath.trimTo(rootLen).concat(pUtf8NameZ);
+                    int srcPathLen = srcPath.length();
+                    int dstPathLen = dstPath.length();
 
-                    path.concat(TableUtils.META_FILE_NAME).$();
-                    copyPath.concat(TableUtils.META_FILE_NAME).$();
-                    if (ff.exists(path) && ff.exists(copyPath)) {
-                        if (ff.copy(path, copyPath) < 0) {
+                    srcPath.concat(TableUtils.META_FILE_NAME).$();
+                    dstPath.concat(TableUtils.META_FILE_NAME).$();
+                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
+                        if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _meta file [src=").$(path)
-                                    .$(", dst=").$(copyPath)
+                                    .$("could not copy _meta file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredMetaFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _meta file [src=").$(path)
-                                    .$(", dst=").$(copyPath)
+                                    .$("recovered _meta file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
 
-                    path.trimTo(plen).concat(TableUtils.TXN_FILE_NAME).$();
-                    copyPath.trimTo(cplen).concat(TableUtils.TXN_FILE_NAME).$();
-                    if (ff.exists(path) && ff.exists(copyPath)) {
-                        if (ff.copy(path, copyPath) < 0) {
+                    srcPath.trimTo(srcPathLen).concat(TableUtils.TXN_FILE_NAME).$();
+                    dstPath.trimTo(dstPathLen).concat(TableUtils.TXN_FILE_NAME).$();
+                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
+                        if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _txn file [src=").$(path)
-                                    .$(", dst=").$(copyPath)
+                                    .$("could not copy _txn file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredTxnFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _txn file [src=").$(path)
-                                    .$(", dst=").$(copyPath)
+                                    .$("recovered _txn file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
 
-                    path.trimTo(plen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                    copyPath.trimTo(cplen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                    if (ff.exists(path) && ff.exists(copyPath)) {
-                        if (ff.copy(path, copyPath) < 0) {
+                    srcPath.trimTo(srcPathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                    dstPath.trimTo(dstPathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
+                        if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _cv file [src=").$(path)
-                                    .$(", dst=").$(copyPath)
+                                    .$("could not copy _cv file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredCVFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _cv file [src=").$(path)
-                                    .$(", dst=").$(copyPath)
+                                    .$("recovered _cv file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
+                                    .$(']').$();
+                        }
+                    }
+
+                    // Go inside SEQ_DIR
+                    srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
+                    srcPathLen = srcPath.length();
+                    srcPath.concat(TableUtils.META_FILE_NAME).$();
+
+                    dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
+                    dstPathLen = dstPath.length();
+                    dstPath.concat(TableUtils.META_FILE_NAME).$();
+
+                    if (ff.exists(srcPath) && ff.exists(dstPath)) {
+                        if (ff.copy(srcPath, dstPath) < 0) {
+                            LOG.critical()
+                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
+                                    .utf8(", dst=").utf8(dstPath)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(']').$();
+                        } else {
+                            try {
+                                srcPath.trimTo(srcPathLen);
+                                openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
+
+                                memFile.smallFile(ff, dstPath, MemoryTag.MMAP_SEQUENCER_METADATA);
+                                dstPath.trimTo(dstPathLen);
+                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+
+                                if (newMaxTxn >= 0) {
+                                    dstPath.trimTo(dstPathLen);
+                                    openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                    // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
+                                    long oldMaxTxn = memFile.getLong(MAX_TXN_OFFSET);
+                                    if (newMaxTxn < oldMaxTxn) {
+                                        // update header of dbRoot/tableName/txn_seq/_txnlog with new values
+                                        memFile.putLong(MAX_TXN_OFFSET, newMaxTxn);
+                                        LOG.info()
+                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").utf8(dstPath)
+                                                .$(", oldMaxTxn=").$(oldMaxTxn)
+                                                .$(", newMaxTxn=").$(newMaxTxn)
+                                                .$(']').$();
+                                    }
+                                }
+                            } catch (CairoException ex) {
+                                LOG.critical()
+                                        .$("could not update file [src=").utf8(dstPath)
+                                        .$("`, ex=").$(ex.getFlyweightMessage())
+                                        .$(", errno=").$(ff.errno())
+                                        .$(']').$();
+                            }
+
+                            recoveredWalFiles.incrementAndGet();
+                            LOG.info()
+                                    .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
@@ -172,13 +242,14 @@ public class DatabaseSnapshotAgent implements Closeable {
                     .$("snapshot recovery finished [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
                     .$(", cvFilesCount=").$(recoveredCVFiles.get())
+                    .$(", walFilesCount=").$(recoveredWalFiles.get())
                     .$(']').$();
 
             // Delete snapshot directory to avoid recovery on next restart.
-            path.trimTo(snapshotRootLen).$();
-            if (ff.rmdir(path) != 0) {
+            srcPath.trimTo(snapshotRootLen).$();
+            if (ff.rmdir(srcPath) != 0) {
                 throw CairoException.critical(ff.errno())
-                        .put("could not remove snapshot dir [dir=").put(path)
+                        .put("could not remove snapshot dir [dir=").put(srcPath)
                         .put(", errno=").put(ff.errno())
                         .put(']');
             }
@@ -190,6 +261,7 @@ public class DatabaseSnapshotAgent implements Closeable {
         lock.lock();
         try {
             unsafeReleaseReaders();
+            metadata.clear();
         } finally {
             lock.unlock();
         }
@@ -201,6 +273,7 @@ public class DatabaseSnapshotAgent implements Closeable {
         try {
             Misc.free(path);
             unsafeReleaseReaders();
+            metadata.close();
         } finally {
             lock.unlock();
         }
@@ -211,9 +284,9 @@ public class DatabaseSnapshotAgent implements Closeable {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
+            activePrepareFlag.set(false); // reset snapshot prepare flag
             if (snapshotReaders.size() == 0) {
                 LOG.info().$("Snapshot has no tables, SNAPSHOT COMPLETE is ignored.").$();
-                return;
             }
 
             // Delete snapshot/db directory.
@@ -222,6 +295,15 @@ public class DatabaseSnapshotAgent implements Closeable {
 
             // Release locked readers if any.
             unsafeReleaseReaders();
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // completeSnapshot can be called several time in a row.
+                }
+            }
         } finally {
             lock.unlock();
         }
@@ -237,7 +319,8 @@ public class DatabaseSnapshotAgent implements Closeable {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
-            if (snapshotReaders.size() > 0) {
+            // activePrepareFlag is used to detect active snapshot prepare called on an empty DB
+            if (activePrepareFlag.get()) {
                 throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
             }
 
@@ -262,27 +345,42 @@ public class DatabaseSnapshotAgent implements Closeable {
                 final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
+
+                    // Suspend the WalPurgeJob
+                    if (walPurgeJobRunLock != null) {
+                        final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
+                        while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
+                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                        }
+                    }
+
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         // Copy metadata files for all tables.
-
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
+                            path.of(configuration.getRoot());
+                            int rootPathLength = path.length();
                             if (
                                     TableUtils.isValidTableName(tableName, tableName.length())
-                                            && ff.exists(path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$())
+                                            && ff.exists(path.concat(tableName).concat(TableUtils.META_FILE_NAME).$())
                             ) {
+                                boolean isWalTable = TableSequencerAPI.isWalTable(tableName, path.trimTo(rootPathLength), ff);
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
                                 TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableName);
                                 snapshotReaders.add(reader);
 
-                                path.trimTo(snapshotLen).concat(tableName).slash$();
-                                if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                                path.trimTo(snapshotLen).concat(tableName);
+                                int rootLen = path.length();
+
+                                if (isWalTable) {
+                                    path.concat(WalUtils.SEQ_DIR);
+                                }
+                                if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
                                     throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
                                 }
 
-                                int rootLen = path.length();
                                 // Copy _meta file.
                                 path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                                 mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
@@ -298,6 +396,18 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                                 reader.getColumnVersionReader().dumpTo(mem);
                                 mem.close(false);
+
+                                if (isWalTable) {
+                                    metadata.clear();
+                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
+                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
+                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
+                                    metadata.close(Vm.TRUNCATE_TO_POINTER);
+
+                                    mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                    mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
+                                    mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                                }
                             } else {
                                 LOG.error().$("skipping, invalid table name or missing metadata [table=").$(tableName).I$();
                             }
@@ -313,8 +423,13 @@ public class DatabaseSnapshotAgent implements Closeable {
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
+                        activePrepareFlag.set(true);
                         LOG.info().$("snapshot copying finished").$();
                     } catch (Throwable e) {
+                        // Resume the WalPurgeJob
+                        if (walPurgeJobRunLock != null) {
+                            walPurgeJobRunLock.unlock();
+                        }
                         unsafeReleaseReaders();
                         LOG.error()
                                 .$("snapshot error [e=").$(e)
@@ -326,6 +441,10 @@ public class DatabaseSnapshotAgent implements Closeable {
         } finally {
             lock.unlock();
         }
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
+        this.walPurgeJobRunLock = walPurgeJobRunLock;
     }
 
     private void unsafeReleaseReaders() {

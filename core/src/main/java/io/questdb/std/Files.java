@@ -50,7 +50,7 @@ public final class Files {
     public static final char SEPARATOR;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
+    private static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
 
     private Files() {
@@ -415,6 +415,16 @@ public final class Files {
     public static int unlink(LPSZ softLink) {
         return unlink(softLink.address());
     }
+
+    public static  long getDiskSize(LPSZ path) {
+        if (path != null) {
+            return getDiskSize(path.address());
+        }
+        // current directory
+        return getDiskSize(0);
+    }
+    
+    private static native long getDiskSize(long lpszPath);
 
     public native static long write(long fd, long address, long len, long offset);
 

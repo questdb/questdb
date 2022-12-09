@@ -34,18 +34,18 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public final class SqlParser {
-
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
+    private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
-    private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
@@ -497,10 +497,7 @@ public final class SqlParser {
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long o3MaxLag = configuration.getO3MaxLag();
 
-        final int walNotSet = -1;
-        final int walDisabled = 0;
-        final int walEnabled = 1;
-        int walSetting = walNotSet;
+        int walSetting = WAL_NOT_SET;
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -518,12 +515,12 @@ public final class SqlParser {
                     if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
-                    walSetting = walEnabled;
+                    walSetting = WAL_ENABLED;
                     tok = optTok(lexer);
                 } else if (isBypassKeyword(tok)) {
                     tok = optTok(lexer);
                     if (tok != null && isWalKeyword(tok)) {
-                        walSetting = walDisabled;
+                        walSetting = WAL_DISABLED;
                         tok = optTok(lexer);
                     } else {
                         throw SqlException.position(
@@ -564,7 +561,7 @@ public final class SqlParser {
         model.setO3MaxLag(o3MaxLag);
         final boolean isWalEnabled =
                 configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
-                        (walSetting == walNotSet && configuration.getWalEnabledDefault()) || walSetting == walEnabled
+                        (walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED
                 );
 
         model.setWalEnabled(isWalEnabled);

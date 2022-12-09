@@ -874,14 +874,21 @@ public class SqlCompiler implements Closeable {
                     GenericRecordMetadata metadata = new GenericRecordMetadata();
                     metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                     Function function = functionParser.parseFunction(expr, metadata, executionContext);
-                    if (function != null && ColumnType.isBoolean(function.getType())) {
-                        function.init(null, executionContext);
-                        if (reader != null) {
-                            filterPartitions(function, functionPosition, reader, alterOperationBuilder);
+                    try {
+                        if (function != null && ColumnType.isBoolean(function.getType())) {
+                            function.init(null, executionContext);
+                            if (reader != null) {
+                                int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
+                                if (affected == 0) {
+                                    throw SqlException.$(functionPosition, "no partitions matched WHERE clause");
+                                }
+                            }
+                            return compiledQuery.ofAlter(this.alterOperationBuilder.build());
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                         }
-                        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+                    } finally {
+                        Misc.free(function);
                     }
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
@@ -1417,8 +1424,7 @@ public class SqlCompiler implements Closeable {
             RecordCursor cursor,
             RecordMetadata metadata,
             TableWriterAPI writer,
-            RecordMetadata
-                    writerMetadata,
+            RecordMetadata writerMetadata,
             RecordToRowCopier recordToRowCopier,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
@@ -1687,12 +1693,13 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    private void filterPartitions(
+    private int filterPartitions(
             Function function,
             int functionPosition,
             TableReader reader,
             AlterOperationBuilder changePartitionStatement
     ) {
+        int affectedPartitions = 0;
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
         final int partitionCount = reader.getPartitionCount();
@@ -1702,16 +1709,19 @@ public class SqlCompiler implements Closeable {
                 partitionFunctionRec.setTimestamp(partitionTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
                     changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
+                    affectedPartitions++;
                 }
             }
 
-            // remove last partition
+            // do action on last partition at the end, it's more expensive than others
             long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
                 changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
+                affectedPartitions++;
             }
         }
+        return affectedPartitions;
     }
 
     private int getNextValidTokenPosition() {

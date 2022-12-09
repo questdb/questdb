@@ -41,6 +41,7 @@ public class PageFrameReduceTask implements Closeable {
     private final DirectLongList rows;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
+    private long frameSequenceId;
 
     public PageFrameReduceTask(CairoConfiguration configuration) {
         this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -75,6 +76,10 @@ public class PageFrameReduceTask implements Closeable {
         return (PageFrameSequence<T>) frameSequence;
     }
 
+    public long getFrameSequenceId() {
+        return frameSequenceId;
+    }
+
     public PageAddressCache getPageAddressCache() {
         return frameSequence.getPageAddressCache();
     }
@@ -85,6 +90,7 @@ public class PageFrameReduceTask implements Closeable {
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
+        this.frameSequenceId = frameSequence.getId();
         this.frameIndex = frameIndex;
         rows.clear();
     }
