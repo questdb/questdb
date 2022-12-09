@@ -29,8 +29,6 @@ import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
@@ -38,15 +36,12 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
 
-@RunWith(Parameterized.class)
 public class PGSecurityTest extends BasePGTest {
 
     private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
@@ -63,19 +58,6 @@ public class PGSecurityTest extends BasePGTest {
     };
     @ClassRule
     public static TemporaryFolder backup = new TemporaryFolder();
-
-    private final ReadOnlyMode readOnlyMode;
-
-    public PGSecurityTest(ReadOnlyMode readOnlyMode) {
-        this.readOnlyMode = readOnlyMode;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {ReadOnlyMode.FULL_RO}, {ReadOnlyMode.RO_USER}
-        });
-    }
 
     @BeforeClass
     public static void init() {
@@ -198,7 +180,7 @@ public class PGSecurityTest extends BasePGTest {
 
             // if this asserts fails then it means UPDATE are already implemented
             // please change this test to check the update throws an exception in the read-only mode
-            // this is in place so we won't forget to test UPDATE honours read-only security context.
+            // this is in place, so we won't forget to test UPDATE honours read-only security context
             assertSql("select * from src", "ts\tname\n" +
                     "2022-04-12T17:30:45.145921Z\tfoo\n");
         });
@@ -289,6 +271,34 @@ public class PGSecurityTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testReadOnlyUser() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
+            try (
+                    final PGWireServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection defaultUserConnection = getConnection(server.getPort(), false, true);
+                        final Connection roUserConnection = getConnectionWithReadOnlyUser(server.getPort())
+                ) {
+                    String query = "drop table src";
+                    try (final Statement statement = roUserConnection.createStatement()) {
+                        statement.execute(query);
+                        fail("Query '" + query + "' must fail for the read-only user!");
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "Write permission denied");
+                    }
+                    try (final Statement statement = defaultUserConnection.createStatement()) {
+                        statement.execute(query);
+                    }
+                }
+            }
+        });
+    }
+
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
@@ -300,14 +310,12 @@ public class PGSecurityTest extends BasePGTest {
 
     private void executeWithPg(String query) throws Exception {
         try (
-                final PGWireServer server = createPGServer(readOnlyMode == ReadOnlyMode.FULL_RO ? READ_ONLY_CONF : READ_ONLY_USER_CONF);
+                final PGWireServer server = createPGServer(READ_ONLY_CONF);
                 final WorkerPool workerPool = server.getWorkerPool()
         ) {
             workerPool.start(LOG);
             try (
-                    final Connection connection = readOnlyMode == ReadOnlyMode.FULL_RO
-                            ? getConnection(server.getPort(), false, true)
-                            : getConnectionWithReadOnlyUser(server.getPort());
+                    final Connection connection = getConnection(server.getPort(), false, true);
                     final Statement statement = connection.createStatement()
             ) {
                 statement.execute(query);
@@ -323,8 +331,8 @@ public class PGSecurityTest extends BasePGTest {
         properties.setProperty(key, "user");
 
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        //use this line to switch to local postgres
-        //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
     }
@@ -342,9 +350,5 @@ public class PGSecurityTest extends BasePGTest {
         // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
-    }
-
-    protected enum ReadOnlyMode {
-        FULL_RO, RO_USER
     }
 }
