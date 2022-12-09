@@ -122,7 +122,7 @@ public class TableNameRegistryFileStore implements Closeable {
             }
             tableNameMemory.sync(false);
             long newAppendOffset = tableNameMemory.getAppendOffset();
-            tableNameMemory.close(false);
+            tableNameMemory.close();
 
             // rename tmp to next version file, everyone will automatically switch to new file
             Path path2 = Path.getThreadLocal2(configuration.getRoot())
@@ -255,7 +255,7 @@ public class TableNameRegistryFileStore implements Closeable {
             try {
                 memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                 LOG.info().$("reloading tables file [path=").utf8(path).I$();
-                if (memory.size() >= Long.BYTES) {
+                if (memory.size() >= 2 * Long.BYTES) {
                     break;
                 }
             } catch (CairoException e) {
@@ -274,11 +274,12 @@ public class TableNameRegistryFileStore implements Closeable {
             }
         } while (true);
 
-        long entryCount = memory.getLong(0);
+        long mapMem = memory.getLong(0);
         long currentOffset = Long.BYTES;
+        memory.extend(mapMem);
 
         int deletedRecordsFound = 0;
-        for (int i = 0; i < entryCount; i++) {
+        while (currentOffset < mapMem) {
             int operation = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
             String tableName = Chars.toString(memory.getStr(currentOffset));
@@ -333,7 +334,6 @@ public class TableNameRegistryFileStore implements Closeable {
         if (!isLocked()) {
             throw CairoException.critical(0).put("table registry is not locked");
         }
-        long entryCount = tableNameMemory.getLong(0);
         tableNameMemory.putInt(operation);
         tableNameMemory.putStr(tableToken.getTableName());
         tableNameMemory.putStr(tableToken.getDirName());
@@ -345,7 +345,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 tableNameMemory.putLong(0);
             }
         }
-        tableNameMemory.putLong(0, entryCount + 1);
+        tableNameMemory.putLong(0L, tableNameMemory.getAppendOffset());
     }
 
     void reload(

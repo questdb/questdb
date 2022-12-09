@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
@@ -1383,7 +1384,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // Change table id in the metadata file in the partition
                 otherPath.chop$().concat(META_FILE_NAME).$();
-                try (var mem2 = Vm.getCMARWInstance()) {
+                try (MemoryCMARW mem2 = Vm.getCMARWInstance()) {
                     mem2.smallFile(configuration.getFilesFacade(), otherPath, MemoryTag.NATIVE_DEFAULT);
                     mem2.putInt(META_OFFSET_TABLE_ID, tableToken.getTableId());
                 }
