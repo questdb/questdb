@@ -17,7 +17,7 @@ stages:
         strategy:
           matrix:
             linux:
-              imageName: "ubuntu-latest"
+              imageName: "ubuntu-20.04"
               poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.11"
