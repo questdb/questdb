@@ -3581,6 +3581,18 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLeftJoinOnFunctionCondition0() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int);");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+
+            String query = "select * from t1 left join t2 on t1.i+10 = t2.j";
+
+            assertSql(query, "i\tj\n");
+        });
+    }
+
+    @Test
     public void testLeftJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 as (select x i from long_sequence(5))");
@@ -3728,6 +3740,40 @@ public class JoinTest extends AbstractGriffinTest {
                             "3\tNaN\n" +
                             "4\tNaN\n" +
                             "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionConditionWith3Tables() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(5))");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+            compile("create table t3 as (select x+1 k from long_sequence(3))");
+
+            String query = "select * from t1 left join (select * k from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
+
+            assertSql(query,
+                    "i\tj\tk\n" +
+                            "1\t11\tNaN\n" +
+                            "2\t12\tNaN\n" +
+                            "3\t13\tNaN\n" +
+                            "4\tNaN\tNaN\n" +
+                            "5\tNaN\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithConstantFalseFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(3))");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+
+            String query = "select * from t1 left join t2 on i=j and abs(1) = 0";
+
+            assertSql(query, "i\tj\n" +
+                    "1\tNaN\n" +
+                    "2\tNaN\n" +
+                    "3\tNaN\n");
         });
     }
 

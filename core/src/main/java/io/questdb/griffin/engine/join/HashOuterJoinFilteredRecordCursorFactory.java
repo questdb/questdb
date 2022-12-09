@@ -170,7 +170,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
                 record.hasSlave(true);//necessary for filter 
                 do {
                     if (filter.getBool(record)) {
-                        record.hasSlave(true);
                         return true;
                     }
                 } while (slaveChain.hasNext());
@@ -186,7 +185,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
                     record.hasSlave(true);
                     while (slaveChain.hasNext()) {
                         if (filter.getBool(record)) {
-                            record.hasSlave(true);
                             return true;
                         }
                     }

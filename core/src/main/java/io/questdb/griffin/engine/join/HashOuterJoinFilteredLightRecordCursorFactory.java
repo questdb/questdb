@@ -156,7 +156,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     if (filter.getBool(record)) {
-                        record.hasSlave(true);
                         return true;
                     } else {
                         slaveChainCursor.next();
@@ -171,8 +170,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecor
                 if (value != null) {
                     slaveChainCursor = slaveChain.getCursor(value.getLong(0));
                     record.hasSlave(true);
-
-                    // we know cursor has values, advance to get first value
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                         if (filter.getBool(record)) {
