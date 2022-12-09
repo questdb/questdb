@@ -22,18 +22,11 @@
  *
  ******************************************************************************/
 
-#include <jni.h>
-#include <unistd.h>
-#include <handleapi.h>
-#include "../share/net.h"
-#include "errno.h"
-#include "files.h"
+#ifndef WINDOWS_FILES_H
+#define WINDOWS_FILES_H
 
-JNIEXPORT jint JNICALL Java_io_questdb_network_Net_abortAccept
-        (JNIEnv *e, jclass cl, jint fd) {
-    jint r = CloseHandle(FD_TO_HANDLE(fd));
-    if (!r) {
-        SaveLastError();
-    }
-    return r;
-}
+#define FD_TO_HANDLE(fd) (HANDLE) ((uintptr_t) fd)
+
+#define HANDLE_TO_FD(handle) (jint) ((uintptr_t) handle)
+
+#endif //WINDOWS_FILES_H
