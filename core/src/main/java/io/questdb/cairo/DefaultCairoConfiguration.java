@@ -736,7 +736,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getTableRegistryAutoReloadTimeout() {
+    public long getTableRegistryAutoReloadFrequency() {
         return 500;
     }
 

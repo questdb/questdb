@@ -45,7 +45,7 @@ public class TableToken implements Sinkable {
 
     @Override
     public boolean equals(Object o) {
-        // equals() enforces both tableId and privateTableName, while hashcode() only uses tableId for speedup
+        // equals() enforces both tableId and dirName, while hashcode() only uses tableId for speedup
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
 
@@ -66,7 +66,7 @@ public class TableToken implements Sinkable {
      * @return table id
      */
     public int getTableId() {
-        // equals() enforces both tableId and privateTableName, while hashcode() only uses tableId for speedup.
+        // equals() enforces both tableId and dirName, while hashcode() only uses tableId for speedup.
         // TableId should be unique except in very rare cases.
         return tableId;
     }

@@ -821,7 +821,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     public void destroy() {
         // Closes all the files and makes this instance unusable e.g. it cannot return to the pool on close.
         LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())
-                .$(", privateTableName=").utf8(tableToken.getDirName()).I$();
+                .$(", dirName=").utf8(tableToken.getDirName()).I$();
         distressed = true;
         doClose(false);
     }

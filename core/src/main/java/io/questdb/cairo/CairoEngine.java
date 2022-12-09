@@ -211,7 +211,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         readerPool.unlock(tableToken);
                         writerPool.unlock(tableToken, null, newTable);
                         metadataPool.unlock(tableToken);
-                        LOG.info().$("unlocked [privateTableName=`").utf8(tableToken.getDirName()).$("`]").$();
+                        LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                     }
                 }
             } else {
@@ -283,7 +283,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
                         LOG.error().$("drop failed [tableName='").$(tableToken).$("', error=").$(errno).$(']').$();
                         throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
-                                .put(", privateTableName=").put(tableToken.getDirName()).put(']');
+                                .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
                     readerPool.unlock(tableToken);
@@ -472,7 +472,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableToken(sink);
     }
 
-    public TableToken getTableTokenByPrivateTableName(String tableName, int tableId) {
+    public TableToken getTableTokenByDirName(String tableName, int tableId) {
         return tableNameRegistry.getTableToken(tableName, tableId);
     }
 
@@ -839,7 +839,7 @@ public class CairoEngine implements Closeable, WriterSource {
             throw rethrow;
         } catch (Throwable th) {
             LOG.critical()
-                    .$("could not repair before reading [privateTableName=").utf8(tableToken.getDirName())
+                    .$("could not repair before reading [dirName=").utf8(tableToken.getDirName())
                     .$(" ,error=").$(th.getMessage()).I$();
             throw rethrow;
         }

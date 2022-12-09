@@ -88,6 +88,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
+    private final long cairoTableRegistryAutoReloadFrequency;
     private final int circuitBreakerBufferSize;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
@@ -260,7 +261,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWithClauseModelPoolCapacity;
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final String systemTableNamePrefix;
-    private final long tableRegistryAutoReloadTimeout;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
@@ -440,7 +440,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.log = log;
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
-        this.tableRegistryAutoReloadTimeout = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_TIMEOUT, 500);
+        this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -2147,8 +2147,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getTableRegistryAutoReloadTimeout() {
-            return tableRegistryAutoReloadTimeout;
+        public long getTableRegistryAutoReloadFrequency() {
+            return cairoTableRegistryAutoReloadFrequency;
         }
 
         public TelemetryConfiguration getTelemetryConfiguration() {

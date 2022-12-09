@@ -318,7 +318,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void checkDropped() {
         if (metadata.isDropped()) {
-            throw CairoException.nonCritical().put("table is dropped [privateTableName=").put(tableToken.getDirName()).put(']');
+            throw CairoException.nonCritical().put("table is dropped [dirName=").put(tableToken.getDirName()).put(']');
         }
     }
 

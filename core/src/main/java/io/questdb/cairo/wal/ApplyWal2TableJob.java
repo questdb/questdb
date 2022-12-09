@@ -25,7 +25,6 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -325,7 +324,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             // Get table name from structure change cursor
                             TableToken updatedToken = engine.refreshTableToken(tableToken);
                             if (updatedToken == null) {
-                                LOG.info().$("detected table delete during WAL replay [privateTableName=").$(tableToken.getDirName()).I$();
+                                LOG.info().$("detected table delete during WAL replay [dirName=").$(tableToken.getDirName()).I$();
                                 // Return will handle table drop on next iteration.
                                 return;
                             }

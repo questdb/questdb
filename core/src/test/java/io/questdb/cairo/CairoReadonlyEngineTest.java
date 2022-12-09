@@ -50,7 +50,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 return () -> testMicrosClock.getTicks() / 1000L;
             }
 
-            public long getTableRegistryAutoReloadTimeout() {
+            public long getTableRegistryAutoReloadFrequency() {
                 return 1000;
             }
 

@@ -79,7 +79,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void dropTable(TableToken tableToken, boolean failedCreate) {
-        LOG.info().$("dropping wal table [name=").$(tableToken).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
+        LOG.info().$("dropping wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 seq.dropTable();
@@ -87,7 +87,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 seq.unlockWrite();
             }
         } catch (CairoException e) {
-            LOG.info().$("failed to drop wal table [name=").$(tableToken).$(", privateTableName=").utf8(tableToken.getDirName()).I$();
+            LOG.info().$("failed to drop wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
             if (!failedCreate) {
                 throw e;
             }
@@ -312,7 +312,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
         LOG.advisory().$("renamed wal table [table=")
                 .utf8(tableToken.getTableName()).$(", newName=").utf8(newTableToken.getTableName())
-                .$(", privateTableName=").utf8(newTableToken.getDirName()).I$();
+                .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
 

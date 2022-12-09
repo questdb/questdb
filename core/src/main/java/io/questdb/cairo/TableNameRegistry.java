@@ -90,13 +90,13 @@ public interface TableNameRegistry extends Closeable {
      * {@link #registerName(TableToken)} must be called to complete table creation and release the lock.
      * or {@link #unlockTableName(TableToken)} must be called to release lock without completing table creation.
      *
-     * @param tableName        table name
-     * @param privateTableName private table name, e.g. the directory where the table files are stored
-     * @param tableId          unique table id
-     * @param isWal            true if table is WAL enabled
+     * @param tableName table name
+     * @param dirName   private table name, e.g. the directory where the table files are stored
+     * @param tableId   unique table id
+     * @param isWal     true if table is WAL enabled
      * @return table token or null if table name with the same tableId, private name is already registered
      */
-    TableToken lockTableName(String tableName, String privateTableName, int tableId, boolean isWal);
+    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal);
 
     /**
      * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is

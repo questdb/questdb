@@ -22,9 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -56,7 +55,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
 
     @Override
     public TableToken getTableToken(String dirName, int tableId) {
-        var rmi = reverseNameTokenMap.get(dirName);
+        ReverseTableMapItem rmi = reverseNameTokenMap.get(dirName);
         if (rmi != null && !rmi.isDropped() && rmi.getToken().getTableId() == tableId) {
             return rmi.getToken();
         }
@@ -78,7 +77,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
 
     @Override
     public TableToken getTokenByDirName(String dirName) {
-        var entry = reverseNameTokenMap.get(dirName);
+        ReverseTableMapItem entry = reverseNameTokenMap.get(dirName);
         return entry == null ? null : entry.getToken();
     }
 
@@ -101,7 +100,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         nameStore.resetMemory();
     }
 
-    public void setNameMaps(
+    void setNameMaps(
             Map<CharSequence, TableToken> nameTableTokenMap,
             Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap) {
         this.nameTokenMap = nameTableTokenMap;

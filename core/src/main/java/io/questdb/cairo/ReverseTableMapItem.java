@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.TableToken;
-
-public class ReverseTableMapItem {
+class ReverseTableMapItem {
     private final boolean isDropped;
     private final TableToken tableToken;
 

@@ -7012,8 +7012,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            String privateTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", privateTableName, 1, false);
+            String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            TableToken tableToken = new TableToken("tab", dirName, 1, false);
             CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {
@@ -7047,8 +7047,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
-            String privateTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            configuration.getFilesFacade().touch(path.of(root).concat(privateTableName).$());
+            String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            configuration.getFilesFacade().touch(path.of(root).concat(dirName).$());
         }
 
         assertSyntaxError(

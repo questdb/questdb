@@ -719,12 +719,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
         String tab41 = "tab41";
-        String privateTableName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        String dirName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
 
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, File.separator + privateTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
+                if (Chars.contains(path, File.separator + dirName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -826,8 +826,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
         String tabex3 = "tabex3";
-        CharSequence privateTableName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(privateTableName).slash$()) {
+        CharSequence dirName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(dirName).slash$()) {
             TestFilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
 
@@ -896,8 +896,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
-        CharSequence privateTableName = "tab34";
-        String mangledPartDir = privateTableName + "_0";
+        CharSequence dirName = "tab34";
+        String mangledPartDir = dirName + "_0";
         FilesFacade ff = new TestFilesFacadeImpl() {
 
             @Override

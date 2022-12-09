@@ -231,7 +231,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
                             int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
                             long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
-                            TableToken token = engine.getTableTokenByPrivateTableName(tableName, tableId);
+                            TableToken token = engine.getTableTokenByDirName(tableName, tableId);
 
                             if (token == null) {
                                 LOG.debug().$("table deleted, skipping [privateTable=").$(tableName).I$();

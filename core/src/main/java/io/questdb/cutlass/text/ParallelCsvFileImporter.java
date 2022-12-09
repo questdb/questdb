@@ -198,18 +198,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final FilesFacade ff,
             int mkDirMode,
             final CharSequence root,
-            final CharSequence privateTableName,
-            final CharSequence publicTableName,
+            final CharSequence tableDir,
+            final CharSequence tableName,
             TableStructure structure,
             int tableId
     ) {
         try (Path path = new Path()) {
-            switch (TableUtils.exists(ff, path, root, privateTableName, 0, privateTableName.length())) {
+            switch (TableUtils.exists(ff, path, root, tableDir, 0, tableDir.length())) {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("could not overwrite table [tableName='").utf8(publicTableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
-                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(publicTableName).put("]");
+                        LOG.error().$("could not overwrite table [tableName='").utf8(tableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
+                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -219,7 +219,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 mkDirMode,
                                 memory,
                                 path,
-                                privateTableName,
+                                tableDir,
                                 structure,
                                 ColumnType.VERSION,
                                 tableId
@@ -227,7 +227,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                     break;
                 default:
-                    throw TextException.$("name is reserved [tableName=").put(publicTableName).put(']');
+                    throw TextException.$("name is reserved [tableName=").put(tableName).put(']');
             }
         }
     }

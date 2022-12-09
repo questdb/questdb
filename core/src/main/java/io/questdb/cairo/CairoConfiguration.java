@@ -385,7 +385,7 @@ public interface CairoConfiguration {
 
     CharSequence getSystemTableNamePrefix();
 
-    long getTableRegistryAutoReloadTimeout();
+    long getTableRegistryAutoReloadFrequency();
 
     TelemetryConfiguration getTelemetryConfiguration();
 

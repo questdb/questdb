@@ -28,7 +28,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.cairo.wal.ReverseTableMapItem;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -90,52 +89,6 @@ public class TableNameRegistryFileStore implements Closeable {
 
     public synchronized void logDropTable(final TableToken tableToken) {
         writeEntry(tableToken, OPERATION_REMOVE);
-    }
-
-    public void reload(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
-    ) {
-        tableIds.clear();
-        reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap);
-        reloadFromRootDirectory(nameTableTokenMap, reverseTableNameTokenMap);
-    }
-
-    public void reloadFromRootDirectory(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
-    ) {
-        Path path = Path.getThreadLocal(configuration.getRoot());
-        FilesFacade ff = configuration.getFilesFacade();
-        long findPtr = ff.findFirst(path.$());
-        StringSink sink = Misc.getThreadLocalBuilder();
-
-        do {
-            long fileName = ff.findName(findPtr);
-            if (Files.isDir(fileName, ff.findType(findPtr), sink)) {
-                if (nameTableTokenMap.get(sink) == null
-                        && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
-
-                    String privateTableName = sink.toString();
-                    String tableName = TableUtils.getTableNameFromDirName(privateTableName);
-                    int tableId = readTableId(path, privateTableName, configuration.getFilesFacade());
-                    boolean isWal = tableId < 0;
-                    tableId = Math.abs(tableId);
-
-                    if (tableName != null && tableId != 0) {
-                        if (tableIds.contains(tableId)) {
-                            LOG.critical().$("duplicate table id found [privateTableName=").$(privateTableName).$(", id=").$(tableId).$(']').$();
-                            continue;
-                        }
-
-                        TableToken token = new TableToken(tableName, privateTableName, tableId, isWal);
-                        nameTableTokenMap.put(tableName, token);
-                        reverseTableNameTokenMap.put(privateTableName, ReverseTableMapItem.of(token));
-                    }
-                }
-            }
-        } while (ff.findNext(findPtr) > 0);
-        ff.findClose(findPtr);
     }
 
     @TestOnly
@@ -228,8 +181,8 @@ public class TableNameRegistryFileStore implements Closeable {
         return lockFd != -1;
     }
 
-    private int readTableId(Path path, String privateTableName, FilesFacade ff) {
-        path.of(configuration.getRoot()).concat(privateTableName).concat(TableUtils.META_FILE_NAME).$();
+    private int readTableId(Path path, String dirName, FilesFacade ff) {
+        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.META_FILE_NAME).$();
         long fd = ff.openRO(path);
         if (fd < 1) {
             return 0;
@@ -246,6 +199,43 @@ public class TableNameRegistryFileStore implements Closeable {
         } finally {
             ff.close(fd);
         }
+    }
+
+    private void reloadFromRootDirectory(
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+    ) {
+        Path path = Path.getThreadLocal(configuration.getRoot());
+        FilesFacade ff = configuration.getFilesFacade();
+        long findPtr = ff.findFirst(path.$());
+        StringSink sink = Misc.getThreadLocalBuilder();
+
+        do {
+            long fileName = ff.findName(findPtr);
+            if (Files.isDir(fileName, ff.findType(findPtr), sink)) {
+                if (nameTableTokenMap.get(sink) == null
+                        && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
+
+                    String dirName = sink.toString();
+                    String tableName = TableUtils.getTableNameFromDirName(dirName);
+                    int tableId = readTableId(path, dirName, configuration.getFilesFacade());
+                    boolean isWal = tableId < 0;
+                    tableId = Math.abs(tableId);
+
+                    if (tableName != null && tableId != 0) {
+                        if (tableIds.contains(tableId)) {
+                            LOG.critical().$("duplicate table id found [dirName=").$(dirName).$(", id=").$(tableId).$(']').$();
+                            continue;
+                        }
+
+                        TableToken token = new TableToken(tableName, dirName, tableId, isWal);
+                        nameTableTokenMap.put(tableName, token);
+                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                    }
+                }
+            }
+        } while (ff.findNext(findPtr) > 0);
+        ff.findClose(findPtr);
     }
 
     private void reloadFromTablesFile(
@@ -293,32 +283,32 @@ public class TableNameRegistryFileStore implements Closeable {
             currentOffset += Integer.BYTES;
             String tableName = Chars.toString(memory.getStr(currentOffset));
             currentOffset += Vm.getStorageLength(tableName);
-            String privateTableName = Chars.toString(memory.getStr(currentOffset));
-            currentOffset += Vm.getStorageLength(privateTableName);
+            String dirName = Chars.toString(memory.getStr(currentOffset));
+            currentOffset += Vm.getStorageLength(dirName);
             int tableId = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
             int tableType = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
 
-            TableToken token = new TableToken(tableName, privateTableName, tableId, tableType == TABLE_TYPE_WAL);
+            TableToken token = new TableToken(tableName, dirName, tableId, tableType == TABLE_TYPE_WAL);
             if (operation == OPERATION_REMOVE) {
                 // remove from registry
                 TableToken tableToken = nameTableTokenMap.remove(tableName);
                 if (tableToken != null) {
-                    reverseTableNameTokenMap.put(privateTableName, ReverseTableMapItem.ofDropped(tableToken));
+                    reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.ofDropped(tableToken));
                     deletedRecordsFound++;
                 }
             } else {
                 if (tableIds.contains(tableId)) {
                     LOG.critical().$("duplicate table id found, table will not be accessible " +
-                            "[privateTableName=").$(privateTableName).$(", id=").$(tableId).$(']').$();
+                            "[dirName=").$(dirName).$(", id=").$(tableId).$(']').$();
                     continue;
                 }
 
                 nameTableTokenMap.put(tableName, token);
                 if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                     // This table is renamed, log system to real table name mapping
-                    LOG.advisory().$("renamed WAL table system name [table=").utf8(tableName).$(", privateTableName=").utf8(privateTableName).$();
+                    LOG.advisory().$("renamed WAL table system name [table=").utf8(tableName).$(", dirName=").utf8(dirName).$();
                 }
 
                 reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
@@ -356,5 +346,14 @@ public class TableNameRegistryFileStore implements Closeable {
             }
         }
         tableNameMemory.putLong(0, entryCount + 1);
+    }
+
+    void reload(
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+    ) {
+        tableIds.clear();
+        reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap);
+        reloadFromRootDirectory(nameTableTokenMap, reverseTableNameTokenMap);
     }
 }

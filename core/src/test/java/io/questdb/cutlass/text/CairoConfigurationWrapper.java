@@ -728,8 +728,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getTableRegistryAutoReloadTimeout() {
-        return conf.getTableRegistryAutoReloadTimeout();
+    public long getTableRegistryAutoReloadFrequency() {
+        return conf.getTableRegistryAutoReloadFrequency();
     }
 
     @Override

@@ -38,7 +38,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -122,11 +121,11 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         assertWalExistence(true, tableName, 1);
 
         // A test FilesFacade that hides the "wal2" directory.
-        String privateTableNamePath = Files.SEPARATOR + Chars.toString(engine.getTableToken(tableName).getDirName());
+        String dirNamePath = Files.SEPARATOR + Chars.toString(engine.getTableToken(tableName).getDirName());
         FilesFacade testFF = new TestFilesFacadeImpl() {
             @Override
             public void iterateDir(LPSZ path, FindVisitor func) {
-                if (Chars.endsWith(path, privateTableNamePath)) {
+                if (Chars.endsWith(path, dirNamePath)) {
                     final NativeLPSZ name = new NativeLPSZ();
                     super.iterateDir(path, (long pUtf8NameZ, int type) -> {
                         name.of(pUtf8NameZ);

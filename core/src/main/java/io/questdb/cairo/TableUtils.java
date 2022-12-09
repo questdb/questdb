@@ -204,9 +204,9 @@ public final class TableUtils {
             Path path,
             TableStructure structure,
             int tableId,
-            CharSequence privateTableName
+            CharSequence dirName
     ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, privateTableName);
+        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, dirName);
     }
 
     public static void createTable(
@@ -216,12 +216,12 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence privateTableName
+            CharSequence dirName
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, privateTableName);
+        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }
 
     public static void createTable(
@@ -233,9 +233,9 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence privateTableName
+            CharSequence dirName
     ) {
-        createTable(ff, root, mkDirMode, memory, path, privateTableName, structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
     }
 
     public static void createTable(
@@ -244,13 +244,13 @@ public final class TableUtils {
             int mkDirMode,
             MemoryMARW memory,
             Path path,
-            CharSequence tableName,
+            CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(tableName).$(']').$();
-        path.of(root).concat(tableName);
+        LOG.debug().$("create table [name=").$(tableDir).$(']').$();
+        path.of(root).concat(tableDir);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');

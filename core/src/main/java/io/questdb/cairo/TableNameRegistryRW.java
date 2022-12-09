@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.wal.AbstractTableNameRegistry;
-import io.questdb.cairo.wal.ReverseTableMapItem;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 
@@ -58,8 +56,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken lockTableName(String tableName, String privateTableName, int tableId, boolean isWal) {
-        TableToken newNameRecord = new TableToken(tableName, privateTableName, tableId, isWal);
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
+        TableToken newNameRecord = new TableToken(tableName, dirName, tableId, isWal);
         TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
 
         if (registeredRecord == null) {

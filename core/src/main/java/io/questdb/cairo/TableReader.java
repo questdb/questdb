@@ -106,7 +106,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").utf8(this.tableToken.getTableName())
-                    .$(", privateTableName=").utf8(this.tableToken.getDirName())
+                    .$(", dirName=").utf8(this.tableToken.getDirName())
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
@@ -497,7 +497,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             LOG.error()
                     .$("could not queue purge partition task, queue is full [")
-                    .$("privateTableName=").utf8(this.tableToken.getDirName())
+                    .$("dirName=").utf8(this.tableToken.getDirName())
                     .$(", txn=").$(txn)
                     .$(']').$();
         }

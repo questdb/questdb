@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.wal.AbstractTableNameRegistry;
-import io.questdb.cairo.wal.ReverseTableMapItem;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.HashMap;
@@ -43,7 +41,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     public TableNameRegistryRO(CairoConfiguration configuration) {
         super(configuration);
         this.clockMs = configuration.getMillisecondClock();
-        long timeout = configuration.getTableRegistryAutoReloadTimeout();
+        long timeout = configuration.getTableRegistryAutoReloadFrequency();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;
         setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
     }
@@ -64,7 +62,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken lockTableName(String tableName, String privateTableName, int tableId, boolean isWal) {
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         throw CairoException.critical(0).put("instance is read only");
     }
 

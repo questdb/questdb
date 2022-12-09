@@ -88,8 +88,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                         null,
                         -1,
                         null);
-        CharSequence privateTableName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        path = new Path().put(configuration.getRoot()).concat(privateTableName);
+        CharSequence dirName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        path = new Path().put(configuration.getRoot()).concat(dirName);
         tablePathLen = path.length();
     }
 
