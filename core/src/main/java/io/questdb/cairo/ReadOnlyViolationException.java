@@ -32,7 +32,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class ReadOnlyViolationException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
-    private static final ThreadLocal<ReadOnlyViolationException> THREAD_LOCAL = new ThreadLocal<>(ReadOnlyViolationException::new) {
+    private static final ThreadLocal<ReadOnlyViolationException> THREAD_LOCAL = new ThreadLocal<ReadOnlyViolationException>(ReadOnlyViolationException::new) {
         @Override
         public ReadOnlyViolationException get() {
             ReadOnlyViolationException ex = super.get();
