@@ -68,7 +68,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             } else {
                 final long eventId = pendingEvents.get(eventRow, EVM_ID);
                 if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                    LOG.error().$("epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                    LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
                             .$(", err=").$(nf.errno()).I$();
                 }
                 pendingEvents.deleteRow(eventRow);
@@ -88,7 +88,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                             initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
                     ) < 0
             ) {
-                LOG.error().$("epoll_ctl failure [id=").$(id)
+                LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
                         .$(", err=").$(nf.errno()).I$();
             }
         }
