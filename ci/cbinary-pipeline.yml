@@ -44,6 +44,7 @@ stages:
 
           - bash: |
               echo "##vso[task.setvariable variable=OS_MAPPING]$(Linux-X64)"
+              sudo apt-get update -y
               sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
             condition:
               and(eq(variables['Agent.OS'], 'Linux'),
