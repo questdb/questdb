@@ -183,14 +183,6 @@ public final class Files {
         return getDiskSize(0);
     }
 
-    public static long getDiskSize(LPSZ path) {
-        if (path != null) {
-            return getDiskSize(path.address());
-        }
-        // current directory
-        return getDiskSize(0);
-    }
-
     /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.

@@ -81,11 +81,11 @@ public class EngineMigration {
                 if (currentVersion >= latestVersion) {
                     LOG.info().$("table structures are up to date").$();
                     ff.close(upgradeFd);
-                    upgradeFd = -1L;
+                    upgradeFd = -1;
                 }
             }
 
-            if (upgradeFd != -1L) {
+            if (upgradeFd != -1) {
                 try {
                     LOG.info().$("upgrading database [version=").$(latestVersion).I$();
                     if (upgradeTables(context, latestVersion)) {

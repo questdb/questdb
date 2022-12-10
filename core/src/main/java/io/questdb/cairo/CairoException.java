@@ -94,11 +94,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(NON_CRITICAL);
     }
 
-    public CairoException date(long timestamp) {
-        TimestampFormatUtils.appendDate(message, timestamp);
-        return this;
-    }
-
     public int getErrno() {
         return errno;
     }
