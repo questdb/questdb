@@ -329,6 +329,7 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
                         ,
                         N,
                         0.9,
@@ -546,6 +547,7 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
                                 .add(ColumnType.getGeoHashTypeWithBits(5))
                                 .add(ColumnType.getGeoHashTypeWithBits(10))
                                 .add(ColumnType.getGeoHashTypeWithBits(20))
@@ -581,10 +583,12 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                        Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(9));
-                        Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(10));
-                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(11));
-                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(12));
+                        Assert.assertEquals(rnd2.nextLong(), value.getUuidHi(9));
+                        Assert.assertEquals(rnd2.nextLong(), value.getUuidLo(9));
+                        Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(10));
+                        Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
+                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
+                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(13));
                     }
                 }
             }
@@ -704,6 +708,8 @@ public class CompactMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9));
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -812,6 +818,7 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
+            value.putUuid(9, rnd2.nextLong(), rnd2.nextLong());
         }
     }
 
@@ -832,10 +839,11 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
-            value.putByte(9, (byte) Math.abs(rnd2.nextByte()));
-            value.putShort(10, (short) Math.abs(rnd2.nextShort()));
-            value.putInt(11, Math.abs(rnd2.nextInt()));
-            value.putLong(12, Math.abs(rnd2.nextLong()));
+            value.putUuid(9, rnd2.nextLong(), rnd2.nextLong());
+            value.putByte(10, (byte) Math.abs(rnd2.nextByte()));
+            value.putShort(11, (short) Math.abs(rnd2.nextShort()));
+            value.putInt(12, Math.abs(rnd2.nextInt()));
+            value.putLong(13, Math.abs(rnd2.nextLong()));
         }
     }
 

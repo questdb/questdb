@@ -157,6 +157,16 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public long getUuidHi(int columnIndex) {
+        return entries.getLong(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getUuidLo(int columnIndex) {
+        return entries.getLong(getValueColumnOffset(columnIndex) + Long.BYTES);
+    }
+
+    @Override
     public boolean isNew() {
         return _new;
     }
