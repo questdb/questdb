@@ -31,15 +31,15 @@ import io.questdb.std.str.Path;
 public interface FilesFacade {
     long MAP_FAILED = -1;
 
-    boolean allocate(long fd, long size);
+    boolean allocate(int fd, long size);
 
-    long append(long fd, long buf, int len);
+    long append(int fd, long buf, int len);
 
-    boolean close(long fd);
+    boolean close(int fd);
 
     int copy(LPSZ from, LPSZ to);
 
-    long copyData(long srcFd, long destFd, long offsetSrc, long length);
+    long copyData(int srcFd, int destFd, long offsetSrc, long length);
 
     int copyRecursive(Path src, Path dst, int dirMode);
 
@@ -47,9 +47,9 @@ public interface FilesFacade {
 
     boolean exists(LPSZ path);
 
-    boolean exists(long fd);
+    boolean exists(int fd);
 
-    void fadvise(long fd, long offset, long len, int advise);
+    void fadvise(int fd, long offset, long len, int advise);
 
     long findClose(long findPtr);
 
@@ -61,7 +61,9 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
-    int fsync(long fd);
+    int fsync(int fd);
+
+    long getDiskSize(LPSZ path);
 
     long getDiskSize(LPSZ path);
 
@@ -85,11 +87,11 @@ public interface FilesFacade {
 
     void iterateDir(LPSZ path, FindVisitor func);
 
-    long length(long fd);
+    long length(int fd);
 
     long length(LPSZ name);
 
-    int lock(long fd);
+    int lock(int fd);
 
     void madvise(long address, long len, int advise);
 
@@ -97,27 +99,27 @@ public interface FilesFacade {
 
     int mkdirs(Path path, int mode);
 
-    long mmap(long fd, long len, long offset, int flags, int memoryTag);
+    long mmap(int fd, long len, long offset, int flags, int memoryTag);
 
-    long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
+    long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
     int msync(long addr, long len, boolean async);
 
     void munmap(long address, long size, int memoryTag);
 
-    long openAppend(LPSZ name);
+    int openAppend(LPSZ name);
 
-    long openCleanRW(LPSZ name, long size);
+    int openCleanRW(LPSZ name, long size);
 
-    long openRO(LPSZ name);
+    int openRO(LPSZ name);
 
-    long openRW(LPSZ name, long opts);
+    int openRW(LPSZ name, long opts);
 
-    long read(long fd, long buf, long size, long offset);
+    long read(int fd, long buf, long size, long offset);
 
-    int readNonNegativeInt(long fd, long offset);
+    int readNonNegativeInt(int fd, long offset);
 
-    long readNonNegativeLong(long fd, long offset);
+    long readNonNegativeLong(int fd, long offset);
 
     boolean remove(LPSZ name);
 
@@ -131,7 +133,7 @@ public interface FilesFacade {
 
     boolean touch(LPSZ path);
 
-    boolean truncate(long fd, long size);
+    boolean truncate(int fd, long size);
 
     int unlink(LPSZ softLink);
 
@@ -141,5 +143,5 @@ public interface FilesFacade {
 
     void walk(Path src, FindVisitor func);
 
-    long write(long fd, long address, long len, long offset);
+    long write(int fd, long address, long len, long offset);
 }

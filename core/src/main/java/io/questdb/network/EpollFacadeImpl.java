@@ -30,17 +30,17 @@ public class EpollFacadeImpl implements EpollFacade {
     public static final EpollFacadeImpl INSTANCE = new EpollFacadeImpl();
 
     @Override
-    public long epollCreate() {
+    public int epollCreate() {
         return EpollAccessor.epollCreate();
     }
 
     @Override
-    public int epollCtl(long epFd, int op, long fd, long eventPtr) {
+    public int epollCtl(int epFd, int op, int fd, long eventPtr) {
         return EpollAccessor.epollCtl(epFd, op, fd, eventPtr);
     }
 
     @Override
-    public int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
+    public int epollWait(int epfd, long eventPtr, int eventCount, int timeout) {
         return EpollAccessor.epollWait(epfd, eventPtr, eventCount, timeout);
     }
 
@@ -50,7 +50,22 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
+    public int eventFd() {
+        return EpollAccessor.eventFd();
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public long readEventFd(int fd) {
+        return EpollAccessor.readEventFd(fd);
+    }
+
+    @Override
+    public int writeEventFd(int fd) {
+        return EpollAccessor.writeEventFd(fd);
     }
 }

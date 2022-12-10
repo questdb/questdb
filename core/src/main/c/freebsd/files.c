@@ -46,8 +46,32 @@
 #include <sys/stat.h>
 #endif
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jint fd, jlong len) {
+    int rc = posix_fallocate(fd, 0, len);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    if (rc == EINVAL) {
+        // Some file systems (such as ZFS) do not support posix_fallocate
+        struct stat st;
+        rc = fstat((int) fd, &st);
+        if (rc != 0) {
+            return JNI_FALSE;
+        }
+        if (st.st_size < len) {
+            rc = ftruncate(fd, len);
+            if (rc != 0) {
+                return JNI_FALSE;
+            }
+        }
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
+}
+
 static inline jlong _io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     int prot = 0;
 
     if (flags == com_questdb_std_Files_MAP_RO) {
@@ -62,18 +86,18 @@ static inline jlong _io_questdb_std_Files_mremap0
         munmap(orgAddr, (size_t) previousLen);
     }
     if (newAddr == MAP_FAILED) {
-        return -1;
+	    return -1;
     }
     return (jlong) newAddr;
 }
 
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
@@ -130,7 +154,7 @@ size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
-        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
+        (JNIEnv *e, jclass cls, jint srcFd, jint dstFd, jlong srcOffset, jlong length) {
     return (jlong) copyData0((int) srcFd, (int) dstFd, srcOffset, length);
 }
 

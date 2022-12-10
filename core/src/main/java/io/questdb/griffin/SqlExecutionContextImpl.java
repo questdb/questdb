@@ -268,7 +268,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
-        this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         walApplication = false;
         return this;
     }

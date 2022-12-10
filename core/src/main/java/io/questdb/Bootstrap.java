@@ -254,7 +254,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        long fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
+        int fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);

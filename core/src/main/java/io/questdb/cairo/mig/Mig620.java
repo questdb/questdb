@@ -146,8 +146,8 @@ public class Mig620 {
         return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
     }
 
-    private static long openRO(FilesFacade ff, LPSZ path) {
-        final long fd = ff.openRO(path);
+    private static int openRO(FilesFacade ff, LPSZ path) {
+        final int fd = ff.openRO(path);
         if (fd > -1) {
             Mig620.LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
@@ -179,7 +179,7 @@ public class Mig620 {
     private static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen) {
         try {
             if (ff.exists(topFile(path, name))) {
-                final long fd = openRO(ff, path);
+                final int fd = openRO(ff, path);
                 try {
                     long n;
                     if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {

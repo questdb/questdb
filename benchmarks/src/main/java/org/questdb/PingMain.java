@@ -47,7 +47,7 @@ public class PingMain {
         long bufSize = 1024;
 
         // blocking client for simplicity
-        long fd = Net.socketTcp(true);
+        int fd = Net.socketTcp(true);
         // DNS resolution is provided by the OS
         long inf = Net.getAddrInfo(host, port);
         // attempt to connect

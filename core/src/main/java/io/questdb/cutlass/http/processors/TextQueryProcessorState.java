@@ -47,6 +47,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     String fileName;
     RecordMetadata metadata;
     boolean noMeta = false;
+    boolean pausedQuery = false;
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     Record record;
     RecordCursorFactory recordCursorFactory;
@@ -61,9 +62,12 @@ public class TextQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void clear() {
+        delimiter = ',';
+        fileName = null;
         metadata = null;
-        cursor = Misc.free(cursor);
+        rnd = null;
         record = null;
+        cursor = Misc.free(cursor);
         if (null != recordCursorFactory) {
             if (queryCacheable) {
                 QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
@@ -76,7 +80,12 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         query.clear();
         queryState = JsonQueryProcessorState.QUERY_PREFIX;
         columnIndex = 0;
+        skip = 0;
+        stop = 0;
+        count = 0;
+        noMeta = false;
         countRows = false;
+        pausedQuery = false;
     }
 
     @Override
@@ -85,7 +94,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
-    public long getFd() {
+    public int getFd() {
         return httpConnectionContext.getFd();
     }
 

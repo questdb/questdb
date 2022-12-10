@@ -64,7 +64,7 @@ public class EngineMigration {
             // check if all tables have been upgraded already
             path.concat(TableUtils.UPGRADE_FILE_NAME).$();
             final boolean existed = !force && ff.exists(path);
-            long upgradeFd = openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
+            int upgradeFd = openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
             LOG.debug()
                     .$("open [fd=").$(upgradeFd)
                     .$(", path=").$(path)
@@ -136,7 +136,7 @@ public class EngineMigration {
                     final int tablePlen = path.length();
 
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                        final long fdMeta = openFileRWOrFail(ff, path, context.getConfiguration().getWriterFileOpenOpts());
+                        final int fdMeta = openFileRWOrFail(ff, path, context.getConfiguration().getWriterFileOpenOpts());
                         try {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
                             if (currentTableVersion < latestVersion) {
