@@ -1485,6 +1485,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
+                    .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long hi, long lo)
+                    .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .timestamp("ts")
                     .wal()
             ) {
@@ -1546,6 +1548,10 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                         row.putSym(24, String.valueOf(i));
                         row.putSym(25, (char) (65 + i % 26));
+                        row.putUuid(26, i, i + 1);
+                        stringSink.clear();
+                        Numbers.appendUuid(i, i + 1, stringSink);
+                        row.putUuid(27, stringSink);
 
                         row.append();
                     }
@@ -1559,7 +1565,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(27, reader.getColumnCount());
+                    assertEquals(29, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -1616,7 +1622,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals(String.valueOf(i), record.getSym(24));
                         assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
 
-                        assertEquals(ts, record.getTimestamp(26));
+                        assertEquals(i, record.getUuidHi(26));
+                        assertEquals(i + 1, record.getUuidLo(26));
+
+                        assertEquals(i, record.getUuidHi(27));
+                        assertEquals(i + 1, record.getUuidLo(27));
+
+                        assertEquals(ts, record.getTimestamp(28));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);

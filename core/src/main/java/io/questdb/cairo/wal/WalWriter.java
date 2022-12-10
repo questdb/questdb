@@ -526,6 +526,7 @@ public class WalWriter implements TableWriterAPI {
                 break;
             case ColumnType.UUID:
                 nullers.add(() -> mem1.putLongLong(UuidUtil.NULL_HI_AND_LO, UuidUtil.NULL_HI_AND_LO));
+                break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }

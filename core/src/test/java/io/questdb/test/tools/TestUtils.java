@@ -1316,6 +1316,10 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
+                    case ColumnType.UUID:
+                        Assert.assertEquals(rr.getUuidHi(i), lr.getUuidHi(i));
+                        Assert.assertEquals(rr.getUuidLo(i), lr.getUuidLo(i));
+                        break;
                     default:
                         // Unknown record type.
                         assert false;

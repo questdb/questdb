@@ -810,7 +810,8 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo short
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
-        row.putSym(col, symbol);
+        row.putSym(col++, symbol);
+        row.putUuid(col, Hash.fastLongMix(i), Hash.fastLongMix(i + 1));
         row.append();
     }
 
@@ -908,6 +909,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                 .col("geoLong", ColumnType.getGeoHashTypeWithBits(35))
                 .col("stringc", ColumnType.STRING)
                 .col("label", ColumnType.SYMBOL)
+                .col("uuid", ColumnType.UUID)
                 .col("bin", ColumnType.BINARY)
                 .timestamp("ts");
     }

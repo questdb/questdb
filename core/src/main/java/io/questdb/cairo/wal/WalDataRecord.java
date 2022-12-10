@@ -26,10 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Rows;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
@@ -205,6 +202,20 @@ public class WalDataRecord implements Record, Sinkable {
     @Override
     public long getUpdateRowId() {
         throw new UnsupportedOperationException("UPDATE is not supported in WAL");
+    }
+
+    @Override
+    public long getUuidHi(int col) {
+        final long offset = recordIndex * UuidUtil.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
+    public long getUuidLo(int col) {
+        final long offset = recordIndex * UuidUtil.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }
 
     public void incrementRecordIndex() {
