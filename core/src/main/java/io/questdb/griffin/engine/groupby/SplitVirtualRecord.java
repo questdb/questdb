@@ -175,6 +175,16 @@ public class SplitVirtualRecord implements Record {
         return getFunction(col).getTimestamp(base);
     }
 
+    @Override
+    public long getUuidHi(int col) {
+        return getFunction(col).getUuidHi(base);
+    }
+
+    @Override
+    public long getUuidLo(int col) {
+        return getFunction(col).getUuidLo(base);
+    }
+
     public void setActiveA() {
         current = functionsA;
         for (int i = 0, n = interpolations.size(); i < n; i++) {

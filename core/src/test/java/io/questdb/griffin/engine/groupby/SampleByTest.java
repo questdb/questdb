@@ -9478,6 +9478,31 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUuidFillNull() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tlast\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\te8beef38-cd7b-43d8-b97f-a69eb8fec6cc\te8beef38-cd7b-43d8-b97f-a69eb8fec6cc\n" +
+                        "TJW\t1970-01-03T00:30:00.000000Z\t\t\n" +
+                        "TJW\t1970-01-03T01:00:00.000000Z\t980eca62-a219-40f1-872b-fc5230158059\t980eca62-a219-40f1-872b-fc5230158059\n",
+                "select s, k, " +
+                        "first(u), " +
+                        "last(u) " +
+                        "from x sample by 30m fill(NULL)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_uuid4() u," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
     public void testWrongTypeInPeriodSyntax() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*3 T",
