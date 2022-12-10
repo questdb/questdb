@@ -30,7 +30,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 
-final public class Dates {
+public final class Dates {
 
     public static final long DAY_MILLIS = 86400000L;
     public static final long HOUR_MILLIS = 3600000L;

@@ -32,7 +32,7 @@
 
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recvmmsg
-        (JNIEnv *e, jclass cl, jlong fd, jlong msgvec, jint vlen) {
+        (JNIEnv *e, jclass cl, jint fd, jlong msgvec, jint vlen) {
     struct timespec timeout;
     timeout.tv_sec = 1;
     timeout.tv_nsec = 0;

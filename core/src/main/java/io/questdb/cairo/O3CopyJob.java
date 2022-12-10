@@ -54,11 +54,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int blockType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -76,23 +76,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMin,
             long timestampMax,
             long partitionTimestamp, // <-- this is used to determine if partition is last or not as well as partition dir
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
             long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
@@ -249,11 +249,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final int blockType = task.getBlockType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final long timestampMergeIndexSize = task.getTimestampMergeIndexSize();
-        final long srcDataFixFd = task.getSrcDataFixFd();
+        final int srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
         final long srcDataFixOffset = task.getSrcDataFixOffset();
         final long srcDataFixSize = task.getSrcDataFixSize();
-        final long srcDataVarFd = task.getSrcDataVarFd();
+        final int srcDataVarFd = task.getSrcDataVarFd();
         final long srcDataVarAddr = task.getSrcDataVarAddr();
         final long srcDataVarOffset = task.getSrcDataVarOffset();
         final long srcDataVarSize = task.getSrcDataVarSize();
@@ -271,23 +271,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long timestampMin = task.getTimestampMin();
         final long timestampMax = task.getTimestampMax();
         final long partitionTimestamp = task.getPartitionTimestamp();
-        final long dstFixFd = task.getDstFixFd();
+        final int dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
         final long dstFixOffset = task.getDstFixOffset();
         final long dstFixFileOffset = task.getDstFixFileOffset();
         final long dstFixSize = task.getDstFixSize();
-        final long dstVarFd = task.getDstVarFd();
+        final int dstVarFd = task.getDstVarFd();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
         final long dstVarOffsetEnd = task.getDstVarOffsetEnd();
         final long dstVarAdjust = task.getDstVarAdjust();
         final long dstVarSize = task.getDstVarSize();
-        final long dstKFd = task.getDstKFd();
-        final long dskVFd = task.getDstVFd();
+        final int dstKFd = task.getDstKFd();
+        final int dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
         final long dstIndexAdjust = task.getDstIndexAdjust();
         final int indexBlockCapacity = task.getIndexBlockCapacity();
-        final long srcTimestampFd = task.getSrcTimestampFd();
+        final int srcTimestampFd = task.getSrcTimestampFd();
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
         final boolean partitionMutates = task.isPartitionMutates();
@@ -358,10 +358,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcLo,
             long srcHi,
             long dstFixAddr,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixFileOffset,
             long dstVarAddr,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
@@ -410,7 +410,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcHi,
             long dstFixAddr,
             long dstFixFileOffset,
-            long dstFd,
+            int dstFd,
             final int shl,
             boolean directIoFlag
     ) {
@@ -431,10 +431,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             @Nullable AtomicInteger partCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
             long srcDataMax,
@@ -444,18 +444,18 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
@@ -533,10 +533,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcLo,
             long srcHi,
             long dstFixAddr,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixFileOffset,
             long dstVarAddr,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,
@@ -668,23 +668,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
@@ -759,7 +759,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
@@ -794,7 +794,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter
@@ -819,7 +819,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     static void closeColumnIdleQuick(
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter
@@ -842,23 +842,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             AtomicInteger partCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarSize,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             TableWriter tableWriter
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
@@ -893,23 +893,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             TableWriter tableWriter
     ) {
         try {
@@ -940,11 +940,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooVarAddr,
             long srcOooLo,
             long srcOooHi,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixFileOffset,
             long dstVarAddr,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarOffset,
             long dstVarAdjust,
             long dstVarSize,

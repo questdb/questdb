@@ -56,13 +56,13 @@ public class LogAlertSocket implements Closeable {
     private final long reconnectDelay;
     private final Runnable onReconnectRef = this::onReconnect;
     private final StringSink responseSink = new StringSink();
+    private long addressInfoAddr = -1; // tcp/ip host:port address
     private int alertHostIdx;
     private int alertHostsCount;
     private String alertTargets; // host[:port](,host[:port])*
-    private long fdAddressInfo = -1; // tcp/ip host:port address
-    private long fdSocket = -1;
     private long inBufferPtr;
     private long outBufferPtr;
+    private int socketFd = -1;
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
         this(
@@ -115,13 +115,13 @@ public class LogAlertSocket implements Closeable {
     }
 
     public void connect() {
-        fdAddressInfo = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
-        if (fdAddressInfo == -1) {
+        addressInfoAddr = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
+        if (addressInfoAddr == -1) {
             logNetworkConnectError("Could not connect with");
         } else {
-            fdSocket = nf.socketTcp(true);
-            if (fdSocket > -1) {
-                if (nf.connectAddrInfo(fdSocket, fdAddressInfo) != 0) {
+            socketFd = nf.socketTcp(true);
+            if (socketFd > -1) {
+                if (nf.connectAddrInfo(socketFd, addressInfoAddr) != 0) {
                     logNetworkConnectError("Could not connect with");
                     freeSocketAndAddress();
                 }
@@ -156,12 +156,12 @@ public class LogAlertSocket implements Closeable {
         final int maxSendAttempts = 2 * alertHostsCount;
         int sendAttempts = maxSendAttempts; // empirical, say twice per host at most
         while (sendAttempts > 0) {
-            if (fdSocket > 0) {
+            if (socketFd > 0) {
                 int remaining = len;
                 long p = outBufferPtr;
                 boolean sendFail = false;
                 while (remaining > 0) {
-                    int n = nf.send(fdSocket, p, remaining);
+                    int n = nf.send(socketFd, p, remaining);
                     if (n > 0) {
                         remaining -= n;
                         p += n;
@@ -182,7 +182,7 @@ public class LogAlertSocket implements Closeable {
                 if (!sendFail) {
                     // receive ack
                     p = inBufferPtr;
-                    final int n = nf.recv(fdSocket, p, inBufferSize);
+                    final int n = nf.recv(socketFd, p, inBufferSize);
                     if (n > 0) {
                         logResponse(n);
                         break;
@@ -257,13 +257,13 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void freeSocketAndAddress() {
-        if (fdAddressInfo != -1) {
-            nf.freeAddrInfo(fdAddressInfo);
-            fdAddressInfo = -1;
+        if (addressInfoAddr != -1) {
+            nf.freeAddrInfo(addressInfoAddr);
+            addressInfoAddr = -1;
         }
-        if (fdSocket != -1) {
-            nf.close(fdSocket);
-            fdSocket = -1;
+        if (socketFd != -1) {
+            nf.close(socketFd);
+            socketFd = -1;
         }
     }
 

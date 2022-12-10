@@ -32,12 +32,11 @@ public class LongMatrixTest {
     @Test
     public void testApproxBinarySearch() {
         int k = 0;
-        LongMatrix<String> m = new LongMatrix<>(2);
+        LongMatrix m = new LongMatrix(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
             m.set(r, 0, k);
             m.set(r, 1, k);
-            m.set(r, "s" + k);
             k += 2;
         }
 
@@ -51,12 +50,11 @@ public class LongMatrixTest {
 
     @Test
     public void testBinarySearch() {
-        LongMatrix<String> m = new LongMatrix<>(2);
+        LongMatrix m = new LongMatrix(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
             m.set(r, 0, i);
             m.set(r, 1, i);
-            m.set(r, "s" + i);
         }
 
         int r = m.binarySearch(631, 0);
@@ -65,12 +63,11 @@ public class LongMatrixTest {
 
     @Test
     public void testDeleteRow() {
-        LongMatrix<String> m = new LongMatrix<>(2);
+        LongMatrix m = new LongMatrix(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
             m.set(r, 0, i);
             m.set(r, 1, i);
-            m.set(r, "s" + i);
         }
 
         Assert.assertEquals(1000, m.size());
@@ -81,52 +78,45 @@ public class LongMatrixTest {
 
         Assert.assertEquals(451, m.get(450, 0));
         Assert.assertEquals(451, m.get(450, 1));
-        Assert.assertEquals("s" + 451, m.get(450));
 
         Assert.assertEquals(449, m.get(449, 0));
         Assert.assertEquals(449, m.get(449, 1));
-        Assert.assertEquals("s" + 449, m.get(449));
 
         m.deleteRow(998);
         Assert.assertEquals(998, m.size());
 
         Assert.assertEquals(998, m.get(997, 0));
         Assert.assertEquals(998, m.get(997, 1));
-        Assert.assertEquals("s" + 998, m.get(997));
 
         m.deleteRow(0);
         Assert.assertEquals(997, m.size());
         Assert.assertEquals(998, m.get(996, 0));
         Assert.assertEquals(998, m.get(996, 1));
-        Assert.assertEquals("s" + 998, m.get(996));
     }
 
     @Test
     public void testResize() {
-        LongMatrix<String> m = new LongMatrix<>(2);
+        LongMatrix m = new LongMatrix(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
             m.set(r, 0, i);
             m.set(r, 1, i);
-            m.set(r, "s" + i);
         }
         Assert.assertEquals(1000, m.size());
 
         for (int i = 0, n = m.size(); i < n; i++) {
             Assert.assertEquals(i, m.get(i, 0));
             Assert.assertEquals(i, m.get(i, 1));
-            Assert.assertEquals("s" + i, m.get(i));
         }
     }
 
     @Test
     public void testZapTop() {
-        LongMatrix<String> m = new LongMatrix<>(2);
+        LongMatrix m = new LongMatrix(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
             m.set(r, 0, i);
             m.set(r, 1, i);
-            m.set(r, "s" + i);
         }
 
         Assert.assertEquals(1000, m.size());
@@ -135,11 +125,9 @@ public class LongMatrixTest {
 
         Assert.assertEquals(35, m.get(0, 0));
         Assert.assertEquals(35, m.get(0, 1));
-        Assert.assertEquals("s" + 35, m.get(0));
 
         Assert.assertEquals(999, m.get(964, 0));
         Assert.assertEquals(999, m.get(964, 1));
-        Assert.assertEquals("s" + 999, m.get(964));
 
         m.zapTop(1000);
         Assert.assertEquals(0, m.size());

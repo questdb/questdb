@@ -78,7 +78,7 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         return -1;
     }
 

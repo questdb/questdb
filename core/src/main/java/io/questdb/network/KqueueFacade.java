@@ -30,4 +30,10 @@ public interface KqueueFacade {
     int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents);
 
     int kqueue();
+
+    long pipe();
+
+    int readPipe(int fd);
+
+    int writePipe(int fd);
 }

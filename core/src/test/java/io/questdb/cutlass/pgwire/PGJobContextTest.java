@@ -34,15 +34,13 @@ import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -74,6 +72,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -3652,7 +3651,6 @@ nodejs code:
             try (
                     final PGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
-
             ) {
                 workerPool.start(LOG);
                 try (
@@ -5155,7 +5153,211 @@ nodejs code:
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
             });
         }
+    }
 
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1, 100);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    try {
+                        String query = "select * from test_data_unavailable(1, 10)";
+                        String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                                "1,1,1\n";
+                        try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, resultSet);
+                            Assert.fail();
+                        } catch (SQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                        }
+                    } finally {
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    int totalRows = 3;
+                    int backoffCount = 3;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicBoolean stopDelayThread = new AtomicBoolean();
+
+                    final Thread delayThread = new Thread(() -> {
+                        while (!stopDelayThread.get()) {
+                            SuspendEvent event = eventRef.getAndSet(null);
+                            if (event != null) {
+                                Os.sleep(1);
+                                try {
+                                    event.trigger();
+                                    event.close();
+                                    totalEvents.incrementAndGet();
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                Os.pause();
+                            }
+                        }
+                    });
+                    delayThread.start();
+
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                    stopDelayThread.set(true);
+
+                    delayThread.join();
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    int totalRows = 3;
+                    int backoffCount = 10;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public int getBindPort() {
+                            return 0; // Bind to ANY port.
+                        }
+
+                        @Override
+                        public String getDispatcherLogName() {
+                            return "pg-server";
+                        }
+                    };
+                }
+
+                @Override
+                public int getSendBufferSize() {
+                    return 192;
+                }
+            };
+
+            try (
+                    PGWireServer server = createPGServer(configuration);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), false, true)) {
+                    int totalRows = 16;
+                    int backoffCount = 3;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n" +
+                            "4,4,4\n" +
+                            "5,5,5\n" +
+                            "6,6,6\n" +
+                            "7,7,7\n" +
+                            "8,8,8\n" +
+                            "9,9,9\n" +
+                            "10,10,10\n" +
+                            "11,11,11\n" +
+                            "12,12,12\n" +
+                            "13,13,13\n" +
+                            "14,14,14\n" +
+                            "15,15,15\n" +
+                            "16,16,16\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                }
+            }
+        });
     }
 
     @Test
@@ -5492,7 +5694,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
@@ -5512,7 +5714,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
@@ -5531,7 +5733,7 @@ nodejs code:
             writerAsyncCommandBusyWaitTimeout = 1;
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
@@ -6421,14 +6623,13 @@ create table tab as (
     @Test
     public void testSmallSendBufferForRowData() throws Exception {
         assertMemoryLeak(() -> {
-
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public IODispatcherConfiguration getDispatcherConfiguration() {
                     return new DefaultIODispatcherConfiguration() {
                         @Override
                         public int getBindPort() {
-                            return 0;  // Bind to ANY port.
+                            return 0; // Bind to ANY port.
                         }
 
                         @Override
@@ -6975,6 +7176,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdate() throws Exception {
@@ -8945,7 +9150,7 @@ create table tab as (
         private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
-        public int send(long fd, long buffer, int bufferLen) {
+        public int send(int fd, long buffer, int bufferLen) {
             if (!delaying.get()) {
                 return super.send(fd, buffer, bufferLen);
             }

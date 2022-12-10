@@ -81,18 +81,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean explain = false;
     private boolean noMeta = false;
     private OperationFuture operationFuture;
+    private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private int queryState = QUERY_PREFIX;
     private short queryType;
-    private boolean quoteLargeNum;
+    private boolean quoteLargeNum = false;
     private Record record;
     private long recordCountNanos;
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
     private long stop;
-    private boolean timings;
+    private boolean timings = false;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -124,7 +125,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;
-        if (null != recordCursorFactory) {
+        if (recordCursorFactory != null) {
             if (queryCacheable) {
                 QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
             } else {
@@ -138,8 +139,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnIndex = 0;
         countRows = false;
         explain = false;
+        noMeta = false;
+        timings = false;
+        pausedQuery = false;
+        quoteLargeNum = false;
         queryJitCompiled = false;
         operationFuture = Misc.free(operationFuture);
+        skip = 0;
+        count = 0;
+        stop = 0;
     }
 
     @Override
@@ -158,13 +166,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.query.clear();
         TextUtil.utf8Decode(query.getLo(), query.getHi(), this.query);
         this.skip = skip;
-        this.count = 0L;
         this.stop = stop;
-        this.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        this.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
-        this.timings = Chars.equalsNc("true", request.getUrlParam("timings"));
-        this.explain = Chars.equalsNc("true", request.getUrlParam("explain"));
-        this.quoteLargeNum = Chars.equalsNc("true", request.getUrlParam("quoteLargeNum"))
+        count = 0L;
+        noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
+        countRows = Chars.equalsNc("true", request.getUrlParam("count"));
+        timings = Chars.equalsNc("true", request.getUrlParam("timings"));
+        explain = Chars.equalsNc("true", request.getUrlParam("explain"));
+        quoteLargeNum = Chars.equalsNc("true", request.getUrlParam("quoteLargeNum"))
                 || Chars.equalsNc("con", request.getUrlParam("src"));
     }
 
@@ -216,6 +224,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.info().$('[').$(getFd()).$("] ");
     }
 
+    public boolean isPausedQuery() {
+        return pausedQuery;
+    }
+
     public void logBufferTooSmall() {
         info().$("Response buffer is too small, state=").$(queryState).$();
     }
@@ -225,10 +237,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logExecuteNew() {
-        info().$("execute-new ").
-                $("[skip: ").$(skip).
-                $(", stop: ").$(stop).
-                $(']').$();
+        info().$("execute-new ")
+                .$("[skip: ").$(skip)
+                .$(", stop: ").$(stop)
+                .$(']').$();
     }
 
     public void logSqlError(FlyweightMessageContainer container) {
@@ -236,12 +248,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logTimings() {
-        info().$("timings ").
-                $("[compiler: ").$(compilerNanos).
-                $(", count: ").$(recordCountNanos).
-                $(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos).
-                $(", q=`").utf8(query).
-                $("`]").$();
+        info().$("timings ")
+                .$("[compiler: ").$(compilerNanos)
+                .$(", count: ").$(recordCountNanos)
+                .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
+                .$(", q=`").utf8(query)
+                .$("`]").$();
     }
 
     public void setCompilerNanos(long compilerNanos) {
@@ -250,6 +262,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void setOperationFuture(OperationFuture fut) {
         operationFuture = fut;
+    }
+
+    public void setPausedQuery(boolean pausedQuery) {
+        this.pausedQuery = pausedQuery;
     }
 
     public void setQueryType(short type) {
@@ -395,8 +411,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"');
     }
 
-    private boolean addColumnToOutput(RecordMetadata metadata, CharSequence columnNames, int start, int hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
-
+    private boolean addColumnToOutput(
+            RecordMetadata metadata,
+            CharSequence columnNames,
+            int start,
+            int hi
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
@@ -595,11 +615,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         socket.put('[');
         columnIndex = 0;
+        count++;
     }
 
     private void doQueryRecordSuffix(HttpChunkedResponseSocket socket) {
         queryState = QUERY_RECORD_SUFFIX;
-        count++;
         socket.bookmark();
         socket.put(']');
     }
@@ -646,7 +666,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doQuerySuffix(socket, columnCount);
     }
 
-    private long getFd() {
+    private int getFd() {
         return httpConnectionContext.getFd();
     }
 

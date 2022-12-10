@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.std.ObjList;
 
-final public class EmptyTableRecordCursor implements NoRandomAccessRecordCursor {
+public final class EmptyTableRecordCursor implements NoRandomAccessRecordCursor {
     public static final EmptyTableRecordCursor INSTANCE = new EmptyTableRecordCursor();
 
     private final Record record = new VirtualRecordNoRowid(new ObjList<>());

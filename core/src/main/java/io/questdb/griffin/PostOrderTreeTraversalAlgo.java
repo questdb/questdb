@@ -29,7 +29,7 @@ import io.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
 
-final public class PostOrderTreeTraversalAlgo {
+public final class PostOrderTreeTraversalAlgo {
     private final IntStack backupDepth = new IntStack();
     private final IntStack indexStack = new IntStack();
     private final IntStack indexStackBackup = new IntStack();

@@ -255,7 +255,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportCsvFailsOnStructureParsingIO() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 return -1L;
             }
         };
@@ -500,7 +500,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnBoundaryScanningIO() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 if (offset > 30000) {
                     return -1L;
                 } else {
@@ -534,7 +534,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 if (offset == 31 && len == 1940) {
                     return -1;
                 }
@@ -560,7 +560,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             int count = 0;
 
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "test-quotes-big.csv")) {
                     if (count++ > 1) {
                         return -1;
@@ -577,11 +577,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
                     return -1;
                 }
-
                 return super.openRW(name, opts);
             }
         };
@@ -594,7 +593,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnFileOpenInDataImportPhase() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "3_1")) {
                     return -1;
                 }
@@ -609,7 +608,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnFileOpenInIndexingPhase() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
                     return -1;
                 }
@@ -624,11 +623,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
                     return -1;
                 }
-
                 return super.openRW(name, opts);
             }
         };
@@ -640,7 +638,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnFileOpenInSymbolMergePhase() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "line.c")) {
                     return -1;
                 }
@@ -655,7 +653,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnFileSortingInIndexingPhase() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (Arrays.stream(new Exception().getStackTrace())
                         .anyMatch(ste -> ste.getClassName().endsWith("CsvFileIndexer") && ste.getMethodName().equals("sort"))) {
                     return -1;
@@ -671,11 +669,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFailsOnSourceFileIndexingIO() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 if (offset == 0 && len == 16797) {
                     return -1;
                 }
-
                 return super.read(fd, buf, len, offset);
             }
         };
@@ -1316,7 +1313,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long enqueueRead(long fd, long offset, long bufAddr, int len) {
+            public long enqueueRead(int fd, long offset, long bufAddr, int len) {
                 if (rnd.nextBoolean()) {
                     return super.enqueueRead(fd, offset, bufAddr, len);
                 }
@@ -2264,7 +2261,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ path) {
+            public int openRO(LPSZ path) {
                 if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
@@ -2325,7 +2322,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ path) {
+            public int openRO(LPSZ path) {
                 if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
@@ -2383,7 +2380,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             importer.setMinChunkSize(1);
             importer.of("table", fileName, 1, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
-            long fd = ff.openRO(path);
+            int fd = ff.openRO(path);
             long length = ff.length(fd);
             Assert.assertTrue(fd > -1);
 
@@ -2462,7 +2459,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             importer.setMinChunkSize(1);
             importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
 
-            long fd = TableUtils.openRO(ff, path, LOG);
+            int fd = TableUtils.openRO(ff, path, LOG);
             try (TableWriter ignored = importer.parseStructure(fd)) {
                 long length = ff.length(fd);
                 importer.phaseBoundaryCheck(length);

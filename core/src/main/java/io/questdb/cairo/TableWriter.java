@@ -178,7 +178,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private int indexCount;
     private long lastPartitionTimestamp;
     private LifecycleManager lifecycleManager;
-    private long lockFd = -1;
+    private int lockFd = -1;
     private long masterRef = 0;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
@@ -249,7 +249,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             if (lock) {
                 lock();
             } else {
-                this.lockFd = -1L;
+                this.lockFd = -1;
             }
             long todoCount = openTodoMem();
             int todo;
@@ -1767,7 +1767,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 '}';
     }
 
-    public void transferLock(long lockFd) {
+    public void transferLock(int lockFd) {
         assert lockFd != -1;
         this.lockFd = lockFd;
     }
@@ -2097,7 +2097,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             TableUtils.iFile(partitionPath, columnName, columnNameTxn);
 
             int typeSize = Long.BYTES;
-            long indexFd = openRO(ff, partitionPath, LOG);
+            int indexFd = openRO(ff, partitionPath, LOG);
             try {
                 long fileSize = ff.length(indexFd);
                 long expectedFileSize = (columnSize + 1) * typeSize;
@@ -2162,7 +2162,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             return;
         }
 
-        long fd = openRO(ff, partitionPath.$(), LOG);
+        int fd = openRO(ff, partitionPath.$(), LOG);
         try {
             long fileSize = ff.length(fd);
             int typeSize = Integer.BYTES;
@@ -3074,7 +3074,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             path.trimTo(rootLen);
         }
 
-        if (this.lockFd == -1L) {
+        if (this.lockFd == -1) {
             throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
@@ -4763,15 +4763,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             dFile(other, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
             if (ff.exists(other)) {
                 // read min timestamp value
-                final long fd = TableUtils.openRO(ff, other, LOG);
+                final int fd = TableUtils.openRO(ff, other, LOG);
                 try {
-                    return TableUtils.readLongOrFail(
-                            ff,
-                            fd,
-                            0,
-                            tempMem16b,
-                            other
-                    );
+                    return TableUtils.readLongOrFail(ff, fd, 0, tempMem16b, other);
                 } finally {
                     ff.close(fd);
                 }
@@ -4785,7 +4779,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private void readPartitionMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
         dFile(path, columnName, COLUMN_NAME_TXN_NONE);
-        final long fd = TableUtils.openRO(ff, path, LOG);
+        final int fd = TableUtils.openRO(ff, path, LOG);
         try {
             attachMinTimestamp = ff.readNonNegativeLong(fd, 0);
             attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
@@ -4843,7 +4837,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // Scan forward while value increases
 
             dFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE);
-            final long fd = TableUtils.openRO(ff, path, LOG);
+            final int fd = TableUtils.openRO(ff, path, LOG);
             try {
                 long fileSize = ff.length(fd);
                 if (fileSize <= 0) {
@@ -5550,7 +5544,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final long maxRow = txWriter.getTransientRowCount() - 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             ColumnIndexer indexer = denseIndexers.getQuick(i);
-            long fd = indexer.getFd();
+            int fd = indexer.getFd();
             if (fd > -1) {
                 LOG.info().$("recovering index [fd=").$(fd).I$();
                 indexer.rollback(maxRow);

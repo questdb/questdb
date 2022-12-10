@@ -70,8 +70,8 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private long statementTimeout = -1L;
 
-    public long connectAndSendRequest(String request) {
-        final long fd = nf.socketTcp(true);
+    public int connectAndSendRequest(String request) {
+        final int fd = nf.socketTcp(true);
         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
         try {
             TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
@@ -90,15 +90,15 @@ public class SendAndReceiveRequestBuilder {
         return fd;
     }
 
-    public long connectAndSendRequestWithHeaders(String request) {
+    public int connectAndSendRequestWithHeaders(String request) {
         return connectAndSendRequest(request + requestHeaders());
     }
 
     public void execute(
             String request,
-            CharSequence response
+            CharSequence expectedResponse
     ) throws InterruptedException {
-        final long fd = nf.socketTcp(true);
+        final int fd = nf.socketTcp(true);
         try {
             long sockAddrInfo = nf.sockaddr("127.0.0.1", 9001);
             try {
@@ -109,7 +109,7 @@ public class SendAndReceiveRequestBuilder {
                     nf.configureNonBlocking(fd);
                 }
 
-                executeWithSocket(request, response, fd);
+                executeWithSocket(request, expectedResponse, fd);
             } finally {
                 nf.freeSockAddr(sockAddrInfo);
             }
@@ -120,7 +120,7 @@ public class SendAndReceiveRequestBuilder {
 
     public void executeExplicit(
             String request,
-            long fd,
+            int fd,
             CharSequence expectedResponse,
             final int len,
             long ptr,
@@ -220,7 +220,7 @@ public class SendAndReceiveRequestBuilder {
     }
 
     public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
-        final long fd = nf.socketTcp(true);
+        final int fd = nf.socketTcp(true);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);
@@ -252,7 +252,7 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) {
+    public void executeUntilDisconnect(String request, int fd, final int len, long ptr, HttpClientStateListener listener) {
         withExpectDisconnect(true);
         long timestamp = System.currentTimeMillis();
         int sent = 0;
@@ -283,8 +283,9 @@ public class SendAndReceiveRequestBuilder {
                 }
             } else if (n < 0) {
                 LOG.error().$("server disconnected").$();
-                assert listener != null;
-                listener.onClosed();
+                if (listener != null) {
+                    listener.onClosed();
+                }
                 break;
             } else {
                 if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
@@ -310,7 +311,6 @@ public class SendAndReceiveRequestBuilder {
             LOG.error().$("timeout expired").$();
             Assert.fail();
         }
-
     }
 
     public void executeWithStandardHeaders(
@@ -372,12 +372,12 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    private void executeWithSocket(String request, CharSequence response, long fd) {
-        final int len = Math.max(response.length(), request.length()) * 2;
+    private void executeWithSocket(String request, CharSequence expectedResponse, int fd) {
+        final int len = Math.max(expectedResponse.length(), request.length()) * 2;
         long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int j = 0; j < requestCount; j++) {
-                executeExplicit(request, fd, response, len, ptr, null);
+                executeExplicit(request, fd, expectedResponse, len, ptr, null);
             }
         } finally {
             Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
