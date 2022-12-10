@@ -40,20 +40,32 @@ public class NumbersTest {
     @Test
     public void appendHexPadded() {
         sink.clear();
-        Numbers.appendHexPadded(sink, 0xff - 1, 16);
+        Numbers.appendHexPadded(sink, 0xff - 1, 2);
         TestUtils.assertEquals("00fe", sink);
+
+        sink.clear();
+        Numbers.appendHexPadded(sink, 0xff0, 4);
+        TestUtils.assertEquals("00000ff0", sink);
+
+        sink.clear();
+        Numbers.appendHexPadded(sink, 1, 4);
+        TestUtils.assertEquals("00000001", sink);
+
+        sink.clear();
+        Numbers.appendHexPadded(sink, 0xff - 1, 3);
+        TestUtils.assertEquals("0000fe", sink);
 
         sink.clear();
         Numbers.appendHexPadded(sink, 0xff - 1, 1);
         TestUtils.assertEquals("fe", sink);
 
         sink.clear();
-        Numbers.appendHexPadded(sink, 0xff0, 32);
-        TestUtils.assertEquals("00000ff0", sink);
+        Numbers.appendHexPadded(sink, 0xffff, 0);
+        TestUtils.assertEquals("ffff", sink);
 
         sink.clear();
-        Numbers.appendHexPadded(sink, 1, 32);
-        TestUtils.assertEquals("00000001", sink);
+        Numbers.appendHexPadded(sink, 0, 8);
+        TestUtils.assertEquals("0000000000000000", sink);
     }
 
     @Test(expected = NumericException.class)

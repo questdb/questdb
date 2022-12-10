@@ -29,11 +29,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -324,20 +320,34 @@ public final class Numbers {
         array[bit].append(sink, value);
     }
 
-    public static void appendHexPadded(CharSink sink, final long value, int padToBits) {
-        if (padToBits < 0 || padToBits > 64) {
-            throw new IllegalArgumentException("padToBits must be between 0 and 64");
-        }
-        if (value == Integer.MIN_VALUE) {
-            sink.put("NaN");
-            return;
-        }
+    /**
+     * Append a long value to a CharSink in hex format.
+     * 
+     * @param sink the CharSink to append to
+     * @param value the value to append
+     * @param padToBytes if non-zero, pad the output to the specified number of bytes
+     */
+    public static void appendHexPadded(CharSink sink, long value, int padToBytes) {
+        assert padToBytes >= 0 && padToBytes <= 8;
+        // This code might be unclear, so here are some hints: 
+        // This method uses longHexAppender() and longHexAppender() is always padding to a whole byte. It never prints
+        // just a nibble. It means the longHexAppender() will print value 0xf as "0f". Value 0xff will be printed as "ff".
+        // Value 0xfff will be printed as "0fff". Value 0xffff will be printed as "ffff" and so on. 
+        // So this method needs to pad only from the next whole byte up.
+        // In other words: This method always pads with full bytes (=even number of zeros), never with just a nibble.
 
+        // Example 1: Value is 0xF and padToBytes is 2. This means the desired output is 000f. 
+        // longHexAppender() pads to a full byte. This means it will output is 0f. So this method needs to pad with 2 zeros.
+
+        // Example 2: The value is 0xFF and padToBytes is 2. This means the desired output is 00ff.
+        // longHexAppender() will output "ff". This is a full byte so longHexAppender() will not do any padding on its own. 
+        // So this method needs to pad with 2 zeros.
         int leadingZeroBits = Long.numberOfLeadingZeros(value);
+        int padToBits = padToBytes << 3;
         int bitsToPad = padToBits - (Long.SIZE - leadingZeroBits);
-        bitsToPad = Math.max(bitsToPad, 0);
-        int zerosToAppend = (bitsToPad >> 2) & (0xFFFFFFFE);
-        for (int i = 0; i < zerosToAppend; i++) {
+        int bytesToPad = (bitsToPad >> 3);
+        for (int i = 0; i < bytesToPad; i++) {
+            sink.put('0');
             sink.put('0');
         }
         if (value == 0) {
@@ -457,15 +467,15 @@ public final class Numbers {
     }
 
     public static void appendUuid(long hi, long lo, CharSink sink) {
-        appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 32);
+        appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 4);
         sink.put('-');
-        appendHexPadded(sink, (hi >> 16) & 0xFFFF, 16);
+        appendHexPadded(sink, (hi >> 16) & 0xFFFF, 2);
         sink.put('-');
-        appendHexPadded(sink, hi & 0xFFFF, 16);
+        appendHexPadded(sink, hi & 0xFFFF, 2);
         sink.put('-');
-        appendHexPadded(sink, lo >> 48 & 0xFFFF, 16);
+        appendHexPadded(sink, lo >> 48 & 0xFFFF, 2);
         sink.put('-');
-        appendHexPadded(sink, lo & 0xFFFFFFFFFFFFL, 48);
+        appendHexPadded(sink, lo & 0xFFFFFFFFFFFFL, 6);
     }
 
     public static int bswap(int value) {
