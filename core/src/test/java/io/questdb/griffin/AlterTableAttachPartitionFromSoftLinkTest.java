@@ -43,6 +43,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     // this privilege is not granted by default. in addition, if User Account Control (UAC) is on, and 
     // the user has administrator privileges, tests must 'Run as administrator'.
 
+    private static final String activePartitionName = "2022-10-18";
+    private static final long activePartitionTimestamp;
     private static final String expectedMaxTimestamp = "2022-10-18T23:59:59.000000Z";
     private static final String expectedMinTimestamp = "2022-10-17T00:00:17.279900Z";
     private static final String readOnlyPartitionName = "2022-10-17";
@@ -279,6 +281,80 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5",
                                     "l\ti\ts\tts\n");
+                        } catch (SqlException ex) {
+                            Assert.fail(ex.getMessage());
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testInsertInTransaction() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            createTableWithReadOnlyPartition(tableName, () -> {
+                        try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5",
+                                    "l\ti\ts\tts\n" +
+                                            "5001\t5001\t\t2022-10-18T00:00:16.779900Z\n" +
+                                            "5002\t5002\tHYRX\t2022-10-18T00:00:34.059800Z\n" +
+                                            "5003\t5003\tCPSW\t2022-10-18T00:00:51.339700Z\n" +
+                                            "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n" +
+                                            "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n"
+                            );
+
+                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "write-rows")) {
+                                TableWriter.Row row = writer.newRow(activePartitionTimestamp);
+                                row.putLong(0, 2023);
+                                row.putInt(1, 12);
+                                row.putSym(2, "December");
+                                row.append();
+
+                                row = writer.newRow(readOnlyPartitionTimestamp);
+                                row.putLong(0, 2023);
+                                row.putInt(1, 11);
+                                row.putSym(2, "Norway");
+                                row.append();
+
+                                try {
+                                    writer.commit();
+                                    Assert.fail();
+                                } catch (ReadOnlyViolationException expected) {
+                                    TestUtils.assertContains(
+                                            "cannot insert into read-only partition [table=" + tableName + ", partitionTimestamp=" + readOnlyPartitionName + "T00:00:00.000Z]",
+                                            expected.getFlyweightMessage());
+                                }
+
+                                assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5",
+                                        "l\ti\ts\tts\n" +
+                                                "5001\t5001\t\t2022-10-18T00:00:16.779900Z\n" +
+                                                "5002\t5002\tHYRX\t2022-10-18T00:00:34.059800Z\n" +
+                                                "5003\t5003\tCPSW\t2022-10-18T00:00:51.339700Z\n" +
+                                                "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n" +
+                                                "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n"
+                                );
+
+                                row = writer.newRow(activePartitionTimestamp);
+                                row.putLong(0, 2023);
+                                row.putInt(1, 10);
+                                row.putSym(2, "Octopus");
+                                row.append();
+
+                                writer.commit();
+                            }
+                            assertUpdateFailsBecausePartitionIsReadOnly(
+                                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + readOnlyPartitionName + "T23:59:42.220100Z'",
+                                    tableName,
+                                    readOnlyPartitionName
+                            );
+
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE s = 'Octopus'",
+                                    "l\ti\ts\tts\n" +
+                                            "2023\t10\tOctopus\t2022-10-18T00:00:00.000000Z\n");
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -997,6 +1073,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     static {
         try {
             readOnlyPartitionTimestamp = TimestampFormatUtils.parseTimestamp(readOnlyPartitionName + "T00:00:00.000Z");
+            activePartitionTimestamp = TimestampFormatUtils.parseTimestamp(activePartitionName + "T00:00:00.000Z");
         } catch (NumericException impossible) {
             throw new RuntimeException(impossible);
         }
