@@ -28,7 +28,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -391,6 +390,19 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);
     }
 
+    private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
+        if (isReadOnly) {
+            maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
+        } else {
+            maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+        }
+        return maskedSize;
+    }
+
+    private static long updatePartitionSize(long maskedSize, long partitionSize) {
+        return (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK);
+    }
+
     private int calculateWriteOffset(int areaSize) {
         boolean currentIsA = (baseVersion & 1L) == 0L;
         int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
@@ -559,17 +571,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
     }
 
-    static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
-        if (isReadOnly) {
-            maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
-        } else {
-            maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
-        }
-        return maskedSize;
-    }
-
-    static long updatePartitionSize(long maskedSize, long partitionSize) {
-        return (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK);
+    static void setPartitionIsClosedByIndex(LongList partitionTable, int index) {
+        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = partitionTable.getQuick(offset);
+        partitionTable.setQuick(offset, updatePartitionSize(maskedSize, PARTITION_SIZE_MASK));
     }
 
     static boolean updatePartitionSizeByIndex(LongList partitionTable, int index, long partitionSize) {

@@ -105,7 +105,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").utf8(this.tableName)
                     .I$();
-            this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
             columnCount = metadata.getColumnCount();
@@ -130,7 +130,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
                 final int baseOffset = i * LONGS_PER_TX_ATTACHED_PARTITION;
                 openPartitionInfo.setQuick(baseOffset + PARTITION_TS_OFFSET, txFile.getPartitionTimestamp(i));
-                openPartitionInfo.setQuick(baseOffset + PARTITION_MASKED_SIZE_OFFSET, PARTITION_SIZE_MASK);
+                TxWriter.setPartitionIsClosedByIndex(openPartitionInfo, baseOffset);
                 openPartitionInfo.setQuick(baseOffset + PARTITION_NAME_TX_OFFSET, txFile.getPartitionNameTxn(i));
                 openPartitionInfo.setQuick(baseOffset + PARTITION_COLUMN_VERSION_OFFSET, txFile.getPartitionColumnVersion(i));
             }
@@ -516,9 +516,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < this.columnCount; i++) {
                 closePartitionColumnFile(oldBase, i);
             }
-            long maskedSize = openPartitionInfo.getQuick(offset + PARTITION_MASKED_SIZE_OFFSET);
-            openPartitionInfo.setQuick(offset + PARTITION_MASKED_SIZE_OFFSET,
-                    TxWriter.updatePartitionSize(maskedSize, PARTITION_SIZE_MASK)); // preserves current mask
+            TxWriter.setPartitionIsClosedByIndex(openPartitionInfo, offset);
             return -1;
         }
         pathGenPartitioned(partitionIndex);
@@ -847,7 +845,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reOpenPartition(int offset, int partitionIndex, long txPartitionNameTxn) {
-        openPartitionInfo.setQuick(offset + PARTITION_MASKED_SIZE_OFFSET, PARTITION_SIZE_MASK);
+        TxWriter.setPartitionIsClosedByIndex(openPartitionInfo, offset);
         openPartition0(partitionIndex);
         openPartitionInfo.setQuick(offset + PARTITION_NAME_TX_OFFSET, txPartitionNameTxn);
     }
