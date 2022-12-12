@@ -940,7 +940,7 @@ public class O3Test extends AbstractO3Test {
                             strColVal + "\t2022-02-24T00:51:34.360000Z\n");
                 }, new TestFilesFacadeImpl() {
                     @Override
-                    public long write(long fd, long address, long len, long offset) {
+                    public long write(int fd, long address, long len, long offset) {
                         writeLen.add(len);
                         return super.write(fd, address, len, offset);
                     }

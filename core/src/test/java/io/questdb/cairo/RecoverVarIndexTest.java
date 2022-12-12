@@ -61,7 +61,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
         bindVariableService.clear();
     }
 
@@ -322,7 +323,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             AtomicInteger count = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.contains(name, "str2.i") && count.incrementAndGet() == 14) {
                         return -1;
                     }

@@ -108,7 +108,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean checkIfTripped(long millis, long fd) {
+            public boolean checkIfTripped(long millis, int fd) {
                 return false;
             }
 
@@ -118,7 +118,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long getFd() {
+            public int getFd() {
                 return -1;
             }
 
@@ -133,7 +133,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public void setFd(long fd) {
+            public void setFd(int fd) {
             }
 
             @Override

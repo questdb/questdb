@@ -3522,9 +3522,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByIOFailure() throws Exception {
         assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
-
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     if (Chars.endsWith(name, "b.d")) {
                         return -1;
                     }

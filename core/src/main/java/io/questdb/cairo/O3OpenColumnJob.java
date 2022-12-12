@@ -187,7 +187,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long partitionTimestamp = task.getPartitionTimestamp();
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataTxn = task.getSrcDataTxn();
-        final long srcTimestampFd = task.getSrcTimestampFd();
+        final int srcTimestampFd = task.getSrcTimestampFd();
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
         final AtomicInteger columnCounter = task.getColumnCounter();
@@ -209,8 +209,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final int mergeType = task.getMergeType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final long timestampMergeIndexSize = task.getTimestampMergeIndexSize();
-        final long activeFixFd = task.getActiveFixFd();
-        final long activeVarFd = task.getActiveVarFd();
+        final int activeFixFd = task.getActiveFixFd();
+        final int activeVarFd = task.getActiveVarFd();
         final long srcDataTop = task.getSrcDataTop();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
@@ -300,12 +300,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int suffixType,
             long suffixLo,
             long suffixHi,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int indexBlockCapacity,
-            long activeFixFd,
-            long activeVarFd,
+            int activeFixFd,
+            int activeVarFd,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -488,18 +488,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataMax,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            long dstFixFd,
+            int dstFixFd,
             MemoryMA dstFixMem,
             long dstLen,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long columnNameTxn
     ) {
-        long dstKFd = 0;
-        long dstVFd = 0;
+        int dstKFd = 0;
+        int dstVFd = 0;
         long dstFixAddr;
         long dstFixOffset;
         long dstFixFileOffset;
@@ -623,7 +623,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataMax,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
@@ -632,8 +632,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int columnIndex,
             long columnNameTxn
     ) {
-        long dstFixFd = 0;
-        long dstVarFd = 0;
+        int dstFixFd = 0;
+        int dstVarFd = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
         if (srcDataTop == -1) {
             try {
@@ -813,14 +813,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long columnNameTxn
     ) {
-        long dstFixFd = 0;
+        int dstFixFd = 0;
         long dstFixAddr = 0;
         long dstFixSize = 0;
-        long dstVarFd = 0;
+        int dstVarFd = 0;
         long dstVarAddr = 0;
         long dstVarSize = 0;
-        long dstKFd = 0;
-        long dstVFd = 0;
+        int dstKFd = 0;
+        int dstVFd = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         try {
@@ -931,14 +931,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long partitionTimestamp,
             long srcDataMax,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             MemoryMA dstFixMem,
             long dstLen,
             TableWriter tableWriter
     ) {
-        long dstFixFd = 0;
+        int dstFixFd = 0;
         long dstFixAddr;
         long dstFixOffset;
         long dstFixFileOffset;
@@ -1043,11 +1043,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataMax,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            long activeFixFd,
-            long activeVarFd,
+            int activeFixFd,
+            int activeVarFd,
             MemoryMA dstFixMem,
             MemoryMA dstVarMem,
             long dstLen,
@@ -1170,7 +1170,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
@@ -1207,8 +1207,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oooPartitionHi,
             long srcDataMax,
             long srcDataTop,
-            long srcDataFixFd,
-            long srcTimestampFd,
+            int srcDataFixFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             long txn,
@@ -1237,13 +1237,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long srcDataFixAddr = 0;
         final int pDirNameLen;
         long dstFixAppendOffset2;
-        long dstFixFd = 0;
+        int dstFixFd = 0;
         long dstFixAddr = 0;
         long srcDataTopOffset;
         long dstFixSize = 0;
-        long dstKFd = 0;
-        long dstVFd = 0;
-        final long srcFixFd = Math.abs(srcDataFixFd);
+        int dstKFd = 0;
+        int dstVFd = 0;
+        final int srcFixFd = Math.abs(srcDataFixFd);
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
         final FilesFacade ff = tableWriter.getFilesFacade();
         final boolean directIoFlag = tableWriter.preferDirectIO();
@@ -1438,9 +1438,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long suffixLo,
             long suffixHi,
             int indexBlockCapacity,
-            long activeFixFd,
-            long activeVarFd,
-            long srcTimestampFd,
+            int activeFixFd,
+            int activeVarFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
@@ -1576,7 +1576,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long suffixLo,
             long suffixHi,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
@@ -1609,8 +1609,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             }
         }
 
-        long srcDataFixFd = 0;
-        long srcDataVarFd = 0;
+        int srcDataFixFd = 0;
+        int srcDataVarFd = 0;
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
@@ -1785,17 +1785,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long suffixLo,
             long suffixHi,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            long srcDataFixFd,
-            long srcDataVarFd,
+            int srcDataFixFd,
+            int srcDataVarFd,
             TableWriter tableWriter,
             long colTopSinkAddr,
             long columnNameTxn
     ) {
         int partCount = 0;
-        long dstVarFd = 0;
+        int dstVarFd = 0;
         long dstVarAddr = 0;
         long srcDataFixOffset;
         long srcDataFixAddr = 0;
@@ -1808,13 +1808,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long srcDataVarSize = 0;
         long dstVarAppendOffset2;
         long dstFixAppendOffset2;
-        long dstFixFd = 0;
+        int dstFixFd = 0;
         long dstFixAddr = 0;
         long srcDataVarAddr = 0;
         long srcDataVarOffset = 0;
         long dstVarAppendOffset1 = 0;
-        final long srcFixFd = Math.abs(srcDataFixFd);
-        final long srcVarFd = Math.abs(srcDataVarFd);
+        final int srcFixFd = Math.abs(srcDataFixFd);
+        final int srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
         final boolean directIoFlag = tableWriter.preferDirectIO();
 
@@ -2108,11 +2108,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int blockType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -2130,23 +2130,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
             long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
@@ -2273,11 +2273,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int blockType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -2295,23 +2295,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
             long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
@@ -2439,11 +2439,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int blockType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -2461,24 +2461,24 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long timestampMin,
             long timestampMax,
             long partitionTimestamp,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
             long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
             long cursor,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
@@ -2547,11 +2547,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int columnType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -2576,20 +2576,20 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int suffixType,
             long suffixLo,
             long suffixHi,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarSize,
             long dstFixAppendOffset1,
             long dstFixAppendOffset2,
             long dstVarAppendOffset1,
             long dstVarAppendOffset2,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,

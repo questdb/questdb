@@ -278,7 +278,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 if (trimSize > -1) {
                     FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    long fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
+                    int fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
                     assert fd > -1;
                     ff.truncate(fd, trimSize);
                     ff.close(fd);

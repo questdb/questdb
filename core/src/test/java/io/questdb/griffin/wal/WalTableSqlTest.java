@@ -686,7 +686,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         String tableName = testName.getMethodName();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
                     try {
                         compile("drop table " + tableName);
@@ -847,8 +847,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             int i = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
-                long fd = super.openRW(name, opts);
+            public int openRW(LPSZ name, long opts) {
+                int fd = super.openRW(name, opts);
                 if (Chars.contains(name, "2022-02-25") && i++ == 0) {
                     try {
                         compile("drop table " + newTableName);

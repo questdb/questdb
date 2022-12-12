@@ -112,7 +112,7 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 int attempt = 0;
 
                 @Override
-                public long openRO(LPSZ path) {
+                public int openRO(LPSZ path) {
                     if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
                         return -1;
                     }
@@ -266,13 +266,12 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 engine.releaseAllWriters();
                 ff = new TestFilesFacadeImpl() {
                     @Override
-                    public long openRO(LPSZ from) {
+                    public int openRO(LPSZ from) {
                         if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
                             return -1;
                         }
                         return super.openRO(from);
                     }
-
                 };
                 try {
                     compile(alterCommand, sqlExecutionContext);

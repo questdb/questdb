@@ -45,6 +45,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -264,9 +265,9 @@ public class SqlCompiler implements Closeable {
         return compiledQuery;
     }
 
-    /*
+    /**
      * Allows processing of batches of sql statements (sql scripts) separated by ';' .
-     * Each query is processed in sequence and processing stops on first error and whole batch gets discarded .
+     * Each query is processed in sequence and processing stops on first error and whole batch gets discarded.
      * Noteworthy difference between this and 'normal' query is that all empty queries get ignored, e.g.
      * <br>
      * select 1;<br>
@@ -275,15 +276,15 @@ public class SqlCompiler implements Closeable {
      * <p>
      * Useful PG doc link :
      *
-     * @param query            - block of queries to process
-     * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
+     * @param query         - block of queries to process
+     * @param batchCallback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
     public void compileBatch(
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
 
         LOG.info().$("batch [text=").$(query).I$();
 
@@ -298,7 +299,7 @@ public class SqlCompiler implements Closeable {
         int position;
 
         while (lexer.hasNext()) {
-            //skip over empty statements that'd cause error in parser
+            // skip over empty statements that'd cause error in parser
             position = getNextValidTokenPosition();
             if (position == -1) {
                 return;
@@ -308,10 +309,10 @@ public class SqlCompiler implements Closeable {
             for (int retries = 0; recompileStale; retries++) {
                 try {
                     batchCallback.preCompile(this);
-                    clear();//we don't use normal compile here because we can't reset existing lexer
+                    clear(); // we don't use normal compile here because we can't reset existing lexer
                     CompiledQuery current = compileInner(executionContext, query);
-                    //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-                    //some code in postCompile might need full text of current query
+                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    // some code in postCompile might need full text of current query
                     CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
                     batchCallback.postCompile(this, current, currentQuery);
                     recompileStale = false;

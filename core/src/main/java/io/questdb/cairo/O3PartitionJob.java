@@ -84,7 +84,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int pplen = path.length();
         TableUtils.txnPartitionConditionally(path, srcDataTxn);
         final int plen = path.length();
-        long srcTimestampFd = 0;
+        int srcTimestampFd = 0;
         long dataTimestampLo;
         long dataTimestampHi;
         final FilesFacade ff = tableWriter.getFilesFacade();
@@ -648,12 +648,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int suffixType,
             long suffixLo,
             long suffixHi,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int indexBlockCapacity,
-            long activeFixFd,
-            long activeVarFd,
+            int activeFixFd,
+            int activeVarFd,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -795,11 +795,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long suffixLo,
             long suffixHi,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            long activeFixFd,
-            long activeVarFd,
+            int activeFixFd,
+            int activeVarFd,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -881,7 +881,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcDataMax,
             long srcDataTxn,
             int openColumnMode,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int timestampIndex,
@@ -897,7 +897,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         tableWriter.addPhysicallyWrittenRows(
                 O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
                         ? srcOooBatchRowSize
-                        : srcDataMax + srcOooBatchRowSize);
+                        : srcDataMax + srcOooBatchRowSize
+        );
 
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 
@@ -942,8 +943,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final MemoryCR oooMem2 = oooColumns.getQuick(colOffset + 1);
                 final MemoryMA mem1 = columns.getQuick(colOffset);
                 final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-                final long activeFixFd;
-                final long activeVarFd;
+                final int activeFixFd;
+                final int activeVarFd;
                 final long srcDataTop;
                 final long srcOooFixAddr;
                 final long srcOooVarAddr;

@@ -1855,7 +1855,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                 dFile(src.chop$(), "ts", -1);
-                long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
+                int fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 8);
                 } finally {

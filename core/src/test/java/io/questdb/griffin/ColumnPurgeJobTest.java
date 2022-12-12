@@ -175,22 +175,22 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                 private long completedFd;
 
                 @Override
-                public boolean allocate(long fd, long size) {
+                public boolean allocate(int fd, long size) {
                     if (completedFd == fd) {
                         throw new RuntimeException("TEST ERROR");
                     }
                     return super.allocate(fd, size);
                 }
 
-                public boolean close(long fd) {
+                public boolean close(int fd) {
                     if (fd == completedFd) {
                         completedFd = -1;
                     }
                     return super.close(fd);
                 }
 
-                public long openRW(LPSZ name, long opts) {
-                    long fd = super.openRW(name, opts);
+                public int openRW(LPSZ name, long opts) {
+                    int fd = super.openRW(name, opts);
                     if (Chars.endsWith(name, "completed.d")) {
                         completedFd = fd;
                     }

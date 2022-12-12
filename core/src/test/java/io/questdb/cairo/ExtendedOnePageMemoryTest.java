@@ -56,7 +56,7 @@ public class ExtendedOnePageMemoryTest {
     public static void beforeClass() {
         ff = new TestFilesFacadeImpl() {
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }
@@ -64,7 +64,7 @@ public class ExtendedOnePageMemoryTest {
             }
 
             @Override
-            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }

@@ -187,7 +187,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String ilpResourceName) throws Exception {
         assertMemoryLeak(() -> {
-            long clientFd = Net.socketTcp(true);
+            int clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
 
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());

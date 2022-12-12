@@ -129,7 +129,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                         if (Files.isDir(pUtf8NameZ, type)) {
                             path.trimTo(plimit);
                             if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
-                                long fd = ff.openRO(path);
+                                int fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
                                         tableId = Unsafe.getUnsafe().getInt(tempMem);

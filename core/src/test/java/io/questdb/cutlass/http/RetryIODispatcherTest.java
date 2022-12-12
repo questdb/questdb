@@ -51,10 +51,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
-// These test the retry behaviour of IODispatcher, HttpConnectionContext
-// They run the same test multiple times in order to test concurrent retry executions
+// These tests verify retry behaviour of IODispatcher and HttpConnectionContext.
+// They run the same test multiple times in order to test concurrent retry executions.
 // If a test becomes unstable (fails sometimes on build server or local run), increase number of iterations
-// to reproduce failure.
+// to reproduce the failure.
 public class RetryIODispatcherTest {
     private static final Log LOG = LogFactory.getLog(RetryIODispatcherTest.class);
 
@@ -549,7 +549,7 @@ public class RetryIODispatcherTest {
                     final int validRequestRecordCount = 24;
                     final int insertCount = 1;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    long[] fds = new long[parallelCount * insertCount];
+                    int[] fds = new int[parallelCount * insertCount];
                     Arrays.fill(fds, -1);
                     for (int i = 0; i < parallelCount; i++) {
                         final int threadI = i;
@@ -558,7 +558,7 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(ValidImportRequest);
+                                        int fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(ValidImportRequest);
                                         fds[threadI * insertCount + r] = fd;
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -573,9 +573,9 @@ public class RetryIODispatcherTest {
                     countDownLatch.await();
                     assertNRowsInserted(validRequestRecordCount);
 
-                    for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
-                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    for (int fd : fds) {
+                        Assert.assertNotEquals(fd, -1);
+                        NetworkFacadeImpl.INSTANCE.close(fd);
                     }
 
                     // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
@@ -747,7 +747,7 @@ public class RetryIODispatcherTest {
 
                     TableWriter writer = lockWriter(engine, "balances_x");
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    long[] fds = new long[parallelCount];
+                    int[] fds = new int[parallelCount];
                     Arrays.fill(fds, -1);
                     Thread[] threads = new Thread[parallelCount];
                     for (int i = 0; i < parallelCount; i++) {
@@ -760,7 +760,7 @@ public class RetryIODispatcherTest {
                                     Os.sleep(threadI * 5);
                                     String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
                                             "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
-                                    long fd = new SendAndReceiveRequestBuilder()
+                                    int fd = new SendAndReceiveRequestBuilder()
                                             .withClientLinger(60)
                                             .connectAndSendRequest(request);
                                     fds[threadI] = fd;
@@ -858,5 +858,4 @@ public class RetryIODispatcherTest {
                         "00\r\n" +
                         "\r\n");
     }
-
 }

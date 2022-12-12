@@ -1920,7 +1920,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
                 ff = new TestFilesFacadeImpl() {
                     @Override
-                    public long openRO(LPSZ name) {
+                    public int openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return TestFilesFacadeImpl.INSTANCE.openRO(temp);
                         }
@@ -1956,10 +1956,10 @@ public class TableReaderTest extends AbstractCairoTest {
             try (Path temp = new Path()) {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
                 ff = new TestFilesFacadeImpl() {
-                    long metaFd = -1;
+                    int metaFd = -1;
 
                     @Override
-                    public long length(long fd) {
+                    public long length(int fd) {
                         if (fd == metaFd) {
                             return Files.length(temp);
                         }
@@ -1975,7 +1975,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long openRO(LPSZ name) {
+                    public int openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
                             return metaFd = TestFilesFacadeImpl.INSTANCE.openRO(name);
                         }
@@ -3911,14 +3911,14 @@ public class TableReaderTest extends AbstractCairoTest {
             boolean called = false;
 
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 fds.remove(fd);
                 return super.close(fd);
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
+            public int openRO(LPSZ name) {
+                int fd = super.openRO(name);
                 if (Chars.endsWith(name, dcol) || Chars.endsWith(name, icol)) {
                     fds.add(fd);
                     called = true;
@@ -4059,7 +4059,6 @@ public class TableReaderTest extends AbstractCairoTest {
 
             long blob = allocBlob();
             try {
-
                 // test if reader behaves correctly when table is empty
 
                 try (TableReader reader = newTableReader(configuration, "all")) {
@@ -4070,7 +4069,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 try (TableReader reader = newTableReader(configuration, "all")) {
-
                     RecordCursor cursor = reader.getCursor();
                     // this combination of reload/iterate/reload is deliberate
                     // we make sure that reload() behavior is not affected by

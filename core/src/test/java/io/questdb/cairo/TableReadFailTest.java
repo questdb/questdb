@@ -41,7 +41,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -56,7 +56,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         spinLockTimeout = 1;
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ path) {
+            public int openRO(LPSZ path) {
                 if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -182,7 +182,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testTxnFileCannotOpenConstructor() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME)) {
                     return -1;
                 }

@@ -72,7 +72,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openCleanRW(LPSZ name, long fd) {
+                public int openCleanRW(LPSZ name, long size) {
                     return -1;
                 }
             };
@@ -94,7 +94,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openCleanRW(LPSZ name, long fd) {
+                public int openCleanRW(LPSZ name, long size) {
                     return -1;
                 }
             };
@@ -124,7 +124,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(1499, scoreboard.getMin());
                 }
-
 
                 // second open is exclusive, file should be truncated
                 try (
@@ -340,7 +339,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     return -1;
                 }
             };
@@ -362,7 +361,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     return -1;
                 }
             };

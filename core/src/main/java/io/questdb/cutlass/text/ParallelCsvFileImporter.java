@@ -377,7 +377,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void process() throws TextImportException {
         final long startMs = getCurrentTimeMs();
 
-        long fd = -1;
+        int fd = -1;
         try {
             try {
                 updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
@@ -1177,7 +1177,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return taskIds;
     }
 
-    TableWriter parseStructure(long fd) throws TextImportException {
+    TableWriter parseStructure(int fd) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 

@@ -53,7 +53,7 @@ public class TableNameRegistryFileStore implements Closeable {
     private final IntHashSet tableIds = new IntHashSet();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
-    private long lockFd = -1;
+    private int lockFd = -1;
 
     public TableNameRegistryFileStore(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -183,7 +183,7 @@ public class TableNameRegistryFileStore implements Closeable {
 
     private int readTableId(Path path, String dirName, FilesFacade ff) {
         path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.META_FILE_NAME).$();
-        long fd = ff.openRO(path);
+        int fd = ff.openRO(path);
         if (fd < 1) {
             return 0;
         }

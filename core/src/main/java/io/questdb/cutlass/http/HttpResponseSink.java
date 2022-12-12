@@ -58,7 +58,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean compressionComplete;
     private int crc = 0;
     private boolean deflateBeforeSend = false;
-    private long fd;
+    private int fd;
     private boolean headersSent;
     private long total = 0;
     private long totalBytesSent = 0;
@@ -232,8 +232,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         if (z_streamp != 0) {
             Zip.deflateReset(z_streamp);
             compressOutBuffer.clear();
-            this.crc = 0;
-            this.total = 0;
+            crc = 0;
+            total = 0;
             compressedHeaderDone = false;
             compressedOutputReady = false;
             compressionComplete = false;
@@ -278,7 +278,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         return totalBytesSent;
     }
 
-    void of(long fd) {
+    void of(int fd) {
         this.fd = fd;
         if (fd > -1) {
             this.buffer.reopen();

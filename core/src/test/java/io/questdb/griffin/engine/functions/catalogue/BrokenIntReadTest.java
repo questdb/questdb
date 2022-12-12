@@ -214,7 +214,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         }
 
         @Override
-        public long read(long fd, long buf, long len, long offset) {
+        public long read(int fd, long buf, long len, long offset) {
             callCount++;
             if (callCount == failOnCount) {
                 return -1;

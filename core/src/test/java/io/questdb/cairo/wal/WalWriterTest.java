@@ -1197,7 +1197,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
                         return -1;
                     }
@@ -1355,7 +1355,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
@@ -1383,7 +1383,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeFails() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
@@ -1416,7 +1416,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeMissing() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(long fd, long offset) {
+            public long readNonNegativeLong(int fd, long offset) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
@@ -2796,10 +2796,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
 
         FilesFacade ff = new TestFilesFacadeImpl() {
-            long eventFileFd;
+            int eventFileFd;
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 long len = super.length(fd);
                 if (fd == eventFileFd && evenFileLengthCallBack.get() != null) {
                     try {
@@ -2813,7 +2813,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == eventFileFd) {
                     if (evenFileLengthCallBack.get() != null) {
                         try {
@@ -2832,8 +2832,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long openRO(LPSZ path) {
-                long fd = super.openRO(path);
+            public int openRO(LPSZ path) {
+                int fd = super.openRO(path);
                 if (Chars.endsWith(path, EVENT_FILE_NAME)) {
                     eventFileFd = fd;
                 }

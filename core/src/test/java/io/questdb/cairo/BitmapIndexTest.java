@@ -1439,7 +1439,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
                 path.of(configuration.getRoot()).concat("x").put(".k").$();
-                long fd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
+                int fd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 64);
                 } finally {

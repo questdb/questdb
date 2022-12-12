@@ -45,13 +45,13 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public boolean close(long fd) {
+    public boolean close(int fd) {
         untrack(fd);
         return super.close(fd);
     }
 
     @Override
-    public boolean closeRemove(long fd, LPSZ path) {
+    public boolean closeRemove(int fd, LPSZ path) {
         if (fd > -1) {
             if (untrack(fd) != 0) {
                 // Make sure only 1 usage found so that it's safe to remove after close
@@ -64,29 +64,29 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public long openAppend(LPSZ name) {
-        long fd = super.openAppend(name);
+    public int openAppend(LPSZ name) {
+        int fd = super.openAppend(name);
         track(name, fd);
         return fd;
     }
 
     @Override
-    public long openCleanRW(LPSZ name, long size) {
-        long fd = super.openCleanRW(name, size);
+    public int openCleanRW(LPSZ name, long size) {
+        int fd = super.openCleanRW(name, size);
         track(name, fd);
         return fd;
     }
 
     @Override
-    public long openRO(LPSZ name) {
-        long fd = super.openRO(name);
+    public int openRO(LPSZ name) {
+        int fd = super.openRO(name);
         track(name, fd);
         return fd;
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
-        long fd = super.openRW(name, opts);
+    public int openRW(LPSZ name, long opts) {
+        int fd = super.openRW(name, opts);
         track(name, fd);
         return fd;
     }

@@ -1016,7 +1016,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 boolean invoked = false;
 
                 @Override
-                public boolean closeRemove(long fd, LPSZ name) {
+                public boolean closeRemove(int fd, LPSZ name) {
                     if (Chars.endsWith(name, ".lock")) {
                         invoked = true;
                         super.close(fd);
@@ -1108,11 +1108,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd eRnd = new Rnd();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
-                private long fd = -1;
+                private int fd = -1;
                 private int mapCount = 0;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1124,7 +1124,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     if (fd == this.fd) {
                         if (mapCount == 1) {
                             return -1;
@@ -1135,7 +1135,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
@@ -1268,7 +1268,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
-                private long fd = -1;
+                private int fd = -1;
 
                 @Override
                 public long getMapPageSize() {
@@ -1276,7 +1276,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         return -1;
@@ -1285,7 +1285,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);
@@ -1441,11 +1441,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd eRnd = new Rnd();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
-                private long fd = -1;
+                private int fd = -1;
                 private int mapCount = 0;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1457,7 +1457,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1469,7 +1469,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
                         return fd = super.openRW(name, opts);

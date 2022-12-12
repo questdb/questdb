@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -63,7 +64,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -162,26 +163,6 @@ public class IODispatcherTest {
                 ));
     }
 
-    @Test
-    public void queryWithDoubleQuotesParsedCorrectly() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> {
-                    // select 1 as "select"
-                    // with select being the column name to check double quote parsing
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
-                            "67\r\n"
-                                    + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
-                                    + "00\r\n"
-                                    + "\r\n"
-                    );
-                });
-    }
-
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -222,6 +203,7 @@ public class IODispatcherTest {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
                                             context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
+                                        return true;
                                     }
                             );
                         }
@@ -230,7 +212,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -245,7 +227,6 @@ public class IODispatcherTest {
                             } finally {
                                 Unsafe.free(buffer, 2048, MemoryTag.NATIVE_DEFAULT);
                             }
-
 
                             Assert.assertEquals(0, Net.close(fd));
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
@@ -298,24 +279,23 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final HttpContextConfiguration httpContextConfiguration = new DefaultHttpContextConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
-                long theFd;
+                int theFd;
 
                 @Override
-                public long accept(long serverFd) {
-                    long fd = super.accept(serverFd);
+                public int accept(int serverFd) {
+                    int fd = super.accept(serverFd);
                     theFd = fd;
                     return fd;
                 }
 
                 @Override
-                public int configureNonBlocking(long fd) {
+                public int configureNonBlocking(int fd) {
                     if (fd == theFd) {
                         return -1;
                     }
                     return super.configureNonBlocking(fd);
                 }
             };
-
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
@@ -326,7 +306,6 @@ public class IODispatcherTest {
                     },
                     (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
             )) {
-
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
                 SOCountDownLatch dispatcherHaltLatch = new SOCountDownLatch(1);
@@ -343,7 +322,7 @@ public class IODispatcherTest {
 
                 try {
                     long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
-                    long fd = Net.socketTcp(true);
+                    int fd = Net.socketTcp(true);
                     try {
                         TestUtils.assertConnect(fd, socketAddr);
 
@@ -394,7 +373,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -445,7 +424,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -1833,7 +1812,7 @@ public class IODispatcherTest {
                         "--------------------------27d997ca93d2689d--",
                 new NetworkFacadeImpl() {
                     @Override
-                    public int send(long fd, long buffer, int bufferLen) {
+                    public int send(int fd, long buffer, int bufferLen) {
                         // ensure we do not send more than one byte at a time
                         if (bufferLen > 0) {
                             return super.send(fd, buffer, 1);
@@ -1940,7 +1919,7 @@ public class IODispatcherTest {
                     int totalSent = 0;
 
                     @Override
-                    public int send(long fd, long buffer, int bufferLen) {
+                    public int send(int fd, long buffer, int bufferLen) {
                         if (bufferLen > 0) {
                             int result = super.send(fd, buffer, 1);
                             totalSent += result;
@@ -3060,7 +3039,7 @@ public class IODispatcherTest {
                             "\r\n";
 
                     NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = nf.socketTcp(true);
+                    int fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -3106,6 +3085,49 @@ public class IODispatcherTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(60_000) // use a large value for query timeout
+                .run((engine) -> {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    final String query = "select * from test_data_unavailable(1, 10)";
+                    final String request = "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n"
+                            + SendAndReceiveRequestBuilder.RequestHeaders;
+
+                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                    int fd = -1;
+                    try {
+                        fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
+                        TestUtils.assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
+                        nf.close(fd);
+                        fd = -1;
+                        // Check that I/O dispatcher closes the event once it detects the disconnect.
+                        TestUtils.assertEventually(() -> Assert.assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
+                    } finally {
+                        if (fd > -1) {
+                            nf.close(fd);
+                        }
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
+                    }
+                });
+    }
+
+    @Test
+    public void testJsonQueryDisconnectOnDataUnavailableEventNeverFired() throws Exception {
+        testDisconnectOnDataUnavailableEventNeverFired(
+                "GET /query?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
+                        + SendAndReceiveRequestBuilder.RequestHeaders
+        );
     }
 
     @Test
@@ -4727,7 +4749,7 @@ public class IODispatcherTest {
                 });
 
                 final int minClientReceivedBytesBeforeDisconnect = 180;
-                final AtomicLong refClientFd = new AtomicLong(-1);
+                final AtomicInteger refClientFd = new AtomicInteger(-1);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
                     private int nBytesReceived = 0;
 
@@ -4740,7 +4762,7 @@ public class IODispatcherTest {
                         LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
                         nBytesReceived += nBytes;
                         if (nBytesReceived >= minClientReceivedBytesBeforeDisconnect) {
-                            long fd = refClientFd.get();
+                            int fd = refClientFd.get();
                             if (fd != -1) {
                                 refClientFd.set(-1);
                                 nf.close(fd);
@@ -4776,7 +4798,7 @@ public class IODispatcherTest {
                             + "Accept-Encoding: gzip, deflate, br\r\n"
                             + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
-                    long fd = nf.socketTcp(true);
+                    int fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -4999,7 +5021,7 @@ public class IODispatcherTest {
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -5044,7 +5066,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                LongList openFds = new LongList();
+                IntList openFds = new IntList();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
@@ -5167,7 +5189,7 @@ public class IODispatcherTest {
     @Test
     public void testMissingURL() throws Exception {
         testJsonQuery0(2, engine -> {
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             try {
                 long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
                 try {
@@ -5289,6 +5311,142 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
+                .withTelemetry(false)
+                .run((engine) -> {
+                    int totalRows = 32;
+                    int backoffCount = 10;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "0100\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(32, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10],[11,11,11],[12\r\n" +
+                                    "f0\r\n" +
+                                    ",12,12],[13,13,13],[14,14,14],[15,15,15],[16,16,16],[17,17,17],[18,18,18],[19,19,19],[20,20,20],[21,21,21],[22,22,22],[23,23,23],[24,24,24],[25,25,25],[26,26,26],[27,27,27],[28,28,28],[29,29,29],[30,30,30],[31,31,31],[32,32,32]],\"count\":32}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    int totalRows = 3;
+                    int backoffCount = 3;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicBoolean stopDelayThread = new AtomicBoolean();
+
+                    final Thread delayThread = new Thread(() -> {
+                        while (!stopDelayThread.get()) {
+                            SuspendEvent event = eventRef.getAndSet(null);
+                            if (event != null) {
+                                Os.sleep(1);
+                                try {
+                                    event.trigger();
+                                    event.close();
+                                    totalEvents.incrementAndGet();
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                Os.pause();
+                            }
+                        }
+                    });
+                    delayThread.start();
+
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "c0\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    stopDelayThread.set(true);
+                    delayThread.join();
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    int totalRows = 3;
+                    int backoffCount = 10;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "c1\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(3, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                });
+    }
+
+    @Test
+    public void testQueryWithDoubleQuotesParsedCorrectly() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    // select 1 as "select"
+                    // with select being the column name to check double quote parsing
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
+                            "67\r\n"
+                                    + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                                    + "00\r\n"
+                                    + "\r\n"
+                    );
+                });
+    }
+
+    @Test
     public void testQueuedConnectionTimeout() throws Exception {
         testQueuedConnectionTimeoutImpl(9001);
     }
@@ -5358,7 +5516,7 @@ public class IODispatcherTest {
                                         "\r\n";
 
                                 for (int j = 0; j < 10; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5388,7 +5546,7 @@ public class IODispatcherTest {
                                         "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
@@ -5400,7 +5558,7 @@ public class IODispatcherTest {
 
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5486,7 +5644,7 @@ public class IODispatcherTest {
 
                         writeRandomFile(path, rnd, 122299092L);
 
-                        long fd = Net.socketTcp(true);
+                        int fd = Net.socketTcp(true);
                         try {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
@@ -5667,7 +5825,7 @@ public class IODispatcherTest {
                                         "\r\n";
 
                                 for (int j = 0; j < 1; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5706,7 +5864,7 @@ public class IODispatcherTest {
                                         "\r\n";
 
                                 for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
@@ -5718,7 +5876,7 @@ public class IODispatcherTest {
 
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
@@ -5755,7 +5913,7 @@ public class IODispatcherTest {
 
 
                                 for (int i = 0; i < 4; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request3, fd, buffer);
@@ -5768,7 +5926,7 @@ public class IODispatcherTest {
                                 // and few more 304s
 
                                 for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
@@ -5833,7 +5991,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -5901,7 +6059,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6003,7 +6161,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration(),
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -6076,7 +6234,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6167,7 +6325,7 @@ public class IODispatcherTest {
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
@@ -6233,7 +6391,7 @@ public class IODispatcherTest {
                     }
                 }).start();
 
-                long fd = Net.socketTcp(true);
+                int fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6277,6 +6435,183 @@ public class IODispatcherTest {
                 Assert.assertEquals(1, closeCount.get());
             }
         });
+    }
+
+    @Test
+    public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
+        testDisconnectOnDataUnavailableEventNeverFired(
+                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
+                        + SendAndReceiveRequestBuilder.RequestHeaders
+        );
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
+                .withTelemetry(false)
+                .run((engine) -> {
+                    final String select = "select * from test_data_unavailable(32, 10)";
+                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0100\r\n" +
+                                    "\"x\",\"y\",\"z\"\r\n" +
+                                    "1,1,1\r\n" +
+                                    "2,2,2\r\n" +
+                                    "3,3,3\r\n" +
+                                    "4,4,4\r\n" +
+                                    "5,5,5\r\n" +
+                                    "6,6,6\r\n" +
+                                    "7,7,7\r\n" +
+                                    "8,8,8\r\n" +
+                                    "9,9,9\r\n" +
+                                    "10,10,10\r\n" +
+                                    "11,11,11\r\n" +
+                                    "12,12,12\r\n" +
+                                    "13,13,13\r\n" +
+                                    "14,14,14\r\n" +
+                                    "15,15,15\r\n" +
+                                    "16,16,16\r\n" +
+                                    "17,17,17\r\n" +
+                                    "18,18,18\r\n" +
+                                    "19,19,19\r\n" +
+                                    "20,20,20\r\n" +
+                                    "21,21,21\r\n" +
+                                    "22,22,22\r\n" +
+                                    "23,23,23\r\n" +
+                                    "24,24,24\r\n" +
+                                    "25,25,25\r\n" +
+                                    "26,26,26\r\n" +
+                                    "27,27,27\r\n" +
+                                    "\r\n" +
+                                    "32\r\n" +
+                                    "28,28,28\r\n" +
+                                    "29,29,29\r\n" +
+                                    "30,30,30\r\n" +
+                                    "31,31,31\r\n" +
+                                    "32,32,32\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                });
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    int totalRows = 3;
+                    int backoffCount = 3;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicBoolean stopDelayThread = new AtomicBoolean();
+
+                    final Thread delayThread = new Thread(() -> {
+                        while (!stopDelayThread.get()) {
+                            SuspendEvent event = eventRef.getAndSet(null);
+                            if (event != null) {
+                                Os.sleep(1);
+                                try {
+                                    event.trigger();
+                                    event.close();
+                                    totalEvents.incrementAndGet();
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                Os.pause();
+                            }
+                        }
+                    });
+                    delayThread.start();
+
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "22\r\n" +
+                                    "\"x\",\"y\",\"z\"\r\n" +
+                                    "1,1,1\r\n" +
+                                    "2,2,2\r\n" +
+                                    "3,3,3\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    stopDelayThread.set(true);
+                    delayThread.join();
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                });
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    int totalRows = 3;
+                    int backoffCount = 10;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "22\r\n" +
+                                    "\"x\",\"y\",\"z\"\r\n" +
+                                    "1,1,1\r\n" +
+                                    "2,2,2\r\n" +
+                                    "3,3,3\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                });
     }
 
     @Test
@@ -6868,7 +7203,7 @@ public class IODispatcherTest {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
                                 for (int i = 0; i < N && !finished.get(); i++) {
-                                    long fd = Net.socketTcp(true);
+                                    int fd = Net.socketTcp(true);
                                     try {
                                         TestUtils.assertConnect(fd, sockAddr);
                                         int len = request.length();
@@ -6951,7 +7286,15 @@ public class IODispatcherTest {
                 1000);
     }
 
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+    private static void assertDownloadResponse(
+            int fd,
+            Rnd rnd,
+            long buffer,
+            int len,
+            int nonRepeatedContentLength,
+            String expectedResponseHeader,
+            long expectedResponseLen
+    ) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
         long downloadedSoFar = 0;
@@ -7024,7 +7367,7 @@ public class IODispatcherTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, long fd, long buffer) {
+    private static void sendRequest(String request, int fd, long buffer) {
         final int requestLen = request.length();
         Chars.asciiStrCpy(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -7309,6 +7652,49 @@ public class IODispatcherTest {
                 false);
     }
 
+    private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run((engine) -> {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                    int fd = nf.socketTcp(true);
+                    try {
+                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+                        assert sockAddrInfo != -1;
+                        try {
+                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
+                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                            nf.configureNonBlocking(fd);
+
+                            long bufLen = request.length();
+                            long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                new SendAndReceiveRequestBuilder()
+                                        .withNetworkFacade(nf)
+                                        .withPauseBetweenSendAndReceive(0)
+                                        .withPrintOnly(false)
+                                        .executeUntilDisconnect(request, fd, 400, ptr, null);
+                            } finally {
+                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } finally {
+                            nf.freeAddrInfo(sockAddrInfo);
+                        }
+                    } finally {
+                        nf.close(fd);
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
+                    }
+                });
+    }
+
     private void testHttpQueryGeoHashColumnChars(String request, String expectedResponse) throws Exception {
         new HttpQueryTestBuilder()
                 .withWorkerCount(1)
@@ -7385,7 +7771,7 @@ public class IODispatcherTest {
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
-            LongList openFds,
+            IntList openFds,
             long buf
     ) {
         // Connect sockets that would be consumed by dispatcher plus
@@ -7393,7 +7779,7 @@ public class IODispatcherTest {
         // This is necessary for TCP stack to start rejecting new connections
         openFds.clear();
         for (int i = 0; i < 400; i++) {
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
             TestUtils.assertConnect(fd, sockAddr);
             openFds.add(fd);
@@ -7424,7 +7810,7 @@ public class IODispatcherTest {
         try {
             for (int i = 0; i < 400; i++) {
                 LOG.info().$("Sending request via socket #").$(i).$();
-                long fd = openFds.getQuick(i);
+                int fd = openFds.getQuick(i);
                 Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                 // ensure we have response from server
                 int len = Net.recv(fd, buf, 64);
@@ -7483,8 +7869,8 @@ public class IODispatcherTest {
             final int listenBackLog = configuration.getListenBacklog();
 
             final AtomicInteger nConnected = new AtomicInteger();
-            final LongHashSet serverConnectedFds = new LongHashSet();
-            final LongHashSet clientActiveFds = new LongHashSet();
+            final IntHashSet serverConnectedFds = new IntHashSet();
+            final IntHashSet clientActiveFds = new IntHashSet();
             IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
@@ -7502,7 +7888,7 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public long getFd() {
+                    public int getFd() {
                         return fd;
                     }
 
@@ -7526,7 +7912,7 @@ public class IODispatcherTest {
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                         IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
-                            long fd = context.getFd();
+                            int fd = context.getFd();
                             int rc;
                             switch (operation) {
                                 case IOOperation.READ:
@@ -7548,6 +7934,7 @@ public class IODispatcherTest {
                                 default:
                                     dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                             }
+                            return true;
                         };
 
                         try {
@@ -7571,7 +7958,7 @@ public class IODispatcherTest {
                 int nClientConnects = 0;
                 int nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    long fd = Net.socketTcp(true);
+                    int fd = Net.socketTcp(true);
                     Assert.assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
@@ -7596,7 +7983,7 @@ public class IODispatcherTest {
 
                 // Close all connections and wait for server to resume listening
                 while (clientActiveFds.size() > 0) {
-                    long fd = clientActiveFds.get(0);
+                    int fd = clientActiveFds.get(0);
                     clientActiveFds.remove(fd);
                     Net.close(fd);
                 }
@@ -7611,7 +7998,7 @@ public class IODispatcherTest {
                 nClientConnects = 0;
                 nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    long fd = Net.socketTcp(true);
+                    int fd = Net.socketTcp(true);
                     Assert.assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
@@ -7636,7 +8023,7 @@ public class IODispatcherTest {
 
                 // Close all remaining client connections
                 for (int n = 0; n < clientActiveFds.size(); n++) {
-                    long fd = clientActiveFds.get(n);
+                    int fd = clientActiveFds.get(n);
                     Net.close(fd);
                 }
                 serverThread.interrupt();
@@ -7656,7 +8043,7 @@ public class IODispatcherTest {
         if (Files.exists(path)) {
             Assert.assertTrue(Files.remove(path));
         }
-        long fd = Files.openAppend(path);
+        int fd = Files.openAppend(path);
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
@@ -7708,9 +8095,9 @@ public class IODispatcherTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
         private final IODispatcher<HelloContext> dispatcher;
-        private final long fd;
+        private final int fd;
 
-        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+        public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             this.fd = fd;
             this.closeLatch = closeLatch;
             this.dispatcher = dispatcher;
@@ -7728,7 +8115,7 @@ public class IODispatcherTest {
         }
 
         @Override
-        public long getFd() {
+        public int getFd() {
             return fd;
         }
 

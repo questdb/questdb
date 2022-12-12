@@ -67,23 +67,23 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger(0);
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return 1024;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
 
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 return -1;
             }
         }, "could not read");
@@ -97,23 +97,23 @@ public class MimeTypesCacheTest {
         testFailure(new TestFilesFacadeImpl() {
 
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return 1024;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
 
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 return 128;
             }
         }, "could not read");
@@ -153,19 +153,19 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return 0;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
         }, "wrong file size");
 
@@ -177,22 +177,20 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger(0);
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return -1;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
-
-
         }, "wrong file size");
 
         Assert.assertEquals(1, closeCount.get());
@@ -203,19 +201,19 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return 1024 * 1024 * 2;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
         }, "wrong file size");
 

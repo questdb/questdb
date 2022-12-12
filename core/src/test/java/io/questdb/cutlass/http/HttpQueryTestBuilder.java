@@ -30,11 +30,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
@@ -59,6 +57,7 @@ public class HttpQueryTestBuilder {
     private Metrics metrics;
     private MicrosecondClock microsecondClock;
     private QueryFutureUpdateListener queryFutureUpdateListener;
+    private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private SqlExecutionContextImpl sqlExecutionContext;
     private long startWriterWaitTimeout = 500;
@@ -94,6 +93,15 @@ public class HttpQueryTestBuilder {
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
                 cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                    @Override
+                    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                        return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public long getTimeout() {
+                                return queryTimeout > 0 ? queryTimeout : super.getTimeout();
+                            }
+                        };
+                    }
                     public FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
@@ -293,6 +301,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
         this.queryFutureUpdateListener = queryFutureUpdateListener;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withQueryTimeout(long queryTimeout) {
+        this.queryTimeout = queryTimeout;
         return this;
     }
 

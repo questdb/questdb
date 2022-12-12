@@ -98,7 +98,7 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
-    public long enqueueRead(long fd, long offset, long bufAddr, int len) {
+    public long enqueueRead(int fd, long offset, long bufAddr, int len) {
         return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);
     }
 
@@ -152,13 +152,13 @@ public class IOURingImpl implements IOURing {
         return facade.submitAndWait(ringAddr, 1);
     }
 
-    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
+    private long enqueueSqe(byte op, int fd, long offset, long bufAddr, int len) {
         final long sqeAddr = nextSqe();
         if (sqeAddr == 0) {
             return -1;
         }
         Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
-        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, (int) fd);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, fd);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);
