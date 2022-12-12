@@ -601,6 +601,14 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPostgresStyleLiteralCasting() throws Exception {
+        assertQuery("column\n" +
+                        "true\n",
+                "select (uuid '11111111-1111-1111-1111-111111111111') = cast('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)", null, null, true, true, true);
+
+    }
+
+    @Test
     public void testRandomizedOrderBy() throws Exception {
         int count = 1000;
 
