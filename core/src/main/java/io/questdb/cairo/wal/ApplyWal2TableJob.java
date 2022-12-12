@@ -81,21 +81,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             do {
                 // security context is checked on writing to the WAL and can be ignored here
-                if (engine.isTableDropped(tableToken)) {
-                    // table was dropped, clean up the table directory.
-                    tryDestroyDroppedTable(tableToken, null, engine, tempPath);
+                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                if (updatedToken == null) {
+                    if (engine.isTableDropped(updatedToken)) {
+                        tryDestroyDroppedTable(tableToken, null, engine, tempPath);
+                    }
+                    // else: table is dropped and fully cleaned, this is late notification.
                     return Long.MAX_VALUE;
+
                 }
 
                 if (!engine.isWalTable(tableToken)) {
                     LOG.info().$("table '").utf8(tableToken.getDirName()).$("' does not exist, skipping WAL application").$();
                     return 0;
-                }
-
-                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-                if (updatedToken == null) {
-                    // Table is dropped, make a spin to hanle it
-                    continue;
                 }
 
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
@@ -114,6 +112,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastSeqTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
             } while (lastAppliedSeqTxn < lastSeqTxn);
         } catch (CairoException ex) {
+            if (engine.isTableDropped(tableToken)) {
+                // Table is dropped, and we received cairo exception in the middle of apply
+                tryDestroyDroppedTable(tableToken, null, engine, tempPath);
+                return Long.MAX_VALUE;
+            }
+
             LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
@@ -136,7 +140,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return useful;
     }
 
-    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
+    private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
         // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -185,7 +189,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
         }
 
-        return allClean;
     }
 
     private static AlterOperation compileAlter(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
@@ -251,7 +254,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())
                     .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
-            engine.notifyWalTxnRepublisher();
         }
     }
 

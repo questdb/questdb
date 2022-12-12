@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -195,7 +196,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             final ObjList<TableToken> tableTokenBucket = new ObjList<>();
             engine.getTableTokens(tableTokenBucket, true);
-            Assert.assertEquals(0, tableTokenBucket.size());
+            if (0 != tableTokenBucket.size()) {
+                Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
+            }
         });
     }
 
@@ -282,5 +285,16 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         ObjList<TableToken> bucket = new ObjList<>();
         ro.getTableTokens(bucket, false);
         return bucket.size();
+    }
+
+    private String formatTableDirs(ObjList<TableToken> tableTokenBucket) {
+        StringSink ss = new StringSink();
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            if (i > 0) {
+                ss.put(", ");
+            }
+            ss.put(tableTokenBucket.getQuick(i).getTableName());
+        }
+        return ss.toString();
     }
 }

@@ -200,7 +200,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 deleteOutstandingWalDirectories();
             }
 
-            if (engine.isTableDropped(tableToken)) {
+            if (lastTxn < 0 && engine.isTableDropped(tableToken)) {
                 // Delete sequencer files
                 deleteTableSequencerFiles(tableToken);
 
@@ -213,8 +213,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         ) != TableUtils.TABLE_EXISTS
                 ) {
                     // Fully deregister the table
+                    LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
                     engine.removeTableToken(tableToken);
                 } else {
+                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
                     // Ping ApplyWal2TableJob to clean up the table files
                     engine.notifyWalTxnRepublisher();
                 }
@@ -382,8 +384,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void recursiveDelete(Path path) {
         final int errno = ff.rmdir(path);
-        if ((errno != 0) && ((errno != 2))) {
-            LOG.error().$("Could not delete directory [path=").$(path)
+        if (errno > 0 && errno != 2) {
+            LOG.error().$("could not delete directory [path=").$(path)
                     .$(", errno=").$(errno).$(']').$();
         }
     }
