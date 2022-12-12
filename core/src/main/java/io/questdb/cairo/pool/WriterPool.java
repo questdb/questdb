@@ -538,7 +538,7 @@ public class WriterPool extends AbstractPool {
             if (owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("'").utf8(e.writer.getTableToken().getTableName()).$("' is still busy [owner=").$(owner).$(']').$();
+                LOG.info().$("'").utf8(e.writer.getTableToken().getDirName()).$("' is still busy [owner=").$(owner).$(']').$();
             }
         }
         return count;

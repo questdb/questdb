@@ -45,18 +45,19 @@ public class TableToken implements Sinkable {
 
     @Override
     public boolean equals(Object o) {
-        // equals() enforces both tableId and dirName, while hashcode() only uses tableId for speedup
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
 
         TableToken that = (TableToken) o;
 
         if (tableId != that.tableId) return false;
+        if (isWal != that.isWal) return false;
+        if (!tableName.equals(that.tableName)) return false;
         return dirName.equals(that.dirName);
     }
 
     /**
-     * @return folder where the table is located.
+     * @return directory where the table is located.
      */
     public @NotNull String getDirName() {
         return dirName;
@@ -66,18 +67,12 @@ public class TableToken implements Sinkable {
      * @return table id
      */
     public int getTableId() {
-        // equals() enforces both tableId and dirName, while hashcode() only uses tableId for speedup.
-        // TableId should be unique except in very rare cases.
         return tableId;
     }
 
     /**
-     * @return table name to use for logging. Note that most of the time it is same as public table
-     * name used in SQL but can diverge per period of time if it is a WAL table, and it is renamed.
-     * Do not use this method to identify table, use CairoEngine.getTableNameByTableToken() instead.
+     * @return table name
      */
-    //todo: name should not be exposed to avoid using it incorrectly
-    //     this class should impl Sinkable
     public @NotNull String getTableName() {
         return tableName;
     }

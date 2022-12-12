@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -63,6 +64,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             for (int j = 0; j < tableCount; j++) {
                                 try {
                                     compiler.compile("drop table tab" + j, executionContext);
+                                } catch (TableReferenceOutOfDateException e) {
+                                    // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
                                             && !Chars.contains(e.getFlyweightMessage(), "Could not lock")
@@ -91,10 +94,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();
                                 try {
-                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
-                                            + (!isWal ? "BYPASS" : "")
-                                            + " WAL ", executionContext);
-
+                                    compiler.compile(
+                                            "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                                    + (!isWal ? "BYPASS" : "")
+                                                    + " WAL ",
+                                            executionContext
+                                    );
                                 } catch (SqlException e) {
                                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                                     continue;
@@ -102,6 +107,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                                 try {
                                     compiler.compile("drop table tab" + j, executionContext);
+                                } catch (TableReferenceOutOfDateException e) {
+                                    // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
                                     // Should never fail on drop table.
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
@@ -183,6 +190,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             runWalPurgeJob();
+
+            drainWalQueue();
 
             final ObjList<TableToken> tableTokenBucket = new ObjList<>();
             engine.getTableTokens(tableTokenBucket, true);

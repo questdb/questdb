@@ -195,6 +195,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.sync(false);
     }
 
+    public void updateTableToken(TableToken newTableToken) {
+        this.tableToken = newTableToken;
+    }
+
     private void addColumn0(CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         if (columnType > 0) {

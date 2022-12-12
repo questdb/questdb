@@ -534,7 +534,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("rename table " + tableName + " to " + newTableName);
 
             TableToken newTabledirectoryName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2directoryName, newTabledirectoryName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
 
             drainWalQueue();
 
@@ -874,7 +874,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("rename table " + tableName + " to " + newTableName);
 
             TableToken newTabledirectoryName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2directoryName, newTabledirectoryName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
 
             drainWalQueue();
 
@@ -908,7 +908,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
             TableToken newTabledirectoryName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2directoryName, newTabledirectoryName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
 
             drainWalQueue();
 

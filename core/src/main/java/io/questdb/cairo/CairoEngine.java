@@ -190,7 +190,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             String lockedReason = lock(securityContext, tableToken, "createTable");
             if (null == lockedReason) {
-                boolean newTable = false;
+                boolean tableCreated = false;
                 try {
                     int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
                     if (status == TableUtils.TABLE_RESERVED) {
@@ -204,16 +204,16 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableToken,
                             tableId
                     );
-                    newTable = true;
-                    tableNameRegistry.registerName(tableToken);
+                    tableCreated = true;
                 } finally {
                     if (!keepLock) {
                         readerPool.unlock(tableToken);
-                        writerPool.unlock(tableToken, null, newTable);
+                        writerPool.unlock(tableToken, null, tableCreated);
                         metadataPool.unlock(tableToken);
                         LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                     }
                 }
+                tableNameRegistry.registerName(tableToken);
             } else {
                 if (!ifNotExists) {
                     throw EntryUnavailableException.instance(lockedReason);
@@ -272,8 +272,10 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             if (tableNameRegistry.dropTable(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
+            } else {
+                LOG.info().$("table is already dropped [table=").$(tableToken)
+                        .$(", dirName=").$(tableToken.getDirName()).I$();
             }
-            // todo: log that this drop table was unsuccessful, e.g. someone else beat us to it
         } else {
             CharSequence lockedReason = lock(securityContext, tableToken, "removeTable");
             if (null == lockedReason) {

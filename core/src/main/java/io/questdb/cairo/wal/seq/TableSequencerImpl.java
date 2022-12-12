@@ -177,7 +177,7 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.lastTxn();
     }
 
-    public TableToken getTableName() {
+    public TableToken getTableToken() {
         return tableToken;
     }
 
@@ -294,6 +294,7 @@ public class TableSequencerImpl implements TableSequencer {
     public long rename(TableToken newTableToken) {
         checkDropped();
         tableToken = newTableToken;
+        this.metadata.updateTableToken(newTableToken);
         long txn = tableTransactionLog.addEntry(getStructureVersion(), RENAME_TABLE_WALID, 0, 0, microClock.getTicks());
         if (!metadata.isSuspended()) {
             engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);

@@ -46,6 +46,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final TableSequencerAPI.RegisteredTable broadSweepIter;
     private final long checkInterval;
     private final MicrosecondClock clock;
+    private final CairoConfiguration configuration;
     private final StringSink debugBuffer = new StringSink();
     private final IntHashSet discoveredWalIds = new IntHashSet();
     private final CairoEngine engine;
@@ -81,6 +82,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // some code here assumes that WAL_NAME_BASE is "wal", this is to fail the tests if it is not
         //noinspection ConstantConditions
         assert WalUtils.WAL_NAME_BASE.equals("wal");
+        configuration = engine.getConfiguration();
     }
 
     public WalPurgeJob(CairoEngine engine) {
@@ -201,7 +203,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (engine.isTableDropped(tableToken)) {
                 // Delete sequencer files
                 deleteTableSequencerFiles(tableToken);
-                engine.removeTableToken(tableToken);
+
+                if (
+                        TableUtils.exists(
+                                ff,
+                                Path.getThreadLocal(""),
+                                configuration.getRoot(),
+                                tableToken.getDirName()
+                        ) != TableUtils.TABLE_EXISTS
+                ) {
+                    // Fully deregister the table
+                    engine.removeTableToken(tableToken);
+                } else {
+                    // Ping ApplyWal2TableJob to clean up the table files
+                    engine.notifyWalTxnRepublisher();
+                }
             }
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableToken)
@@ -377,42 +393,42 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private Path setSegmentLockPath(TableToken tableName, int walId, int segmentId) {
-        path.of(engine.getConfiguration().getRoot())
+        path.of(configuration.getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
         TableUtils.lockName(path);
         return path;
     }
 
     private Path setSegmentPath(TableToken tableName, int walId, int segmentId) {
-        return path.of(engine.getConfiguration().getRoot())
+        return path.of(configuration.getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
     }
 
     private Path setTablePath(TableToken tableName) {
-        return path.of(engine.getConfiguration().getRoot())
+        return path.of(configuration.getRoot())
                 .concat(tableName).$();
     }
 
     private void setTableSequencerPath(TableToken tableName) {
-        path.of(engine.getConfiguration().getRoot())
+        path.of(configuration.getRoot())
                 .concat(tableName).concat(WalUtils.SEQ_DIR).$();
     }
 
     private void setTxnPath(TableToken tableName) {
-        path.of(engine.getConfiguration().getRoot())
+        path.of(configuration.getRoot())
                 .concat(tableName)
                 .concat(TableUtils.TXN_FILE_NAME).$();
     }
 
     private Path setWalLockPath(TableToken tableName, int walId) {
-        path.of(engine.getConfiguration().getRoot())
+        path.of(configuration.getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
         TableUtils.lockName(path);
         return path;
     }
 
     private Path setWalPath(TableToken tableName, int walId) {
-        return path.of(engine.getConfiguration().getRoot())
+        return path.of(configuration.getRoot())
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).$();
     }
 

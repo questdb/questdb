@@ -177,8 +177,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 if (allClean) {
                     // Remove _txn and _meta files when all other files are removed
-                    allClean = ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
-                    allClean &= ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
+                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
                 }
             } finally {
                 ff.findClose(p);
@@ -241,9 +241,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // Force writer to close all the files.
                     writer.destroy();
                 }
-                if (!cleanDroppedTableDirectory(engine, tempPath, tableToken)) {
-                    engine.notifyWalTxnRepublisher();
-                }
+                cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
                 if (writerToClose != null) {
                     writerToClose.close();
@@ -444,7 +442,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (lastAppliedSeqTxn > -1L) {
                 lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
             } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {
-                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
+                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);
                 engine.getTableSequencerAPI().suspendTable(tableToken);
             }
         } else {

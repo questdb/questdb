@@ -74,7 +74,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
-import java.util.function.Function;
 
 /**
  * A hash table supporting full concurrency of retrievals and
@@ -918,7 +917,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @throws RuntimeException      or Error if the mappingFunction does so,
      *                               in which case the mapping is left unestablished
      */
-    public V computeIfAbsent(CharSequence key, Function<CharSequence, ? extends V> mappingFunction) {
+    public V computeIfAbsent(CharSequence key, Object token, Function<CharSequence, Object, ? extends V> mappingFunction) {
         if (key == null || mappingFunction == null)
             throw new NullPointerException();
         int h = spread(key.hashCode());
@@ -936,7 +935,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                         binCount = 1;
                         Node<V> node = null;
                         try {
-                            if ((val = mappingFunction.apply(key)) != null)
+                            if ((val = mappingFunction.apply(key, token)) != null)
                                 node = new Node<V>(h, key, val, null);
                         } finally {
                             setTabAt(tab, i, node);
@@ -963,7 +962,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                                 }
                                 Node<V> pred = e;
                                 if ((e = e.next) == null) {
-                                    if ((val = mappingFunction.apply(key)) != null) {
+                                    if ((val = mappingFunction.apply(key, token)) != null) {
                                         added = true;
                                         pred.next = new Node<V>(h, key, val, null);
                                     }
@@ -977,7 +976,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                             if ((r = t.root) != null &&
                                     (p = r.findTreeNode(h, key, null)) != null)
                                 val = p.val;
-                            else if ((val = mappingFunction.apply(key)) != null) {
+                            else if ((val = mappingFunction.apply(key, token)) != null) {
                                 added = true;
                                 t.putTreeVal(h, key, val);
                             }
@@ -2204,6 +2203,10 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             }
         }
         return sum;
+    }
+
+    public interface Function<T1, T2, R> {
+        R apply(T1 t1, T2 t2);
     }
 
     /**

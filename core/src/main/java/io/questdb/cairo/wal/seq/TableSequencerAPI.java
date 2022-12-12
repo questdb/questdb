@@ -29,15 +29,13 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
-
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
@@ -48,9 +46,9 @@ public class TableSequencerAPI implements QuietCloseable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final long inactiveTtlUs;
-    private final Function<TableToken, TableSequencerEntry> openSequencerInstanceLambda;
+    private final ConcurrentHashMap.Function<CharSequence, Object, TableSequencerEntry> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
-    private final ConcurrentHashMap<TableToken, TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
@@ -107,12 +105,12 @@ public class TableSequencerAPI implements QuietCloseable {
             // Use includeDropped argument to decide whether to include dropped tables.
             String publicTableName = tableToken.getTableName();
             boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
-            if (engine.isWalTable(tableToken)) {
+            if (engine.isWalTable(tableToken) && !isDropped) {
                 long lastTxn;
                 int tableId;
 
                 try {
-                    if (!seqRegistry.containsKey(tableToken)) {
+                    if (!seqRegistry.containsKey(tableToken.getDirName())) {
                         // Fast path.
                         // The following calls are racy, i.e. there might be a sequencer modifying both
                         // metadata and log concurrently as we read the values. It's ok since we iterate
@@ -266,8 +264,8 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void registerTable(int tableId, final TableStructure tableStructure, final TableToken tableToken) {
         try (
-                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key) -> {
-                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableToken);
+                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt1) -> {
+                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tt1);
                     sequencer.create(tableId, tableStructure);
                     sequencer.open();
                     return sequencer;
@@ -348,12 +346,16 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @NotNull
-    private TableSequencerEntry getTableSequencerEntry(TableToken tableToken, SequencerLockType lock, Function<TableToken, TableSequencerEntry> getSequencerLambda) {
+    private TableSequencerEntry getTableSequencerEntry(
+            TableToken tableToken,
+            SequencerLockType lock,
+            ConcurrentHashMap.Function<CharSequence, Object, TableSequencerEntry> getSequencerLambda
+    ) {
         TableSequencerEntry entry;
         int attempt = 0;
         while (attempt < recreateDistressedSequencerAttempts) {
             throwIfClosed();
-            entry = seqRegistry.computeIfAbsent(tableToken, getSequencerLambda);
+            entry = seqRegistry.computeIfAbsent(tableToken.getDirName(), tableToken, getSequencerLambda);
             if (lock == SequencerLockType.READ) {
                 entry.readLock();
             } else if (lock == SequencerLockType.WRITE) {
@@ -378,8 +380,8 @@ public class TableSequencerAPI implements QuietCloseable {
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
-    private TableSequencerEntry openSequencerInstance(TableToken tableToken) {
-        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableToken);
+    private TableSequencerEntry openSequencerInstance(CharSequence tableDir, Object tableToken) {
+        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tableToken);
         sequencer.open();
         return sequencer;
     }
@@ -395,13 +397,13 @@ public class TableSequencerAPI implements QuietCloseable {
             return true;
         }
         boolean removed = false;
-        for (TableToken tableToken : seqRegistry.keySet()) {
-            final TableSequencerEntry sequencer = seqRegistry.get(tableToken);
+        for (CharSequence tableDir : seqRegistry.keySet()) {
+            final TableSequencerEntry sequencer = seqRegistry.get(tableDir);
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
-                    LOG.info().$("releasing idle table sequencer [table=").utf8(tableToken.getDirName()).I$();
-                    seqRegistry.remove(tableToken, sequencer);
+                    LOG.info().$("releasing idle table sequencer [tableDir=").utf8(tableDir).I$();
+                    seqRegistry.remove(tableDir, sequencer);
                     removed = true;
                 }
             }
@@ -449,8 +451,8 @@ public class TableSequencerAPI implements QuietCloseable {
                     // Sequencer is distressed or dropped, close before removing from the pool.
                     // Remove from registry only if this thread closed the instance.
                     if (checkClose()) {
-                        LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).I$();
-                        pool.seqRegistry.remove(getTableName(), this);
+                        LOG.info().$("closed distressed table sequencer [table=").$(getTableToken()).I$();
+                        pool.seqRegistry.remove(getTableToken().getDirName(), this);
                     }
                 }
             } else {
