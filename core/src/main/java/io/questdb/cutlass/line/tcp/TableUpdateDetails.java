@@ -280,7 +280,7 @@ public class TableUpdateDetails implements Closeable {
             writerAPI.ic();
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken().getTableName())
+                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();

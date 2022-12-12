@@ -79,6 +79,7 @@ public final class TableUtils {
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TXN_FILE_NAME = "_txn";
@@ -327,6 +328,9 @@ public final class TableUtils {
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+            createTableNameFile(mem, getTableNameFromDirName(tableDir));
         } finally {
             if (dirFd > 0) {
                 if (ff.fsync(dirFd) != 0) {
@@ -522,17 +526,12 @@ public final class TableUtils {
         return dirName;
     }
 
-    public static String getTableNameFromDirName(String privateName) {
+    public static CharSequence getTableNameFromDirName(CharSequence privateName) {
         int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);
         if (suffixIndex == -1) {
             return privateName;
         }
-
-        if (suffixIndex != privateName.length() - 1) {
-            // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
-            return null;
-        }
-        return privateName.substring(0, suffixIndex);
+        return Chars.toString(privateName).substring(0, suffixIndex);
     }
 
     public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
@@ -1212,6 +1211,12 @@ public final class TableUtils {
                     .put(", value=").put(value)
                     .put(']');
         }
+    }
+
+    private static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+        mem.putStr(charSequence);
+        mem.putByte((byte) 0);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {

@@ -194,8 +194,37 @@ public class TableNameRegistryFileStore implements Closeable {
                 LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
                 return 0;
             }
-            byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) >>> 24);
+            byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
             return isWal == 0 ? tableId : -tableId;
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    private String readTableName(Path path, String dirName, FilesFacade ff) {
+        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
+        int fd = ff.openRO(path);
+        if (fd < 1) {
+            return null;
+        }
+
+        try {
+            long fileLen = ff.length(fd);
+            if (fileLen > 4) {
+                int charLen = ff.readNonNegativeInt(fd, 0);
+                if (charLen * 2L + 4 != fileLen - 1) {
+                    LOG.error().$("invalid table name file [path=").$(path).$(", headerLen=").$(charLen).$(", fileLne=").$(fileLen).I$();
+                    return null;
+                }
+
+                tableNameRoMemory.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
+                String value = Chars.toString(tableNameRoMemory.getStr(0));
+                tableNameRoMemory.close();
+                return value;
+            } else {
+                LOG.error().$("invalid table name file [path=").$(path).$(", fileLne=").$(fileLen).I$();
+                return null;
+            }
         } finally {
             ff.close(fd);
         }
@@ -217,20 +246,31 @@ public class TableNameRegistryFileStore implements Closeable {
                         && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
                     String dirName = sink.toString();
-                    String tableName = TableUtils.getTableNameFromDirName(dirName);
-                    int tableId = readTableId(path, dirName, configuration.getFilesFacade());
-                    boolean isWal = tableId < 0;
-                    tableId = Math.abs(tableId);
-
-                    if (tableName != null && tableId != 0) {
-                        if (tableIds.contains(tableId)) {
-                            LOG.critical().$("duplicate table id found [dirName=").$(dirName).$(", id=").$(tableId).$(']').$();
-                            continue;
+                    if (!reverseTableNameTokenMap.containsKey(dirName)) {
+                        int tableId = readTableId(path, dirName, ff);
+                        boolean isWal = tableId < 0;
+                        tableId = Math.abs(tableId);
+                        String tableName = readTableName(path, dirName, ff);
+                        if (tableName == null) {
+                            if (isWal) {
+                                LOG.error().$("could not read table name from [path=").$(path).$(", dirName=").$(dirName).I$();
+                                continue;
+                            } else {
+                                // Non-wal tables may not have _name file.
+                                tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
+                            }
                         }
 
-                        TableToken token = new TableToken(tableName, dirName, tableId, isWal);
-                        nameTableTokenMap.put(tableName, token);
-                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        if (tableId > -1L) {
+                            if (tableIds.contains(tableId)) {
+                                LOG.critical().$("duplicate table id found [dirName=").$(dirName).$(", id=").$(tableId).$(']').$();
+                                continue;
+                            }
+
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal);
+                            nameTableTokenMap.put(tableName, token);
+                            reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        }
                     }
                 }
             }

@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -41,6 +42,8 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class TableNameRegistryTest extends AbstractCairoTest {
     protected static final Log LOG = LogFactory.getLog(TableNameRegistryTest.class);
@@ -278,6 +281,55 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }
+        });
+    }
+
+    @Test
+    public void testRestoreTableNamesFile() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1;
+            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            TableToken tt2;
+            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt2));
+
+            TableToken tt3;
+            try (TableModel model = new TableModel(configuration, "tab3", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .noWal()
+                    .timestamp()) {
+                tt3 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertFalse(engine.isWalTable(tt3));
+
+            tt2 = engine.rename(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), "tab2", Path.getThreadLocal2(""), "tab2_ࠄ");
+            Assert.assertTrue(engine.isWalTable(tt2));
+            drainWalQueue();
+
+            engine.closeNameRegistry();
+
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.remove(Path.getThreadLocal(root).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$()));
+
+            engine.reloadTableNames();
+
+            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
+            Assert.assertEquals(tt2, engine.getTableToken("tab2_ࠄ"));
+            Assert.assertEquals(tt3, engine.getTableToken("tab3"));
         });
     }
 
