@@ -26,15 +26,21 @@ package io.questdb.cairo.mig;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
 
-class MigrationActions {
-    public static final Log LOG = LogFactory.getLog(MigrationActions.class);
-    public static final long META_COLUMN_DATA_SIZE_606 = 16;
-    public static final long META_OFFSET_COLUMN_TYPES_606 = 128;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT_505 = 72;
-    public static final String SEQ_DIR_670 = "seq";
+import static io.questdb.cairo.mig.MigrationActions.SEQ_DIR_670;
 
-    public static long prefixedBlockOffset(long prefix, long index, long blockSize) {
-        return prefix + index * blockSize;
+final class Mig670 {
+    private static final Log LOG = LogFactory.getLog(EngineMigration.class);
+
+    static void migrate(MigrationContext migrationContext) {
+        final Path path = migrationContext.getTablePath();
+        path.concat(SEQ_DIR_670).$();
+
+        final FilesFacade ff = migrationContext.getFf();
+        if (ff.exists(path) && ff.rmdir(path) != 0) {
+            LOG.error().$("failed to remove dir [path='").utf8(path).$(']').$();
+        }
     }
 }

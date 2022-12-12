@@ -91,7 +91,7 @@ public final class ColumnType {
     public static final short UNDEFINED = 0;
     public static final short VAR_ARG = 21;
     // column type version as written to the metadata file
-    public static final int VERSION = 426;
+    public static final int VERSION = 427;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final int BITS_OFFSET = 8;
     // this value has to be larger than MAX type and be power of 2
