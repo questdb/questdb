@@ -61,7 +61,7 @@ public class WalEventReader implements Closeable {
     public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
         int trimTo = path.length();
         try {
-            long fd = openRO(ff, path.concat(EVENT_FILE_NAME).$(), LOG);
+            final int fd = openRO(ff, path.concat(EVENT_FILE_NAME).$(), LOG);
 
             // read event file size to map to correct length.
             long size;
