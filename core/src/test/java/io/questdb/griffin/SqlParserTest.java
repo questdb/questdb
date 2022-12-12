@@ -2379,6 +2379,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEmptyAliasDisallowed() throws Exception {
+        assertSyntaxError("select x as '' from long_sequence(1)", 15, "column alias");
+        assertSyntaxError("select 'x' '' from long_sequence(1)", 14, "column alias");
+    }
+
+    @Test
     public void testEmptyOrderBy() throws Exception {
         assertSyntaxError("select x, y from tab order by", 29, "literal expected");
     }

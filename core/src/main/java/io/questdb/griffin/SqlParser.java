@@ -1573,7 +1573,9 @@ public final class SqlParser {
             } else {
                 alias = createColumnAlias(expr, model);
             }
-
+            if (alias.length() == 0) {
+                throw err(lexer, null, "column alias cannot be a blank string");
+            }
             col.setAlias(alias);
 
             // correlated sub-queries do not have expr.token values (they are null)
