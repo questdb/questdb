@@ -769,7 +769,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             refreshTablesInBaseEngine();
-            engine.notifyWalTxnCommitted(1, sysTableName, 10);
+            engine.notifyWalTxnCommitted(sysTableName, 10);
             drainWalQueue();
 
             checkTableFilesExist(sysTableName, "2022-02-24", "x.d", false);

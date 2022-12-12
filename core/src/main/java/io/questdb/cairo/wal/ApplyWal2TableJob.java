@@ -70,7 +70,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     public long processWalTxnNotification(
             TableToken tableToken,
-            int tableId,
             CairoEngine engine,
             SqlToOperation sqlToOperation
     ) {
@@ -83,7 +82,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // security context is checked on writing to the WAL and can be ignored here
                 TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
                 if (updatedToken == null) {
-                    if (engine.isTableDropped(updatedToken)) {
+                    if (engine.isTableDropped(tableToken)) {
                         tryDestroyDroppedTable(tableToken, null, engine, tempPath);
                     }
                     // else: table is dropped and fully cleaned, this is late notification.
@@ -97,7 +96,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
-                    assert writer.getMetadata().getTableId() == tableId;
+                    assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     applyOutstandingWalTransactions(tableToken, writer, engine, sqlToOperation, tempPath);
                     lastAppliedSeqTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
@@ -425,12 +424,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final TableToken tableToken;
-        final int tableId;
         final long seqTxn;
 
         try {
             WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            tableId = walTxnNotificationTask.getTableId();
             tableToken = walTxnNotificationTask.getTableToken();
             seqTxn = walTxnNotificationTask.getTxn();
         } finally {
@@ -438,9 +435,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
+        final int tableId = tableToken.getTableId();
         if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
             // Check, maybe we already processed this table to higher txn.
-            final long lastAppliedSeqTxn = processWalTxnNotification(tableToken, tableId, engine, sqlToOperation);
+            final long lastAppliedSeqTxn = processWalTxnNotification(tableToken, engine, sqlToOperation);
             if (lastAppliedSeqTxn > -1L) {
                 lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
             } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {

@@ -110,7 +110,7 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
         metadata.dropTable();
-        engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, Integer.MAX_VALUE);
+        engine.notifyWalTxnCommitted(tableToken, Integer.MAX_VALUE);
     }
 
     @Override
@@ -244,7 +244,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
+            engine.notifyWalTxnCommitted(tableToken, txn);
         }
         return txn;
     }
@@ -270,7 +270,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
+            engine.notifyWalTxnCommitted(tableToken, txn);
         }
         return txn;
     }
@@ -297,7 +297,7 @@ public class TableSequencerImpl implements TableSequencer {
         this.metadata.updateTableToken(newTableToken);
         long txn = tableTransactionLog.addEntry(getStructureVersion(), RENAME_TABLE_WALID, 0, 0, microClock.getTicks());
         if (!metadata.isSuspended()) {
-            engine.notifyWalTxnCommitted(metadata.getTableId(), tableToken, txn);
+            engine.notifyWalTxnCommitted(tableToken, txn);
         }
         return txn;
     }

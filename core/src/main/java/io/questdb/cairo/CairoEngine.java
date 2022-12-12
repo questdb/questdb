@@ -639,13 +639,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.lock(tableToken, lockReason);
     }
 
-    public void notifyWalTxnCommitted(int tableId, TableToken tableToken, long txn) {
+    public void notifyWalTxnCommitted(TableToken tableToken, long txn) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
-                task.of(tableToken, tableId, txn);
+                task.of(tableToken, txn);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {

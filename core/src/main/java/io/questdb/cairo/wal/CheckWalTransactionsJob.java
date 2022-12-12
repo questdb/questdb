@@ -51,7 +51,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         dbRoot = engine.getConfiguration().getRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-        checkNotifyOutstandingTxnInWal = this::checkNotifyOutstandingTxnInWal;
+        checkNotifyOutstandingTxnInWal = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
     }
 
     public void checkMissingWalTransactions() {
@@ -59,7 +59,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWal);
     }
 
-    public void checkNotifyOutstandingTxnInWal(int tableId, TableToken tableToken, long txn) {
+    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long txn) {
         if (
                 txn < 0 && TableUtils.exists(
                         ff,
@@ -69,7 +69,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 ) == TableUtils.TABLE_EXISTS
         ) {
             // Dropped table
-            engine.notifyWalTxnCommitted(tableId, tableToken, Long.MAX_VALUE);
+            engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
         } else {
             threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
             if (ff.exists(threadLocalPath)) {
@@ -78,12 +78,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                     if (txReader2.getSeqTxn() < txn) {
                         // table name should be immutable when in the notification message
-                        engine.notifyWalTxnCommitted(tableId, tableToken, txn);
+                        engine.notifyWalTxnCommitted(tableToken, txn);
                     }
                 }
             } else {
                 // table is dropped, notify the JOB to delete the data
-                engine.notifyWalTxnCommitted(tableId, tableToken, Long.MAX_VALUE);
+                engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
             }
         }
     }
