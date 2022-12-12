@@ -103,7 +103,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
         final long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
-        long fd = -1;
+        int fd = -1;
         try {
             fd = TableUtils.openRO(ff, inputFilePath, LOG);
             long fileLen = ff.length(fd);

@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -37,15 +34,13 @@ import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -77,6 +72,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -152,7 +148,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
     }
 
@@ -2360,6 +2356,17 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testGssApiRequestClosedGracefully() throws Exception {
+        final String script = ">0000000804d21630\n" +
+                "<4e\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
     public void testHappyPathForIntParameterWithoutExplicitParameterTypeHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -3644,7 +3651,6 @@ nodejs code:
             try (
                     final PGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
-
             ) {
                 workerPool.start(LOG);
                 try (
@@ -4896,8 +4902,36 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
-                } finally {
-                    currentMicros = -1;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementWithSystimestampFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "create table xts (ts timestamp) timestamp(ts)")) {
+                        statement.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
+                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                            statement.execute();
+                        }
+                    }
+
+                    queryTimestampsInRange(connection);
+
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
                 }
             }
         });
@@ -5119,7 +5153,211 @@ nodejs code:
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
             });
         }
+    }
 
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1, 100);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    try {
+                        String query = "select * from test_data_unavailable(1, 10)";
+                        String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                                "1,1,1\n";
+                        try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, resultSet);
+                            Assert.fail();
+                        } catch (SQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                        }
+                    } finally {
+                        // Make sure to close the event on the producer side.
+                        Misc.free(eventRef.get());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    int totalRows = 3;
+                    int backoffCount = 3;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                    final AtomicBoolean stopDelayThread = new AtomicBoolean();
+
+                    final Thread delayThread = new Thread(() -> {
+                        while (!stopDelayThread.get()) {
+                            SuspendEvent event = eventRef.getAndSet(null);
+                            if (event != null) {
+                                Os.sleep(1);
+                                try {
+                                    event.trigger();
+                                    event.close();
+                                    totalEvents.incrementAndGet();
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            } else {
+                                Os.pause();
+                            }
+                        }
+                    });
+                    delayThread.start();
+
+                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                    stopDelayThread.set(true);
+
+                    delayThread.join();
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    int totalRows = 3;
+                    int backoffCount = 10;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public int getBindPort() {
+                            return 0; // Bind to ANY port.
+                        }
+
+                        @Override
+                        public String getDispatcherLogName() {
+                            return "pg-server";
+                        }
+                    };
+                }
+
+                @Override
+                public int getSendBufferSize() {
+                    return 192;
+                }
+            };
+
+            try (
+                    PGWireServer server = createPGServer(configuration);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), false, true)) {
+                    int totalRows = 16;
+                    int backoffCount = 3;
+
+                    final AtomicInteger totalEvents = new AtomicInteger();
+                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                        event.trigger();
+                        event.close();
+                        totalEvents.incrementAndGet();
+                    };
+
+                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n" +
+                            "4,4,4\n" +
+                            "5,5,5\n" +
+                            "6,6,6\n" +
+                            "7,7,7\n" +
+                            "8,8,8\n" +
+                            "9,9,9\n" +
+                            "10,10,10\n" +
+                            "11,11,11\n" +
+                            "12,12,12\n" +
+                            "13,13,13\n" +
+                            "14,14,14\n" +
+                            "15,15,15\n" +
+                            "16,16,16\n";
+                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+
+                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                }
+            }
+        });
     }
 
     @Test
@@ -5456,7 +5694,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
@@ -5476,7 +5714,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
@@ -5495,7 +5733,7 @@ nodejs code:
             writerAsyncCommandBusyWaitTimeout = 1;
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
@@ -6385,14 +6623,13 @@ create table tab as (
     @Test
     public void testSmallSendBufferForRowData() throws Exception {
         assertMemoryLeak(() -> {
-
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public IODispatcherConfiguration getDispatcherConfiguration() {
                     return new DefaultIODispatcherConfiguration() {
                         @Override
                         public int getBindPort() {
-                            return 0;  // Bind to ANY port.
+                            return 0; // Bind to ANY port.
                         }
 
                         @Override
@@ -6940,6 +7177,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -6987,10 +7228,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
@@ -7254,21 +7491,59 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateWithNowAndSystimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 123678000L;
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false)
+                ) {
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
+                    statement.execute();
+
+                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:02'::timestamp, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                            "('2020-06-01T00:00:06'::timestamp, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                            "('2020-06-01T00:00:12'::timestamp, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                    insert1.execute();
+
+                    final PreparedStatement update1 = connection.prepareStatement("update x set a=now() where b>2.5");
+                    int numOfRowsUpdated1 = update1.executeUpdate();
+                    assertEquals(2, numOfRowsUpdated1);
+
+                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                            "('2020-06-01T00:00:22'::timestamp, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                            "('2020-06-01T00:00:32'::timestamp, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                    insert2.execute();
+
+                    final PreparedStatement update2 = connection.prepareStatement("update x set a=systimestamp() where b>5.0");
+                    int numOfRowsUpdated2 = update2.executeUpdate();
+                    assertEquals(1, numOfRowsUpdated2);
+
+                    final String expected = "a[TIMESTAMP],b[DOUBLE],ts[TIMESTAMP]\n" +
+                            "2020-06-01 00:00:02.0,2.0,2020-06-01 00:00:02.0\n" +
+                            "1970-01-01 00:02:03.678,2.6,2020-06-01 00:00:06.0\n" +
+                            "1970-01-01 00:02:03.678,3.0,2020-06-01 00:00:12.0\n" +
+                            "2020-06-01 00:00:22.0,4.0,2020-06-01 00:00:22.0\n" +
+                            "1970-01-01 00:02:03.678,6.0,2020-06-01 00:00:32.0\n";
+                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUtf8QueryText() throws Exception {
         testQuery(
                 "rnd_double(4) расход, ",
                 "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n"
-        );
-    }
-
-    @Test
-    public void testGssApiRequestClosedGracefully() throws Exception {
-        final String script = ">0000000804d21630\n" +
-            "<4e\n";
-        assertHexScript(
-            NetworkFacadeImpl.INSTANCE,
-            script,
-            getHexPgWireConfig()
         );
     }
 
@@ -8850,7 +9125,7 @@ create table tab as (
         private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
-        public int send(long fd, long buffer, int bufferLen) {
+        public int send(int fd, long buffer, int bufferLen) {
             if (!delaying.get()) {
                 return super.send(fd, buffer, bufferLen);
             }

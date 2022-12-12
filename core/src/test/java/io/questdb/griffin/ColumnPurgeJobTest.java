@@ -177,7 +177,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                 private int counter = 0;
 
                 @Override
-                public boolean allocate(long fd, long size) {
+                public boolean allocate(int fd, long size) {
                     if (counter < deadline) {
                         counter++;
                         return super.allocate(fd, size);
@@ -697,7 +697,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeTaskRecycle() throws Exception {
-        columnVersionTaskPoolCapacity = 1;
+        configOverrideColumnVersionTaskPoolCapacity(1);
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3_many as" +

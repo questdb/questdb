@@ -350,7 +350,7 @@ public class UpdateTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "s1.d.1") && Chars.contains(name, "1970-01-03")) {
                         return -1;
                     }
@@ -2167,7 +2167,7 @@ public class UpdateTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "x.d.1") && Chars.contains(name, "1970-01-03")) {
                         return -1;
                     }

@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.ObjList;
 
-final public class EmptyTableRandomRecordCursor implements RecordCursor {
+public final class EmptyTableRandomRecordCursor implements RecordCursor {
     public static final EmptyTableRandomRecordCursor INSTANCE = new EmptyTableRandomRecordCursor();
 
     private final Record recordA;

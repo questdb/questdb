@@ -73,6 +73,17 @@ public class TableSequencerAPI implements QuietCloseable {
         releaseAll();
     }
 
+    @TestOnly
+    public void closeSequencer(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.close();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public void forAllWalTables(RegisteredTable callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -95,19 +106,19 @@ public class TableSequencerAPI implements QuietCloseable {
                                 // metadata and log concurrently as we read the values. It's ok since we iterate
                                 // through the WAL tables periodically, so eventually we should see the updates.
                                 path.concat(nameSink).concat(SEQ_DIR);
-                                long fdMeta = -1;
-                                long fdTxn = -1;
+                                int metaFd = -1;
+                                int txnFd = -1;
                                 try {
-                                    fdMeta = openFileRO(ff, path, META_FILE_NAME);
-                                    fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-                                    tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
-                                    lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                                    metaFd = openFileRO(ff, path, META_FILE_NAME);
+                                    txnFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                    tableId = ff.readNonNegativeInt(metaFd, SEQ_META_TABLE_ID);
+                                    lastTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                                 } finally {
-                                    if (fdMeta > -1) {
-                                        ff.close(fdMeta);
+                                    if (metaFd > -1) {
+                                        ff.close(metaFd);
                                     }
-                                    if (fdTxn > -1) {
-                                        ff.close(fdTxn);
+                                    if (txnFd > -1) {
+                                        ff.close(txnFd);
                                     }
                                 }
                             } else {
@@ -241,6 +252,17 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    @TestOnly
+    public void openSequencer(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.open();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public void registerTable(int tableId, final TableStructure tableStructure) {
         String tableNameStr = Chars.toString(tableStructure.getTableName());
         try (
@@ -279,10 +301,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void reopen() {
-        closed = false;
-    }
-
     @TestOnly
     public void setDistressed(String tableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
@@ -310,7 +328,7 @@ public class TableSequencerAPI implements QuietCloseable {
         return isWalTable(tableName, path, ff);
     }
 
-    private static long openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
         final int rootLen = path.length();
         path.concat(fileName).$();
         try {

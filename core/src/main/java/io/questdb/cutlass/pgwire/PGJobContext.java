@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.WeakSelfReturningObjectPool;
@@ -81,11 +82,10 @@ public class PGJobContext implements Closeable {
         typesAndUpdateCache.clear();
     }
 
-    public void handleClientOperation(PGConnectionContext context, int operation)
-            throws PeerIsSlowToWriteException,
-            PeerIsSlowToReadException,
-            PeerDisconnectedException,
-            BadProtocolException {
+    public void handleClientOperation(
+            PGConnectionContext context,
+            int operation
+    ) throws PeerIsSlowToWriteException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         context.handleClientOperation(
                 compiler,
                 typesAndSelectCache,

@@ -46,7 +46,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final MicrosecondClock clock;
     private final int sharedWorkerCount;
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final IntStack timestampRequiredStack = new IntStack();
@@ -54,10 +53,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
     private boolean columnPreTouchEnabled = true;
     private int jitMode;
     private long now;
+    private final MicrosecondClock nowClock = () -> now;
     private Rnd random;
     private long requestFd = -1;
     private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
@@ -145,6 +146,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getMicrosecondTimestamp() {
+        return clock.getTicks();
+    }
+
+    @Override
     public long getNow() {
         return now;
     }
@@ -176,7 +182,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
+        now = clock.getTicks();
     }
 
     @Override
@@ -220,6 +226,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setNowAndFixClock(long now) {
+        this.now = now;
+        clock = nowClock;
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
     }
@@ -256,7 +268,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
-        this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         walApplication = false;
         return this;
     }

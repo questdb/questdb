@@ -29,29 +29,31 @@ import io.questdb.std.str.LPSZ;
 
 public interface NetworkFacade {
 
-    void abortAccept(long fd);
+    void abortAccept(int fd);
 
-    long accept(long serverFd);
+    int accept(int serverFd);
 
-    boolean bindTcp(long fd, int address, int port);
+    boolean bindTcp(int fd, int address, int port);
 
-    boolean bindTcp(long fd, CharSequence ipv4Address, int port);
+    boolean bindTcp(int fd, CharSequence ipv4Address, int port);
 
-    boolean bindUdp(long fd, int ipv4Address, int port);
+    boolean bindUdp(int fd, int ipv4Address, int port);
 
-    int close(long fd);
+    void bumpFdCount(int fd);
 
-    void close(long fd, Log logger);
+    int close(int fd);
 
-    int configureLinger(long fd, int seconds);
+    void close(int fd, Log logger);
 
-    void configureNoLinger(long fd);
+    int configureLinger(int fd, int seconds);
 
-    int configureNonBlocking(long fd);
+    void configureNoLinger(int fd);
 
-    int connect(long fd, long pSockaddr);
+    int configureNonBlocking(int fd);
 
-    int connectAddrInfo(long fd, long pAddrInfo);
+    int connect(int fd, long pSockaddr);
+
+    int connectAddrInfo(int fd, long pAddrInfo);
 
     int errno();
 
@@ -69,56 +71,61 @@ public interface NetworkFacade {
 
     long getMMsgBufLen(long msg);
 
-    long getPeerIP(long fd);
+    long getPeerIP(int fd);
 
-    int getSndBuf(long fd);
+    int getSndBuf(int fd);
 
-    boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
+    boolean join(int fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
 
-    boolean join(long fd, int bindIPv4, int groupIPv4);
+    boolean join(int fd, int bindIPv4, int groupIPv4);
 
-    void listen(long serverFd, int backlog);
+    void listen(int serverFd, int backlog);
 
     long msgHeaders(int msgBufferSize, int msgCount);
 
     int parseIPv4(CharSequence ipv4Address);
 
-    int peek(long fd, long buffer, int bufferLen);
+    int peek(int fd, long buffer, int bufferLen);
 
-    int recv(long fd, long buffer, int bufferLen);
+    int recv(int fd, long buffer, int bufferLen);
 
     @SuppressWarnings("SpellCheckingInspection")
-    int recvmmsg(long fd, long msgVec, int msgCount);
+    int recvmmsg(int fd, long msgVec, int msgCount);
 
-    int resolvePort(long fd);
+    int resolvePort(int fd);
 
-    int send(long fd, long buffer, int bufferLen);
+    int send(int fd, long buffer, int bufferLen);
 
-    int sendTo(long fd, long lo, int len, long socketAddress);
+    int sendTo(int fd, long lo, int len, long socketAddress);
 
-    int setMulticastInterface(long fd, CharSequence address);
+    int setMulticastInterface(int fd, CharSequence address);
 
-    int setMulticastInterface(long fd, int ipv4Address);
+    int setMulticastInterface(int fd, int ipv4Address);
 
-    int setMulticastLoop(long fd, boolean loop);
+    int setMulticastLoop(int fd, boolean loop);
 
-    int setMulticastTtl(long fd, int ttl);
+    int setMulticastTtl(int fd, int ttl);
 
-    int setRcvBuf(long fd, int size);
+    int setRcvBuf(int fd, int size);
 
-    int setReusePort(long fd);
+    int setReusePort(int fd);
 
-    boolean setSndBuf(long fd, int size);
+    boolean setSndBuf(int fd, int size);
 
-    int setTcpNoDelay(long fd, boolean noDelay);
+    int setTcpNoDelay(int fd, boolean noDelay);
 
-    int shutdown(long fd, int how);
+    int shutdown(int fd, int how);
 
     long sockaddr(int address, int port);
 
     long sockaddr(CharSequence address, int port);
 
-    long socketTcp(boolean blocking);
+    int socketTcp(boolean blocking);
 
-    long socketUdp();
+    int socketUdp();
+
+    /**
+     * Returns true if a disconnect happened, false otherwise.
+     */
+    boolean testConnection(int fd, long buffer, int bufferSize);
 }

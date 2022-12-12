@@ -219,22 +219,22 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @TestOnly
     static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
-        long fdTemplate = -1;
+        int templateFd = -1;
         try (Path path = new Path()) {
             path.of(location);
-            fdTemplate = ff.openRO(path.$());
-            if (fdTemplate == -1) {
+            templateFd = ff.openRO(path.$());
+            if (templateFd == -1) {
                 throw new LogError(String.format(
                         "Cannot read %s [errno=%d]",
                         location,
                         ff.errno()
                 ));
             }
-            long size = ff.length(fdTemplate);
+            long size = ff.length(templateFd);
             if (size > addressSize) {
                 throw new LogError("Template file is too big");
             }
-            if (size < 0 || size != ff.read(fdTemplate, address, size, 0)) {
+            if (size < 0 || size != ff.read(templateFd, address, size, 0)) {
                 throw new LogError(String.format(
                         "Cannot read %s [errno=%d, size=%d]",
                         location,
@@ -244,8 +244,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             }
             Chars.utf8Decode(address, address + size, sink);
         } finally {
-            if (fdTemplate != -1) {
-                ff.close(fdTemplate);
+            if (templateFd != -1) {
+                ff.close(templateFd);
             }
         }
     }

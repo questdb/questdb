@@ -32,7 +32,9 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
 
@@ -160,9 +162,13 @@ public interface CairoConfiguration {
 
     int getMetadataPoolCapacity();
 
-    MicrosecondClock getMicrosecondClock();
+    default MicrosecondClock getMicrosecondClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
 
-    MillisecondClock getMillisecondClock();
+    default MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
 
     long getMiscAppendPageSize();
 
