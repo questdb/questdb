@@ -37,6 +37,8 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.function.BiFunction;
+
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
@@ -46,7 +48,7 @@ public class TableSequencerAPI implements QuietCloseable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final long inactiveTtlUs;
-    private final ConcurrentHashMap.Function<CharSequence, Object, TableSequencerEntry> openSequencerInstanceLambda;
+    private final BiFunction<CharSequence, Object, TableSequencerEntry> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private volatile boolean closed;
@@ -349,7 +351,7 @@ public class TableSequencerAPI implements QuietCloseable {
     private TableSequencerEntry getTableSequencerEntry(
             TableToken tableToken,
             SequencerLockType lock,
-            ConcurrentHashMap.Function<CharSequence, Object, TableSequencerEntry> getSequencerLambda
+            BiFunction<CharSequence, Object, TableSequencerEntry> getSequencerLambda
     ) {
         TableSequencerEntry entry;
         int attempt = 0;
