@@ -684,6 +684,13 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTypeOf() throws Exception {
+        assertQuery("typeOf\n" +
+                        "UUID\n",
+                "select typeOf(uuid '11111111-1111-1111-1111-111111111111') from long_sequence(1)", null, null, true, true, true);
+    }
+
+    @Test
     public void testUnionAllArbitraryStringWithUuid() throws Exception {
         assertCompile("create table x (u string)");
         assertCompile("create table y (u uuid)");
