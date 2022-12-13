@@ -2379,7 +2379,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testEmptyAliasDisallowed() throws Exception {
+    public void testEmptyColumnAliasDisallowed() throws Exception {
         assertSyntaxError("select x as '' from long_sequence(1)", 15, "column alias");
         assertSyntaxError("select 'x' '' from long_sequence(1)", 14, "column alias");
     }
@@ -2397,6 +2397,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEmptySampleBy() throws Exception {
         assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
+    }
+
+    @Test
+    public void testEmptyTableAliasDisallowed() throws Exception {
+        assertSyntaxError("select x from long_sequence(1) ''", 31, "table alias");
+        assertSyntaxError("select x from long_sequence(1) as ''", 34, "table alias");
+        assertSyntaxError("select * from long_sequence(1) \"\"", 31, "table alias");
+        assertSyntaxError("select * from long_sequence(1) as \"\"", 34, "table alias");
     }
 
     @Test

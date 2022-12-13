@@ -1979,7 +1979,11 @@ public final class SqlParser {
             if (SqlKeywords.isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
             }
-            joinModel.setAlias(literal(lexer, tok));
+            ExpressionNode alias = literal(lexer, tok);
+            if (alias.token.length() == 0) {
+                throw SqlException.position(alias.position).put("Empty table alias");
+            }
+            joinModel.setAlias(alias);
             tok = optTok(lexer);
         }
         return tok;
