@@ -46,11 +46,14 @@ public class TxReader implements Closeable, Mutable {
     // PARTITION_MASKED_SIZE_OFFSET
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
-    // | sign-bit | read-only | available bits | partition size |
+    // | reserved | read-only | available bits | partition size |
     // +----------+-----------+----------------+----------------+
     // |  1 bit   |  1 bit    |  18 bits       |      44 bits   |
     //
-    // when read-only bit is set, the partition is read only
+    // when read-only bit is set, the partition is read only.
+    // we reserve the highest bit to allow negative values to 
+    // have meaning (in future). For instance the table reader uses
+    // a negative size value to mean that the partition is not open.
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
     protected final AtomicLong structureVersion = new AtomicLong();
