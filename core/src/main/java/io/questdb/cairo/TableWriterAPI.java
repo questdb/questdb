@@ -77,7 +77,7 @@ public interface TableWriterAPI extends Closeable {
     void ic(long o3MaxLag);
 
     default boolean isPartitionReadOnlyByTimestamp(long timestamp) {
-        return false;
+        throw new UnsupportedOperationException();
     }
 
     TableWriter.Row newRow();
