@@ -399,7 +399,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgNetIdleConnectionTimeout;
     private String pgPassword;
     private int pgPendingWritersCacheCapacity;
+    private String pgReadOnlyPassword;
     private boolean pgReadOnlySecurityContext;
+    private boolean pgReadOnlyUserEnabled;
+    private String pgReadOnlyUsername;
     private int pgRecvBufferSize;
     private int pgSelectCacheBlockCount;
     private boolean pgSelectCacheEnabled;
@@ -674,6 +677,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.PG_CONNECTION_POOL_CAPACITY, 4);
                 this.pgPassword = getString(properties, env, PropertyKey.PG_PASSWORD, "quest");
                 this.pgUsername = getString(properties, env, PropertyKey.PG_USER, "admin");
+                this.pgReadOnlyPassword = getString(properties, env, PropertyKey.PG_RO_PASSWORD, "quest");
+                this.pgReadOnlyUsername = getString(properties, env, PropertyKey.PG_RO_USER, "user");
+                this.pgReadOnlyUserEnabled = getBoolean(properties, env, PropertyKey.PG_RO_USER_ENABLED, false);
                 this.pgReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.PG_SECURITY_READONLY, false);
                 this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, PropertyKey.PG_MAX_BLOB_SIZE_ON_QUERY, 512 * 1024);
                 this.pgRecvBufferSize = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, Numbers.SIZE_1MB);
@@ -3178,6 +3184,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getReadOnlyPassword() {
+            return pgReadOnlyPassword;
+        }
+
+        @Override
+        public String getReadOnlyUsername() {
+            return pgReadOnlyUsername;
+        }
+
+        @Override
         public int getRecvBufferSize() {
             return pgRecvBufferSize;
         }
@@ -3250,6 +3266,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isInsertCacheEnabled() {
             return pgInsertCacheEnabled;
+        }
+
+        @Override
+        public boolean isReadOnlyUserEnabled() {
+            return pgReadOnlyUserEnabled;
         }
 
         @Override
