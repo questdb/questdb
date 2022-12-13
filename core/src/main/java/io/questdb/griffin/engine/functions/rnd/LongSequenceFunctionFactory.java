@@ -209,6 +209,8 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.type("long_sequence");
             sink.meta("count").val(cursor.recordCount);
+            sink.meta("seedLo").val(seedLo);
+            sink.meta("seedHi").val(seedHi);
         }
     }
 

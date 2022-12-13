@@ -61,5 +61,15 @@ public class NotFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return !arg.getBool(rec);
         }
+
+        @Override
+        public String getSymbol() {
+            return "not";
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
     }
 }

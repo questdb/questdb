@@ -76,6 +76,15 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
         return true;
     }
 
+    public void forEach(CharSequenceObjConsumer<T> action) {
+        for (int i = 0, n = values.length; i < n; i++) {
+            if (keys[i] == null) {
+                continue;
+            }
+            action.accept(keys[i], values[i]);
+        }
+    }
+
     public T get(CharSequence key) {
         return valueAt(keyIndex(key));
     }
@@ -171,5 +180,10 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @FunctionalInterface
+    public interface CharSequenceObjConsumer<V> {
+        void accept(CharSequence key, V value);
     }
 }

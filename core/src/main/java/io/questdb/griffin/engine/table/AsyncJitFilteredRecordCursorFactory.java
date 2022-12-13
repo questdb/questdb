@@ -60,7 +60,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
-    private final boolean preTouchColumns;
     private final int workerCount;
     private DirectLongList negativeLimitRows;
 
@@ -107,7 +106,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
-        this.preTouchColumns = preTouchColumns;
         this.workerCount = workerCount;
     }
 
@@ -179,7 +177,33 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async JIT Filter");
-        sink.optAttr("limit", limitLoFunction);
+        //calc order and limit if possible 
+        long rowsRemaining;
+        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
+        int order;
+        if (limitLoFunction != null) {
+            try {
+                limitLoFunction.init(frameSequence.getSymbolTableSource(), null);
+                rowsRemaining = limitLoFunction.getLong(null);
+            } catch (Exception e) {
+                rowsRemaining = Long.MAX_VALUE;
+            }
+            if (rowsRemaining > -1) {
+                order = baseOrder;
+            } else {
+                order = reverse(baseOrder);
+                rowsRemaining = -rowsRemaining;
+            }
+        } else {
+            rowsRemaining = Long.MAX_VALUE;
+            order = baseOrder;
+        }
+        if (rowsRemaining != Long.MAX_VALUE) {
+            sink.attr("limit").val(rowsRemaining);
+        }
+        if (order != ORDER_ASC) {
+            sink.attr("pageFrameDirection").val(nameOf(order));
+        }
         sink.attr("filter").val(filterAtom);
         sink.attr("workers").val(workerCount);
         sink.child(base);

@@ -25,10 +25,39 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
+import io.questdb.griffin.engine.functions.columns.*;
+import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.date.*;
+import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.*;
+import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
 public class ExplainPlanTest extends AbstractGriffinTest {
+
+    protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
 
     @Ignore//reenable after merge with join fix 
     @Test
@@ -666,6 +695,234 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         } finally {
             compiler.setFullFatJoins(false);
         }
+    }
+
+    @Test
+    public void testFunctions() {
+        final StringSink sink = new StringSink();
+
+        IntObjHashMap<Function> constFuncs = new IntObjHashMap<>();
+        constFuncs.put(ColumnType.BOOLEAN, BooleanConstant.TRUE);
+        constFuncs.put(ColumnType.BYTE, new ByteConstant((byte) 1));
+        constFuncs.put(ColumnType.SHORT, new ShortConstant((short) 2));
+        constFuncs.put(ColumnType.CHAR, new CharConstant('a'));
+        constFuncs.put(ColumnType.INT, new IntConstant(3));
+        constFuncs.put(ColumnType.LONG, new LongConstant(4));
+        constFuncs.put(ColumnType.DATE, new DateConstant(0));
+        constFuncs.put(ColumnType.TIMESTAMP, new TimestampConstant(86400000000L));
+        constFuncs.put(ColumnType.FLOAT, new FloatConstant(5f));
+        constFuncs.put(ColumnType.DOUBLE, new DoubleConstant(6));
+        constFuncs.put(ColumnType.STRING, new StrConstant("bbb"));
+        constFuncs.put(ColumnType.SYMBOL, new SymbolConstant("symbol", 0));
+        constFuncs.put(ColumnType.LONG256, new Long256Constant(0, 1, 2, 3));
+        constFuncs.put(ColumnType.GEOBYTE, new GeoByteConstant((byte) 1, ColumnType.getGeoHashTypeWithBits(5)));
+        constFuncs.put(ColumnType.GEOSHORT, new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(10)));
+        constFuncs.put(ColumnType.GEOINT, new GeoIntConstant(1, ColumnType.getGeoHashTypeWithBits(20)));
+        constFuncs.put(ColumnType.GEOLONG, new GeoLongConstant(1, ColumnType.getGeoHashTypeWithBits(35)));
+        constFuncs.put(ColumnType.GEOHASH, new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
+        constFuncs.put(ColumnType.BINARY, new NullBinConstant());
+        constFuncs.put(ColumnType.LONG128, new Long128Constant(0, 1));
+
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
+        constFuncs.put(ColumnType.RECORD, new RecordColumn(0, metadata));
+
+        GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
+        cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
+        constFuncs.put(ColumnType.CURSOR, new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
+            public boolean supportPageFrameCursor() {
+                return true;
+            }
+        }));
+
+        IntObjHashMap<Function> colFuncs = new IntObjHashMap<>();
+        colFuncs.put(ColumnType.BOOLEAN, new BooleanColumn(1));
+        colFuncs.put(ColumnType.BYTE, new ByteColumn(1));
+        colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
+        colFuncs.put(ColumnType.CHAR, new CharColumn(1));
+        colFuncs.put(ColumnType.INT, new IntColumn(1));
+        colFuncs.put(ColumnType.LONG, new LongColumn(1));
+        colFuncs.put(ColumnType.DATE, new DateColumn(1));
+        colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
+        colFuncs.put(ColumnType.FLOAT, new FloatColumn(1));
+        colFuncs.put(ColumnType.DOUBLE, new DoubleColumn(1));
+        colFuncs.put(ColumnType.STRING, new StrColumn(1));
+        colFuncs.put(ColumnType.SYMBOL, new SymbolColumn(1, true));
+        colFuncs.put(ColumnType.LONG256, new Long256Column(1));
+        colFuncs.put(ColumnType.GEOBYTE, new GeoByteColumn(1, ColumnType.getGeoHashTypeWithBits(5)));
+        colFuncs.put(ColumnType.GEOSHORT, new GeoShortColumn(1, ColumnType.getGeoHashTypeWithBits(10)));
+        colFuncs.put(ColumnType.GEOINT, new GeoIntColumn(1, ColumnType.getGeoHashTypeWithBits(20)));
+        colFuncs.put(ColumnType.GEOLONG, new GeoLongColumn(1, ColumnType.getGeoHashTypeWithBits(35)));
+        colFuncs.put(ColumnType.GEOHASH, new GeoShortColumn((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
+        colFuncs.put(ColumnType.BINARY, new BinColumn(1));
+        colFuncs.put(ColumnType.LONG128, new Long128Column(1));
+
+        PlanSink planSink = new PlanSink() {
+            @Override
+            public PlanSink putColumnName(int no) {
+                put("column(").put(no).put(")");
+                return this;
+            }
+        };
+
+        PlanSink tmpPlanSink = new PlanSink() {
+            @Override
+            public PlanSink putColumnName(int no) {
+                put("column(").put(no).put(")");
+                return this;
+            }
+        };
+
+        ObjList<Function> args = new ObjList<>();
+        IntList argPositions = new IntList();
+
+        FunctionFactoryCache cache = compiler.getFunctionFactoryCache();
+        LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
+        factories.forEach((key, value) -> {
+            for (int i = 0, n = value.size(); i < n; i++) {
+                planSink.clear();
+
+                FunctionFactoryDescriptor descriptor = value.get(i);
+                FunctionFactory factory = descriptor.getFactory();
+                int sigArgCount = descriptor.getSigArgCount();
+
+                sink.clear();
+                sink.put(factory.getSignature()).put(" types: ");
+
+                for (int p = 0, pn = sigArgCount; p < pn; p++) {
+                    int sigArgTypeMask = descriptor.getArgTypeMask(p);
+                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+
+                    if (p > 0) {
+                        sink.put(',');
+                    }
+                    sink.put(ColumnType.nameOf(sigArgType));
+                    if (isArray) {
+                        sink.put("[]");
+                    }
+                }
+                sink.put(" -> ");
+
+                int combinations = 1;
+
+                for (int p = 0; p < sigArgCount; p++) {
+                    boolean isConstant = FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeMask(p));
+                    if (!isConstant) {
+                        combinations *= 2;
+                    }
+                }
+
+                boolean goodArgsFound = false;
+                for (int no = 0; no < combinations; no++) {
+                    args.clear();
+                    argPositions.clear();
+                    planSink.clear();
+
+                    int tempNo = no;
+
+                    try {
+                        for (int p = 0; p < sigArgCount; p++) {
+                            int sigArgTypeMask = descriptor.getArgTypeMask(p);
+                            short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                            boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
+                            boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                            boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;
+                            boolean isVarArg = sigArgType == ColumnType.VAR_ARG;
+
+                            if (isVarArg) {
+                                if (factory instanceof LongSequenceFunctionFactory) {
+                                    sigArgType = ColumnType.LONG;
+                                } else if (factory instanceof InCharFunctionFactory) {
+                                    sigArgType = ColumnType.CHAR;
+                                } else if (factory instanceof InTimestampTimestampFunctionFactory) {
+                                    sigArgType = ColumnType.TIMESTAMP;
+                                } else {
+                                    sigArgType = ColumnType.STRING;
+                                }
+                            }
+
+                            if (factory instanceof SwitchFunctionFactory) {
+                                args.add(new IntConstant(1));
+                                args.add(new IntConstant(2));
+                                args.add(new StrConstant("a"));
+                                args.add(new StrConstant("b"));
+                            } else if (factory instanceof CoalesceFunctionFactory) {
+                                args.add(new FloatColumn(1));
+                                args.add(new FloatColumn(2));
+                                args.add(new FloatConstant(12f));
+                            } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("day"));
+                            } else if (factory instanceof TimestampCeilFunctionFactory) {
+                                args.add(new StrConstant("d"));
+                            } else if (sigArgType == ColumnType.STRING && isArray) {
+                                args.add(new StringToStringArrayFunction(0, "{'test'}"));
+                            } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
+                                args.add(new StrConstant("2022-12-12"));
+                            } else if (factory instanceof ToTimezoneTimestampFunctionFactory && p == 1) {
+                                args.add(new StrConstant("CET"));
+                            } else if (factory instanceof CastStrToRegClassFunctionFactory) {
+                                args.add(new StrConstant("pg_namespace"));
+                            } else if (factory instanceof CastStrToStrArrayFunctionFactory) {
+                                args.add(new StrConstant("{'abc'}"));
+                            } else if (factory instanceof TestSumXDoubleGroupByFunctionFactory && p == 1) {
+                                args.add(new StrConstant("123.456"));
+                            } else if (factory instanceof TimestampFloorFunctionFactory && p == 0) {
+                                args.add(new StrConstant("d"));
+                            } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
+                                args.add(new StrConstant("year"));
+                            } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {
+                                args.add(new StrConstant("CEST"));
+                            } else if (factory instanceof TimestampAddFunctionFactory && p == 0) {
+                                args.add(new CharConstant('s'));
+                            } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
+                                args.add(new StrConstant("1"));
+                            } else if (!useConst) {
+                                args.add(colFuncs.get(sigArgType));
+                            } else {
+                                args.add(getConst(constFuncs, sigArgType, p));
+                            }
+
+                            if (!isConstant) {
+                                tempNo >>= 1;
+                            }
+                        }
+
+                        argPositions.setAll(args.size(), 0);
+
+                        if (factory instanceof RowNumberFunctionFactory) {
+                            sqlExecutionContext.configureAnalyticContext(null, null, null, true, true);
+                        }
+
+                        Function function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
+                        function.toPlan(planSink);
+                        goodArgsFound = true;
+
+                        Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly but got " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
+                        LOG.info().$(sink).$(planSink.getSink()).$();
+
+                        if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
+                            ((NegatableBooleanFunction) function).setNegated();
+                            tmpPlanSink.clear();
+                            function.toPlan(tmpPlanSink);
+
+                            if (Chars.equals(planSink.getSink(), tmpPlanSink.getSink())) {
+                                throw new AssertionError("Same output generated regardless of negatable flag! Factory: " + factory.getSignature() + " " + function);
+                            }
+
+                            Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly but got " + tmpPlanSink.getSink(),
+                                    Chars.contains(tmpPlanSink.getSink(), "io.questdb"));
+                        }
+                    } catch (Exception t) {
+                        LOG.info().$(t).$();
+                    }
+                }
+
+                if (!goodArgsFound) {
+                    throw new RuntimeException("No good set of values found for " + factory);
+                }
+            }
+        });
     }
 
     @Test//only none, single int|symbol key cases are vectorized   
@@ -2772,6 +3029,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
+                        "      pageFrameDirection: backward\n" +
                         "      filter: (s=$0::string or s=$1::string)\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -2785,6 +3043,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
+                        "      pageFrameDirection: backward\n" +
                         "      filter: (s='S1' or s='S2')\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -3267,6 +3526,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
+                        "      pageFrameDirection: backward\n" +
                         "      filter: d=1.2\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -3275,11 +3535,26 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectWithJittedFilter24d() throws Exception {
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
+                "select * from tab where d = 1.2 limit -1 ",
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  pageFrameDirection: backward\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n");
+    }
+
+    @Test
     public void testSelectWithJittedFilter25() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
+                        "      pageFrameDirection: backward\n" +
                         "      filter: d=1.2\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -3915,6 +4190,28 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
+    private Function getConst(IntObjHashMap<Function> values, int type, int paramNo) {
+        //use param number to work around rnd factories validation logic
+        int val = paramNo + 1;
+
+        switch (type) {
+            case ColumnType.BYTE:
+                return new ByteConstant((byte) val);
+            case ColumnType.SHORT:
+                return new ShortConstant((short) val);
+            case ColumnType.INT:
+                return new IntConstant(val);
+            case ColumnType.LONG:
+                return new LongConstant(val);
+            case ColumnType.DATE:
+                return new DateConstant(val * 86_400_000L);
+            case ColumnType.TIMESTAMP:
+                return new TimestampConstant(val * 86_400_000L);
+            default:
+                return values.get(type);
+        }
+    }
+
     private void test2686Prepare() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table table_1 (\n" +
@@ -3940,3 +4237,4 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 }
+

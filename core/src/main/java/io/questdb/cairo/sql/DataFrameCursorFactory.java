@@ -44,6 +44,17 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     int ORDER_ASC = 0;
     int ORDER_DESC = 1;
 
+    static CharSequence nameOf(int order) {
+        switch (order) {
+            case ORDER_ASC:
+                return "forward";
+            case ORDER_DESC:
+                return "backward";
+            default:
+                return "any";
+        }
+    }
+
     static int reverse(int order) {
         switch (order) {
             case ORDER_ASC:

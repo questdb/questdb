@@ -48,6 +48,6 @@ public class GeoLongConstant extends GeoLongFunction implements ConstantFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        GeoHashes.append(hash, type, sink.getSink());
+        GeoHashes.append(hash, ColumnType.getGeoHashBits(type), sink.getSink());
     }
 }

@@ -126,6 +126,16 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
             return negated != Chars.equalsNc(a, b);
         }
+
+        @Override
+        public String getSymbol() {
+            if (negated) {
+                return "!=";
+            } else {
+                return "=";
+            }
+
+        }
     }
 
     private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {

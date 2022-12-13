@@ -127,6 +127,14 @@ public class PlanSink {
     public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
         clear();
         this.executionContext = executionContext;
+        if (executionContext.getBindVariableService() == null) {
+            this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
+            this.attrIndent = "&nbsp;&nbsp;";
+        } else {
+            this.childIndent = "    ";
+            this.attrIndent = "  ";
+        }
+
         if (factory != null) {
             factoryStack.push(factory);
             factory.toPlan(this);
@@ -170,6 +178,36 @@ public class PlanSink {
 
     public PlanSink put(Sinkable s) {
         val(s);
+        return this;
+    }
+
+    public PlanSink put(ObjList<?> list) {
+        return put(list, 0, list.size());
+    }
+
+    public PlanSink put(ObjList<?> list, int from) {
+        return put(list, from, list.size());
+    }
+
+    public PlanSink put(ObjList<?> list, int from, int to) {
+        sink.put('[');
+        for (int i = from; i < to; i++) {
+            if (i > from) {
+                sink.put(',');
+            }
+            Object obj = list.getQuick(i);
+            if (obj instanceof Plannable) {
+                ((Plannable) obj).toPlan(this);
+            } else if (obj instanceof Sinkable) {
+                sink.put((Sinkable) obj);
+            } else if (obj == null) {
+                sink.put("null");
+            } else {
+                sink.put(obj.toString());
+            }
+        }
+        sink.put(']');
+
         return this;
     }
 
@@ -240,10 +278,6 @@ public class PlanSink {
         this.eolIndexes.add(0);
         this.factoryStack.clear();
         this.executionContext = null;
-    }
-
-    public void setUseBaseMetadata(boolean b) {
-        this.useBaseMetadata = b;
     }
 
     public PlanSink type(CharSequence type) {

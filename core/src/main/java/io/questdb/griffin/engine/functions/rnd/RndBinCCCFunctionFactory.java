@@ -110,7 +110,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_bin(").put(this.sequence.len).put(',').put(nullRate - 1).put(')');
+            sink.put("rnd_bin(").put(this.sequence.len).put(',').put(this.sequence.len).put(',').put(nullRate - 1).put(')');
         }
     }
 

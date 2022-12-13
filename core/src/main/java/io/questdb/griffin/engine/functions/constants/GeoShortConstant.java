@@ -48,6 +48,6 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
 
     @Override
     public void toPlan(PlanSink sink) {
-        GeoHashes.append(hash, type, sink.getSink());
+        GeoHashes.append(hash, ColumnType.getGeoHashBits(type), sink.getSink());
     }
 }

@@ -79,4 +79,16 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
         trim(type, getArg().getStr(rec), sink1);
         return sink1.length();
     }
+
+    @Override
+    public String getSymbol() {
+        switch (type) {
+            case LTRIM:
+                return "ltrim";
+            case RTRIM:
+                return "rtrim";
+            default:
+                return "trim";
+        }
+    }
 }

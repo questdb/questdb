@@ -173,7 +173,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.put('!');
             }
-            sink.put('=').put(getHash());
+            sink.put('=').put(getHash()).put("::geohash");
         }
 
         protected abstract long getHash();

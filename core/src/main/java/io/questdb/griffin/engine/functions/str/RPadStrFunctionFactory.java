@@ -115,6 +115,11 @@ public class RPadStrFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public String getSymbol() {
+            return "rpad";
+        }
+
         @Nullable
         private StringSink rPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
             if (str != null && len >= 0 && fillText != null && fillText.length() > 0) {

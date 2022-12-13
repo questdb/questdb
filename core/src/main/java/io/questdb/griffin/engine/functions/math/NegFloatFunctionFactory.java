@@ -61,5 +61,15 @@ public class NegFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             return -arg.getFloat(rec);
         }
+
+        @Override
+        public String getSymbol() {
+            return "-";
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
     }
 }

@@ -79,5 +79,15 @@ public class RemLongFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
+
+        @Override
+        public String getSymbol() {
+            return "%";
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
+        }
     }
 }

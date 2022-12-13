@@ -37,6 +37,8 @@ import io.questdb.std.ObjList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestLatchedCounterFunctionFactory implements FunctionFactory {
+
+    public static final String SIGNATURE = "test_latched_counter()";
     private static final AtomicInteger COUNTER = new AtomicInteger();
     private static volatile Callback CALLBACK;
 
@@ -51,7 +53,7 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "test_latched_counter()";
+        return SIGNATURE;
     }
 
     @Override
@@ -98,7 +100,7 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("TestLatch");
+            sink.put(SIGNATURE);
         }
     }
 }

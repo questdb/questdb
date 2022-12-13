@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
@@ -41,9 +42,12 @@ import io.questdb.std.ObjList;
 
 public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
+    private static final String SYMBOL = "make_geohash";
+    private static final String SIGNATURE = SYMBOL + "(DDi)";
+
     @Override
     public String getSignature() {
-        return "make_geohash(DDi)";
+        return SIGNATURE;
     }
 
     @Override
@@ -127,6 +131,11 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             return lon;
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(SYMBOL).put('(').put(lon).put(',').put(lat).put(',').put(bits).put(')');
+        }
+
         private long getLongValue(Record rec) {
             try {
                 double lon = this.lon.getDouble(rec);
@@ -136,5 +145,6 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
                 return GeoHashes.NULL;
             }
         }
+
     }
 }

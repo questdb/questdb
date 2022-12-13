@@ -106,6 +106,11 @@ public class LPadFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public String getSymbol() {
+            return "lpad";
+        }
+
         @Nullable
         private StringSink lPad(CharSequence str, int len, StringSink sink) {
             if (str != null && len >= 0) {
@@ -129,4 +134,5 @@ public class LPadFunctionFactory implements FunctionFactory {
             return null;
         }
     }
+
 }

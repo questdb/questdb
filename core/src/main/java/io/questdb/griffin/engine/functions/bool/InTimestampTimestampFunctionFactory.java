@@ -195,7 +195,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 sink.put(" not");
             }
             sink.put(" in ");
-            args.toSink(sink.getSink(), 1);
+            sink.put(args, 1);
         }
     }
 }

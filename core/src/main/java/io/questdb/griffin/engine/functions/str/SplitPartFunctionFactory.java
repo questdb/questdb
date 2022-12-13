@@ -113,6 +113,11 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "split_part";
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
             if (indexFunc.isRuntimeConstant()) {

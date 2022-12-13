@@ -106,6 +106,11 @@ public class RPadFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public String getSymbol() {
+            return "rpad";
+        }
+
         @Nullable
         private StringSink rPad(CharSequence str, int len, StringSink sink) {
             if (str != null && len >= 0) {

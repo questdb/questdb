@@ -97,7 +97,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(left).put(" in ").put(intervals);
+            sink.put(left);
+            if (negated) {
+                sink.put(" not");
+            }
+            sink.put(" in ").put(intervals);
         }
     }
 

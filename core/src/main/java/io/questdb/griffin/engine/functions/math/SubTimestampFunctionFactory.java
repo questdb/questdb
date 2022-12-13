@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -67,6 +66,11 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "-";
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             long l = left.getTimestamp(rec);
             long r = right.getTimestamp(rec);
@@ -79,8 +83,8 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("SubTimestamp(").put(left).put(",").put(right).put(')');
+        public boolean isOperator() {
+            return true;
         }
     }
 }

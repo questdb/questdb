@@ -91,6 +91,11 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "to_long128";
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return false;
         }

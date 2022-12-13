@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -68,7 +68,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         return new VarBetweenFunction(arg, fromFn, toFn);
     }
 
-    private static class ConstFunc extends NegatableBooleanFunction implements UnaryFunction {
+    private static class ConstFunc extends BooleanFunction implements UnaryFunction {
         private final long from;
         private final Function left;
         private final long to;
@@ -98,7 +98,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class VarBetweenFunction extends NegatableBooleanFunction implements TernaryFunction {
+    private static class VarBetweenFunction extends BooleanFunction implements TernaryFunction {
         private final Function arg;
         private final Function from;
         private final Function to;
@@ -145,8 +145,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
-            return "between";
+        public void toPlan(PlanSink sink) {
+            sink.put(arg).put(" between ").put(from).put(" and ").put(to);
         }
     }
 }
