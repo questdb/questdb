@@ -517,8 +517,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "6e\r\n" +
-                            "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"\",\"type\":\"STRING\"}],\"dataset\":[[\"\"]],\"count\":1}\r\n" +
+                            "74\r\n" +
+                            "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"}],\"dataset\":[[\"\"]],\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
