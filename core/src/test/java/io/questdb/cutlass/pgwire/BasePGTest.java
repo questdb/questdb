@@ -260,11 +260,13 @@ public abstract class BasePGTest extends AbstractGriffinTest {
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public int getCircuitBreakerThrottle() {
-                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK) ? 0 : super.getCircuitBreakerThrottle();//fail on first check
+                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
+                        ? 0 // fail on first check
+                        : super.getCircuitBreakerThrottle();
             }
 
-            //should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because
-            //Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
+            // should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because
+            // Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
             @Override
             public MillisecondClock getClock() {
                 return () -> testMicrosClock.getTicks() / 1000L;
@@ -351,7 +353,7 @@ public abstract class BasePGTest extends AbstractGriffinTest {
     protected NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
             @Override
-            public int send(long fd, long buffer, int bufferLen) {
+            public int send(int fd, long buffer, int bufferLen) {
                 int total = 0;
                 for (int i = 0; i < bufferLen; i++) {
                     int n = super.send(fd, buffer + i, 1);

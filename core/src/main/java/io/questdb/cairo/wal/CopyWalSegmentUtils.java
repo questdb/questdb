@@ -57,10 +57,10 @@ public class CopyWalSegmentUtils {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.length();
         dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
-        long primaryFd = openRW(ff, newSegPath, LOG, options);
+        int primaryFd = openRW(ff, newSegPath, LOG, options);
         newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);
 
-        long secondaryFd;
+        int secondaryFd;
         if (ColumnType.isVariableLength(columnType)) {
             iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
             secondaryFd = openRW(ff, newSegPath, LOG, options);
@@ -88,7 +88,16 @@ public class CopyWalSegmentUtils {
         }
     }
 
-    private static boolean copyFixLenFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, int columnType, LongList newOffsets, int columnIndex) {
+    private static boolean copyFixLenFile(
+            FilesFacade ff,
+            MemoryMA primaryColumn,
+            int primaryFd,
+            long rowOffset,
+            long rowCount,
+            int columnType,
+            LongList newOffsets,
+            int columnIndex
+    ) {
         int shl = ColumnType.pow2SizeOf(columnType);
         long offset = rowOffset << shl;
         long length = rowCount << shl;
@@ -101,7 +110,15 @@ public class CopyWalSegmentUtils {
         return success;
     }
 
-    private static boolean copyTimestampFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
+    private static boolean copyTimestampFile(
+            FilesFacade ff,
+            MemoryMA primaryColumn,
+            int primaryFd,
+            long rowOffset,
+            long rowCount,
+            LongList newOffsets,
+            int columnIndex
+    ) {
         // Designated timestamp column is written as 2 long values
         if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex)) {
             return false;
@@ -116,7 +133,17 @@ public class CopyWalSegmentUtils {
         return true;
     }
 
-    private static boolean copyVarLenFile(FilesFacade ff, MemoryMA primaryColumn, MemoryMA secondaryColumn, long primaryFd, long secondaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
+    private static boolean copyVarLenFile(
+            FilesFacade ff,
+            MemoryMA primaryColumn,
+            MemoryMA secondaryColumn,
+            int primaryFd,
+            int secondaryFd,
+            long rowOffset,
+            long rowCount,
+            LongList newOffsets,
+            int columnIndex
+    ) {
         long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;
         long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);
         try {

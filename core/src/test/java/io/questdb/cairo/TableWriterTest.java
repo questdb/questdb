@@ -105,7 +105,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -329,7 +329,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -345,7 +345,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -366,7 +366,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -383,7 +383,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int toCount = 5;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -405,7 +405,6 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         FilesFacade ff = new FilesFacadeImpl() {
-
             int count = 5;
 
             @Override
@@ -444,9 +443,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1L;
+                    return -1;
                 }
                 return super.openRO(name);
             }
@@ -489,9 +488,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1L;
+                    return -1;
                 }
                 return super.openRO(name);
             }
@@ -510,9 +509,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
-                    return -1L;
+                    return -1;
                 }
                 return super.openRO(name);
             }
@@ -604,7 +603,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "supplier.d") && count-- == 0) {
                     return -1;
                 }
@@ -814,12 +813,12 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public boolean allocate(long fd, long size) {
+                public boolean allocate(int fd, long size) {
                     return !fail && super.allocate(fd, size);
                 }
 
                 @Override
-                public long read(long fd, long buf, long len, long offset) {
+                public long read(int fd, long buf, long len, long offset) {
                     if (fail) {
                         return -1;
                     }
@@ -887,10 +886,10 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCancelFirstRowPartitioned() throws Exception {
         ff = new FilesFacadeImpl() {
-            long kIndexFd = -1;
+            int kIndexFd = -1;
 
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 if (fd == kIndexFd) {
                     kIndexFd = -1;
                 }
@@ -898,7 +897,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean closeChecked(long fd) {
+            public boolean closeChecked(int fd) {
                 if (fd == kIndexFd) {
                     kIndexFd = -1;
                 }
@@ -906,7 +905,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
                     return kIndexFd = super.openRW(name, opts);
                 }
@@ -1283,7 +1282,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, PRODUCT + ".lock")) {
                         ran = true;
                         return -1;
@@ -1295,8 +1294,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 public boolean wasCalled() {
                     return ran;
                 }
-
-
             };
 
             try {
@@ -1317,10 +1314,10 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotMapTxFile() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             int count = 2;
-            long fd = -1;
+            int fd = -1;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
@@ -1329,7 +1326,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1342,7 +1339,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenColumnFile() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
                     return -1;
                 }
@@ -1371,7 +1368,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRW(LPSZ path, long opts) {
+            public int openRW(LPSZ path, long opts) {
                 if (Chars.endsWith(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -1386,7 +1383,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 2;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
@@ -1401,10 +1398,10 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new FilesFacadeImpl() {
-            long fd;
+            int fd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     return -1;
                 }
@@ -1412,7 +1409,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "supplier.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1427,10 +1424,10 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new FilesFacadeImpl() {
-            long fd;
+            int fd;
 
             @Override
-            public boolean allocate(long fd, long size) {
+            public boolean allocate(int fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
@@ -1438,7 +1435,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1453,10 +1450,10 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
         testConstructor(new FilesFacadeImpl() {
-            long fd;
+            int fd;
 
             @Override
-            public boolean allocate(long fd, long size) {
+            public boolean allocate(int fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
@@ -1464,7 +1461,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1479,7 +1476,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            long fd = -1;
+            int fd = -1;
             boolean ran = false;
 
             @Override
@@ -1488,7 +1485,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1496,7 +1493,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(long fd, long size) {
+            public boolean truncate(int fd, long size) {
                 if (this.fd == fd) {
                     ran = true;
                     return false;
@@ -1519,7 +1516,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            long fd = -1;
+            int fd = -1;
             boolean ran = false;
 
             @Override
@@ -1528,7 +1525,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1536,7 +1533,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(long fd, long size) {
+            public boolean truncate(int fd, long size) {
                 if (this.fd == fd) {
                     ran = true;
                     return false;
@@ -1558,7 +1555,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            long fd = -1;
+            int fd = -1;
             boolean ran = false;
 
             @Override
@@ -1567,7 +1564,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1575,7 +1572,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(long fd, long size) {
+            public boolean truncate(int fd, long size) {
                 if (this.fd == fd) {
                     ran = true;
                     return false;
@@ -1858,7 +1855,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -2149,11 +2146,10 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnCannotOpenSwap() throws Exception {
         class X extends TestFilesFacade {
-
             boolean hit = false;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
@@ -2407,11 +2403,10 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testRenameColumnCannotOpenSwap() throws Exception {
         class X extends TestFilesFacade {
-
             boolean hit = false;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
@@ -3047,7 +3042,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
                         return super.mmap(fd, len, offset, flags, memoryTag);
                     }
@@ -4006,10 +4001,10 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
             class X extends FilesFacadeImpl {
-                long fd = -1;
+                int fd = -1;
 
                 @Override
-                public boolean allocate(long fd, long size) {
+                public boolean allocate(int fd, long size) {
                     if (fd == this.fd) {
                         return false;
                     }
@@ -4017,7 +4012,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "bin.i")) {
                         return fd = super.openRW(name, opts);
                     }

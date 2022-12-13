@@ -398,7 +398,7 @@ public class TextImportTask {
             long ptr;
             long hi;
 
-            long fd = TableUtils.openRO(ff, path, LOG);
+            int fd = TableUtils.openRO(ff, path, LOG);
             ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
 
@@ -626,8 +626,8 @@ public class TextImportTask {
             long columnMemorySize = 0;
             long remapTableMemory = 0;
             long remapTableMemorySize = 0;
-            long columnFd = -1;
-            long remapFd = -1;
+            int columnFd = -1;
+            int remapFd = -1;
             try {
                 columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
                 columnMemorySize = ff.length(columnFd);
@@ -1016,7 +1016,7 @@ public class TextImportTask {
             offsets.clear();
             lexer.setupBeforeExactLines(onFieldsPartitioned);
 
-            long fd = -1;
+            int fd = -1;
             try {
                 tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
                 utf8Sink.clear();
@@ -1128,7 +1128,7 @@ public class TextImportTask {
 
             lexer.setupBeforeExactLines(onFieldsPartitioned);
 
-            long fd = -1;
+            int fd = -1;
             try {
                 tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
                 utf8Sink.clear();
@@ -1227,7 +1227,7 @@ public class TextImportTask {
 
             long mergedIndexSize = -1;
             long mergeIndexAddr = 0;
-            long fd = -1;
+            int fd = -1;
             try {
                 mergedIndexSize = openIndexChunks(ff, partitionPath, unmergedIndexes, partitionLen);
 
@@ -1331,7 +1331,7 @@ public class TextImportTask {
                             partitionPath.trimTo(partitionLen);
                             partitionPath.concat(chunkName).$();
 
-                            long fd = TableUtils.openRO(ff, partitionPath, LOG);
+                            int fd = TableUtils.openRO(ff, partitionPath, LOG);
                             long size = 0;
                             long address = -1;
 

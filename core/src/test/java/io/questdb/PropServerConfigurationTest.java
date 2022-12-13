@@ -253,6 +253,7 @@ public class PropServerConfigurationTest {
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getNetworkFacade());
         Assert.assertSame(EpollFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEpollFacade());
         Assert.assertSame(SelectFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSelectFacade());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getCairoConfiguration().getFilesFacade());
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMillisecondClock());
         Assert.assertSame(MicrosecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMicrosecondClock());
@@ -284,6 +285,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRcvBufSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getSndBufSize());
+        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
@@ -334,6 +336,7 @@ public class PropServerConfigurationTest {
 
         // Pg wire
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getLimit());
+        Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
@@ -796,7 +799,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
             Assert.assertFalse(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
             Assert.assertEquals(500, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-            Assert.assertEquals(32, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
+            Assert.assertEquals(16, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
 
             Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
@@ -809,6 +812,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(102, configuration.getHttpMinServerConfiguration().getYieldThreshold());
             Assert.assertEquals(100002, configuration.getHttpMinServerConfiguration().getSleepThreshold());
             Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
+            Assert.assertEquals(16, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
@@ -826,6 +830,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(63, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
             Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
             Assert.assertEquals(8388608, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
+            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getCairoConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
             Assert.assertEquals(65536, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
             Assert.assertEquals(8388608, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
@@ -971,6 +976,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
             Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRcvBufSize());
+            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(LineProtoMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
@@ -1025,6 +1031,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+            Assert.assertEquals(16, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
 
             Assert.assertEquals(255, configuration.getCairoConfiguration().getMaxFileNameLength());
             Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
@@ -1087,6 +1094,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1001, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getQueueTimeout());
             Assert.assertEquals(33554432, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getSndBufSize());
             Assert.assertEquals(16777216, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
+            Assert.assertEquals(64, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
             Assert.assertTrue(configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getHint());
 
             // influxdb line TCP protocol

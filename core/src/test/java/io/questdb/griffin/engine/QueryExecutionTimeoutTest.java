@@ -65,12 +65,12 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
             @Override
-            protected boolean testConnection(long fd) {
+            protected boolean testConnection(int fd) {
                 return false;
             }
 
             {
-                setTimeout(-100);//trigger timeout on first check
+                setTimeout(-100); // trigger timeout on first check
             }
         };
         AbstractGriffinTest.setUpStatic();

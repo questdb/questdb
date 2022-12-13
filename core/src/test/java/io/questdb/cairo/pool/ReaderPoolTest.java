@@ -442,8 +442,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             int count = N;
 
             @Override
-
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 count--;
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
                     return -1;

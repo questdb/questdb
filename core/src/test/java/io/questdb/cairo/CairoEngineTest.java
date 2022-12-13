@@ -100,10 +100,10 @@ public class CairoEngineTest extends AbstractCairoTest {
             public void run() {
                 ff = new FilesFacadeImpl() {
                     private boolean failNextAlloc = false;
-                    private long theFD = 0;
+                    private int theFD = 0;
 
                     @Override
-                    public boolean allocate(long fd, long size) {
+                    public boolean allocate(int fd, long size) {
                         if (failNextAlloc) {
                             failNextAlloc = false;
                             return false;
@@ -112,7 +112,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long length(long fd) {
+                    public long length(int fd) {
                         if (theFD == fd) {
                             failNextAlloc = true;
                             theFD = 0;
@@ -122,8 +122,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long openRW(LPSZ name, long opts) {
-                        long fd = super.openRW(name, opts);
+                    public int openRW(LPSZ name, long opts) {
+                        int fd = super.openRW(name, opts);
                         if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             theFD = fd;
                         }

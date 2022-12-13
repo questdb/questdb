@@ -107,16 +107,16 @@ public class TableSequencerAPI implements QuietCloseable {
                                 // metadata and log concurrently as we read the values. It's ok since we iterate
                                 // through the WAL tables periodically, so eventually we should see the updates.
                                 path.concat(nameSink).concat(SEQ_DIR);
-                                long fdMeta = -1;
-                                long fdTxn = -1;
+                                int metaFd = -1;
+                                int txnFd = -1;
                                 try {
-                                    fdMeta = TableUtils.openRO(ff, path, META_FILE_NAME, LOG);
-                                    fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
-                                    tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
-                                    lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                                    metaFd = TableUtils.openFileRO(ff, path, META_FILE_NAME);
+                                    txnFd = TableUtils.openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                    tableId = ff.readNonNegativeInt(metaFd, SEQ_META_TABLE_ID);
+                                    lastTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                                 } finally {
-                                    ff.closeChecked(fdMeta);
-                                    ff.closeChecked(fdTxn);
+                                    ff.closeChecked(metaFd);
+                                    ff.closeChecked(txnFd);
                                 }
                             } else {
                                 // Slow path.
@@ -345,6 +345,16 @@ public class TableSequencerAPI implements QuietCloseable {
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(tableName, path, ff);
+    }
+
+    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+        final int rootLen = path.length();
+        path.concat(fileName).$();
+        try {
+            return TableUtils.openRO(ff, path, LOG);
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     @NotNull

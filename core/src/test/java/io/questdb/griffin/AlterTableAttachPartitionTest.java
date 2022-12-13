@@ -773,7 +773,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     s -> {
                         engine.clear();
                         path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.i").$();
-                        long fd = Files.openRW(path);
+                        int fd = Files.openRW(path);
                         Files.truncate(fd, Files.length(fd) / 4);
                         Files.close(fd);
                     },
@@ -839,7 +839,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         // .v file
                         engine.clear();
                         path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.v").$();
-                        long fd = Files.openRW(path);
+                        int fd = Files.openRW(path);
                         Files.truncate(fd, Files.length(fd) / 2);
                         Files.close(fd);
                     },
@@ -917,7 +917,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         // .d file
                         engine.clear();
                         path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.d").$();
-                        long fd = Files.openRW(path);
+                        int fd = Files.openRW(path);
                         Files.truncate(fd, Files.length(fd) / 10);
                         Files.close(fd);
                     },
@@ -1323,10 +1323,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
-            private long tsdFd;
+            private int tsdFd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (tsdFd != fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -1335,8 +1335,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
+            public int openRO(LPSZ name) {
+                int fd = super.openRO(name);
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.tsdFd = fd;
                 }
@@ -1352,7 +1352,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1368,7 +1368,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1400,7 +1400,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "dst" + testName.getMethodName()) && Chars.contains(name, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1780,7 +1780,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        long fd = -1;
+        int fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             // .i file

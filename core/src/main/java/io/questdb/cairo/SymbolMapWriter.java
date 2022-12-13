@@ -173,7 +173,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         Misc.free(indexWriter);
         Misc.free(charMem);
         if (this.offsetMem != null) {
-            long fd = this.offsetMem.getFd();
+            int fd = this.offsetMem.getFd();
             Misc.free(offsetMem);
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }

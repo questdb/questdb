@@ -144,7 +144,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             int counter = 0;
 
             @Override
-            public long openRW(LPSZ name, long mode) {
+            public int openRW(LPSZ name, long mode) {
                 if (Chars.endsWith(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
                     return -1;
                 }
@@ -566,7 +566,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         FilesFacade ffOverride = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
@@ -610,7 +610,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         FilesFacade ffOverride = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
@@ -744,7 +744,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
         runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "sym5.c")) {
                     return -1;
                 }
@@ -1031,7 +1031,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -1097,10 +1097,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
         FilesFacade dodgyFf = new FilesFacadeImpl() {
-            long fd = -1;
+            int fd = -1;
 
             @Override
-            public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+            public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
                 if (destFd == fd) {
                     return -1;
                 }
@@ -1108,7 +1108,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "1" + Files.SEPARATOR + failToRollFile)) {
                     fd = super.openRW(name, opts);
                     return fd;

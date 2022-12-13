@@ -44,7 +44,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private long buf;
     private int bufSize;
     private String bufferSize;
-    private long fd = -1;
+    private int fd = -1;
     private long lim;
     private String location;
     private QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;

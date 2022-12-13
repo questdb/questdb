@@ -38,7 +38,7 @@ public class TxnScoreboard implements Closeable, Mutable {
     private final FilesFacade ff;
     private final int pow2EntryCount;
     private final long size;
-    private long fd = -1;
+    private int fd = -1;
     private long mem;
 
     public TxnScoreboard(FilesFacade ff, int entryCount) {
@@ -191,8 +191,8 @@ public class TxnScoreboard implements Closeable, Mutable {
         return txn + 1;
     }
 
-    static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
-        final long fd = ff.openCleanRW(path, size);
+    static int openCleanRW(FilesFacade ff, LPSZ path, long size) {
+        final int fd = ff.openCleanRW(path, size);
         if (fd > -1) {
             LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;

@@ -22,6 +22,7 @@
 #
 ################################################################################
 
+io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory
 io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
 io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory

@@ -67,7 +67,7 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(5, Files.length(path));
 
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
                 try {
                     Files.allocate(fd, 10);
                     Assert.assertEquals(10, Files.length(path));
@@ -81,6 +81,30 @@ public class FilesTest {
     }
 
     @Test
+    public void testAllocateConcurrent() throws IOException, InterruptedException {
+        // This test allocates (but doesn't write to) potentially very large files
+        // size of which will depend on free disk space of the host OS.
+        // I found that on OSX (m1) with large disk allocate() call is painfully slow and
+        // for that reason (until we understood the problem better) we won't run this test
+        // on OSX
+        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+        String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
+        AtomicInteger errors = new AtomicInteger();
+
+        for (int i = 0; i < 10; i++) {
+            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
+            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors));
+            th1.start();
+            th2.start();
+            th1.join();
+            th2.join();
+            Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    @Test
     public void testAllocateLoop() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
@@ -88,7 +112,7 @@ public class FilesTest {
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(5, Files.length(path));
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
 
                 long M50 = 100 * 1024L * 1024L;
                 try {
@@ -212,7 +236,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 File f = temporaryFolder.newFile();
-                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
+                int fd = Files.openRW(path.of(f.getAbsolutePath()).$());
                 Assert.assertTrue(Files.exists(fd));
                 Assert.assertTrue(Files.remove(path));
                 Assert.assertFalse(Files.exists(fd));
@@ -228,7 +252,7 @@ public class FilesTest {
             TestUtils.writeStringToFile(temp, "abcde");
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
                 Assert.assertTrue(Files.exists(path));
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
                 Assert.assertEquals(5, Files.length(path));
 
                 try {
@@ -382,11 +406,11 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
             try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
-                long fd = Files.openCleanRW(path, 1024);
+                int fd = Files.openCleanRW(path, 1024);
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(1024, Files.length(path));
 
-                long fd2 = Files.openCleanRW(path, 2048);
+                int fd2 = Files.openCleanRW(path, 2048);
                 Assert.assertEquals(2048, Files.length(path));
 
                 Files.close(fd);
@@ -415,7 +439,7 @@ public class FilesTest {
                         try {
                             barrier.await();
                             for (int i = 0; i < iteration; i++) {
-                                long fd = Files.openCleanRW(path, fileSize);
+                                int fd = Files.openCleanRW(path, fileSize);
                                 if (fd < 0) {
                                     errors.incrementAndGet();
                                 }
@@ -447,7 +471,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                long fd1 = Files.openRW(path.$());
+                int fd1 = Files.openRW(path.$());
                 long fileSize = 4096;
                 long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
 
@@ -480,7 +504,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                long fd1 = Files.openRW(path.$());
+                int fd1 = Files.openRW(path.$());
                 long size2Gb = (2L << 30) + 4096;
                 long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
 
@@ -547,9 +571,9 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                long fd1 = Files.openRW(path1.$());
+                int fd1 = Files.openRW(path1.$());
                 path2.put(".2").$();
-                long fd2 = 0;
+                int fd2 = 0;
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -602,9 +626,9 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                long fd1 = Files.openRW(path1.$());
+                int fd1 = Files.openRW(path1.$());
                 path2.put(".2").$();
-                long fd2 = Files.openRW(path2);
+                int fd2 = Files.openRW(path2);
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -705,7 +729,7 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path));
                 Assert.assertEquals(5, Files.length(path));
 
-                long fd = Files.openRW(path);
+                int fd = Files.openRW(path);
                 try {
                     Files.truncate(fd, 3);
                     Assert.assertEquals(3, Files.length(path));
@@ -767,7 +791,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                long fd1 = Files.openRW(path.$());
+                int fd1 = Files.openRW(path.$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
@@ -799,8 +823,8 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-                long fd1 = Files.openRW(path.$());
-                long fd2 = Files.openRW(path.chop$().put(".2").$());
+                int fd1 = Files.openRW(path.$());
+                int fd2 = Files.openRW(path.chop$().put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;
 
@@ -844,7 +868,7 @@ public class FilesTest {
     private static void assertEqualsFileContent(Path path, String fileContent) {
         final int buffSize = 2048;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        long fd = -1L;
+        int fd = -1;
         try {
             fd = Files.openRO(path);
             Assert.assertTrue(Files.exists(fd));
@@ -864,9 +888,7 @@ public class FilesTest {
             Chars.utf8Decode(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
-            if (fd != -1L) {
-                Files.close(fd);
-            }
+            Files.closeChecked(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
@@ -886,20 +908,52 @@ public class FilesTest {
             Unsafe.getUnsafe().putByte(p++, bytes[i]);
         }
         Unsafe.getUnsafe().putByte(p, (byte) 0);
-        long fd = -1L;
+        int fd = -1;
         try {
             fd = Files.openAppend(path.concat(fileName).$());
-            if (fd > -1L) {
+            if (fd > -1) {
                 Files.truncate(fd, 0);
                 Files.append(fd, buffPtr, bytes.length);
                 Files.sync();
             }
             Assert.assertTrue(Files.exists(fd));
         } finally {
-            if (fd != -1L) {
-                Files.close(fd);
-            }
+            Files.closeChecked(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
+        try (
+                Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
+                Path p2 = new Path().of(pathName).$()
+        ) {
+            int fd = -1;
+            long mem = -1;
+            long diskSize = ff.getDiskSize(p2);
+            Assert.assertNotEquals(-1, diskSize);
+            long fileSize = diskSize / 3 * 2;
+            try {
+                fd = ff.openRW(path, CairoConfiguration.O_NONE);
+                assert fd != -1;
+                if (ff.allocate(fd, fileSize)) {
+                    mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
+                    Unsafe.getUnsafe().putLong(mem, 123455);
+                }
+            } finally {
+                if (mem != -1) {
+                    ff.munmap(mem, fileSize, 0);
+                }
+
+                if (fd != -1) {
+                    ff.close(fd);
+                }
+
+                ff.remove(path);
+            }
+        } catch (Throwable e) {
+            e.printStackTrace();
+            errors.incrementAndGet();
         }
     }
 
@@ -1017,61 +1071,5 @@ public class FilesTest {
                 Assert.assertTrue(Files.remove(softLinkRenamedFilePath));
             }
         });
-    }
-
-    @Test
-    public void testAllocateConcurrent() throws IOException, InterruptedException {
-        // This test allocates (but doesn't write to) potentially very large files
-        // size of which will depend on free disk space of the host OS.
-        // I found that on OSX (m1) with large disk allocate() call is painfully slow and
-        // for that reason (until we understood the problem better) we won't run this test
-        // on OSX
-        Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
-        String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
-        AtomicInteger errors = new AtomicInteger();
-
-        for (int i = 0; i < 10; i++) {
-            Thread th1 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 1, errors));
-            Thread th2 = new Thread(() -> testAllocateConcurrent0(ff, tmpFolder, 2, errors));
-            th1.start();
-            th2.start();
-            th1.join();
-            th2.join();
-            Assert.assertEquals(0, errors.get());
-        }
-    }
-
-    private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
-        try (
-            Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt").$();
-            Path p2 = new Path().of(pathName).$()
-        ) {
-            long fd = -1;
-            long mem = -1;
-            long diskSize = ff.getDiskSize(p2);
-            Assert.assertNotEquals(-1, diskSize);
-            long fileSize = diskSize / 3 * 2;
-            try {
-                fd = ff.openRW(path, CairoConfiguration.O_NONE);
-                assert fd != -1;
-                if (ff.allocate(fd, fileSize)) {
-                    mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
-                    Unsafe.getUnsafe().putLong(mem, 123455);
-                }
-            } finally {
-                if (mem != -1) {
-                    ff.munmap(mem, fileSize, 0);
-                }
-
-                ff.closeChecked(fd);
-
-                ff.remove(path);
-            }
-        } catch (Throwable e) {
-            e.printStackTrace();
-            errors.incrementAndGet();
-        }
     }
 }

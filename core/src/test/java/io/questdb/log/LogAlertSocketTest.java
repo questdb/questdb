@@ -55,7 +55,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(long fd, long pSockaddr) {
+                public int connect(int fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -132,7 +132,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(long fd, long pSockaddr) {
+                public int connect(int fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -418,7 +418,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(long fd, long pSockaddr) {
+                public int connect(int fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -434,7 +434,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(long fd, long pSockaddr) {
+                public int connect(int fd, long pSockaddr) {
                     return -1;
                 }
             };

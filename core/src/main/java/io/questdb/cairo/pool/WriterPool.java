@@ -440,7 +440,7 @@ public class WriterPool extends AbstractPool {
         Path path = Path.getThreadLocal(root).concat(tableName);
         TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
-        if (e.lockFd == -1L) {
+        if (e.lockFd == -1) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;
             e.owner = UNALLOCATED;
@@ -572,7 +572,7 @@ public class WriterPool extends AbstractPool {
                 // do not release locks unless pool is shutting down, which is
                 // indicated via deadline to be Long.MAX_VALUE
                 if (ff.closeChecked(e.lockFd)) {
-                    e.lockFd = -1L;
+                    e.lockFd = -1;
                     iterator.remove();
                     removed = true;
                 }
@@ -589,7 +589,7 @@ public class WriterPool extends AbstractPool {
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
-        private volatile long lockFd = -1L;
+        private volatile int lockFd = -1;
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;

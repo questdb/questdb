@@ -144,11 +144,13 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         return false;
     }
 
-    private void onRequest(int operation, LineTcpConnectionContext context) {
+    private boolean onRequest(int operation, LineTcpConnectionContext context) {
         if (handleIO(context)) {
             busyContext = context;
             LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
+            return false;
         }
+        return true;
     }
 
 }

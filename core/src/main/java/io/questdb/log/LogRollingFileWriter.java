@@ -52,7 +52,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long buf;
     private String bufferSize;
     private long currentSize;
-    private long fd = -1;
+    private int fd = -1;
     private long idleSpinCount = 0;
     private long lim;
     // can be set via reflection

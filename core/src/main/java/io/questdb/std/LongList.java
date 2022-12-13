@@ -386,7 +386,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
         }
     }
 
-    final public void setPos(int pos) {
+    public final void setPos(int pos) {
         ensureCapacity(pos);
         this.pos = pos;
     }

@@ -34,7 +34,7 @@ import io.questdb.std.FilesFacade;
 // "sliding" read only memory that reads file descriptor used for append
 public class MemorySRImpl extends MemoryPARWImpl {
     private static final Log LOG = LogFactory.getLog(MemorySRImpl.class);
-    private long fd = -1;
+    private int fd = -1;
     private FilesFacade ff;
     private long pageAddress;
     private int pageIndex;
@@ -48,7 +48,7 @@ public class MemorySRImpl extends MemoryPARWImpl {
         releasePage();
     }
 
-    public long getFd() {
+    public int getFd() {
         return fd;
     }
 
