@@ -123,6 +123,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
             }
+            // TODO(puzpuzpuz): this is non-suspendable
             toTop();
         }
 
@@ -228,7 +229,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             count = 0L;
-            // TODO(puzpuzpuz): this is non-suspendable
             while (base.hasNext()) {
                 count++;
             }

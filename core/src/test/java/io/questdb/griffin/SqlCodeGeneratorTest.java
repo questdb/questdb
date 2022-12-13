@@ -290,7 +290,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         testBindVariableWithLike0("like");
     }
 
-    // TODO fix broken test
     @Test
     public void testBug484() throws Exception {
         TestMatchFunctionFactory.clear();
