@@ -105,7 +105,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 
 JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
         (JNIEnv *e, jclass cl,
-         jlong fd,
+         jint fd,
          jlong offset) {
     jbyte result;
     ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jbyte), (off_t) offset);
@@ -117,7 +117,7 @@ JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
 
 JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
         (JNIEnv *e, jclass cl,
-         jlong fd,
+         jint fd,
          jlong offset) {
     jshort result;
     ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jshort), (off_t) offset);
