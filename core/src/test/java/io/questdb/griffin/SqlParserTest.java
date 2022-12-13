@@ -2405,6 +2405,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("select x from long_sequence(1) as ''", 34, "table alias");
         assertSyntaxError("select * from long_sequence(1) \"\"", 31, "table alias");
         assertSyntaxError("select * from long_sequence(1) as \"\"", 34, "table alias");
+        assertSyntaxError("select ''.* from long_sequence(1) as ''", 37, "table alias");
+        assertSyntaxError("select \"\".* from long_sequence(1) as \"\"", 37, "table alias");
     }
 
     @Test
@@ -5778,6 +5780,44 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testQuotedTableAliasFollowedByStar() throws Exception {
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select foo.* from long_sequence(1) as foo"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as foo"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select foo.* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo\".* from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo\".* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as \"foo\""
         );
     }
 
