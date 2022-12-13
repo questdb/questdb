@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.mp.Job;
 import io.questdb.std.*;
@@ -38,7 +37,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.fail;
 
 public class CairoEngineTest extends AbstractCairoTest {
 
@@ -207,28 +206,6 @@ public class CairoEngineTest extends AbstractCairoTest {
                     Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
                     assertReader(engine, "x");
                     assertWriter(engine, "x");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testLockWriter_ReadOnlyContext() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
-                try {
-                    engine.lockWriter(readOnlyContext, "x", "testing");
-                    fail("acquiring a write lock in read-only context should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
-
-                    // check the lock was actually NOT acquired
-                    assertNull(engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
-                    // and release it again to prevent leaks
-                    engine.unlockWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
                 }
             }
         });
@@ -469,30 +446,6 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertReader(engine, "y");
                 assertWriter(engine, "y");
-            }
-        });
-    }
-
-    @Test
-    public void testUnlockWriter_ReadOnlyContext() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
-                engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
-                try {
-                    engine.unlockWriter(readOnlyContext, "x");
-                    fail("releasing a write lock in read-only context should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
-
-                    // check the lock was actually NOT released
-                    assertEquals("testing", engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
-
-                    // and now release it to prevent leaks
-                    engine.unlockWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
-                }
             }
         });
     }

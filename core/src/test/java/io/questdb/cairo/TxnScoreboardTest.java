@@ -101,9 +101,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             Assert.assertEquals(0, txnScoreboard.releaseTxn(lastCommittedTxn));
 
             // a reader sneaks in
-            Assert.assertFalse(txnScoreboard.acquireTxn(lastCommittedTxn));
+            Assert.assertTrue(txnScoreboard.acquireTxn(lastCommittedTxn));
 
-            // the lockout
+            // the lockout fails, read is in
+            Assert.assertEquals(0, txnScoreboard.releaseTxn(lastCommittedTxn));
+
+            // reader releases
             Assert.assertEquals(-1, txnScoreboard.releaseTxn(lastCommittedTxn));
 
             // Thread B (reader) - fails to grab latest

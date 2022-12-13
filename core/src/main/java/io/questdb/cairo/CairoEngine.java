@@ -55,6 +55,8 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -462,10 +464,39 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return readerPool.lock(tableName);
     }
 
-    public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
-        securityContext.checkWritePermission();
-        validNameOrThrow(tableName);
-        return writerPool.lock(tableName, lockReason);
+    public void lockReaders(CharSequence tableName, Path path) {
+        // this method must be invoked only when thread has lock on writer pool
+        path.of(configuration.getRoot()).concat(tableName);
+        int plen = path.length();
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (TxnScoreboard txnScoreboard = new TxnScoreboard(configuration).ofRW(path)) {
+            path.trimTo(plen).concat(TXN_FILE_NAME).$();
+            int txnFd = TableUtils.openRO(configuration.getFilesFacade(), path, LOG);
+            long txn;
+            try {
+                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    txn = TableUtils.readLongOrFail(configuration.getFilesFacade(), txnFd, TableUtils.TX_OFFSET_TXN_64, mem, path);
+                } finally {
+                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(txnFd);
+            }
+
+            // make sure we can get a slot
+            if (txnScoreboard.acquireTxn(txn)) {
+                txnScoreboard.releaseTxn(txn);
+
+                // lock the current txn if scoreboard is at min
+                if (txnScoreboard.getMin() == txn && txnScoreboard.releaseTxn(txn) == -1) {
+                    return;
+                }
+                throw CairoException.nonCritical().put("could not lock out the readers [table=").put(tableName).put(']');
+            }
+            throw CairoException.nonCritical().put("oversubscribed scoreboard [table=").put(tableName).put(']');
+        }
     }
 
     public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
@@ -590,6 +621,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @Nullable TableWriter writer,
             boolean newTable
     ) {
+        securityContext.checkWritePermission();
         validNameOrThrow(tableName);
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer, newTable);
@@ -600,12 +632,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void unlockReaders(CharSequence tableName) {
         validNameOrThrow(tableName);
         readerPool.unlock(tableName);
-    }
-
-    public void unlockWriter(CairoSecurityContext securityContext, CharSequence tableName) {
-        securityContext.checkWritePermission();
-        validNameOrThrow(tableName);
-        writerPool.unlock(tableName);
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

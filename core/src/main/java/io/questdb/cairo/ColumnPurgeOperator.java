@@ -59,7 +59,7 @@ public class ColumnPurgeOperator implements Closeable {
         this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
         path.of(configuration.getRoot());
         pathRootLen = path.length();
-        txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+        txnScoreboard = new TxnScoreboard(configuration);
         txReader = new TxReader(ff);
         microClock = configuration.getMicrosecondClock();
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);

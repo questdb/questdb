@@ -64,7 +64,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
             partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
-            txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
+            txnScoreboards.add(new TxnScoreboard(configuration));
             txnReaders.add(new TxReader(configuration.getFilesFacade()));
         }
     }

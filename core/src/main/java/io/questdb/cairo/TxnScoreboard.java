@@ -41,6 +41,10 @@ public class TxnScoreboard implements Closeable, Mutable {
     private int fd = -1;
     private long mem;
 
+    public TxnScoreboard(CairoConfiguration configuration) {
+        this(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount());
+    }
+
     public TxnScoreboard(FilesFacade ff, int entryCount) {
         this.ff = ff;
         this.pow2EntryCount = Numbers.ceilPow2(entryCount);
@@ -50,9 +54,13 @@ public class TxnScoreboard implements Closeable, Mutable {
     public static native long getScoreboardSize(int entryCount);
 
     public boolean acquireTxn(long txn) {
+        return acquireTxn(txn, true);
+    }
+    
+    public boolean acquireTxn(long txn, boolean chkLockedState) {
         assert txn > -1;
         final long internalTxn = toInternalTxn(txn);
-        final long response = acquireTxn(mem, internalTxn);
+        final long response = acquireTxn(mem, internalTxn, chkLockedState);
         if (response == 0) {
             // all good
             return true;
@@ -126,10 +134,20 @@ public class TxnScoreboard implements Closeable, Mutable {
         return this;
     }
 
-    public TxnScoreboard ofRW(@Transient Path root) {
+    public TxnScoreboard ofRW(@Transient Path tableRoot) {
+        return ofRW(tableRoot, false);
+    }
+
+    public TxnScoreboard ofRW(@Transient Path tableRoot, boolean safeOpen) {
         clear();
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = openCleanRW(ff, root, this.size);
+        tableRoot.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+        this.fd = ff.openCleanRW(tableRoot, this.size);
+        if (fd < 0) {
+            if (safeOpen) {
+                return null;
+            }
+            throw CairoException.critical(ff.errno()).put("could not open read-write with clean allocation [file=").put(tableRoot).put(']');
+        }
 
         // truncate is required to give file a size
         // allocate above does not seem to update file system's size entry
@@ -151,13 +169,13 @@ public class TxnScoreboard implements Closeable, Mutable {
         return released;
     }
 
-    private static long acquireTxn(long pTxnScoreboard, long txn) {
+    private static long acquireTxn(long pTxnScoreboard, long txn, boolean chkLockedState) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
-        return acquireTxn0(pTxnScoreboard, txn);
+        return acquireTxn0(pTxnScoreboard, txn, chkLockedState);
     }
 
-    private native static long acquireTxn0(long pTxnScoreboard, long txn);
+    private native static long acquireTxn0(long pTxnScoreboard, long txn, boolean chkLockedState);
 
     /**
      * Reverts toInternalTxn() value.

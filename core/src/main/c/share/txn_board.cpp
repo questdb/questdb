@@ -52,7 +52,7 @@ class txn_scoreboard_t {
         return counts[offset & mask];
     }
 
-    inline bool increment_count(int64_t txn) {
+    inline bool increment_count(int64_t txn, bool chkLockedState) {
         // Increment txn count
         // but do not allow to use txn below max value
         // Once there is count for txn 100
@@ -64,7 +64,7 @@ class txn_scoreboard_t {
             return false;
         }
 
-        if (get_counter(txn) == -1) {
+        if (chkLockedState && get_counter(txn) == -1) {
             return false;
         }
         
@@ -119,7 +119,7 @@ public:
     }
 
     // txn must be > 0
-    inline int64_t txn_acquire(int64_t txn) {
+    inline int64_t txn_acquire(int64_t txn, bool chkLockedState) {
         int64_t current_min = min.load();
         if (current_min == L_MIN) {
             if (min.compare_exchange_strong(current_min, txn)) {
@@ -136,7 +136,7 @@ public:
                 // Updating min directly will create a race condition
                 // instead move min size by size
                 auto dummy_txn = current_min + size - 1;
-                if (increment_count(dummy_txn)) {
+                if (increment_count(dummy_txn, chkLockedState)) {
                     current_min = update_min(txn);
                     // release dummy txn
                     get_counter(dummy_txn)--;
@@ -156,7 +156,7 @@ public:
         }
 
         if (txn - current_min < size) {
-            if (!increment_count(txn)) {
+            if (!increment_count(txn, chkLockedState)) {
                 // Race lost, someone updated max to higher value
                 return -1;
             }
@@ -190,8 +190,8 @@ public:
 extern "C" {
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
-        (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
-    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
+        (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn, jboolean chkLockedState) {
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn, chkLockedState);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0

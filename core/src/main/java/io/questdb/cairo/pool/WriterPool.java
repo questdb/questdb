@@ -173,7 +173,7 @@ public class WriterPool extends AbstractPool {
      *
      * @param tableName  table name
      * @param lockReason description of where or why lock is held
-     * @return true if lock was successful, false otherwise
+     * @return OWNERSHIP_REASON_NONE if lock was successful, text description of lock reason otherwise
      */
     public String lock(CharSequence tableName, String lockReason) {
         checkClosed();
@@ -308,6 +308,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private void assertLockReasonIsNone(String lockReason) {
+        //noinspection StringEquality
         if (lockReason == OWNERSHIP_REASON_NONE) {
             throw new NullPointerException();
         }
@@ -465,6 +466,7 @@ public class WriterPool extends AbstractPool {
         // therefore we could be in a situation where we can be confident writer is locked
         // but reason has not yet caught up. In this case we do not really know the reason
         // but not to confuse the caller, we have to provide a non-null value
+        //noinspection StringEquality
         return providedReason == OWNERSHIP_REASON_NONE ? OWNERSHIP_REASON_UNKNOWN : providedReason;
     }
 

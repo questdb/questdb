@@ -268,7 +268,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             this.metadata = new TableWriterMetadata(this.tableName, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
-            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
+            this.txnScoreboard = new TxnScoreboard(configuration).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
