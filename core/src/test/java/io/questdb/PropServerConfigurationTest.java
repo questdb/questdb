@@ -348,6 +348,12 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+        Assert.assertFalse(configuration.getPGWireConfiguration().readOnlySecurityContext());
+        Assert.assertEquals("quest", configuration.getPGWireConfiguration().getDefaultPassword());
+        Assert.assertEquals("admin", configuration.getPGWireConfiguration().getDefaultUsername());
+        Assert.assertFalse(configuration.getPGWireConfiguration().isReadOnlyUserEnabled());
+        Assert.assertEquals("quest", configuration.getPGWireConfiguration().getReadOnlyPassword());
+        Assert.assertEquals("user", configuration.getPGWireConfiguration().getReadOnlyUsername());
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
         Assert.assertEquals(127, configuration.getCairoConfiguration().getMaxFileNameLength());
@@ -1031,6 +1037,12 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+            Assert.assertTrue(configuration.getPGWireConfiguration().readOnlySecurityContext());
+            Assert.assertEquals("my_quest", configuration.getPGWireConfiguration().getDefaultPassword());
+            Assert.assertEquals("my_admin", configuration.getPGWireConfiguration().getDefaultUsername());
+            Assert.assertTrue(configuration.getPGWireConfiguration().isReadOnlyUserEnabled());
+            Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
+            Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
 
             Assert.assertEquals(255, configuration.getCairoConfiguration().getMaxFileNameLength());
