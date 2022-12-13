@@ -1756,6 +1756,9 @@ public final class SqlParser {
     private void parseWithClauses(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> model) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
+            if (name.token.length() == 0) {
+                throw SqlException.$(name.position, "empty common table expression name");
+            }
 
             if (model.get(name.token) != null) {
                 throw SqlException.$(name.position, "duplicate name");

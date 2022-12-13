@@ -2385,6 +2385,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEmptyCommonTableExpressionNameDisallowed() throws Exception {
+        assertSyntaxError("with \"\" as (select 'a' ) select * from \"\"", 5, "empty");
+    }
+
+    @Test
     public void testEmptyOrderBy() throws Exception {
         assertSyntaxError("select x, y from tab order by", 29, "literal expected");
     }
