@@ -190,10 +190,6 @@ public class TxReader implements Closeable, Mutable {
         return -1;
     }
 
-    public long getPartitionMaskedSize(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET);
-    }
-
     public long getPartitionNameTxn(int i) {
         return getPartitionNameTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }

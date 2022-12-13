@@ -399,10 +399,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return maskedSize;
     }
 
-    private static long updatePartitionSize(long maskedSize, long partitionSize) {
-        return (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK);
-    }
-
     private int calculateWriteOffset(int areaSize) {
         boolean currentIsA = (baseVersion & 1L) == 0L;
         int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
@@ -559,7 +555,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void updatePartitionSizeByIndex(int index, long partitionSize) {
-        if (updatePartitionSizeByIndex(attachedPartitions, index, partitionSize)) {
+        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
+            attachedPartitions.setQuick(offset, (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK));
             recordStructureVersion++;
         }
     }
@@ -569,22 +568,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);
         assert recordOffset + Integer.BYTES <= readRecordSize;
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
-    }
-
-    static void setPartitionIsClosedByIndex(LongList partitionTable, int index) {
-        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
-        long maskedSize = partitionTable.getQuick(offset);
-        partitionTable.setQuick(offset, updatePartitionSize(maskedSize, PARTITION_SIZE_MASK));
-    }
-
-    static boolean updatePartitionSizeByIndex(LongList partitionTable, int index, long partitionSize) {
-        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
-        long maskedSize = partitionTable.getQuick(offset);
-        if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
-            partitionTable.setQuick(offset, updatePartitionSize(maskedSize, partitionSize));
-            return true;
-        }
-        return false;
     }
 
     void bumpPartitionTableVersion() {
