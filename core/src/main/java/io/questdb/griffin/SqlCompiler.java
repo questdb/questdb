@@ -696,10 +696,10 @@ public class SqlCompiler implements Closeable {
                     symbolCapacity = configuration.getDefaultSymbolCapacity();
                 }
 
-                if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
+                if (Chars.equalsLowerCaseAsciiNc("cache", tok)) {
                     cache = true;
                     tok = SqlUtil.fetchNext(lexer);
-                } else if (Chars.equalsLowerCaseAsciiNc(tok, "nocache")) {
+                } else if (Chars.equalsLowerCaseAsciiNc("nocache", tok)) {
                     cache = false;
                     tok = SqlUtil.fetchNext(lexer);
                 } else {
@@ -708,12 +708,12 @@ public class SqlCompiler implements Closeable {
 
                 TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-                indexed = Chars.equalsLowerCaseAsciiNc(tok, "index");
+                indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
                 if (indexed) {
                     tok = SqlUtil.fetchNext(lexer);
                 }
 
-                if (Chars.equalsLowerCaseAsciiNc(tok, "capacity")) {
+                if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
                     tok = expectToken(lexer, "symbol index capacity");
 
                     try {
