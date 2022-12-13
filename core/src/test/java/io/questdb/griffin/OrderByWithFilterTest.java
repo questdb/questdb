@@ -308,7 +308,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithComplexJITFilter() throws Exception {
+    public void testOrderByTimestampWithComplexJitFilter() throws Exception {
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
                 "insert into trips " +
                         "  select x," +
@@ -324,7 +324,24 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJITAndIntervalFilters() throws Exception {
+    public void testOrderByTimestampWithComplexJitFilterAndLimit() throws Exception {
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(1000);");
+
+        assertQuery("l\tts\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n",
+                "select l, ts from trips " +
+                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
+                        "order by ts desc limit 3, 5",
+                null, null, true, false, true);
+    }
+
+    @Test
+    public void testOrderByTimestampWithJitAndIntervalFilters() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into trips " +
