@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -145,6 +146,13 @@ public class TestDataUnavailableFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("test_data_unavailable");
+            sink.meta("totalRows").val(cursor.totalRows);
+            sink.meta("backoffCount").val(cursor.backoffCount);
         }
 
         static {
