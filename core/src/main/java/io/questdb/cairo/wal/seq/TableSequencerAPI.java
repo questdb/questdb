@@ -304,7 +304,8 @@ public class TableSequencerAPI implements QuietCloseable {
                 if (!sequencer.isSuspended()) {
                     return;
                 }
-                if (resumeFromTxn != -1) {
+                // resume from the latest on negative value
+                if (resumeFromTxn > 0) {
                     try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableName, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getSeqTxn();
                         if (resumeFromTxn > seqTxn) {
