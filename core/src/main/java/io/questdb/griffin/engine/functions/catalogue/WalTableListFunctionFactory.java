@@ -219,17 +219,17 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 public boolean switchTo(final CharSequence tableName) {
                     int rootLen = rootPath.length();
                     rootPath.concat(tableName).concat(SEQ_DIR);
-                    long fdMeta = -1;
-                    long fdTxn = -1;
+                    int metaFd = -1;
+                    int txnFd = -1;
                     try {
-                        fdMeta = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
-                        fdTxn = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
-                        suspendedFlag = ff.readNonNegativeByte(fdMeta, SEQ_META_SUSPENDED) > 0;
-                        sequencerTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                        metaFd = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
+                        txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
+                        suspendedFlag = ff.readNonNegativeByte(metaFd, SEQ_META_SUSPENDED) > 0;
+                        sequencerTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                     } finally {
                         rootPath.trimTo(rootLen);
-                        ff.closeChecked(fdMeta);
-                        ff.closeChecked(fdTxn);
+                        ff.closeChecked(metaFd);
+                        ff.closeChecked(txnFd);
                     }
 
                     rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();

@@ -42,7 +42,7 @@ public interface FilesFacade {
     
     int copy(LPSZ from, LPSZ to);
 
-    long copyData(long srcFd, long destFd, long offsetSrc, long length);
+    long copyData(int srcFd, int destFd, long offsetSrc, long length);
 
     int copyRecursive(Path src, Path dst, int dirMode);
 

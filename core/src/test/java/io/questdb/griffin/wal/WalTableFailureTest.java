@@ -823,7 +823,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -860,7 +860,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -983,7 +983,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
