@@ -49,7 +49,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), executionContext);
+        boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
+        // async filtered factories to avoid redundant disk reads.
+        executionContext.setColumnPreTouchEnabled(preTouchEnabled && cursor.hiFunction == null);
+        try {
+            cursor.of(base.getCursor(executionContext), executionContext);
+        } finally {
+            executionContext.setColumnPreTouchEnabled(preTouchEnabled);
+        }
         return cursor;
     }
 
@@ -174,7 +182,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
                 long baseRowCount = base.size();
-                if (baseRowCount > -1L) {//don't want to cause a pass-through whole data set
+                if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
                     limit = Math.min(baseRowCount, lo);
                 } else {
                     limit = lo;
@@ -215,10 +223,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         base.toTop();
                     } else {
                         long baseRowCount = base.size();
-                        if (baseRowCount > -1L) {//don't want to cause a pass-through whole data set
+                        if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
                             limit = Math.max(0, Math.min(baseRowCount, hi) - lo);
                         } else {
-                            limit = Math.max(0, hi - lo);//doesn't handle hi exceeding number of rows
+                            limit = Math.max(0, hi - lo); // doesn't handle hi exceeding number of rows
                         }
                         size = limit;
                     }

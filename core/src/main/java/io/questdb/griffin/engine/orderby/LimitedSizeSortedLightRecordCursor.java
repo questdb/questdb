@@ -31,16 +31,16 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
 
 /**
- * SortedLightRecordCursor implementing LIMIT clause .
+ * SortedLightRecordCursor which implements LIMIT clause.
  */
 public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor {
 
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
-    private final long limit; //<0 - limit disabled ; =0 means don't fetch any rows ; >0 - apply limit
-    private final long skipFirst; //skip first N rows
-    private final long skipLast;  //skip last N rows
+    private final long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
+    private final long skipFirst; // skip first N rows
+    private final long skipLast;  // skip last N rows
     private RecordCursor base;
     private Record baseRecord;
     private boolean isOpen;
