@@ -60,7 +60,7 @@ public class TestInterop {
              Path path = new Path().of(pp).$();
              Sender sender = new LineTcpSender(channel, 1024)) {
             JsonTestSuiteParser parser = new JsonTestSuiteParser(sender, channel);
-            long fd = ff.openRO(path);
+            int fd = ff.openRO(path);
             assert fd > 0;
             final long memSize = 1024 * 1024;
             final long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);

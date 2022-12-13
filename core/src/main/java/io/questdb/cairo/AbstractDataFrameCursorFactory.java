@@ -58,7 +58,7 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
 
     @Override
     public boolean supportTableRowId(CharSequence tableName) {
-        return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
+        return Chars.equalsIgnoreCaseNc(this.tableName, tableName);
     }
 
     @Override

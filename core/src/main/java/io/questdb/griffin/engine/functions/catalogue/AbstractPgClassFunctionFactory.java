@@ -244,7 +244,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                     path.trimTo(plimit);
                     if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                         // open metadata file and read id
-                        long fd = ff.openRO(path);
+                        int fd = ff.openRO(path);
                         if (fd > -1) {
                             if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
                                 intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);

@@ -27,10 +27,11 @@
 #include <handleapi.h>
 #include "../share/net.h"
 #include "errno.h"
+#include "files.h"
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_abortAccept
-        (JNIEnv *e, jclass cl, jlong fd) {
-    jint r = CloseHandle((HANDLE) fd);
+        (JNIEnv *e, jclass cl, jint fd) {
+    jint r = CloseHandle(FD_TO_HANDLE(fd));
     if (!r) {
         SaveLastError();
     }

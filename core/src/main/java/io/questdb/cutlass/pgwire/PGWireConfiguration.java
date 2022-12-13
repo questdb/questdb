@@ -32,6 +32,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends WorkerPoolConfiguration {
+
     int getBinParamCountCapacity();
 
     int getCharacterStoreCapacity();
@@ -75,6 +76,10 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
         return null;
     }
 
+    String getReadOnlyPassword();
+
+    String getReadOnlyUsername();
+
     int getRecvBufferSize();
 
     int getSelectCacheBlockCount();
@@ -90,6 +95,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
     int getUpdateCacheRowCount();
 
     boolean isInsertCacheEnabled();
+
+    boolean isReadOnlyUserEnabled();
 
     boolean isSelectCacheEnabled();
 

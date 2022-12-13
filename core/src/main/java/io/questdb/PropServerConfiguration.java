@@ -88,7 +88,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
-    private final int circuitBreakerBufferSize;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final long circuitBreakerTimeout;
@@ -376,6 +375,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long minIdleMsBeforeWriterRelease;
     private int multipartHeaderBufferSize;
     private long multipartIdleSpinCount;
+    private int netTestConnectionBufferSize;
     private int pgBinaryParamsCapacity;
     private int pgCharacterStoreCapacity;
     private int pgCharacterStorePoolCapacity;
@@ -400,7 +400,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgNetIdleConnectionTimeout;
     private String pgPassword;
     private int pgPendingWritersCacheCapacity;
+    private String pgReadOnlyPassword;
     private boolean pgReadOnlySecurityContext;
+    private boolean pgReadOnlyUserEnabled;
+    private String pgReadOnlyUsername;
     private int pgRecvBufferSize;
     private int pgSelectCacheBlockCount;
     private boolean pgSelectCacheEnabled;
@@ -483,7 +486,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try (Path path = new Path()) {
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
+            final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
                 if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
@@ -641,8 +644,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE, 4096);
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
-            this.circuitBreakerBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.circuitBreakerTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
+            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
+            this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
@@ -674,6 +678,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.PG_CONNECTION_POOL_CAPACITY, 4);
                 this.pgPassword = getString(properties, env, PropertyKey.PG_PASSWORD, "quest");
                 this.pgUsername = getString(properties, env, PropertyKey.PG_USER, "admin");
+                this.pgReadOnlyPassword = getString(properties, env, PropertyKey.PG_RO_PASSWORD, "quest");
+                this.pgReadOnlyUsername = getString(properties, env, PropertyKey.PG_RO_USER, "user");
+                this.pgReadOnlyUserEnabled = getBoolean(properties, env, PropertyKey.PG_RO_USER_ENABLED, false);
                 this.pgReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.PG_SECURITY_READONLY, false);
                 this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, PropertyKey.PG_MAX_BLOB_SIZE_ON_QUERY, 512 * 1024);
                 this.pgRecvBufferSize = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, Numbers.SIZE_1MB);
@@ -2378,6 +2385,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getLimit() {
             return httpNetConnectionLimit;
         }
@@ -2405,6 +2417,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return httpNetConnectionSndBuf;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
         }
 
         @Override
@@ -2450,6 +2467,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getLimit() {
             return httpMinNetConnectionLimit;
         }
@@ -2477,6 +2499,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return httpMinNetConnectionSndBuf;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
         }
 
         public long getTimeout() {
@@ -2881,6 +2908,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getLimit() {
             return lineTcpNetConnectionLimit;
         }
@@ -2907,6 +2939,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return -1;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
         }
 
         @Override
@@ -3154,6 +3191,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getReadOnlyPassword() {
+            return pgReadOnlyPassword;
+        }
+
+        @Override
+        public String getReadOnlyUsername() {
+            return pgReadOnlyUsername;
+        }
+
+        @Override
         public int getRecvBufferSize() {
             return pgRecvBufferSize;
         }
@@ -3229,6 +3276,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isReadOnlyUserEnabled() {
+            return pgReadOnlyUserEnabled;
+        }
+
+        @Override
         public boolean isSelectCacheEnabled() {
             return pgSelectCacheEnabled;
         }
@@ -3282,6 +3334,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getLimit() {
             return pgNetConnectionLimit;
         }
@@ -3311,12 +3368,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             return pgNetConnectionSndBuf;
         }
 
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
         }
     }
 
     private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
+
         @Override
         public boolean checkConnection() {
             return true;
@@ -3324,7 +3387,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getBufferSize() {
-            return circuitBreakerBufferSize;
+            return netTestConnectionBufferSize;
         }
 
         @Override
@@ -3354,6 +3417,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropStaticContentProcessorConfiguration implements StaticContentProcessorConfiguration {
+
         @Override
         public FilesFacade getFilesFacade() {
             return FilesFacadeImpl.INSTANCE;
@@ -3663,5 +3727,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerDeprecated(
                 PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
                 PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
+        registerDeprecated(
+                PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE,
+                PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE);
     }
 }

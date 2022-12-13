@@ -49,7 +49,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
     private MillisecondClock clock;
-    private long lockFd;
+    private int lockFd;
 
     @Override
     public void clear() {
@@ -166,7 +166,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             path.trimTo(rootLen);
         }
 
-        if (this.lockFd == -1L) {
+        if (this.lockFd == -1) {
             throw CairoException.nonCritical().put("Cannot lock table: ").put(path.$());
         }
     }
@@ -318,7 +318,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     private void releaseLock(FilesFacade ff) {
         if (lockFd != -1L) {
             ff.close(lockFd);
-            lockFd = -1L;
+            lockFd = -1;
             try {
                 path.trimTo(rootLen);
                 lockName(path);
