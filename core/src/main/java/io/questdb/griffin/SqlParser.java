@@ -156,7 +156,7 @@ public final class SqlParser {
 
     //prevent full/right from being used as table aliases
     private void checkSupportedJoinType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (tok != null && (Chars.equalsIgnoreCase(tok, "full") || Chars.equalsIgnoreCase(tok, "right"))) {
+        if (tok != null && (SqlKeywords.isFullKeyword(tok) || SqlKeywords.isRightKeyword(tok))) {
             throw SqlException.$((lexer.lastTokenPosition()), "unsupported join type");
         }
     }
