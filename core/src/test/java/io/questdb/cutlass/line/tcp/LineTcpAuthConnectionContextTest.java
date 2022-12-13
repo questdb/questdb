@@ -62,7 +62,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         integerDefaultColumnType = ColumnType.LONG;
         lineTcpConfiguration = createReceiverConfiguration(true, new LineTcpNetworkFacade() {
             @Override
-            public int send(long fd, long buffer, int bufferLen) {
+            public int send(int fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
                 if (null != sentBytes) {
                     return 0;

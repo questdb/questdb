@@ -52,7 +52,7 @@ public class LineTCPSenderMainVarLenStrings {
         long start = System.nanoTime();
         FilesFacade ff = new FilesFacadeImpl();
         try (Path path = new Path()) {
-            long logFd = -1;
+            int logFd = -1;
             if (args.length == 1) {
                 path.put(args[0]).$();
                 logFd = ff.openRW(path, CairoConfiguration.O_NONE);
@@ -97,11 +97,11 @@ public class LineTCPSenderMainVarLenStrings {
 
     private static class LoggingLineChannel implements LineChannel {
         private final FilesFacade ff;
-        private final long outFileFd;
+        private final int outFileFd;
         private LineChannel delegate;
         private long fileOffset = 0;
 
-        private LoggingLineChannel(LineChannel delegate, long outFileFd, FilesFacade ff) {
+        private LoggingLineChannel(LineChannel delegate, int outFileFd, FilesFacade ff) {
             this.delegate = delegate;
             this.outFileFd = outFileFd;
             this.ff = ff;

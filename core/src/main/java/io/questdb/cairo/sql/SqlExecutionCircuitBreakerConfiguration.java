@@ -26,19 +26,25 @@ package io.questdb.cairo.sql;
 
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.NotNull;
 
 public interface SqlExecutionCircuitBreakerConfiguration {
+
     boolean checkConnection();
 
     int getBufferSize();
 
     int getCircuitBreakerThrottle();
 
+    @NotNull
     MillisecondClock getClock();
 
+    @NotNull
     NetworkFacade getNetworkFacade();
 
-    // maximum SQL execution time in micros
+    /**
+     * Returns maximum SQL execution time in millis.
+     */
     long getTimeout();
 
     boolean isEnabled();
