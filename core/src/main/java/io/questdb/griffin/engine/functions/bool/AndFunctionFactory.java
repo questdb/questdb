@@ -47,7 +47,7 @@ public class AndFunctionFactory implements FunctionFactory {
         Function leftFunc = args.getQuick(0);
         Function rightFunc = args.getQuick(1);
         if (leftFunc.isConstant()) {
-            try (leftFunc) {
+            try (Function ignore = leftFunc) {
                 if (leftFunc.getBool(null)) {
                     return rightFunc;
                 }
@@ -57,7 +57,7 @@ public class AndFunctionFactory implements FunctionFactory {
         }
 
         if (rightFunc.isConstant()) {
-            try (rightFunc) {
+            try (Function ignore = rightFunc) {
                 if (rightFunc.getBool(null)) {
                     return leftFunc;
                 }
