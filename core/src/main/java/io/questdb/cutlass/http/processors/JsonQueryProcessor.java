@@ -480,14 +480,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     //same as for select new but disallows caching of explain plans  
     private void executeExplain(JsonQueryProcessorState state,
                                 CompiledQuery cq,
-                                CharSequence keepAliveHeader) throws PeerIsSlowToReadException, SqlException, PeerDisconnectedException {
+                                CharSequence keepAliveHeader)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, false, sqlExecutionContext)) {
                 header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
-                doResumeSend(state, context);
+                doResumeSend(state, context, sqlExecutionContext);
                 metrics.jsonQuery().markComplete();
             } else {
                 readyForNextRequest(context);
