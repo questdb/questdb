@@ -28,7 +28,7 @@
 #include <atomic>
 #include <algorithm>
 
-#define COUNTER_T uint16_t
+#define COUNTER_T int16_t
 
 template<typename T>
 class txn_scoreboard_t {
@@ -63,6 +63,11 @@ class txn_scoreboard_t {
         if (txn < current_max || txn - min.load() >= size) {
             return false;
         }
+
+        if (get_counter(txn) == -1) {
+            return false;
+        }
+        
         get_counter(txn)++; // atomic
 
         current_max = max.load();

@@ -46,6 +46,8 @@
 #include <sys/stat.h>
 #endif
 
+#if !defined(__APPLE__)
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jint fd, jlong len) {
     int rc = posix_fallocate(fd, 0, len);
@@ -69,6 +71,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
     }
     return JNI_FALSE;
 }
+
+#endif
 
 static inline jlong _io_questdb_std_Files_mremap0
         (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {

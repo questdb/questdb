@@ -68,6 +68,52 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLockOutScoreboard() {
+        final long lastCommittedTxn = 2;
+        ff = new FilesFacadeImpl();
+        try (
+                final Path shmPath = new Path();
+                TxnScoreboard txnScoreboard = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))
+        ) {
+            // Thread A (writer) grabs last txn
+            Assert.assertTrue(txnScoreboard.acquireTxn(lastCommittedTxn));
+            Assert.assertEquals(0, txnScoreboard.releaseTxn(lastCommittedTxn));
+            // the lockout
+            Assert.assertEquals(-1, txnScoreboard.releaseTxn(lastCommittedTxn));
+
+            // Thread B (reader) - fails to grab latest
+            for (int i = 0; i < 100; i++) {
+                Assert.assertFalse(txnScoreboard.acquireTxn(lastCommittedTxn));
+            }
+        }
+    }
+
+    @Test
+    public void testOverlappedLockOutScoreboard() {
+        final long lastCommittedTxn = 2;
+        ff = new FilesFacadeImpl();
+        try (
+                final Path shmPath = new Path();
+                TxnScoreboard txnScoreboard = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))
+        ) {
+            // Thread A (writer) grabs last txn
+            Assert.assertTrue(txnScoreboard.acquireTxn(lastCommittedTxn));
+            Assert.assertEquals(0, txnScoreboard.releaseTxn(lastCommittedTxn));
+
+            // a reader sneaks in
+            Assert.assertFalse(txnScoreboard.acquireTxn(lastCommittedTxn));
+
+            // the lockout
+            Assert.assertEquals(-1, txnScoreboard.releaseTxn(lastCommittedTxn));
+
+            // Thread B (reader) - fails to grab latest
+            for (int i = 0; i < 100; i++) {
+                Assert.assertFalse(txnScoreboard.acquireTxn(lastCommittedTxn));
+            }
+        }
+    }
+
+    @Test
     public void testCleanFailsNoResourceLeakRO() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new FilesFacadeImpl() {
