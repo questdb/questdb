@@ -568,10 +568,10 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (deadline == Long.MAX_VALUE) {
+            } else if (e.lockFd != -1 && deadline == Long.MAX_VALUE) {
                 // do not release locks unless pool is shutting down, which is
                 // indicated via deadline to be Long.MAX_VALUE
-                if (ff.closeChecked(e.lockFd)) {
+                if (ff.close(e.lockFd)) {
                     e.lockFd = -1;
                     iterator.remove();
                     removed = true;
