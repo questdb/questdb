@@ -27,7 +27,7 @@ package io.questdb.cairo.mig;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
-class MigrationActions {
+public class MigrationActions {
     public static final Log LOG = LogFactory.getLog(MigrationActions.class);
     public static final long META_COLUMN_DATA_SIZE_606 = 16;
     public static final long META_OFFSET_COLUMN_TYPES_606 = 128;
