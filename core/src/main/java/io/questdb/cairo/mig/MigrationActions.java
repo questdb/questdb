@@ -32,7 +32,6 @@ class MigrationActions {
     public static final long META_COLUMN_DATA_SIZE_606 = 16;
     public static final long META_OFFSET_COLUMN_TYPES_606 = 128;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_505 = 72;
-    public static final String SEQ_DIR_670 = "seq";
 
     public static long prefixedBlockOffset(long prefix, long index, long blockSize) {
         return prefix + index * blockSize;
