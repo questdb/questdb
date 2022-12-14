@@ -58,8 +58,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static TableReader unindexedReader;
     private final WhereClauseParser e = new WhereClauseParser();
     private final FunctionParser functionParser = new FunctionParser(
-        configuration,
-        new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+            configuration,
+            new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
     );
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
     private final RpnBuilder rpn = new RpnBuilder();
@@ -73,61 +73,60 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         // same as x but with different number of values in symbol maps
         try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
-                .col("bid", ColumnType.DOUBLE)
-                .col("ask", ColumnType.DOUBLE)
-                .col("bidSize", ColumnType.INT)
-                .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
-                .timestamp();
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                    .timestamp();
             CairoTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL)
-                .col("bid", ColumnType.DOUBLE)
-                .col("ask", ColumnType.DOUBLE)
-                .col("bidSize", ColumnType.INT)
-                .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL)
-                .col("ex", ColumnType.SYMBOL)
-                .col("timestamp", ColumnType.TIMESTAMP);
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL)
+                    .col("ex", ColumnType.SYMBOL)
+                    .col("timestamp", ColumnType.TIMESTAMP);
             CairoTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
-                .col("bid", ColumnType.DOUBLE)
-                .col("ask", ColumnType.DOUBLE)
-                .col("bidSize", ColumnType.INT)
-                .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
-                .timestamp();
-
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                    .timestamp();
             CairoTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
-                .col("bid", ColumnType.DOUBLE)
-                .col("ask", ColumnType.DOUBLE)
-                .col("bidSize", ColumnType.INT)
-                .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
             CairoTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL)
-                .col("bid", ColumnType.DOUBLE)
-                .col("ask", ColumnType.DOUBLE)
-                .col("bidSize", ColumnType.INT)
-                .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
-                .timestamp();
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                    .timestamp();
             CairoTestUtils.create(model);
         }
 
@@ -163,13 +162,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            .with(
-                AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService,
-                null,
-                -1,
-                null
-            );
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null
+                );
     }
 
     @AfterClass
@@ -203,7 +202,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testAndBranchWithNonIndexedFieldNoDesignatedTimestamp() throws Exception {
         IntrinsicModel m = noDesignatedTimestampNotIdxModelOf(
-            "timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100");
+                "timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "100 bid > '2014-01-02T12:30:00.000Z' '2014-01-01T12:30:00.000Z' timestamp between and");
         Assert.assertNull(m.keyColumn);
@@ -389,7 +388,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
         currentMicros = IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z");
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
-            "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
 
     @Test
@@ -413,22 +412,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBetweenIntervalWithCaseStatementAsParam() throws SqlException {
         runWhereTest("timestamp between case when true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
     }
 
     @Test
     public void testBetweenIntervalWithCaseStatementAsParam2() throws SqlException {
         runWhereTest("timestamp between " +
-                "'2014-01-02T12:30:00.000Z' " +
-                "and " +
-                "case when true then '2014-01-02T12:30:00.000Z' else '2014-01-03T12:30:00.000Z' end",
-            "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                        "'2014-01-02T12:30:00.000Z' " +
+                        "and " +
+                        "case when true then '2014-01-02T12:30:00.000Z' else '2014-01-03T12:30:00.000Z' end",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
     public void testBetweenIntervalWithCaseStatementAsParamWIthAndInCase() throws SqlException {
         runWhereTest("timestamp between case when true and true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
     }
 
     @Test
@@ -445,7 +444,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testBetweenWithDanglingCase() {
         try {
             runWhereTest("timestamp between case when true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
-                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
+                    "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(18, e.getPosition());
@@ -482,8 +481,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testComplexNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0(
-            "timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'",
-            "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
+                "timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'",
+                "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
     }
 
     @Test
@@ -660,25 +659,25 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testDesTimestampGreaterAndLess() throws Exception {
         runWhereTest("timestamp > '2015-02-23' and timestamp < '2015-02-24'",
-            "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
+                "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
     public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
         runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
-            "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
     }
 
     @Test
     public void testDesTimestampWithEpochGreaterAndLess() throws Exception {
         runWhereTest("timestamp > 1424649600000000 and timestamp < 1424736000000000",
-            "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
+                "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
     public void testDesTimestampWithEpochGreaterAndLessOrEqual() throws Exception {
         runWhereTest("timestamp >= 1424649600000000 and timestamp <= 1424736000000000",
-            "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
     }
 
     @Test
@@ -1216,25 +1215,25 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testEqualsTo2DatesInterval() throws Exception {
         runWhereTest("timestamp in '2015-02-23'",
-            "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
     public void testEqualsToDateInterval() throws Exception {
         runWhereTest("timestamp in '2015-02-23'",
-            "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
     public void testEqualsToDateTimestamp() throws Exception {
         runWhereTest("timestamp = '2015-02-23'",
-            "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
     public void testEqualsToEpochInterval() throws Exception {
         runWhereTest("timestamp in 1424649600000000",
-            "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -1272,14 +1271,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testFilterAndInterval() throws Exception {
         IntrinsicModel m = runWhereCompareToModelTest("bid > 100 and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         assertFilter(m, "100 bid >");
     }
 
     @Test
     public void testFilterMultipleKeysAndInterval() throws Exception {
         IntrinsicModel m = runWhereCompareToModelTest("sym in ('a', 'b', 'c') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b,c]", keyValueFuncsToString(m.keyValueFuncs));
         assertFilter(m, null);
@@ -1288,7 +1287,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testFilterOnIndexedFieldAndInterval() throws Exception {
         IntrinsicModel m = runWhereCompareToModelTest("sym in ('a') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
         assertFilter(m, null);
@@ -1736,7 +1735,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testInVsEqualInterval() throws Exception {
         IntrinsicModel m = runWhereCompareToModelTest("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp IN '2014-01-01'",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T23:59:59.999999Z}]");
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T23:59:59.999999Z}]");
         assertFilter(m, null);
     }
 
@@ -1758,81 +1757,117 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testInterval() throws Exception {
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp >= '2022-03-23T08:00:00.000000Z'",
-                "timestamp < '2022-03-25T10:00:00.000000Z'",
-                "timestamp > '2022-03-26T19:20:52.792Z'"
-            },
-            "[]"
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'",
+                        "timestamp > '2022-03-26T19:20:52.792Z'"
+                },
+                "[]"
         );
 
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp >= '2022-03-23T08:00:00.000000Z'",
-                "timestamp < '2022-03-25T10:00:00.000000Z'",
-                "timestamp > dateadd('d', -10, now())"
-            },
-            "[]"
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'",
+                        "timestamp > dateadd('d', -10, now())"
+                },
+                "[]"
         );
 
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp >= '2022-03-23T08:00:00.000000Z'",
-                "timestamp < '2022-03-25T10:00:00.000000Z'",
-                "timestamp > dateadd('d', -10, '2022-04-05T19:20:52.792Z')"
-            },
-            "[]"
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'",
+                        "timestamp > dateadd('d', -10, '2022-04-05T19:20:52.792Z')"
+                },
+                "[]"
         );
 
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND now()",
-                "timestamp BETWEEN now() AND '2022-03-23T08:00:00.000000Z'",
-                "timestamp IN ('2022-03-23')",
-                "timestamp > dateadd('d', 1,'2022-03-23T08:00:00.000000Z')"
-            },
-            "[]"
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND now()",
+                        "timestamp BETWEEN now() AND '2022-03-23T08:00:00.000000Z'",
+                        "timestamp IN ('2022-03-23')",
+                        "timestamp > dateadd('d', 1,'2022-03-23T08:00:00.000000Z')"
+                },
+                "[]"
         );
 
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
-                "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND now()",
-                "timestamp NOT IN ('2022-03-25')",
-                "timestamp != now() - 15",
-                "timestamp > '2021-01'",
-                "timestamp < '2022-04'",
-                "timestamp > '2022-05'"
-            },
-            "[]"
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND now()",
+                        "timestamp NOT IN ('2022-03-25')",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'",
+                        "timestamp < '2022-04'",
+                        "timestamp > '2022-05'"
+                },
+                "[]"
         );
 
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
-                "timestamp NOT IN ('2022-03-25')",
-                "timestamp != now() - 15",
-                "timestamp > '2021-01'",
-                "timestamp < '2022-04'"
-            },
-            "[1648022400000000,1648202400000000]"
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
+                        "timestamp NOT IN ('2022-03-25')",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'",
+                        "timestamp < '2022-04'"
+                },
+                "[1648022400000000,1648202400000000]"
         );
 
         andShuffleExpressionsTest(
-            new String[]{
-                "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
-                "timestamp NOT IN ('2022-03-25')",
-                "timestamp != now() - 15",
-                "timestamp > '2021-01'",
-                "timestamp < '2022-04'",
-                "timestamp NOT BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'"
-            },
-            "[1648022400000000,1648202400000000]"
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
+                        "timestamp NOT IN ('2022-03-25')",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'",
+                        "timestamp < '2022-04'",
+                        "timestamp NOT BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'"
+                },
+                "[1648022400000000,1648202400000000]"
         );
     }
 
     @Test
-    public void testIntervalDontIntersect() throws Exception {
+    public void testIntervalCaseSensitivityBetween() throws Exception {
+        runWhereIntervalTest0("TIMESTAMP BETWEEN '2013-01-01T13:30:00.000Z' AND '2014-01-01T14:40:00.000Z'",
+                "[{lo=2013-01-01T13:30:00.000000Z, hi=2014-01-01T14:40:00.000000Z}]");
+    }
+
+    @Test
+    public void testIntervalCaseSensitivityGreater1() throws Exception {
+        runWhereIntervalTest0("TIMESTAMP > '2013-01-01T13:30:00.000Z'",
+                "[{lo=2013-01-01T13:30:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testIntervalCaseSensitivityGreater2() throws Exception {
+        runWhereIntervalTest0("'2014-01-01T14:30:00.000Z' > TIMESTAMP",
+                "[{lo=, hi=2014-01-01T14:29:59.999999Z}]");
+    }
+
+    @Test
+    public void testIntervalCaseSensitivityIn() throws Exception {
+        runWhereIntervalTest0("TIMESTAMP in '2015-02-23T10:00;2d'",
+                "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T10:00:59.999999Z}]");
+    }
+
+    @Test
+    public void testIntervalCaseSensitivityLess1() throws Exception {
+        runWhereIntervalTest0("TIMESTAMP < '2013-01-01T13:30:00.000Z'",
+                "[{lo=, hi=2013-01-01T13:29:59.999999Z}]");
+    }
+
+    @Test
+    public void testIntervalCaseSensitivityLess2() throws Exception {
+        runWhereIntervalTest0("'2014-01-01T13:30:00.000Z' < TIMESTAMP",
+                "[{lo=2014-01-01T13:30:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testIntervalDoNotIntersect() throws Exception {
         // because of intervals being processed from right to left
         // code will try to intersect 'not equal' will already be existing positive interval
         // result must be zero-overlap and FALSE model
@@ -1843,26 +1878,26 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalGreater1() throws Exception {
         runWhereCompareToModelTest("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp > '2014-01-01T15:30:00.000Z'",
-            "[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
     public void testIntervalGreater2() throws Exception {
         runWhereCompareToModelTest("timestamp > '2014-01-01T15:30:00.000Z' and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T15:30:00.000001Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
     public void testIntervalGreater3() throws Exception {
         IntrinsicModel m = runWhereCompareToModelTest("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp > column1",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         assertFilter(m, "column1 timestamp >");
     }
 
     @Test
     public void testIntervalGreater4() throws Exception {
         IntrinsicModel m = runWhereCompareToModelTest("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and column1 > timestamp",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         assertFilter(m, "timestamp column1 >");
     }
 
@@ -1876,22 +1911,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalGreaterOrEq1() throws Exception {
         runWhereCompareToModelTest("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp >= '2014-01-01T15:30:00.000Z'",
-            "[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
     public void testIntervalGreaterOrEq2() throws Exception {
         runWhereCompareToModelTest("timestamp >= '2014-01-01T15:30:00.000Z' and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
-            "[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+                "[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
     }
 
     @Test
     public void testIntervalInManyArgs() throws SqlException {
         runWhereIntervalTest0(
-            "timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z', '2014-01-03T12:30:00.000Z')",
-            "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z}," +
-                "{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}," +
-                "{lo=2014-01-03T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]"
+                "timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z', '2014-01-03T12:30:00.000Z')",
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z}," +
+                        "{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}," +
+                        "{lo=2014-01-03T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]"
         );
     }
 
@@ -1912,60 +1947,60 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalSourceDay() throws Exception {
         runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;30m;2d;5'",
-            "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:55.000000Z}," +
-                "{lo=2015-02-25T10:00:55.000000Z, hi=2015-02-25T10:30:55.000000Z}," +
-                "{lo=2015-02-27T10:00:55.000000Z, hi=2015-02-27T10:30:55.000000Z}," +
-                "{lo=2015-03-01T10:00:55.000000Z, hi=2015-03-01T10:30:55.000000Z}," +
-                "{lo=2015-03-03T10:00:55.000000Z, hi=2015-03-03T10:30:55.000000Z}]");
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:55.000000Z}," +
+                        "{lo=2015-02-25T10:00:55.000000Z, hi=2015-02-25T10:30:55.000000Z}," +
+                        "{lo=2015-02-27T10:00:55.000000Z, hi=2015-02-27T10:30:55.000000Z}," +
+                        "{lo=2015-03-01T10:00:55.000000Z, hi=2015-03-01T10:30:55.000000Z}," +
+                        "{lo=2015-03-03T10:00:55.000000Z, hi=2015-03-03T10:30:55.000000Z}]");
     }
 
     @Test
     public void testIntervalSourceHour() throws Exception {
         runWhereCompareToModelTest("timestamp in '2015-02-23T10:00:55.000Z;10m;3h;10'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:10:55.000000Z}," +
-            "{lo=2015-02-23T13:00:55.000000Z, hi=2015-02-23T13:10:55.000000Z}," +
-            "{lo=2015-02-23T16:00:55.000000Z, hi=2015-02-23T16:10:55.000000Z}," +
-            "{lo=2015-02-23T19:00:55.000000Z, hi=2015-02-23T19:10:55.000000Z}," +
-            "{lo=2015-02-23T22:00:55.000000Z, hi=2015-02-23T22:10:55.000000Z}," +
-            "{lo=2015-02-24T01:00:55.000000Z, hi=2015-02-24T01:10:55.000000Z}," +
-            "{lo=2015-02-24T04:00:55.000000Z, hi=2015-02-24T04:10:55.000000Z}," +
-            "{lo=2015-02-24T07:00:55.000000Z, hi=2015-02-24T07:10:55.000000Z}," +
-            "{lo=2015-02-24T10:00:55.000000Z, hi=2015-02-24T10:10:55.000000Z}," +
-            "{lo=2015-02-24T13:00:55.000000Z, hi=2015-02-24T13:10:55.000000Z}]");
+                "{lo=2015-02-23T13:00:55.000000Z, hi=2015-02-23T13:10:55.000000Z}," +
+                "{lo=2015-02-23T16:00:55.000000Z, hi=2015-02-23T16:10:55.000000Z}," +
+                "{lo=2015-02-23T19:00:55.000000Z, hi=2015-02-23T19:10:55.000000Z}," +
+                "{lo=2015-02-23T22:00:55.000000Z, hi=2015-02-23T22:10:55.000000Z}," +
+                "{lo=2015-02-24T01:00:55.000000Z, hi=2015-02-24T01:10:55.000000Z}," +
+                "{lo=2015-02-24T04:00:55.000000Z, hi=2015-02-24T04:10:55.000000Z}," +
+                "{lo=2015-02-24T07:00:55.000000Z, hi=2015-02-24T07:10:55.000000Z}," +
+                "{lo=2015-02-24T10:00:55.000000Z, hi=2015-02-24T10:10:55.000000Z}," +
+                "{lo=2015-02-24T13:00:55.000000Z, hi=2015-02-24T13:10:55.000000Z}]");
     }
 
     @Test
     public void testIntervalSourceMin() throws Exception {
         runWhereCompareToModelTest("timestamp in '2015-02-23T10:00:55.000Z;15s;15m;5'",
-            "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:10.000000Z}," +
-                "{lo=2015-02-23T10:15:55.000000Z, hi=2015-02-23T10:16:10.000000Z}," +
-                "{lo=2015-02-23T10:30:55.000000Z, hi=2015-02-23T10:31:10.000000Z}," +
-                "{lo=2015-02-23T10:45:55.000000Z, hi=2015-02-23T10:46:10.000000Z}," +
-                "{lo=2015-02-23T11:00:55.000000Z, hi=2015-02-23T11:01:10.000000Z}]");
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:10.000000Z}," +
+                        "{lo=2015-02-23T10:15:55.000000Z, hi=2015-02-23T10:16:10.000000Z}," +
+                        "{lo=2015-02-23T10:30:55.000000Z, hi=2015-02-23T10:31:10.000000Z}," +
+                        "{lo=2015-02-23T10:45:55.000000Z, hi=2015-02-23T10:46:10.000000Z}," +
+                        "{lo=2015-02-23T11:00:55.000000Z, hi=2015-02-23T11:01:10.000000Z}]");
     }
 
     @Test
     public void testIntervalSourceMonth() throws Exception {
         runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;2h;2M;3'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T12:00:55.000000Z}," +
-            "{lo=2015-04-23T10:00:55.000000Z, hi=2015-04-23T12:00:55.000000Z}," +
-            "{lo=2015-06-23T10:00:55.000000Z, hi=2015-06-23T12:00:55.000000Z}]");
+                "{lo=2015-04-23T10:00:55.000000Z, hi=2015-04-23T12:00:55.000000Z}," +
+                "{lo=2015-06-23T10:00:55.000000Z, hi=2015-06-23T12:00:55.000000Z}]");
     }
 
     @Test
     public void testIntervalSourceSec() throws Exception {
         runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;5s;30s;5'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:00.000000Z}," +
-            "{lo=2015-02-23T10:01:25.000000Z, hi=2015-02-23T10:01:30.000000Z}," +
-            "{lo=2015-02-23T10:01:55.000000Z, hi=2015-02-23T10:02:00.000000Z}," +
-            "{lo=2015-02-23T10:02:25.000000Z, hi=2015-02-23T10:02:30.000000Z}," +
-            "{lo=2015-02-23T10:02:55.000000Z, hi=2015-02-23T10:03:00.000000Z}]");
+                "{lo=2015-02-23T10:01:25.000000Z, hi=2015-02-23T10:01:30.000000Z}," +
+                "{lo=2015-02-23T10:01:55.000000Z, hi=2015-02-23T10:02:00.000000Z}," +
+                "{lo=2015-02-23T10:02:25.000000Z, hi=2015-02-23T10:02:30.000000Z}," +
+                "{lo=2015-02-23T10:02:55.000000Z, hi=2015-02-23T10:03:00.000000Z}]");
     }
 
     @Test
     public void testIntervalSourceYear() throws Exception {
         runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;1d;1y;5'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-24T10:00:55.000000Z}," +
-            "{lo=2016-02-23T10:00:55.000000Z, hi=2016-02-24T10:00:55.000000Z}," +
-            "{lo=2017-02-23T10:00:55.000000Z, hi=2017-02-24T10:00:55.000000Z}," +
-            "{lo=2018-02-23T10:00:55.000000Z, hi=2018-02-24T10:00:55.000000Z}," +
-            "{lo=2019-02-23T10:00:55.000000Z, hi=2019-02-24T10:00:55.000000Z}]");
+                "{lo=2016-02-23T10:00:55.000000Z, hi=2016-02-24T10:00:55.000000Z}," +
+                "{lo=2017-02-23T10:00:55.000000Z, hi=2017-02-24T10:00:55.000000Z}," +
+                "{lo=2018-02-23T10:00:55.000000Z, hi=2018-02-24T10:00:55.000000Z}," +
+                "{lo=2019-02-23T10:00:55.000000Z, hi=2019-02-24T10:00:55.000000Z}]");
     }
 
     @Test
@@ -2243,7 +2278,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp not between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z' and timestamp in '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         TestUtils.assertEquals("[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T14:59:59.999999Z},{lo=2015-05-11T20:00:00.000001Z, hi=2015-05-11T23:59:59.999999Z}]",
-            intervalToString(m));
+                intervalToString(m));
         assertFilter(m, null);
     }
 
@@ -2252,7 +2287,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp in '2015-05-11' and not (timestamp between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z')");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         TestUtils.assertEquals("[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T14:59:59.999999Z},{lo=2015-05-11T20:00:00.000001Z, hi=2015-05-11T23:59:59.999999Z}]",
-            intervalToString(m));
+                intervalToString(m));
         assertFilter(m, null);
     }
 
@@ -2261,7 +2296,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp in '2015-05-11' and not (timestamp between '2015-05-11T15:00:00.000Z' and '2015-05-11T20:00:00.000Z') and not (timestamp between '2015-05-11T12:00:00.000Z' and '2015-05-11T14:00:00.000Z'))");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         TestUtils.assertEquals("[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T11:59:59.999999Z},{lo=2015-05-11T14:00:00.000001Z, hi=2015-05-11T14:59:59.999999Z},{lo=2015-05-11T20:00:00.000001Z, hi=2015-05-11T23:59:59.999999Z}]",
-            intervalToString(m));
+                intervalToString(m));
         assertFilter(m, null);
     }
 
@@ -2318,7 +2353,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testNotInIntervalTooMany() throws SqlException {
         runWhereIntervalTest0("(timestamp not in  ('2015-05-11T15:00:00.000Z','2015-05-11T15:00:00.000Z','2015-05-11T15:00:00.000Z')) and timestamp in '2015-05-11'",
-            "[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T14:59:59.999999Z},{lo=2015-05-11T15:00:00.000001Z, hi=2015-05-11T23:59:59.999999Z}]");
+                "[{lo=2015-05-11T00:00:00.000000Z, hi=2015-05-11T14:59:59.999999Z},{lo=2015-05-11T15:00:00.000001Z, hi=2015-05-11T23:59:59.999999Z}]");
     }
 
     @Test
@@ -2356,8 +2391,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testNowWithNotIn() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z' and '2020-01-31T23:59:59.999999Z' and now() <= timestamp",
-            "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
-                "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
+                        "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
@@ -2497,7 +2532,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         currentMicros = 24L * 3600 * 1000 * 1000;
         try {
             runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+                    "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
         } finally {
             currentMicros = -1;
         }
@@ -2506,28 +2541,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampEqualsConstFunction() throws Exception {
         runWhereCompareToModelTest("timestamp = to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
-            "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]");
+                "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsFunctionOfNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
-            "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
+                "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereCompareToModelTest("timestamp = now()",
-            "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsNowAndSymbolsInList() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
-            "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
         assertFilter(m, null);
     }
 
@@ -2537,8 +2572,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setTimestamp(0, day);
         runWhereIntervalTest0("timestamp = $1",
-            "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]",
-            bv -> bv.setTimestamp(0, day));
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]",
+                bv -> bv.setTimestamp(0, day));
     }
 
     @Test
@@ -2611,28 +2646,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampNotEqualsConstFunction() throws Exception {
         runWhereIntervalTest0("timestamp != to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
-            "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+                "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsFunctionOfNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp != dateadd('d', 2, now())",
-            "[{lo=, hi=1970-01-03T23:59:59.999999Z},{lo=1970-01-04T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+                "[{lo=, hi=1970-01-03T23:59:59.999999Z},{lo=1970-01-04T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp != now()",
-            "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsNowAndSymbolsNotInList() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         IntrinsicModel m = runWhereIntervalTest0("timestamp != now() and sym not in (1, 2, 3)",
-            "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
         assertFilter(m, null);
     }
 
@@ -2642,8 +2677,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setTimestamp(0, day);
         runWhereIntervalTest0("timestamp != $1",
-            "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
-            bv -> bv.setTimestamp(0, day));
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
+                bv -> bv.setTimestamp(0, day));
     }
 
     @Test
@@ -2663,30 +2698,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testTimestampWithBindVariable() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp >= $1",
-            "[{lo=1970-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]",
-            bv -> bv.setTimestamp(0, day));
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]",
+                bv -> bv.setTimestamp(0, day));
     }
 
     @Test
     public void testTimestampWithBindVariableCombinedNot() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp != $1 and timestamp != $2",
-            "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=1970-01-02T23:59:59.999999Z},{lo=1970-01-03T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
-            bv -> {
-                bv.setTimestamp(0, day);
-                bv.setTimestamp(1, 2 * day);
-            });
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=1970-01-02T23:59:59.999999Z},{lo=1970-01-03T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
+                bv -> {
+                    bv.setTimestamp(0, day);
+                    bv.setTimestamp(1, 2 * day);
+                });
     }
 
     @Test
     public void testTimestampWithBindVariableWithin() throws SqlException {
         long day = 24L * 3600 * 1000 * 1000;
         runWhereCompareToModelTest("timestamp >= $1 and timestamp <= $2",
-            "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]",
-            bv -> {
-                bv.setTimestamp(0, day);
-                bv.setTimestamp(1, 2 * day);
-            });
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]",
+                bv -> {
+                    bv.setTimestamp(0, day);
+                    bv.setTimestamp(1, 2 * day);
+                });
     }
 
     @Test
@@ -2941,64 +2976,64 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
         return e.extract(
-            column -> column,
-            compiler.testParseExpression(seq, queryModel),
-            metadata,
-            preferredColumn,
-            metadata.getTimestampIndex(),
-            functionParser,
-            metadata,
-            sqlExecutionContext,
-            false,
-            reader
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                metadata,
+                preferredColumn,
+                metadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false,
+                reader
         );
     }
 
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
         return e.extract(
-            column -> column,
-            compiler.testParseExpression(seq, queryModel),
-            noDesignatedTimestampNorIdxMetadata,
-            null,
-            noDesignatedTimestampNorIdxMetadata.getTimestampIndex(),
-            functionParser,
-            metadata,
-            sqlExecutionContext,
-            false,
-            noDesignatedTimestampNorIdxReader
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                noDesignatedTimestampNorIdxMetadata,
+                null,
+                noDesignatedTimestampNorIdxMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false,
+                noDesignatedTimestampNorIdxReader
         );
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
         return e.extract(
-            column -> column,
-            compiler.testParseExpression(seq, queryModel),
-            noTimestampMetadata,
-            null,
-            noTimestampMetadata.getTimestampIndex(),
-            functionParser,
-            metadata,
-            sqlExecutionContext,
-            false,
-            noTimestampReader
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                noTimestampMetadata,
+                null,
+                noTimestampMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false,
+                noTimestampReader
         );
     }
 
     private IntrinsicModel nonEmptyModelOf() throws SqlException {
         queryModel.clear();
         return e.extract(
-            column -> column,
-            compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
-            nonEmptyMetadata,
-            null,
-            nonEmptyMetadata.getTimestampIndex(),
-            functionParser,
-            metadata,
-            sqlExecutionContext,
-            false,
-            nonEmptyReader
+                column -> column,
+                compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
+                nonEmptyMetadata,
+                null,
+                nonEmptyMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false,
+                nonEmptyReader
         );
     }
 
@@ -3064,11 +3099,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             sink.clear(sink.length() - separator.length());
             String expression = sink.toString();
             Assert.assertEquals(
-                expected,
-                modelOf(expression)
-                    .buildIntervalModel()
-                    .calculateIntervals(sqlExecutionContext)
-                    .toString()
+                    expected,
+                    modelOf(expression)
+                            .buildIntervalModel()
+                            .calculateIntervals(sqlExecutionContext)
+                            .toString()
             );
         }
     }
@@ -3100,16 +3135,16 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
         return e.extract(
-            column -> column,
-            compiler.testParseExpression(seq, queryModel),
-            unindexedMetadata,
-            preferredColumn,
-            unindexedMetadata.getTimestampIndex(),
-            functionParser,
-            metadata,
-            sqlExecutionContext,
-            false,
-            unindexedReader
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                unindexedMetadata,
+                preferredColumn,
+                unindexedMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false,
+                unindexedReader
         );
     }
 
