@@ -76,6 +76,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryMR> columns;
     private int partitionCount;
+    private long txColumnVersion = -1;
+    private long txPartitionVersion = -1;
+    private long txTruncateVersion = -1;
     private long rowCount;
     private long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
     private long txn = TableUtils.INITIAL_TXN;
@@ -420,14 +423,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (acquireTxn()) {
             return false;
         }
-        final long prevPartitionVersion = txFile.getPartitionTableVersion();
-        final long prevColumnVersion = txFile.getColumnVersion();
-        final long prevTruncateVersion = txFile.getTruncateVersion();
         try {
             reloadSlow(true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
-            reconcileOpenPartitions(prevPartitionVersion, prevColumnVersion, prevTruncateVersion);
+            reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
+
+            // Save transaction details which impact the reloading. Do not rely on txReader, it can be reloaded outside this method.
+            txPartitionVersion = this.txFile.getPartitionTableVersion();
+            txColumnVersion = this.txFile.getColumnVersion();
+            txTruncateVersion = this.txFile.getTruncateVersion();
+
             return true;
         } catch (Throwable e) {
             releaseTxn();
