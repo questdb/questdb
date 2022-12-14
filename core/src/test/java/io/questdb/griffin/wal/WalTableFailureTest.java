@@ -886,6 +886,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
+            try {
+                compile("alter table " + tableName + " resume wal from transaction 999"); // fails
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
+            }
+
             compile("alter table " + tableName + " resume wal from txn 3");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
             engine.releaseInactive(); // release writer from the pool

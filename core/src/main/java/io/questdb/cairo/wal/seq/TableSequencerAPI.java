@@ -304,6 +304,10 @@ public class TableSequencerAPI implements QuietCloseable {
                 if (!sequencer.isSuspended()) {
                     return;
                 }
+                final long nextTxn = sequencer.lastTxn() + 1;
+                if (resumeFromTxn > nextTxn) {
+                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+                }
                 // resume from the latest on negative value
                 if (resumeFromTxn > 0) {
                     try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableName, WAL_2_TABLE_RESUME_REASON)) {
