@@ -122,7 +122,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Map dataMap;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private boolean dataMapBuilt;
+        private boolean isDataMapBuilt;
         private boolean isOpen;
 
         public GroupByRecordCursor(
@@ -151,7 +151,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             // TODO(puzpuzpuz): test suspendability
-            if (!dataMapBuilt) {
+            if (!isDataMapBuilt) {
                 final Record baseRecord = managedCursor.getRecord();
                 while (managedCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -165,7 +165,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
                 super.of(dataMap.getCursor());
-                dataMapBuilt = true;
+                isDataMapBuilt = true;
             }
             return super.hasNext();
         }
@@ -177,7 +177,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             this.circuitBreaker = circuitBreaker;
             this.managedCursor = managedCursor;
-            dataMapBuilt = false;
+            isDataMapBuilt = false;
         }
     }
 }

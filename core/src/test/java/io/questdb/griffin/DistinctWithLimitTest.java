@@ -381,5 +381,4 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
                 "CREATE TABLE test as ( select x as id from long_sequence(9) )",
                 null, true, true, true);
     }
-
 }

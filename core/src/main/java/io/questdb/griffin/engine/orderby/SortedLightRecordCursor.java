@@ -36,6 +36,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final RecordComparator comparator;
     private RecordCursor base;
     private Record baseRecord;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean isChainBuilt;
     private boolean isOpen;
 
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
@@ -73,6 +75,11 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isChainBuilt) {
+            buildChain();
+            isChainBuilt = true;
+        }
         if (chainCursor.hasNext()) {
             base.recordAt(baseRecord, chainCursor.next());
             return true;
@@ -87,31 +94,15 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        // TODO(puzpuzpuz): this is non-suspendable
         if (!isOpen) {
             chain.reopen();
             isOpen = true;
         }
 
         this.base = base;
-        this.baseRecord = base.getRecord();
-        final Record placeHolderRecord = base.getRecordB();
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        while (base.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            // Tree chain is liable to re-position record to
-            // other rows to do record comparison. We must use our
-            // own record instance in case base cursor keeps
-            // state in the record it returns.
-            chain.put(
-                    baseRecord,
-                    base,
-                    placeHolderRecord,
-                    comparator
-            );
-        }
-        chainCursor.toTop();
+        baseRecord = base.getRecord();
+        circuitBreaker = executionContext.getCircuitBreaker();
+        isChainBuilt = false;
     }
 
     @Override
@@ -127,5 +118,23 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     @Override
     public void toTop() {
         chainCursor.toTop();
+    }
+
+    private void buildChain() {
+        final Record placeHolderRecord = base.getRecordB();
+        while (base.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            // Tree chain is liable to re-position record to
+            // other rows to do record comparison. We must use our
+            // own record instance in case base cursor keeps
+            // state in the record it returns.
+            chain.put(
+                    baseRecord,
+                    base,
+                    placeHolderRecord,
+                    comparator
+            );
+        }
+        toTop();
     }
 }

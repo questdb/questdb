@@ -43,6 +43,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final long skipLast;  // skip last N rows
     private RecordCursor base;
     private Record baseRecord;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean isChainBuilt;
     private boolean isOpen;
     private long rowsLeft;
 
@@ -88,6 +90,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): this is non-suspendable
+        if (!isChainBuilt) {
+            buildChain();
+            isChainBuilt = true;
+        }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
             base.recordAt(baseRecord, chainCursor.next());
             return true;
@@ -102,17 +109,42 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        // TODO(puzpuzpuz): this is non-suspendable
         if (!isOpen) {
             chain.reopen();
             isOpen = true;
         }
-        this.base = base;
-        this.baseRecord = base.getRecord();
-        final Record placeHolderRecord = base.getRecordB();
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
+        this.base = base;
+        baseRecord = base.getRecord();
+        circuitBreaker = executionContext.getCircuitBreaker();
+        isChainBuilt = false;
         chain.clear();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public long size() {
+        return isChainBuilt ? Math.max(chain.size() - skipFirst - skipLast, 0) : -1;
+    }
+
+    @Override
+    public void toTop() {
+        chainCursor.toTop();
+
+        long skipLeft = skipFirst;
+        while (skipLeft-- > 0 && chainCursor.hasNext()) {
+            chainCursor.next();
+        }
+
+        rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
+    }
+
+    private void buildChain() {
+        final Record placeHolderRecord = base.getRecordB();
         if (limit != 0) {
             while (base.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -128,30 +160,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
                 );
             }
         }
-
         toTop();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
-    }
-
-    @Override
-    public long size() {
-        return Math.max(chain.size() - skipFirst - skipLast, 0);
-    }
-
-    @Override
-    public void toTop() {
-        chainCursor.toTop();
-
-        long skipLeft = skipFirst;
-        while (skipLeft-- > 0 && chainCursor.hasNext()) {
-            chainCursor.next();
-        }
-
-        rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
     }
 }
 

@@ -142,7 +142,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         private RecordCursor base;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
-        private boolean recordChainBuilt;
+        private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
         public CachedAnalyticRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
@@ -183,10 +183,11 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public boolean hasNext() {
-            if (!recordChainBuilt) {
+            // TODO(puzpuzpuz): test suspendability
+            if (!isRecordChainBuilt) {
                 buildRecordChain();
             }
-            recordChainBuilt = true;
+            isRecordChainBuilt = true;
             return recordChain.hasNext();
         }
 
@@ -270,9 +271,8 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private void of(RecordCursor base, SqlExecutionContext context) {
-            // TODO(puzpuzpuz): test suspendability
             this.base = base;
-            recordChainBuilt = false;
+            isRecordChainBuilt = false;
             recordChainOffset = -1;
             circuitBreaker = context.getCircuitBreaker();
             if (!isOpen) {
