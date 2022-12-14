@@ -49,8 +49,6 @@ import java.net.URL;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-import static io.questdb.cairo.mig.MigrationActions.SEQ_DIR_670;
-
 public class EngineMigrationTest extends AbstractGriffinTest {
 
     public static void replaceDbContent(String path) throws IOException {
@@ -119,11 +117,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void test425() throws IOException, SqlException {
         doMigration("/migration/data_425.zip", true, true, true, true);
-    }
-
-    @Test
-    public void test426() throws IOException, SqlException {
-        doMigration("/migration/data_426.zip", true, true, true, true);
     }
 
     @Test
@@ -1274,21 +1267,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         assertData(withO3, withColTops, withColTopO3);
         appendData(withColTopO3);
         assertAppendedData(withColTopO3);
-        assertNoSeqDir();
-    }
-
-    private void assertNoSeqDir() {
-        try (Path path = new Path().of(root).slash$()) {
-            final int rootLen = path.length();
-            final FilesFacade ff = configuration.getFilesFacade();
-            ff.iterateDir(path, (name, type) -> {
-                if (Files.isDir(name, type, sink)) {
-                    path.trimTo(rootLen);
-                    path.concat(sink).concat(SEQ_DIR_670).$();
-                    Assert.assertFalse(ff.exists(path));
-                }
-            });
-        }
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
