@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 class ExceptRecordCursor extends AbstractSetRecordCursor {
     private final Map map;
     private final RecordSink recordSink;
+    private boolean isCursorBHashed;
     private boolean isOpen;
     private Record recordA;
     private Record recordB;
@@ -73,6 +74,12 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isCursorBHashed) {
+            hashCursorB();
+            toTop();
+            isCursorBHashed = true;
+        }
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(recordA, recordSink);
@@ -118,15 +125,14 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        this.recordB = cursorB.getRecord();
         if (!isOpen) {
             map.reopen();
             isOpen = true;
         }
-        // TODO(puzpuzpuz): this is non-suspendable
-        hashCursorB();
+
+        super.of(cursorA, cursorB, circuitBreaker);
         recordA = cursorA.getRecord();
-        toTop();
+        recordB = cursorB.getRecord();
+        isCursorBHashed = false;
     }
 }

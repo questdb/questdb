@@ -39,6 +39,7 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
     private final Map map;
     private final RecordSink recordSink;
+    private boolean isCursorBHashed;
     private boolean isOpen;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
@@ -77,6 +78,13 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isCursorBHashed) {
+            hashCursorB();
+            castRecord.setAb(true);
+            toTop();
+            isCursorBHashed = true;
+        }
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(castRecord, recordSink);
@@ -113,20 +121,18 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
         // this is an optimisation to release TableReader in case "this"
         // cursor lingers around. If there is exception or circuit breaker fault
         // we will rely on close() method to release reader.
-        this.cursorB = Misc.free(this.cursorB);
+        cursorB = Misc.free(cursorB);
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        this.castRecord.of(cursorA.getRecord(), cursorB.getRecord());
-        this.castRecord.setAb(false);
         if (!isOpen) {
             isOpen = true;
             map.reopen();
         }
-        // TODO(puzpuzpuz): this is non-suspendable
-        hashCursorB();
-        castRecord.setAb(true);
-        toTop();
+
+        super.of(cursorA, cursorB, circuitBreaker);
+        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+        castRecord.setAb(false);
+        isCursorBHashed = false;
     }
 }

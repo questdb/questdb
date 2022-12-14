@@ -39,6 +39,7 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     private final UnionCastRecord castRecord;
     private final Map map;
     private final RecordSink recordSink;
+    private boolean isCursorBHashed;
     private boolean isOpen;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
@@ -82,6 +83,13 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isCursorBHashed) {
+            hashCursorB();
+            castRecord.setAb(true);
+            toTop();
+            isCursorBHashed = true;
+        }
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(castRecord, recordSink);
@@ -122,19 +130,16 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
-        this.cursorA = cursorA;
-        this.cursorB = cursorB;
-        this.circuitBreaker = circuitBreaker;
-
         if (!isOpen) {
             this.isOpen = true;
             map.reopen();
         }
+
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
         castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         castRecord.setAb(false);
-        // TODO(puzpuzpuz): this is non-suspendable
-        hashCursorB();
-        castRecord.setAb(true);
-        toTop();
+        isCursorBHashed = false;
     }
 }
