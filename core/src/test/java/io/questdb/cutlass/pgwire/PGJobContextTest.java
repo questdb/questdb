@@ -2196,18 +2196,18 @@ if __name__ == "__main__":
                 pstmt.execute();
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where x > ? and x < ? limit 10")) {
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where x > ? and x < ?::double limit 10")) {
                 for (int i = 0; i < 3; i++) {
                     statement.setLong(1, i);
-                    statement.setLong(2, (i + 1) * 10);
+                    statement.setDouble(2, (i + 1) * 10);
                     statement.execute();
                     sink.clear();
                     try (ResultSet rs = statement.getResultSet()) {
                         assertResultSet(
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Async JIT Filter\n" +
+                                        "Async Filter\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ($0::long<x and x<$1::long)\n" +
+                                        "  filter: ($0::long<x and x<$1::double)\n" +
                                         "  workers: 2\n" +
                                         "    DataFrame\n" +
                                         "        Row forward scan\n" +
