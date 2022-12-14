@@ -151,9 +151,7 @@ public final class SerialCsvFileImporter implements Closeable {
         } catch (CairoException e) {
             throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
         } finally {
-            if (fd != -1) {
-                ff.close(fd);
-            }
+            ff.closeChecked(fd);
             textLoader.clear();
             Unsafe.free(buf, sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         }

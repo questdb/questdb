@@ -154,8 +154,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private void closePurgeLogCompleteFile() {
-        if (purgeLogPartitionFd != -1L) {
-            ff.close(purgeLogPartitionFd);
+        if (ff.closeChecked(purgeLogPartitionFd)) {
             LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
             purgeLogPartitionFd = -1;
         }

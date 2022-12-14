@@ -519,9 +519,22 @@ public class FilesTest {
                     // Check read call works
                     // Check written data
                     Assert.assertEquals(size2Gb, Files.read(fd1, mem, size2Gb, 0));
+                    byte byte1 = Files.readNonNegativeByte(fd1, 0L);
+                    short short1 = Files.readNonNegativeShort(fd1, 0L);
+                    int int1 = Files.readNonNegativeInt(fd1, 0L);
                     long long1 = Files.readNonNegativeLong(fd1, 0L);
+                    Assert.assertEquals((byte) testValue, byte1);
+                    Assert.assertEquals((short) testValue, short1);
+                    Assert.assertEquals((int) testValue, int1);
                     Assert.assertEquals(testValue, long1);
+
+                    byte byte2 = Files.readNonNegativeByte(fd1, size2Gb - 8);
+                    short short2 = Files.readNonNegativeShort(fd1, size2Gb - 8);
+                    int int2 = Files.readNonNegativeInt(fd1, size2Gb - 8);
                     long long2 = Files.readNonNegativeLong(fd1, size2Gb - 8);
+                    Assert.assertEquals((byte) testValue, byte2);
+                    Assert.assertEquals((short) testValue, short2);
+                    Assert.assertEquals((int) testValue, int2);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -874,9 +887,7 @@ public class FilesTest {
             Chars.utf8Decode(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
-            if (fd != -1) {
-                Files.close(fd);
-            }
+            Files.closeChecked(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
@@ -906,9 +917,7 @@ public class FilesTest {
             }
             Assert.assertTrue(Files.exists(fd));
         } finally {
-            if (fd != -1L) {
-                Files.close(fd);
-            }
+            Files.closeChecked(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }

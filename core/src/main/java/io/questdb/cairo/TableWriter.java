@@ -594,8 +594,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             if (ex.isWALTolerable()) {
                 try {
                     rollback(); // rollback in case on any dirty state
-                    setSeqTxn(seqTxn);
-                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                    commitSeqTxn(seqTxn);
                 } catch (Throwable th2) {
                     LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
                 }
@@ -817,6 +816,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     public long commit(int commitMode) {
         return commit(commitMode, 0);
+    }
+
+    public void commitSeqTxn(long seqTxn) {
+        txWriter.setSeqTxn(seqTxn);
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
     @Override
@@ -1691,10 +1695,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 distressed = true;
             }
         }
-    }
-
-    public void rollbackUpdate() {
-        columnVersionWriter.readUnsafe();
     }
 
     public void setExtensionListener(ExtensionListener listener) {

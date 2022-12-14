@@ -1979,7 +1979,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab foobar",
                     16,
-                    "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected",
+                    "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected",
                     tableModel
             );
         }
