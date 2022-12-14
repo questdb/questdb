@@ -2,9 +2,6 @@ package io.questdb.griffin;
 
 import org.junit.Test;
 
-/**
- *
- */
 public class SortAndLimitTest extends AbstractGriffinTest {
 
     @Test

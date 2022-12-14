@@ -52,7 +52,7 @@ public class TxnTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade errorFf = new FilesFacadeImpl() {
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     return -1;
                 }
             };

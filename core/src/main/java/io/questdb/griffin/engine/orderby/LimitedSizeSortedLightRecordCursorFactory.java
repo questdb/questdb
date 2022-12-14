@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
@@ -42,8 +43,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final CairoConfiguration configuration;
     private final Function hiFunction;
     private final Function loFunction;
-    //initialization delayed to getCursor() because lo/hi need to be evaluated
-    private DelegatingRecordCursor cursor;//LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
+    // initialization delayed to getCursor() because lo/hi need to be evaluated
+    private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
 
     public LimitedSizeSortedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -51,7 +52,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             RecordCursorFactory base,
             RecordComparator comparator,
             Function loFunc,
-            Function hiFunc
+            @Nullable Function hiFunc
     ) {
         super(metadata);
         this.base = base;
@@ -63,15 +64,22 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = base.getCursor(executionContext);
+        boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
+        // async filtered factories to avoid redundant disk reads.
+        executionContext.setColumnPreTouchEnabled(preTouchEnabled && hiFunction == null);
+        RecordCursor baseCursor = null;
         try {
+            baseCursor = base.getCursor(executionContext);
             initialize(executionContext, baseCursor);
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
-            baseCursor.close();
+            Misc.free(baseCursor);
             Misc.free(cursor);
             throw ex;
+        } finally {
+            executionContext.setColumnPreTouchEnabled(preTouchEnabled);
         }
     }
 

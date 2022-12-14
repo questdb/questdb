@@ -36,7 +36,6 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-
     }
 
     @Override

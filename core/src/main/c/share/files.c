@@ -37,11 +37,7 @@
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
-        (JNIEnv *e, jclass cl,
-         jlong fd,
-         jlong address,
-         jlong len,
-         jlong offset) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len, jlong offset) {
 
     off_t writeOffset = offset;
     ssize_t written;
@@ -62,7 +58,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
+        (JNIEnv *e, jclass cl, jint fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
     int prot = 0;
 
     if (flags == com_questdb_std_Files_MAP_RO) {
@@ -79,21 +75,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
-        (JNIEnv *e, jclass cl,
-         jlong fd,
-         jlong address,
-         jlong len) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len) {
     ssize_t res;
     RESTARTABLE(write((int) fd, (void *) (address), (size_t) len), res);
     return res;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
-        (JNIEnv *e, jclass cl,
-         jlong fd,
-         jlong address,
-         jlong len,
-         jlong offset) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len, jlong offset) {
 
     off_t readOffset = offset;
     ssize_t read;
@@ -115,9 +104,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
-        (JNIEnv *e, jclass cl,
-         jlong fd,
-         jlong offset) {
+        (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     jint result;
     ssize_t readLen = pread((int) fd, (void *) &result, (size_t) 4, (off_t) offset);
     if (readLen != 4) {
@@ -127,9 +114,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
-        (JNIEnv *e, jclass cl,
-         jlong fd,
-         jlong offset) {
+        (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     jlong result;
     ssize_t readLen;
     RESTARTABLE(pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset), readLen);
@@ -139,29 +124,29 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
     return result;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_RDONLY);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     return close((int) fd);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRWOpts
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
         (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openAppend
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
@@ -206,67 +191,37 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     struct stat st;
     int r = fstat((int) fd, &st);
     return r == 0 ? st.st_size : r;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     struct stat st;
     int r = fstat((int) fd, &st);
     return (jboolean) (r == 0 ? st.st_nlink > 0 : 0);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getStdOutFd
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) 1;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
-        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
+        (JNIEnv *e, jclass cl, jint fd, jlong len) {
     if (ftruncate((int) fd, len) == 0) {
         return JNI_TRUE;
     }
     return JNI_FALSE;
 }
 
-#ifdef __APPLE__
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
-    // MACOS allocates additional space. Check what size the file currently is
-    struct stat st;
-    int _fd = (int) fd;
-    if (fstat(_fd, &st) != 0) {
-        return JNI_FALSE;
-    }
-    const jlong fileLen = st.st_blksize * st.st_blocks;
-    jlong deltaLen = len - fileLen;
-    if (deltaLen > 0) {
-        // F_ALLOCATECONTIG - try to allocate continuous space.
-        fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, deltaLen, 0};
-        int result = fcntl(_fd, F_PREALLOCATE, &flags);
-        if (result == -1) {
-            // F_ALLOCATEALL - try to allocate non-continuous space.
-            flags.fst_flags = F_ALLOCATEALL;
-            result = fcntl((int) fd, F_PREALLOCATE, &flags);
-            if (result == -1) {
-                return JNI_FALSE;
-            }
-        }
-    }
-    return ftruncate((int) fd, len) == 0;
-}
-
-#endif
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
     return msync((void *) addr, len, async ? MS_ASYNC : MS_SYNC);
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jlong fd) {
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jint fd) {
     return fsync((int) fd);
 }
 
@@ -327,7 +282,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getPageSize
     return sysconf(_SC_PAGESIZE);
 }
 
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
@@ -362,14 +316,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     return flock((int) fd, LOCK_EX | LOCK_NB);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         (JNIEnv *e, jclass cl, jlong lpszName, jlong size) {
 
-    jlong fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
+    jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 
     if (fd < 0) {
         // error opening / creating file
