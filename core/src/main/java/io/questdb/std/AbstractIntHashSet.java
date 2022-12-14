@@ -63,7 +63,7 @@ public abstract class AbstractIntHashSet implements Mutable {
     }
 
     public int keyIndex(int key) {
-        int index = key & mask;
+        int index = Hash.spread(key) & mask;
 
         if (keys[index] == noEntryKeyValue) {
             return index;
@@ -104,7 +104,7 @@ public abstract class AbstractIntHashSet implements Mutable {
                     key != noEntryKeyValue;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = key & mask;
+                int idealHit = Hash.spread(key) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != noEntryKeyValue) {
