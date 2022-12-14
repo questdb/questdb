@@ -310,7 +310,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         long seqTxn = tableWriter.getSeqTxn();
                         if (resumeFromTxn - 1 > seqTxn) {
                             // including resumeFromTxn 
-                            tableWriter.setSeqTxn(resumeFromTxn - 1, true);
+                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
                         }
                     }
                 }
@@ -346,16 +346,6 @@ public class TableSequencerAPI implements QuietCloseable {
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(tableName, path, ff);
-    }
-
-    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
-        final int rootLen = path.length();
-        path.concat(fileName).$();
-        try {
-            return TableUtils.openRO(ff, path, LOG);
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     @NotNull

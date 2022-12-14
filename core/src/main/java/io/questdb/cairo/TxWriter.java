@@ -285,11 +285,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setSeqTxn(long seqTxn, boolean persist) {
+    public void setSeqTxn(long seqTxn) {
         this.seqTxn = seqTxn;
-        if (persist) {
-            putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
-        }
     }
 
     public void switchPartitions(long timestamp) {

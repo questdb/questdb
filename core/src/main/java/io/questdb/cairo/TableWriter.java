@@ -598,8 +598,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             if (ex.isWALTolerable()) {
                 try {
                     rollback(); // rollback in case on any dirty state
-                    setSeqTxn(seqTxn);
-                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                    commitSeqTxn(seqTxn);
                 } catch (Throwable th2) {
                     LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
                 }
@@ -814,6 +813,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     public long commit(int commitMode) {
         return commit(commitMode, 0);
+    }
+
+    public void commitSeqTxn(long seqTxn) {
+        txWriter.setSeqTxn(seqTxn);
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
     @Override
@@ -1392,7 +1396,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         updateIndexes();
         columnVersionWriter.commit();
-        txWriter.setSeqTxn(seqTxn, false);
+        txWriter.setSeqTxn(seqTxn);
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
 
@@ -1723,12 +1727,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
-    public void setSeqTxn(long seqTxn, boolean persist) {
-        txWriter.setSeqTxn(seqTxn, persist);
-    }
-
     public void setSeqTxn(long seqTxn) {
-        txWriter.setSeqTxn(seqTxn, false);
+        txWriter.setSeqTxn(seqTxn);
     }
 
     public long size() {
