@@ -3953,7 +3953,7 @@ nodejs code:
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (final Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1)) {
+                try (final Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, -1)) {
                     connection.setAutoCommit(false);
                     try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
                         pstmt.execute();
@@ -7695,43 +7695,43 @@ create table tab as (
 
     private void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.Simple, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.Simple, true, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.Simple, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.Simple, false, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.Extended, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.Extended, true, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.Extended, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.Extended, false, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
         }
     }
 

@@ -127,6 +127,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final CharSequenceObjHashMap<TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
+    @Nullable
+    private final PGAuthenticator roUserAuthenticator;
     private final IntList selectColumnTypes = new IntList();
     private final int sendBufferSize;
     private final String serverVersion;
@@ -209,6 +211,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
+        this.roUserAuthenticator = configuration.isReadOnlyUserEnabled()
+                ? new PGBasicAuthenticator(configuration.getReadOnlyUsername(), configuration.getReadOnlyPassword(), true)
+                : null;
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
@@ -1230,7 +1235,20 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             long msgLo,
             long msgLimit
     ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException {
-        final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+
+        CairoSecurityContext cairoSecurityContext = null;
+        // First, try to authenticate as the read-only user if it's configured.
+        if (roUserAuthenticator != null) {
+            try {
+                cairoSecurityContext = roUserAuthenticator.authenticate(username, msgLo, msgLimit);
+            } catch (AuthenticationException ignore) {
+                // Wrong user, never mind.
+            }
+        }
+        // Next, authenticate as the primary user if we failed to recognize the read-only user.
+        if (cairoSecurityContext == null) {
+            cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+        }
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
             authenticationRequired = false;
