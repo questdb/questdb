@@ -308,7 +308,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 if (resumeFromTxn > 0) {
                     try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableName, WAL_2_TABLE_RESUME_REASON)) {
                         long seqTxn = tableWriter.getSeqTxn();
-                        if (resumeFromTxn > seqTxn) {
+                        if (resumeFromTxn - 1 > seqTxn) {
                             // including resumeFromTxn 
                             tableWriter.setSeqTxn(resumeFromTxn - 1, true);
                         }

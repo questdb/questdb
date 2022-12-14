@@ -86,9 +86,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 applyOutstandingWalTransactions(writer, engine, sqlToOperation);
                 lastAppliedSeqTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
-                boolean equalsReason = WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) ||
+                boolean goodReason = WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) ||
                         WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason());
-                if (!equalsReason) {
+                if (!goodReason) {
                     LOG.critical().$("unsolicited table lock [table=").$(tableName).$(", lock_reason=").$(tableBusy.getReason()).I$();
                     return WAL_APPLY_FAILED;
                 }
