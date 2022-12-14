@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.str.Path;
 
 public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
@@ -75,6 +76,10 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     @Override
     public boolean isOpen() {
         return true;
+    }
+
+    @Override
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
     }
 
     private NullCursor getCursor(boolean cachedInstance) {

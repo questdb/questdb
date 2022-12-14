@@ -209,13 +209,24 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnBase, int columnIndex, int direction) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
+        final long partitionTimestamp = txFile.getPartitionTimestamp(partitionIndex);
+        final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+        final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
+
         BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);
         if (reader != null) {
+            // make sure to reload the reader
+            final String columnName = metadata.getColumnName(columnIndex);
+            final long columnTop = getColumnTop(columnBase, columnIndex);
+            Path path = pathGenPartitioned(partitionIndex);
+            try {
+                reader.of(configuration, path, columnName, columnNameTxn, columnTop, partitionTxn);
+            } finally {
+                path.trimTo(rootLen);
+            }
             return reader;
         }
-        long partitionTimestamp = txFile.getPartitionTimestamp(partitionIndex);
-        long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
-        return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, txFile.getPartitionNameTxn(partitionIndex));
+        return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }
 
     public MemoryR getColumn(int absoluteIndex) {
@@ -1011,16 +1022,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
-                    if (indexReader instanceof BitmapIndexBwdReader) {
+                    if (indexReader != null) {
                         // name txn is -1 because the parent call sets up partition name for us
-                        ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
+                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
                     }
-
-                    indexReader = indexReaders.getQuick(secondaryIndex);
-                    if (indexReader instanceof BitmapIndexFwdReader) {
-                        ((BitmapIndexFwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
-                    }
-
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
                     Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
