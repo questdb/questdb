@@ -379,7 +379,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), tok, "alterSystem");
+            CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), tok, "alterSystem", true);
             if (lockedReason != WriterPool.OWNERSHIP_REASON_NONE) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
@@ -1498,7 +1498,7 @@ public class SqlCompiler implements Closeable {
         this.insertCount = -1;
 
         // Slow path with lock attempt
-        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
+        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable", false);
         if (null == lockedReason) {
             TableWriter tableWriter = null;
             boolean newTable = false;
@@ -2379,11 +2379,11 @@ public class SqlCompiler implements Closeable {
                     try {
                         if (writer.getMetadata().isWalEnabled()) {
                             writer.truncate();
-                        } else if (engine.lockReaders(writer.getTableName())) {
+                        } else if (engine.lockReaderPool(writer.getTableName())) {
                             try {
                                 writer.truncate();
                             } finally {
-                                engine.unlockReaders(writer.getTableName());
+                                engine.unlockReaderPool(writer.getTableName());
                             }
                         } else {
                             throw SqlException.$(0, "there is an active query against '").put(writer.getTableName()).put("'. Try again.");

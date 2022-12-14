@@ -2608,7 +2608,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testExpressionSyntaxError() throws Exception {
         assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
 
-        // when AST cache is not cleared below query will pickup "garbage" and will misrepresent error
+        // when AST cache is not cleared below query will pick up "garbage" and will misrepresent error
         assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
@@ -7011,7 +7011,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing");
+            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing", false);
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};

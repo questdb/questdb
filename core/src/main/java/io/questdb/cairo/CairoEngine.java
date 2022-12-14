@@ -165,7 +165,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct
     ) {
         validNameOrThrow(struct.getTableName());
-        String lockedReason = lock(securityContext, struct.getTableName(), "createTable");
+        String lockedReason = lock(securityContext, struct.getTableName(), "createTable", false);
         if (null == lockedReason) {
             boolean newTable = false;
             try {
@@ -437,7 +437,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public String lock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
-            String lockReason
+            String lockReason,
+            boolean assumeTableExists
     ) {
         assert null != lockReason;
         securityContext.checkWritePermission();
@@ -445,7 +446,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         validNameOrThrow(tableName);
         String lockedReason = writerPool.lock(tableName, lockReason);
         if (lockedReason == null) { // not locked
-            if (readerPool.lock(tableName)) {
+            if ((!assumeTableExists || lockReaders(tableName)) && readerPool.lock(tableName)) {
                 if (metadataPool.lock(tableName)) {
                     tableSequencerAPI.releaseInactive();
                     LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
@@ -453,50 +454,34 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 }
                 readerPool.unlock(tableName);
             }
+
+            if (assumeTableExists) {
+                unlockReaders(tableName);
+            }
             writerPool.unlock(tableName);
             return BUSY_READER;
         }
         return lockedReason;
     }
 
-    public boolean lockReaders(CharSequence tableName) {
+    /**
+     * Locking reader pool releases all TableReader instances of this engine. This in turn provides a
+     * guarantee that all read-only files will be closed. On platforms such as Windows this allows file
+     * deletion or truncation without conflicts.
+     * <p>
+     * Additionally, this prevents new readers from being instantiated from the pool. Readers outside the pool
+     * might still be able to open even after when lock is held.
+     *
+     * @param tableName the name of the table, which readers must close
+     * @return true if pool could be locked and false, when there are active readers
+     */
+    public boolean lockReaderPool(CharSequence tableName) {
         validNameOrThrow(tableName);
         return readerPool.lock(tableName);
     }
 
-    public void lockReaders(CharSequence tableName, Path path) {
-        // this method must be invoked only when thread has lock on writer pool
-        path.of(configuration.getRoot()).concat(tableName);
-        int plen = path.length();
-
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (TxnScoreboard txnScoreboard = new TxnScoreboard(configuration).ofRW(path)) {
-            path.trimTo(plen).concat(TXN_FILE_NAME).$();
-            int txnFd = TableUtils.openRO(configuration.getFilesFacade(), path, LOG);
-            long txn;
-            try {
-                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    txn = TableUtils.readLongOrFail(configuration.getFilesFacade(), txnFd, TableUtils.TX_OFFSET_TXN_64, mem, path);
-                } finally {
-                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                }
-            } finally {
-                ff.close(txnFd);
-            }
-
-            // make sure we can get a slot
-            if (txnScoreboard.acquireTxn(txn)) {
-                txnScoreboard.releaseTxn(txn);
-
-                // lock the current txn if scoreboard is at min
-                if (txnScoreboard.getMin() == txn && txnScoreboard.releaseTxn(txn) == -1) {
-                    return;
-                }
-                throw CairoException.nonCritical().put("could not lock out the readers [table=").put(tableName).put(']');
-            }
-            throw CairoException.nonCritical().put("oversubscribed scoreboard [table=").put(tableName).put(']');
-        }
+    public boolean lockReaders(CharSequence tableName) {
+        return lockReaders(tableName, Path.getThreadLocal(configuration.getRoot()));
     }
 
     public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
@@ -560,7 +545,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         validNameOrThrow(tableName);
-        CharSequence lockedReason = lock(securityContext, tableName, "removeTable");
+        CharSequence lockedReason = lock(securityContext, tableName, "removeTable", true);
         if (null == lockedReason) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
@@ -595,7 +580,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         validNameOrThrow(tableName);
         validNameOrThrow(newName);
 
-        String lockedReason = lock(securityContext, tableName, "renameTable");
+        String lockedReason = lock(securityContext, tableName, "renameTable", true);
         if (null == lockedReason) {
             try {
                 rename0(path, tableName, otherPath, newName);
@@ -624,14 +609,74 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         validNameOrThrow(tableName);
         readerPool.unlock(tableName);
+        unlockReaders(tableName);
         writerPool.unlock(tableName, writer, newTable);
         metadataPool.unlock(tableName);
         LOG.info().$("unlocked [table=`").utf8(tableName).$("`]").$();
     }
 
-    public void unlockReaders(CharSequence tableName) {
+    public void unlockReaderPool(CharSequence tableName) {
         validNameOrThrow(tableName);
         readerPool.unlock(tableName);
+    }
+
+    private boolean lockReaders(CharSequence tableName, Path path) {
+        // this method must be invoked only when thread has lock on writer pool
+        path.of(configuration.getRoot()).concat(tableName);
+        int plen = path.length();
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (TxnScoreboard txnScoreboard = new TxnScoreboard(configuration)) {
+            if (txnScoreboard.ofRW(path, true) != null) {
+                long txn = readMaxTxn(ff, path.trimTo(plen));
+                if (txn == -2) {
+                    // message would have already been logged
+                    return false;
+                }
+
+                // make sure we can get a slot
+                if (txnScoreboard.acquireTxn(txn)) {
+                    txnScoreboard.releaseTxn(txn);
+
+                    // lock the current txn if scoreboard is at min
+                    if (txnScoreboard.getMin() == txn && txnScoreboard.releaseTxn(txn) == -1) {
+                        return true;
+                    }
+                    LOG.error().$("could not lock out the readers [table=").$(tableName).I$();
+                } else {
+                    LOG.error().$("oversubscribed scoreboard [table=").$(tableName).I$();
+                }
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private long readMaxTxn(FilesFacade ff, Path path) {
+        path.concat(TXN_FILE_NAME).$();
+        final int fd = ff.openRO(path);
+        if (fd > -1) {
+            LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            try {
+                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long bytesRead;
+                    if ((bytesRead = ff.read(fd, mem, Long.BYTES, TableUtils.TX_OFFSET_TXN_64)) != Long.BYTES) {
+                        LOG.error().$("could not read txn value [file=").$(path).$(", bytesRead=").$(bytesRead).I$();
+                        return -2;
+                    }
+                    return Unsafe.getUnsafe().getLong(mem);
+                } finally {
+                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } else {
+            LOG.error().$("could not open _txn [file=").$(path).$(", errno=").$(ff.errno()).I$();
+            return -2;
+        }
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {
@@ -676,6 +721,39 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                     .$("could not repair before reading [table=").$(tableName)
                     .$(" ,error=").$(th.getMessage()).I$();
             throw rethrow;
+        }
+    }
+
+    public void unlockReaders(CharSequence tableName) {
+        unlockReaders(tableName, Path.getThreadLocal(configuration.getRoot()));
+    }
+    
+    private void unlockReaders(CharSequence tableName, Path path) {
+        // this method must be invoked only when thread has lock on writer pool
+        path.of(configuration.getRoot()).concat(tableName);
+        int plen = path.length();
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (TxnScoreboard txnScoreboard = new TxnScoreboard(configuration)) {
+            if (txnScoreboard.ofRW(path, true) == null) {
+                // we should not be unlocking readers unless we could lock them in the first place
+                // these scenarios are possible here:
+                // 1. unlockReaders() was called spuriously, without attempting to lock them first
+                // 2. somehow readers were locked and scoreboard file existed, but it disappeared before unlock was called
+                //    2.1 the drop table operation locked readers, removed the table and then attempted to unlock something that no longer exists
+                LOG.critical().$("internal error, could not open [file=").$(path).I$();
+                return;
+            }
+            final long txn = readMaxTxn(ff, path.trimTo(plen));
+            if (txn == -2) {
+                // could not read the txn, message would be already logged
+                return;
+            }
+
+            if (txnScoreboard.getActiveReaderCount(txn) == -1 && txnScoreboard.acquireTxn(txn, false)) {
+                return;
+            }
+            LOG.critical().$("could not unlock the scoreboard [file=").$(path).$(", txn=").$(txn).I$();
         }
     }
 
