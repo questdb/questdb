@@ -2105,8 +2105,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // 1. if we only have one column to order by - the cursor would already be ordered
                 //    by timestamp (either ASC or DESC); we have nothing to do
                 // 2. metadata of the new cursor will have the timestamp
-
-                RecordMetadata orderedMetadata;
                 if (timestampIndex != -1) {
                     CharSequence column = columnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
@@ -2122,8 +2120,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-
+                RecordMetadata orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
 
@@ -2136,14 +2133,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 recordCursorFactory,
                                 recordComparatorCompiler.compile(metadata, listColumnFilterA),
                                 loFunc,
-                                hiFunc
+                                hiFunc,
+                                listColumnFilterA.copy()
                         );
                     } else {
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
                                 recordCursorFactory,
-                                recordComparatorCompiler.compile(metadata, listColumnFilterA)
+                                recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                                listColumnFilterA.copy()
                         );
                     }
                 }
@@ -2162,7 +2161,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 entityColumnFilter,
                                 false
                         ),
-                        recordComparatorCompiler.compile(metadata, listColumnFilterA)
+                        recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                        listColumnFilterA.copy()
                 );
             }
 

@@ -22,32 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.functions.lt;
 
-import io.questdb.std.IntList;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Numbers;
+import org.junit.Test;
 
-public class ListColumnFilter extends IntList implements ColumnFilter {
-
-    public ListColumnFilter() {
-    }
-
-    public ListColumnFilter(int capacity) {
-        super(capacity);
-    }
-
-    public ListColumnFilter copy() {
-        ListColumnFilter copy = new ListColumnFilter(size());
-        copy.addAll(this);
-        return copy;
+public class LtLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testAll() throws SqlException {
+        call(1024L, 4560L).andAssert(true);
+        call(-13L, -1L).andAssert(true);
+        call(77L, 77L).andAssert(false);
+        call(-7L, 7L).andAssert(true);
+        call(1L, -1L).andAssert(false);
+        call(-10L, -10L).andAssert(false);
+        call(Numbers.LONG_NaN, 7L).andAssert(false);
+        call(42L, Numbers.LONG_NaN).andAssert(false);
+        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(false);
     }
 
     @Override
-    public int getColumnCount() {
-        return size();
-    }
-
-    @Override
-    public int getColumnIndex(int position) {
-        return getQuick(position);
+    protected FunctionFactory getFunctionFactory() {
+        return new LtLongFunctionFactory();
     }
 }

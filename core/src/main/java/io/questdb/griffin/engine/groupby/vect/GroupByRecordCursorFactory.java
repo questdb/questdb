@@ -374,8 +374,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(true);
-        sink.optAttr("groupByFunctions", vafList, true);
-        sink.attr("keyColumn").putBaseColumnNameNoRemap(keyColumnIndex);
+        sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
+        sink.optAttr("values", vafList, true);
         sink.attr("workers").val(workerCount);
         sink.child(base);
     }

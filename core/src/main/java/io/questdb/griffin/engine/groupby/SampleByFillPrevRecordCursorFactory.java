@@ -87,7 +87,8 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillPrev");
-        sink.optAttr("groupByFunctions", groupByFunctions);
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
     }
 

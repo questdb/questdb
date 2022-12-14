@@ -27,6 +27,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -64,29 +65,27 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinDoesntMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
-                            "join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10 ",
-                    "VirtualRecord\n" +
-                            "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: a.ts>=dateadd('m',-1,b2.ts)\n" +
-                            "            Cross join\n" +
-                            "                Filter filter: b.age=10\n" +
-                            "                    Nested Loop Left Join\n" +
-                            "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table_1\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table_2\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
+                        "join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10 ",
+                "VirtualRecord\n" +
+                        "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: a.ts>=dateadd('m',-1,b2.ts)\n" +
+                        "            Cross join\n" +
+                        "                Filter filter: b.age=10\n" +
+                        "                    Nested Loop Left Join\n" +
+                        "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
+                        "                        DataFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: table_1\n" +
+                        "                        DataFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: table_2\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -94,28 +93,26 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinDoesntMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
-                            "left join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10 ",
-                    "VirtualRecord\n" +
-                            "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Nested Loop Left Join\n" +
-                            "          filter: (a.ts>=dateadd('m',-1,b2.ts) and b.age=10)\n" +
-                            "            Nested Loop Left Join\n" +
-                            "              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table_1\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table_2\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
+                        "left join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and b.age = 10 ",
+                "VirtualRecord\n" +
+                        "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
+                        "    SelectedRecord\n" +
+                        "        Nested Loop Left Join\n" +
+                        "          filter: (a.ts>=dateadd('m',-1,b2.ts) and b.age=10)\n" +
+                        "            Nested Loop Left Join\n" +
+                        "              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: table_1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: table_2\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -123,29 +120,27 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinDoesntMoveOtherTwoTableEqJoinPredicate() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
-                            "join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and a.age = b.age ",
-                    "VirtualRecord\n" +
-                            "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: a.ts>=dateadd('m',-1,b2.ts)\n" +
-                            "            Cross join\n" +
-                            "                Filter filter: a.age=b.age\n" +
-                            "                    Nested Loop Left Join\n" +
-                            "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table_1\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: table_2\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
+                        "join table_2 as b2 on a.ts >= dateadd('m', -1, b2.ts) and a.age = b.age ",
+                "VirtualRecord\n" +
+                        "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: a.ts>=dateadd('m',-1,b2.ts)\n" +
+                        "            Cross join\n" +
+                        "                Filter filter: a.age=b.age\n" +
+                        "                    Nested Loop Left Join\n" +
+                        "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
+                        "                        DataFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: table_1\n" +
+                        "                        DataFrame\n" +
+                        "                            Row forward scan\n" +
+                        "                            Frame forward scan on: table_2\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -153,22 +148,20 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinDoesntPushJoinPredicateToLeftTable() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10 ",
-                    "VirtualRecord\n" +
-                            "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Nested Loop Left Join\n" +
-                            "          filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and a.age=10)\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table_1\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10 ",
+                "VirtualRecord\n" +
+                        "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
+                        "    SelectedRecord\n" +
+                        "        Nested Loop Left Join\n" +
+                        "          filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and a.age=10)\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: table_1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -176,20 +169,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinDoesntPushJoinPredicateToRightTable() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts \n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10 ",
-                    "SelectedRecord\n" +
-                            "    Nested Loop Left Join\n" +
-                            "      filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and b.age=10)\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table_1\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts \n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10 ",
+                "SelectedRecord\n" +
+                        "    Nested Loop Left Join\n" +
+                        "      filter: ((a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts) and b.age=10)\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: table_1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -197,24 +188,22 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinDoesntPushWherePredicateToRightTable() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)" +
-                            "where b.age = 10 ",
-                    "VirtualRecord\n" +
-                            "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: b.age=10\n" +
-                            "            Nested Loop Left Join\n" +
-                            "              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table_1\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)" +
+                        "where b.age = 10 ",
+                "VirtualRecord\n" +
+                        "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: b.age=10\n" +
+                        "            Nested Loop Left Join\n" +
+                        "              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: table_1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -222,22 +211,20 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void test2686LeftJoinPushesWherePredicateToLeftJoinCondition() throws Exception {
         test2686Prepare();
 
-        assertMemoryLeak(() -> {
-            assertPlan("select a.name, a.age, b.address, a.ts\n" +
-                            "from table_1 as a \n" +
-                            "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
-                            "where a.age * b.age = 10",
-                    "SelectedRecord\n" +
-                            "    Filter filter: a.age*b.age=10\n" +
-                            "        Nested Loop Left Join\n" +
-                            "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table_1\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: table_2\n");
-        });
+        assertMemoryLeak(() -> assertPlan("select a.name, a.age, b.address, a.ts\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
+                        "where a.age * b.age = 10",
+                "SelectedRecord\n" +
+                        "    Filter filter: a.age*b.age=10\n" +
+                        "        Nested Loop Left Join\n" +
+                        "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: table_1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: table_2\n"));
     }
 
     @Ignore//reenable after merge with join fix 
@@ -388,6 +375,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Frame forward scan on: a\n" +
                             "        SelectedRecord\n" +
                             "            Sort light\n" +
+                            "              keys: [ts, i]\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: b\n");
@@ -441,6 +429,31 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp) timestamp(ts)");
+            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            try {
+                compiler.setFullFatJoins(true);
+                assertPlan("select * " +
+                                "from a " +
+                                "asof join b on a.i = b.i",
+                        "SelectedRecord\n" +
+                                "    AsOf join\n" +
+                                "      condition: b.i=a.i\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: a\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: b\n");
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
         });
     }
 
@@ -698,6 +711,28 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFullFatHashJoin2() throws Exception {
+        compiler.setFullFatJoins(true);
+        try {
+            assertPlan("create table a ( l long)",
+                    "select * from a left join a a1 on l",
+                    "SelectedRecord\n" +
+                            "    Hash outer join\n" +
+                            "      condition: a1.l=a.l\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+
+    @Test
     public void testFunctions() {
         final StringSink sink = new StringSink();
 
@@ -789,7 +824,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 sink.clear();
                 sink.put(factory.getSignature()).put(" types: ");
 
-                for (int p = 0, pn = sigArgCount; p < pn; p++) {
+                for (int p = 0; p < sigArgCount; p++) {
                     int sigArgTypeMask = descriptor.getArgTypeMask(p);
                     final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                     boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
@@ -861,7 +896,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 args.add(new StrConstant("2022-12-12"));
                             } else if (factory instanceof ToTimezoneTimestampFunctionFactory && p == 1) {
                                 args.add(new StrConstant("CET"));
-                            } else if (factory instanceof CastStrToRegClassFunctionFactory) {
+                            } else if (factory instanceof CastStrToRegClassFunctionFactory && useConst) {
                                 args.add(new StrConstant("pg_namespace"));
                             } else if (factory instanceof CastStrToStrArrayFunctionFactory) {
                                 args.add(new StrConstant("{'abc'}"));
@@ -928,12 +963,27 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test//only none, single int|symbol key cases are vectorized   
     public void testGroupByBoolean() throws Exception {
         assertPlan("create table a ( l long, b boolean)",
-                "select b, min(l) from a group by b",
+                "select b, min(l)  from a group by b",
                 "GroupByRecord vectorized: false\n" +
-                        "  groupByFunctions: [min(l)]\n" +
+                        "  keys: [b]\n" +
+                        "  values: [min(l)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByBooleanFunction() throws Exception {
+        assertPlan("create table a ( l long, b1 boolean, b2 boolean)",
+                "select b1||b2, min(l) from a group by b1||b2",
+                "GroupByRecord vectorized: false\n" +
+                        "  keys: [concat]\n" +
+                        "  values: [min(l)]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [concat([b1,b2]),l]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
     @Test//only none, single int|symbol key cases are vectorized   
@@ -941,7 +991,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( l long, d double)",
                 "select d, min(l) from a group by d",
                 "GroupByRecord vectorized: false\n" +
-                        "  groupByFunctions: [min(l)]\n" +
+                        "  keys: [d]\n" +
+                        "  values: [min(l)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -952,7 +1003,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( l long, f float)",
                 "select f, min(l) from a group by f",
                 "GroupByRecord vectorized: false\n" +
-                        "  groupByFunctions: [min(l)]\n" +
+                        "  keys: [f]\n" +
+                        "  values: [min(l)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -963,8 +1015,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( ts timestamp, d double)",
                 "select hour(ts), min(d) from a group by hour(ts)",
                 "GroupByRecord vectorized: true\n" +
-                        "  groupByFunctions: [min(d)]\n" +
-                        "  keyColumn: ts\n" +
+                        "  keys: [ts]\n" +
+                        "  values: [min(d)]\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -976,8 +1028,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select min(d), i from a group by i",
                 "GroupByRecord vectorized: true\n" +
-                        "  groupByFunctions: [min(d)]\n" +
-                        "  keyColumn: i\n" +
+                        "  keys: [i]\n" +
+                        "  values: [min(d)]\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -988,10 +1040,81 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByInt2() throws Exception {
         assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
                 "GroupByRecord vectorized: false\n" +
-                        "  groupByFunctions: [min(d)]\n" +
+                        "  keys: [i,i1]\n" +
+                        "  values: [min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByKeyedOnExcept() throws Exception {
+        assertCompile("create table a ( i int, d double)");
+
+        assertPlan("create table b ( j int, e double)",
+                "select d, max(i) from (select * from a except select * from b)",
+                "GroupByRecord vectorized: false\n" +
+                        "  keys: [d]\n" +
+                        "  values: [max(i)]\n" +
+                        "    Except\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "        Hash\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: b\n");
+    }
+
+    @Test
+    public void testGroupByKeyedOnIntersect() throws Exception {
+        assertCompile("create table a ( i int, d double)");
+
+        assertPlan("create table b ( j int, e double)",
+                "select d, max(i) from (select * from a intersect select * from b)",
+                "GroupByRecord vectorized: false\n" +
+                        "  keys: [d]\n" +
+                        "  values: [max(i)]\n" +
+                        "    Intersect\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "        Hash\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: b\n");
+    }
+
+    @Test
+    public void testGroupByKeyedOnUnion() throws Exception {
+        assertPlan("create table a ( i int, d double)",
+                "select d, max(i) from (select * from a union select * from a)",
+                "GroupByRecord vectorized: false\n" +
+                        "  keys: [d]\n" +
+                        "  values: [max(i)]\n" +
+                        "    Union\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByKeyedOnUnionAll() throws Exception {
+        assertPlan("create table a ( i int, d double)",
+                "select d, max(i) from (select * from a union all select * from a)",
+                "GroupByRecord vectorized: false\n" +
+                        "  keys: [d]\n" +
+                        "  values: [max(i)]\n" +
+                        "    Union All\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
     @Test//only none, single int|symbol key cases are vectorized   
@@ -999,7 +1122,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( l long, d double)",
                 "select l, min(d) from a group by l",
                 "GroupByRecord vectorized: false\n" +
-                        "  groupByFunctions: [min(d)]\n" +
+                        "  keys: [l]\n" +
+                        "  values: [min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1010,7 +1134,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select min(d) from a",
                 "GroupByNotKeyed vectorized: true\n" +
-                        "  groupByFunctions: [min(d)]\n" +
+                        "  values: [min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1021,7 +1145,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a join a b on i )",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [max(i)]\n" +
+                        "  values: [max(i)]\n" +
                         "    SelectedRecord\n" +
                         "        Hash Join Light\n" +
                         "          condition: b.i=a.i\n" +
@@ -1039,7 +1163,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select min(d), max(d*d) from a",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [min(d),max(d*d)]\n" +
+                        "  values: [min(d),max(d*d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1050,7 +1174,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select max(d+1) from a",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [max(d+1)]\n" +
+                        "  values: [max(d+1)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1061,7 +1185,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select count(*), max(i), min(d) from a",
                 "GroupByNotKeyed vectorized: true\n" +
-                        "  groupByFunctions: [count(0),max(i),min(d)]\n" +
+                        "  values: [count(0),max(i),min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1072,7 +1196,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [first(10),last(d),avg(10),min(10),max(10)]\n" +
+                        "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1083,7 +1207,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [max(i)]\n" +
+                        "  values: [max(i)]\n" +
                         "    Async JIT Filter\n" +
                         "      filter: i<10\n" +
                         "      workers: 1\n" +
@@ -1097,7 +1221,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a order by d)",
                 "GroupByNotKeyed vectorized: true\n" +
-                        "  groupByFunctions: [max(i)]\n" +
+                        "  values: [max(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1108,8 +1232,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a order by d limit 10)",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [max(i)]\n" +
+                        "  values: [max(i)]\n" +
                         "    Sort light lo: 10\n" +
+                        "      keys: [d]\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n");
@@ -1120,7 +1245,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a union all select * from a)",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [max(i)]\n" +
+                        "  values: [max(i)]\n" +
                         "    Union All\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -1394,8 +1519,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Subquery\n" +
                         "        DistinctKey\n" +
                         "            GroupByRecord vectorized: true\n" +
-                        "              groupByFunctions: [count(1)]\n" +
-                        "              keyColumn: s\n" +
+                        "              keys: [s]\n" +
+                        "              values: [count(1)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1414,8 +1539,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Subquery\n" +
                         "        DistinctKey\n" +
                         "            GroupByRecord vectorized: true\n" +
-                        "              groupByFunctions: [count(1)]\n" +
-                        "              keyColumn: s\n" +
+                        "              keys: [s]\n" +
+                        "              values: [count(1)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1433,8 +1558,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Subquery\n" +
                         "        DistinctKey\n" +
                         "            GroupByRecord vectorized: true\n" +
-                        "              groupByFunctions: [count(1)]\n" +
-                        "              keyColumn: s\n" +
+                        "              keys: [s]\n" +
+                        "              values: [count(1)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1452,8 +1577,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Subquery\n" +
                         "        DistinctKey\n" +
                         "            GroupByRecord vectorized: true\n" +
-                        "              groupByFunctions: [count(1)]\n" +
-                        "              keyColumn: s\n" +
+                        "              keys: [s]\n" +
+                        "              values: [count(1)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1482,6 +1607,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Row backward scan\n" +
                         "      expectedSymbolsCount: 2\n" +
                         "    Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testLatestOn16() throws Exception {
+        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
+                "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2",
+                "LatestByAllSymbolsFiltered\n" +
+                        "  filter: s1='S1'\n" +
+                        "    Row backward scan\n" +
+                        "      expectedSymbolsCount: 2147483647\n" +
+                        "    Interval backward scan on: a\n" +
+                        "      intervals: [static=[1,9223372036854775807]\n");
     }
 
     @Test
@@ -2170,6 +2307,31 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinFullFat() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp) timestamp(ts)");
+            compile("create table b ( i int, ts timestamp) timestamp(ts)");
+            try {
+                compiler.setFullFatJoins(true);
+                assertPlan("select * " +
+                                "from a " +
+                                "Lt join b on a.i = b.i",
+                        "SelectedRecord\n" +
+                                "    Lt join\n" +
+                                "      condition: b.i=a.i\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: a\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: b\n");
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
+        });
+    }
+
+    @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -2184,6 +2346,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Frame forward scan on: a\n" +
                             "        SelectedRecord\n" +
                             "            Sort light\n" +
+                            "              keys: [ts, i]\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: b\n");
@@ -2294,7 +2457,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h",
                 "SampleByFillNoneNotKeyed\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2305,7 +2468,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(linear)",
                 "SampleByInterpolate\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2316,29 +2479,53 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(null)",
                 "SampleByFillNullNotKeyed\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
     }
 
     @Test
-    public void testSampleByFillPrev() throws Exception {
+    public void testSampleByFillPrevKeyed() throws Exception {
+        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
+                "select s, first(i) from a sample by 1h fill(prev)",
+                "SampleByFillPrev\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSampleByFillPrevNotKeyed() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(prev)",
                 "SampleByFillPrevNotKeyed\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
     }
 
     @Test
-    public void testSampleByFillValue() throws Exception {
+    public void testSampleByFillValueKeyed() throws Exception {
+        assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
+                "select s, first(i) from a sample by 1h fill(1)",
+                "SampleByFillValue\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSampleByFillValueNotKeyed() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(1)",
                 "SampleByFillValueNotKeyed\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2347,13 +2534,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSampleByFirstLast() throws Exception {
         assertPlan("create table a ( l long, s string, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;",
-                "select sym, first(i), last(sym), first(l) " +
+                "select s, first(i), last(sym), first(l) " +
                         "from a " +
                         "where sym in ('S') " +
                         "and   ts > 0::timestamp and ts < 100::timestamp " +
                         "sample by 1h",
                 "SampleByFirstLast\n" +
-                        "  groupByColumn: sym\n" +
+                        "  keys: [s]\n" +
+                        "  values: [first(i), last(sym), first(l)]\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: sym deferred: true\n" +
                         "          filter: sym='S'\n" +
@@ -2366,7 +2554,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, i, first(i) from a sample by 1h",
                 "SampleByFillNone\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  keys: [l,i]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2377,7 +2566,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, i, first(i) from a sample by 1h",
                 "SampleByFillNone\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  keys: [l,i]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2388,7 +2578,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i) from a sample by 1h fill(null)",
                 "SampleByFillNull\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2399,7 +2590,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i) from a sample by 1d fill(linear)",
                 "SampleByInterpolate\n" +
-                        "  groupByFunctions: [first(i)]\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2410,7 +2602,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i), last(i) from a sample by 1d fill(1,2)",
                 "SampleByFillValue\n" +
-                        "  groupByFunctions: [first(i),last(i)]\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i),last(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2421,7 +2614,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i), last(i) from a sample by 1d fill(prev,prev)",
                 "SampleByFillValue\n" +
-                        "  groupByFunctions: [first(i),last(i)]\n" +
+                        "  keys: [l]\n" +
+                        "  values: [first(i),last(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2517,6 +2711,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
                 "select * from a where s = 'S1' order by ts desc ",
                 "Sort light\n" +
+                        "  keys: [ts desc]\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -2538,7 +2733,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select count(2) from a",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [count(0)]\n" +
+                        "  values: [count(0)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2621,7 +2816,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select count_distinct(s)  from tab",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [count(s)]\n" +
+                        "  values: [count(s)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
@@ -2632,7 +2827,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s symbol index, ts timestamp);",
                 "select count_distinct(s)  from tab",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [count(s)]\n" +
+                        "  values: [count(s)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
@@ -2643,7 +2838,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s string, l long );",
                 "select count_distinct(l)  from tab",
                 "GroupByNotKeyed vectorized: false\n" +
-                        "  groupByFunctions: [count(l)]\n" +
+                        "  values: [count(l)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
@@ -2663,6 +2858,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) ;",
                 "select * from a order by ts desc",
                 "Sort light\n" +
+                        "  keys: [ts desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -2673,6 +2869,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) ;",
                 "select * from (select i, ts from a union all select 1, null ) order by ts desc",
                 "Sort\n" +
+                        "  keys: [ts desc]\n" +
                         "    Union All\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -2722,8 +2919,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select distinct(s) from tab",
                 "DistinctKey\n" +
                         "    GroupByRecord vectorized: true\n" +
-                        "      groupByFunctions: [count(1)]\n" +
-                        "      keyColumn: s\n" +
+                        "      keys: [s]\n" +
+                        "      values: [count(1)]\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -2736,8 +2933,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select distinct(s) from tab",
                 "DistinctKey\n" +
                         "    GroupByRecord vectorized: true\n" +
-                        "      groupByFunctions: [count(1)]\n" +
-                        "      keyColumn: s\n" +
+                        "      keys: [s]\n" +
+                        "      values: [count(1)]\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -2814,6 +3011,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc",
                 "Sort light\n" +
+                        "  keys: [ts desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
@@ -2856,6 +3054,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 "Sort light lo: 1\n" +
+                        "  keys: [ts desc]\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -2867,6 +3066,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in ('S1', 'S2') order by s desc limit 1",
                 "Sort light lo: 1\n" +
+                        "  keys: [s desc]\n" +
                         "    FilterOnValues\n" +
                         "        Cursor-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -2929,6 +3129,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 in ('S1')  order by ts desc",
                     "Sort light\n" +
+                            "  keys: [ts desc]\n" +
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: s1\n" +
                             "          filter: s1=1\n" +
@@ -2943,6 +3144,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlan("select * from a where s1 = 'S1'  order by ts desc",
                     "Sort light\n" +
+                            "  keys: [ts desc]\n" +
                             "    DeferredSingleSymbolFilterDataFrame\n" +
                             "        Index forward scan on: s1\n" +
                             "          filter: s1=1\n" +
@@ -2997,6 +3199,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "and ts > 0::timestamp and ts < 9::timestamp  " +
                             "order by s1,ts desc",
                     "Sort light\n" +
+                            "  keys: [s1, ts desc]\n" +
                             "    Async JIT Filter\n" +
                             "      filter: (s1='S1' or s1='S2')\n" +
                             "      workers: 1\n" +
@@ -3012,6 +3215,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1",
                 "Sort light lo: 1\n" +
+                        "  keys: [s desc]\n" +
                         "    FilterOnValues\n" +
                         "        Cursor-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -3057,6 +3261,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
                 "Limit lo: 1\n" +
                         "    Sort\n" +
+                        "      keys: [ts desc]\n" +
                         "        Empty table\n");
     }
 
@@ -3065,6 +3270,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
                 "Sort light lo: 1\n" +
+                        "  keys: [ts desc]\n" +
                         "    FilterOnSubQuery\n" +
                         "        Union All\n" +
                         "            VirtualRecord\n" +
@@ -3081,6 +3287,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
                 "Sort light lo: 1\n" +
+                        "  keys: [ts desc]\n" +
                         "    FilterOnSubQuery\n" +
                         "      filter: length(s)=2\n" +
                         "        Union All\n" +
@@ -3098,6 +3305,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index) ;",
                 "select * from a where s = 'S1' order by s asc limit 10",
                 "Sort light lo: 10\n" +
+                        "  keys: [s]\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -3109,6 +3317,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index) ;",
                 "select * from a where s != 'S1' and length(s) = 2 order by s ",
                 "Sort light\n" +
+                        "  keys: [s]\n" +
                         "    FilterOnExcludedValues\n" +
                         "      symbolFilter: s not in ['S1']\n" +
                         "      filter: length(s)=2\n" +
@@ -3121,6 +3330,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( s symbol index) ;",
                 "select * from a where s != 'S1' order by s ",
                 "Sort light\n" +
+                        "  keys: [s]\n" +
                         "    FilterOnExcludedValues\n" +
                         "      symbolFilter: s not in ['S1']\n" +
                         "        Cursor-order scan\n" +
@@ -3152,6 +3362,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i asc",
                 "Sort light\n" +
+                        "  keys: [i]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -3162,6 +3373,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i desc",
                 "Sort light\n" +
+                        "  keys: [i desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -3172,6 +3384,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i limit 10, 100",
                 "Sort light lo: 10 hi: 100\n" +
+                        "  keys: [i]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -3200,6 +3413,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ",
                 "Sort light\n" +
+                        "  keys: [l desc]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Interval forward scan on: tab\n" +
+                        "          intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
+    }
+
+    @Test
+    public void testSelectStaticTsInterval10a() throws Exception {
+        assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
+                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ",
+                "Sort light\n" +
+                        "  keys: [l desc, ts desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
@@ -3284,6 +3510,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc ",
                 "Sort light\n" +
+                        "  keys: [ts desc]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
@@ -3994,6 +4221,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "SelectedRecord\n" +
                         "    Filter filter: i1*i2!=0\n" +
                         "        Sort light lo: 100\n" +
+                        "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
                         "                SelectedRecord\n" +
                         "                    DataFrame\n" +
@@ -4006,7 +4234,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ",
                 "GroupByRecord vectorized: false\n" +
-                        "  groupByFunctions: [max(ts)]\n" +
+                        "  keys: [k]\n" +
+                        "  values: [max(ts)]\n" +
                         "    SelectedRecord\n" +
                         "        Async Filter\n" +
                         "          filter: (l::short<i and l<0)\n" +
@@ -4025,7 +4254,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "where mil + mini> 1 ",
                 "Filter filter: 1<mil+mini\n" +
                         "    GroupByRecord vectorized: false\n" +
-                        "      groupByFunctions: [max(i*l),min(l),min(i)]\n" +
+                        "      keys: [k]\n" +
+                        "      values: [max(i*l),min(l),min(i)]\n" +
                         "        SelectedRecord\n" +
                         "            Async Filter\n" +
                         "              filter: l::short<i\n" +
@@ -4131,6 +4361,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "            Frame forward scan on: a\n" +
                             "        SelectedRecord\n" +
                             "            Sort light\n" +
+                            "              keys: [ts, i]\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: b\n");
@@ -4181,6 +4412,65 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testWithBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t ( x int );");
+
+            int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                bindVariableService.clear();
+                bindVariableService.setStr("v1", "a");
+                assertBindVarPlan("string");
+
+                bindVariableService.clear();
+                bindVariableService.setLong("v1", 123);
+                assertBindVarPlan("long");
+
+                bindVariableService.clear();
+                bindVariableService.setByte("v1", (byte) 123);
+                assertBindVarPlan("byte");
+
+                bindVariableService.clear();
+                bindVariableService.setShort("v1", (short) 123);
+                assertBindVarPlan("short");
+
+                bindVariableService.clear();
+                bindVariableService.setInt("v1", 12345);
+                assertBindVarPlan("int");
+
+                bindVariableService.clear();
+                bindVariableService.setFloat("v1", 12f);
+                assertBindVarPlan("float");
+
+                bindVariableService.clear();
+                bindVariableService.setDouble("v1", 12d);
+                assertBindVarPlan("double");
+
+                bindVariableService.clear();
+                bindVariableService.setDate("v1", 123456L);
+                assertBindVarPlan("date");
+
+                bindVariableService.clear();
+                bindVariableService.setTimestamp("v1", 123456L);
+                assertBindVarPlan("timestamp");
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    private void assertBindVarPlan(String type) throws SqlException {
+        assertPlan("select * from t where x = :v1 ",
+                "Async Filter\n" +
+                        "  filter: x=:v1::" + type + "\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: t\n");
     }
 
     private void assertPlan(String ddl, String query, String expectedPlan) throws Exception {

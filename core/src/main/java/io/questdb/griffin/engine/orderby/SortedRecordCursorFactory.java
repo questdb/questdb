@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,12 +41,15 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final SortedRecordCursor cursor;
 
+    private final ListColumnFilter sortColumnFilter;
+
     public SortedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory base,
             @NotNull RecordSink recordSink,
-            @NotNull RecordComparator comparator
+            @NotNull RecordComparator comparator,
+            @NotNull ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
         RecordTreeChain chain = new RecordTreeChain(
@@ -59,6 +63,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         );
         this.base = base;
         this.cursor = new SortedRecordCursor(chain);
+        this.sortColumnFilter = sortColumnFilter;
     }
 
     @Override
@@ -80,6 +85,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sort");
+        SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }
 

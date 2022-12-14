@@ -48,6 +48,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private final LongList crossFrameRow;
     private final int[] firstLastIndexByCol;
     private final int groupBySymbolColIndex;
+    private final boolean[] isKeyColumn;
     private final int maxSamplePeriodSize;
     private final int pageSize;
     private final int[] queryToFrameColumnMapping;
@@ -77,10 +78,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.firstLastIndexByCol = new int[columns.size()];
+        this.isKeyColumn = new boolean[columns.size()];
         this.crossFrameRow = new LongList(columns.size());
         this.crossFrameRow.setPos(columns.size());
         this.timestampIndex = timestampIndex;
-        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex);
+        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
         this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
         this.maxSamplePeriodSize = this.pageSize * 4;
@@ -132,7 +134,36 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFirstLast");
-        sink.attr("groupByColumn").putColumnName(groupBySymbolColIndex);
+        sink.attr("keys");
+        boolean first = true;
+        sink.put('[');
+        for (int i = 0; i < isKeyColumn.length; i++) {
+            if (isKeyColumn[i]) {
+                if (first) {
+                    first = false;
+                } else {
+                    sink.put(", ");
+                }
+                sink.putBaseColumnName(i);
+            }
+        }
+        sink.val(']');
+        sink.attr("values");
+        first = true;
+        sink.val('[');
+        for (int i = 0; i < isKeyColumn.length; i++) {
+            if (!isKeyColumn[i]) {
+                if (first) {
+                    first = false;
+                } else {
+                    sink.val(", ");
+                }
+                sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? "last" : "first").val('(');
+                sink.putBaseColumnName(i);
+                sink.val(')');
+            }
+        }
+        sink.val(']');
         sink.child(base);
     }
 
@@ -146,7 +177,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int[] queryToFrameColumnMapping,
             RecordMetadata metadata,
             ObjList<QueryColumn> columns,
-            int timestampIndex
+            int timestampIndex,
+            boolean[] isKeyColumn
     ) throws SqlException {
         for (int i = 0, n = firstLastIndex.length; i < n; i++) {
             QueryColumn column = columns.getQuick(i);
@@ -173,6 +205,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
             } else {
                 int underlyingColIndex = metadata.getColumnIndex(ast.token);
+                isKeyColumn[i] = true;
                 queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {
                     groupByTimestampIndex = i;

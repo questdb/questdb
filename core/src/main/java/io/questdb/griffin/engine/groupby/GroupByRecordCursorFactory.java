@@ -106,13 +106,28 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(false);
-        sink.optAttr("groupByFunctions", groupByFunctions, true);
+        sink.optAttr("keys", getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
     }
 
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
+        ObjList<String> keyFuncs = null;
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            if (!(recordFunctions.get(i) instanceof GroupByFunction)) {
+                if (keyFuncs == null) {
+                    keyFuncs = new ObjList<>();
+                }
+                keyFuncs.add(metadata.getColumnName(i));
+            }
+        }
+
+        return keyFuncs;
     }
 
     @Override

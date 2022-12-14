@@ -77,7 +77,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillNoneNotKeyed");
-        sink.optAttr("groupByFunctions", cursor.groupByFunctions, true);
+        sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }
 

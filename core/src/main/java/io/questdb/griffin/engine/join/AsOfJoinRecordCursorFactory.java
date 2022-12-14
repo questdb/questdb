@@ -117,7 +117,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf join");
-        sink.val("condition").val(joinContext);
+        sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

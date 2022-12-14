@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -37,12 +38,14 @@ import io.questdb.griffin.engine.RecordComparator;
 public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final SortedLightRecordCursor cursor;
+    private final ListColumnFilter sortColumnFilter;
 
     public SortedLightRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
-            RecordComparator comparator
+            RecordComparator comparator,
+            ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
         LongTreeChain chain = new LongTreeChain(
@@ -53,6 +56,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
                 configuration.getSqlSortLightValueMaxPages());
         this.base = base;
         this.cursor = new SortedLightRecordCursor(chain, comparator);
+        this.sortColumnFilter = sortColumnFilter;
     }
 
     @Override
@@ -81,12 +85,29 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sort light");
+        addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }
 
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
+        sink.attr("keys").val('[');
+        for (int i = 0, n = filter.size(); i < n; i++) {
+            int colIdx = filter.get(i);
+            int col = (colIdx > 0 ? colIdx : -colIdx) - 1;
+            if (i > 0) {
+                sink.put(", ");
+            }
+            sink.putBaseColumnName(col);
+            if (colIdx < 0) {
+                sink.val(" ").val("desc");
+            }
+        }
+        sink.val(']');
     }
 
     @Override

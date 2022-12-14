@@ -96,7 +96,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("GroupByNotKeyed");
         sink.meta("vectorized").val(false);
-        sink.optAttr("groupByFunctions", groupByFunctions, true);
+        sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
     }
 

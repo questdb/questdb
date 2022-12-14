@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -74,7 +73,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
 
                     planSink.clear();
                     planSink.put("GroupByNotKeyed vectorized: ").put(vectorized).put("\n")
-                            .put("  groupByFunctions: [").put(expectedFunction).put("]\n")
+                            .put("  values: [").put(expectedFunction).put("]\n")
                             .put("    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: test\n");
@@ -126,8 +125,8 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
 
                     planSink.clear();
                     planSink.put("GroupByRecord vectorized: ").put(vectorized).put("\n")
-                            .put("  groupByFunctions: [").put(expectedFunction).put("]\n")
-                            .put(vectorized ? "  keyColumn: key\n" : "")
+                            .put("  keys: [key]\n")
+                            .put("  values: [").put(expectedFunction).put("]\n")
                             .put(vectorized ? "  workers: 1\n" : "")
                             .put("    DataFrame\n" +
                                     "        Row forward scan\n" +
@@ -217,7 +216,8 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     "VirtualRecord\n" +
                             "  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
                             "    SampleByFillNone\n" +
-                            "      groupByFunctions: [count(1),sum(qty*price),sum(qty)]\n" +
+                            "      keys: [candle_st,venue]\n" +
+                            "      values: [count(1),sum(qty*price),sum(qty)]\n" +
                             "        SelectedRecord\n" +
                             "            Async Filter\n" +
                             "              filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
