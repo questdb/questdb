@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
@@ -43,7 +44,7 @@ public interface BitmapIndexReader extends Closeable {
      * minimum and maximum, both of which are inclusive. Order of values is
      * determined by specific implementations of this method.
      *
-     * @param cachedInstance when this parameters is true, index reader may return singleton instance of cursor.
+     * @param cachedInstance when this parameter is true, index reader may return singleton instance of cursor.
      * @param key            index key
      * @param minValue       inclusive minimum value
      * @param maxValue       inclusive maximum value
@@ -70,4 +71,6 @@ public interface BitmapIndexReader extends Closeable {
     long getValueMemorySize();
 
     boolean isOpen();
+
+    void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn);
 }
