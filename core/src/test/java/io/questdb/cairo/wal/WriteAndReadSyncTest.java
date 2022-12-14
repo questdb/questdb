@@ -61,7 +61,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     // barrier to make sure both threads kick in at the same time;
                     final CyclicBarrier barrier = new CyclicBarrier(2);
                     final AtomicInteger errorCount = new AtomicInteger();
-                    long fd1 = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+                    int fd1 = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
                     long size = longCount * 8 / Files.PAGE_SIZE + 1;
 
                     // have this thread write another page
@@ -75,7 +75,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                             }
                             readLatch.countDown();
                             ff.munmap(mem, (size) * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
-                            ff.truncate(mem, longCount * 8);
+                            ff.truncate(fd1, longCount * 8);
                             FilesFacadeImpl.INSTANCE.close(fd1);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
@@ -85,7 +85,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     th.start();
                     barrier.await();
 
-                    long fd2 = TableUtils.openRO(ff, path, LOG);
+                    int fd2 = TableUtils.openRO(ff, path, LOG);
                     try {
                         readLatch.await();
                         long mem = TableUtils.mapRO(ff, fd2, longCount * 8, MemoryTag.NATIVE_DEFAULT);

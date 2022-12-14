@@ -48,7 +48,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
         AbstractGriffinTest.setUpStatic();
     }
 
-    //tearDown() overrides settings set in setUpStatic() 
+    // tearDown() overrides settings set in setUpStatic()
     @Before
     public void setUp() {
         pageFrameMaxRows = PAGE_FRAME_MAX_ROWS;

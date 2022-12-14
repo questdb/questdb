@@ -90,7 +90,7 @@ public class IOURingImplTest {
             TestUtils.writeStringToFile(file, txt);
 
             try (Path path = new Path()) {
-                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                int fd = Files.openRO(path.of(file.getAbsolutePath()).$());
                 Assert.assertTrue(fd > -1);
                 long[] bufs = new long[inFlight];
                 for (int i = 0; i < inFlight; i++) {
@@ -178,7 +178,7 @@ public class IOURingImplTest {
             TestUtils.writeStringToFile(file, txt);
 
             try (Path path = new Path()) {
-                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                int fd = Files.openRO(path.of(file.getAbsolutePath()).$());
                 Assert.assertTrue(fd > -1);
                 long buf = Unsafe.malloc(txtLen, MemoryTag.NATIVE_DEFAULT);
 

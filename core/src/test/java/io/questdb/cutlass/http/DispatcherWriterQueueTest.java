@@ -122,7 +122,7 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
@@ -174,7 +174,7 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
@@ -208,7 +208,7 @@ public class DispatcherWriterQueueTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(500);
@@ -301,7 +301,7 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "x.d.1")) {
                             Os.sleep(50);
                         }
@@ -375,7 +375,7 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "x.d.1")) {
                             disconnectLatch.countDown();
                         }
@@ -468,7 +468,7 @@ public class DispatcherWriterQueueTest {
                         try {
                             barrier.await();
                             if (waitToDisconnect != null) {
-                                long fd = new SendAndReceiveRequestBuilder()
+                                int fd = new SendAndReceiveRequestBuilder()
                                         .connectAndSendRequest(
                                                 "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
                                                         + SendAndReceiveRequestBuilder.RequestHeaders
@@ -557,7 +557,7 @@ public class DispatcherWriterQueueTest {
                         try {
                             barrier.await();
                             if (waitToDisconnect != null) {
-                                long fd = new SendAndReceiveRequestBuilder()
+                                int fd = new SendAndReceiveRequestBuilder()
                                         .withStatementTimeout(statementTimeout)
                                         .connectAndSendRequestWithHeaders(
                                                 "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n"
@@ -648,7 +648,7 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableMaxWaitTimeout(50_000L)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
                             updateAckReceived.await();
                         }

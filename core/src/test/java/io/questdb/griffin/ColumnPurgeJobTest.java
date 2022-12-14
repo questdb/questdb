@@ -177,7 +177,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                 private int counter = 0;
 
                 @Override
-                public boolean allocate(long fd, long size) {
+                public boolean allocate(int fd, long size) {
                     if (counter < deadline) {
                         counter++;
                         return super.allocate(fd, size);

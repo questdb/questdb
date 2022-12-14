@@ -27,13 +27,10 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class PGBasicAuthenticator implements PGAuthenticator {
-    private static final Log LOG = LogFactory.getLog(PGBasicAuthenticator.class);
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final String password;
     private final CairoSecurityContext securityContext;
@@ -56,14 +53,10 @@ public class PGBasicAuthenticator implements PGAuthenticator {
             // +1 is 'type' byte that message length does not account for
             long hi = PGConnectionContext.getStringLength(msg, msgLimit, "bad password length");
             dbcs.of(msg, hi);
-
             // check password
             if (Chars.equals(this.password, dbcs)) {
                 return securityContext;
             }
-            LOG.error().$("invalid password [user=").$(username).$(']').$();
-        } else {
-            LOG.error().$("invalid user [").$(username).$(']').$();
         }
         // -1 position here means we will not send it to postgresql
         throw AuthenticationException.INSTANCE;

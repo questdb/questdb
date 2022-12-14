@@ -40,7 +40,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
-    private long fd = -1;
+    private int fd = -1;
     private long powerUpTime = Long.MAX_VALUE;
     private int testCount;
     private long timeout;
@@ -51,7 +51,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.bufferSize = configuration.getBufferSize();
         this.memoryTag = memoryTag;
-        this.buffer = Unsafe.malloc(bufferSize, this.memoryTag);
+        this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
         long timeout = configuration.getTimeout();
         if (timeout > 0) {
@@ -70,7 +70,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean checkIfTripped(long millis, long fd) {
+    public boolean checkIfTripped(long millis, int fd) {
         if (clock.getTicks() - timeout > millis) {
             return true;
         }
@@ -79,8 +79,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize, this.memoryTag);
-        buffer = 0;
+        buffer = Unsafe.free(buffer, bufferSize, this.memoryTag);
         fd = -1;
     }
 
@@ -90,7 +89,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         return fd;
     }
 
@@ -99,7 +98,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return powerUpTime < Long.MAX_VALUE;
     }
 
-    public NetworkSqlExecutionCircuitBreaker of(long fd) {
+    public NetworkSqlExecutionCircuitBreaker of(int fd) {
         assert buffer != 0;
         testCount = 0;
         this.fd = fd;
@@ -116,7 +115,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setFd(long fd) {
+    public void setFd(int fd) {
         this.fd = fd;
     }
 
@@ -153,39 +152,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         }
     }
 
-    protected boolean testConnection(long fd) {
+    protected boolean testConnection(int fd) {
         if (!configuration.checkConnection()) {
             return false;
         }
-
-        if (fd == -1) {
-            return true;
-        }
-
-        final int nRead = nf.peek(fd, buffer, bufferSize);
-
-        if (nRead == 0) {
-            return false;
-        }
-
-        if (nRead < 0) {
-            return true;
-        }
-
-        int index = 0;
-        long ptr = buffer;
-        while (index < nRead) {
-            byte b = Unsafe.getUnsafe().getByte(ptr + index);
-            if (b != (byte) '\r' && b != (byte) '\n') {
-                break;
-            }
-            index++;
-        }
-
-        if (index > 0) {
-            nf.recv(fd, buffer, index);
-        }
-
-        return false;
+        return nf.testConnection(fd, buffer, bufferSize);
     }
 }
