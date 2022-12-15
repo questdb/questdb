@@ -1066,14 +1066,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             try {
                 engine.getTableSequencerAPI().suspendTable(tableToken);
                 Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-                //simulate resumeTable fail
-                node1.getConfigurationOverrides().setMaxFileNameLength(2);
-                compile("alter table " + tableToken.getTableName() + " resume wal from txn 2");
+                compile("alter table " + tableToken.getTableName() + "ererer resume wal from txn 2");
                 Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[-1] invalid table name [table=" + tableToken.getTableName() + "]");
-            } finally {
-                node1.getConfigurationOverrides().setMaxFileNameLength(-1);
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[12] table does not exist [table=" + tableToken.getTableName() + "ererer]");
             }
         });
     }

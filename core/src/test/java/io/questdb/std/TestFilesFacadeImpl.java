@@ -41,13 +41,20 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     private final static CharSequenceIntHashMap openPaths = new CharSequenceIntHashMap();
 
     public static synchronized void resetTracking() {
-
     }
 
     @Override
     public boolean close(int fd) {
         untrack(fd);
         return super.close(fd);
+    }
+
+    @Override
+    public boolean closeChecked(int fd) {
+        if (fd > -1) {
+            untrack(fd);
+        }
+        return super.closeChecked(fd);
     }
 
     @Override

@@ -422,8 +422,8 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @NotNull
-    private TableSequencerEntry openSequencerLocked(TableToken tableName, SequencerLockType lock) {
-        return getTableSequencerEntry(tableName, lock, this.openSequencerInstanceLambda);
+    private TableSequencerEntry openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
+        return getTableSequencerEntry(tableToken, lock, this.openSequencerInstanceLambda);
     }
 
     private boolean releaseEntries(long deadline) {
