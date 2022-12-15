@@ -37,6 +37,5 @@ public interface DataFrameRecordCursor extends RecordCursor {
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
 
-    // TODO remove 'throws SqlException'
     void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException;
 }

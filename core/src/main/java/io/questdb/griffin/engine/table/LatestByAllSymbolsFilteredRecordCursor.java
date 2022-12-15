@@ -28,8 +28,8 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,6 +49,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     private final IntList partitionByColumnIndexes;
     private final IntList partitionBySymbolCounts;
     private final RecordSink recordSink;
+    private long possibleCombinations;
 
     public LatestByAllSymbolsFilteredRecordCursor(
             @NotNull Map map,
@@ -76,6 +77,16 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
         }
     }
 
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        if (!isOpen()) {
+            map.reopen();
+        }
+        super.of(dataFrameCursor, executionContext);
+        filter.init(this, executionContext);
+        possibleCombinations = -1;
+    }
+
     private long countSymbolCombinations() {
         long combinations = 1;
         for (int i = 0, n = partitionByColumnIndexes.size(); i < n; i++) {
@@ -97,18 +108,14 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        if (!isOpen()) {
-            map.reopen();
+    protected void buildTreeMap() {
+        // TODO(puzpuzpuz): test suspendability
+        if (possibleCombinations < 0) {
+            possibleCombinations = countSymbolCombinations();
         }
-        filter.init(this, executionContext);
-
-        long possibleCombinations = countSymbolCombinations();
         DataFrame frame;
         OUTER:
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

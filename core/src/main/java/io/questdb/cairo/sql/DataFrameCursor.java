@@ -52,6 +52,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
     /**
      * @return the next element in the data frame
+     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
      */
     @Nullable DataFrame next();
 

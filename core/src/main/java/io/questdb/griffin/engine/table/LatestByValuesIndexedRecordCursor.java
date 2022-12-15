@@ -44,7 +44,10 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     private final IntHashSet found = new IntHashSet();
     private final DirectLongList rows;
     private final IntHashSet symbolKeys;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private long index = 0;
+    private boolean isTreeMapBuilt;
+    private int keyCount;
 
     public LatestByValuesIndexedRecordCursor(
             int columnIndex,
@@ -62,9 +65,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            isTreeMapBuilt = true;
+        }
         if (index > -1) {
-            final long rowid = rows.get(index);
-            recordA.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
+            final long rowId = rows.get(index);
+            recordA.jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
             index--;
             return true;
         }
@@ -74,9 +82,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        buildTreeMap(executionContext);
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
+        keyCount = -1;
+        rows.clear();
+        found.clear();
+        isTreeMapBuilt = false;
     }
 
     @Override
@@ -101,14 +113,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        int keyCount = symbolKeys.size();
-        if (deferredSymbolKeys != null) {
-            keyCount += deferredSymbolKeys.size();
+    private void buildTreeMap() {
+        if (keyCount < 0) {
+            keyCount = symbolKeys.size();
+            if (deferredSymbolKeys != null) {
+                keyCount += deferredSymbolKeys.size();
+            }
         }
-        found.clear();
-        rows.setPos(0);
+
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap

@@ -94,6 +94,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        // TODO(puzpuzpuz): this is non-suspendable
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());

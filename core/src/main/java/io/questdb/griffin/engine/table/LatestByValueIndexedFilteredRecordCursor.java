@@ -82,6 +82,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     }
 
     private void findRecord(SqlExecutionContext executionContext) {
+        // TODO(puzpuzpuz): this is non-suspendable
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
         DataFrame frame;

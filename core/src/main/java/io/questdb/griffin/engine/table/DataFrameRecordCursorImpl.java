@@ -76,10 +76,11 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             close();
             this.dataFrameCursor = dataFrameCursor;
         }
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader(), sqlExecutionContext);
-        this.next = nextFrame;
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        // TODO(puzpuzpuz): this is non-suspendable
+        rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader(), sqlExecutionContext);
+        next = nextFrame;
     }
 
     @Override

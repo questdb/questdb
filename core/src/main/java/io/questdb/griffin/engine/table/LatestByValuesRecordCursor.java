@@ -26,7 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -38,13 +39,15 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
     private final IntHashSet deferredSymbolKeys;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
+    private boolean isMapPrepared;
 
     public LatestByValuesRecordCursor(
             int columnIndex,
             DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
-            @NotNull IntList columnIndexes) {
+            @NotNull IntList columnIndexes
+    ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
@@ -52,7 +55,13 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
     }
 
-    private void prepare() {
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        isMapPrepared = false;
+        super.of(dataFrameCursor, executionContext);
+    }
+
+    private void prepareMap() {
         if (deferredSymbolKeys != null) {
             // We need to clean up the map when there are deferred keys since
             // they may contain bind variables.
@@ -61,17 +70,22 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
                 map.put(deferredSymbolKeys.get(i), 0);
             }
         }
+
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             map.put(symbolKeys.get(i), 0);
         }
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        prepare();
+    protected void buildTreeMap() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isMapPrepared) {
+            prepareMap();
+            isMapPrepared = true;
+        }
+
         DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

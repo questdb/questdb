@@ -27,11 +27,14 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
@@ -44,14 +47,22 @@ import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
+class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
+
     protected final long indexShift = 0;
     protected final DirectLongList prefixes;
+    protected final DirectLongList rows;
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
     protected long aIndex;
     protected long aLimit;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
+    private long argumentsAddress;
+    private MessageBus bus;
+    private boolean isTreeMapBuilt;
+    private int keyCount;
+    private int workerCount;
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
@@ -59,13 +70,19 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
-        super(rows, columnIndexes);
+        super(columnIndexes);
+        this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;
     }
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            isTreeMapBuilt = true;
+        }
         if (aIndex < aLimit) {
             long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
             recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
@@ -75,8 +92,22 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
+        bus = executionContext.getMessageBus();
+        workerCount = executionContext.getSharedWorkerCount();
+        rows.clear();
+        keyCount = -1;
+        argumentsAddress = 0;
+        isTreeMapBuilt = false;
+    }
+
+    @Override
     public long size() {
-        return aLimit - indexShift;
+        return isTreeMapBuilt ? aLimit - indexShift : -1;
     }
 
     @Override
@@ -84,59 +115,48 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         aIndex = indexShift;
     }
 
+    private static long getChunkSize(int keyCount, int workerCount) {
+        return (keyCount + workerCount - 1) / workerCount;
+    }
+
     private static int getPow2SizeOfGeoHashType(int type) {
         return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
-    private void processTasks(SqlExecutionCircuitBreaker circuitBreaker, RingQueue<LatestByTask> queue, Sequence subSeq, int queuedCount) {
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCircuitBreaker.cancel();
-                }
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
-        }
-
-        doneLatch.await(queuedCount);
+    private static int getTaskCount(int keyCount, long chunkSize) {
+        return (int) ((keyCount + chunkSize - 1) / chunkSize);
     }
 
-    @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        final MessageBus bus = executionContext.getMessageBus();
+    private void buildTreeMap() {
+        // TODO(puzpuzpuz): this is non-suspendable
+        int taskCount;
+        if (keyCount < 0) {
+            keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
+            final long chunkSize = getChunkSize(keyCount, workerCount);
+            taskCount = getTaskCount(keyCount, chunkSize);
+            rows.setCapacity(keyCount);
+            GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
-        final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
-        final Sequence pubSeq = bus.getLatestByPubSeq();
-        final Sequence subSeq = bus.getLatestBySubSeq();
+            argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
+            for (long i = 0; i < taskCount; ++i) {
+                final long klo = i * chunkSize;
+                final long khi = Long.min(klo + chunkSize, keyCount);
+                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+                LatestByArguments.setKeyLo(argsAddress, klo);
+                LatestByArguments.setKeyHi(argsAddress, khi);
+                LatestByArguments.setRowsSize(argsAddress, 0);
+            }
 
-        int keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
-        rows.setCapacity(keyCount);
-        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
-
-        final int workerCount = executionContext.getSharedWorkerCount();
-
-        final long chunkSize = (keyCount + workerCount - 1) / workerCount;
-        final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
-
-        final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
-        for (long i = 0; i < taskCount; ++i) {
-            final long klo = i * chunkSize;
-            final long khi = Long.min(klo + chunkSize, keyCount);
-            final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-            LatestByArguments.setKeyLo(argsAddress, klo);
-            LatestByArguments.setKeyHi(argsAddress, khi);
-            LatestByArguments.setRowsSize(argsAddress, 0);
+            sharedCircuitBreaker.reset();
+        } else {
+            final long chunkSize = getChunkSize(keyCount, workerCount);
+            taskCount = getTaskCount(keyCount, chunkSize);
         }
 
         int hashColumnIndex = -1;
         int hashColumnType = ColumnType.UNDEFINED;
-
-        sharedCircuitBreaker.reset();
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
@@ -147,18 +167,20 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             prefixesCount = prefixes.size() - 2;
         }
 
-        DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
 
-        final TableReader reader = this.dataFrameCursor.getTableReader();
+        final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
+        final Sequence pubSeq = bus.getLatestByPubSeq();
+        final Sequence subSeq = bus.getLatestBySubSeq();
+        final TableReader reader = dataFrameCursor.getTableReader();
 
+        DataFrame frame;
         long foundRowCount = 0;
         int queuedCount = 0;
-
         try {
-            while ((frame = this.dataFrameCursor.next()) != null && foundRowCount < keyCount) {
+            while ((frame = dataFrameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
 
@@ -175,7 +197,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
                 long hashColumnAddress = 0;
 
-                //hashColumnIndex can be -1 for latest by part only (no prefixes to match)
+                // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
                 if (hashColumnIndex > -1) {
                     final int columnBase = reader.getColumnBase(partitionIndex);
                     final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
@@ -262,24 +284,48 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                     foundRowCount += LatestByArguments.getRowsSize(address);
                 }
             }
+        } catch (DataUnavailableException e) {
+            // We're not yet done, so no need to cancel the circuit breaker. 
+            throw e;
         } catch (Throwable t) {
             sharedCircuitBreaker.cancel();
             throw t;
         } finally {
-            processTasks(circuitBreaker, queue, subSeq, queuedCount);
+            processTasks(queuedCount);
             if (sharedCircuitBreaker.isCanceled()) {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
+                argumentsAddress = 0;
             }
         }
 
-        final long rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
-        LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
+        long rowCount = 0;
+        if (argumentsAddress > 0) {
+            rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
+            LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
+            argumentsAddress = 0;
+        }
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
     }
 
-    protected void postProcessRows() {
+    private void postProcessRows() {
         Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
+    }
+
+    private void processTasks(int queuedCount) {
+        final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
+        final Sequence subSeq = bus.getLatestBySubSeq();
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                if (circuitBreaker.checkIfTripped()) {
+                    sharedCircuitBreaker.cancel();
+                }
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+        doneLatch.await(queuedCount);
     }
 }
