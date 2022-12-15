@@ -110,7 +110,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final StringSink tableNameSink = new StringSink();
+            private final StringSink dirNameSink = new StringSink();
             private final TxReader txReader = new TxReader(ff);
             private long findPtr = 0;
 
@@ -145,14 +145,14 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    boolean isDir = Files.isDir(ff.findName(findPtr), ff.findType(findPtr), tableNameSink);
+                    boolean isDir = Files.isDir(ff.findName(findPtr), ff.findType(findPtr), dirNameSink);
                     if (isDir) {
                         final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-                        final TableToken tableToken = engine.getTableTokenByDirName(tableNameSink);
+                        final TableToken tableToken = engine.getTableTokenByDirName(dirNameSink);
                         final boolean isWalTable = engine.isWalTable(tableToken);
                         rootPath.trimTo(rootLen);
                         if (isWalTable) {
-                            if (record.switchTo(tableNameSink)) {
+                            if (record.switchTo(dirNameSink, tableToken)) {
                                 return true;
                             }
                         }
@@ -176,6 +176,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
+                private String tableName;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private long writerTxn;
@@ -202,7 +203,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return tableNameSink;
+                        return tableName;
                     }
                     return null;
                 }
@@ -217,9 +218,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean switchTo(final CharSequence tableName) {
+                private boolean switchTo(final CharSequence dirName, final TableToken tableToken) {
+                    tableName = tableToken.getTableName();
                     int rootLen = rootPath.length();
-                    rootPath.concat(tableName).concat(SEQ_DIR);
+                    rootPath.concat(dirName).concat(SEQ_DIR);
                     int metaFd = -1;
                     int txnFd = -1;
                     try {
@@ -233,7 +235,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         ff.closeChecked(txnFd);
                     }
 
-                    rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+                    rootPath.concat(dirName).concat(TableUtils.TXN_FILE_NAME).$();
                     txReader.ofRO(rootPath, PartitionBy.NONE);
                     rootPath.trimTo(rootLen);
 
