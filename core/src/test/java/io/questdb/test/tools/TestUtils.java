@@ -105,11 +105,19 @@ public final class TestUtils {
         }
     }
 
-    public static void assertContains(CharSequence _this, CharSequence that) {
-        if (Chars.contains(_this, that)) {
+    public static void assertContains(String message, CharSequence actual, CharSequence expected) {
+        // Assume that "" is contained in any string.
+        if (expected.length() == 0) {
             return;
         }
-        Assert.fail("'" + _this.toString() + "' does not contain: " + that);
+        if (Chars.contains(actual, expected)) {
+            return;
+        }
+        Assert.fail((message != null ? message + ": '" : "'") + actual.toString() + "' does not contain: " + expected);
+    }
+
+    public static void assertContains(CharSequence actual, CharSequence expected) {
+        assertContains(null, actual, expected);
     }
 
     public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
