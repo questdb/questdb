@@ -28,7 +28,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
 public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCursorFactory {
@@ -81,7 +80,7 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader) {
         this.cursor.prepare(tableReader);
     }
 }

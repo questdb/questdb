@@ -36,8 +36,10 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     private final int columnIndex;
     private final Function filter;
     private final int symbolKey;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean found;
     private boolean hasNext;
+    private boolean isRecordFound;
 
     public LatestByValueIndexedFilteredRecordCursor(
             int columnIndex,
@@ -53,6 +55,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isRecordFound) {
+            findRecord();
+            hasNext = found;
+            isRecordFound = true;
+        }
         if (hasNext) {
             hasNext = false;
             return true;
@@ -63,11 +71,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
         filter.init(this, executionContext);
-        findRecord(executionContext);
-        hasNext = found;
+        found = false;
+        isRecordFound = false;
     }
 
     @Override
@@ -81,16 +90,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
         filter.toTop();
     }
 
-    private void findRecord(SqlExecutionContext executionContext) {
-        // TODO(puzpuzpuz): this is non-suspendable
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
+    private void findRecord() {
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        found = false;
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);

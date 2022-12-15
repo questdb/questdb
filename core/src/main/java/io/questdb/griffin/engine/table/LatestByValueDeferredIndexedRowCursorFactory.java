@@ -28,7 +28,6 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final boolean cachedIndexReaderCursor;
@@ -71,7 +70,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader) {
         final CharSequence symbol = symbolFunc.getStr(null);
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

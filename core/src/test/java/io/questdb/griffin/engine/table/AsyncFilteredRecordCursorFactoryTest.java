@@ -425,7 +425,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     null,
                     false,
                     sqlExecutionContext,
-                    true
+                    false
             );
         });
     }

@@ -67,6 +67,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        symbolFunction.init(tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
@@ -77,8 +82,7 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        symbolFunction.init(tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.cursor.of(symbolKey);

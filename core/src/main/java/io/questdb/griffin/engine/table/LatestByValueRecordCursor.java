@@ -35,8 +35,10 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final int symbolKey;
-    private boolean empty;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean found;
     private boolean hasNext;
+    private boolean isRecordFound;
 
     public LatestByValueRecordCursor(int columnIndex, int symbolKey, @NotNull IntList columnIndexes) {
         super(columnIndexes);
@@ -46,6 +48,12 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isRecordFound) {
+            findRecord();
+            toTop();
+            isRecordFound = true;
+        }
         if (hasNext) {
             hasNext = false;
             return true;
@@ -56,10 +64,11 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        findRecord(executionContext);
-        toTop();
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
+        found = false;
+        isRecordFound = false;
     }
 
     @Override
@@ -69,14 +78,10 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toTop() {
-        hasNext = !empty;
+        hasNext = found;
     }
 
-    private void findRecord(SqlExecutionContext executionContext) {
-        // TODO(puzpuzpuz): this is non-suspendable
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        empty = true;
+    private void findRecord() {
         DataFrame frame;
         OUT:
         while ((frame = this.dataFrameCursor.next()) != null) {
@@ -89,7 +94,7 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (key == symbolKey) {
-                    empty = false;
+                    found = true;
                     break OUT;
                 }
             }

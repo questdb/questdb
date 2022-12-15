@@ -278,7 +278,8 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable test = () -> assertQuery(
                 "cnt\n3\n", "select count(*) cnt from reading",
                 null,
-                false
+                false,
+                true
         );
 
         testCopy(stmt, test);
@@ -621,6 +622,7 @@ public class CopyTest extends AbstractGriffinTest {
                 expected,
                 "x",
                 null,
+                true,
                 true
         );
         testCopy(insert, assertion);
@@ -664,6 +666,7 @@ public class CopyTest extends AbstractGriffinTest {
                 expected,
                 "x",
                 null,
+                true,
                 true
         );
         testCopy(insert, assertion);
@@ -682,6 +685,7 @@ public class CopyTest extends AbstractGriffinTest {
                 expected,
                 "x",
                 null,
+                true,
                 true
         );
         testCopy(insert, assertion);
@@ -701,6 +705,7 @@ public class CopyTest extends AbstractGriffinTest {
                 expected,
                 "x",
                 null,
+                true,
                 true
         );
         testCopy(insert, assertion);
@@ -749,6 +754,7 @@ public class CopyTest extends AbstractGriffinTest {
                 expected,
                 "x",
                 null,
+                true,
                 true
         );
         testCopy(insert, assertion);
@@ -781,7 +787,8 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable test = () -> assertQuery(
                 "cnt\n3\n", "select count(*) cnt from x",
                 null,
-                false
+                false,
+                true
         );
 
         testCopy(stmt, test);
@@ -795,7 +802,8 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable test = () -> assertQuery(
                 "cnt\n0\n", "select count(*) cnt from x",
                 null,
-                false
+                false,
+                true
         );
 
         testCopy(stmt, test);
@@ -982,6 +990,7 @@ public class CopyTest extends AbstractGriffinTest {
                     expected,
                     "x",
                     null,
+                    true,
                     true
             );
             assertQuery(
@@ -990,6 +999,7 @@ public class CopyTest extends AbstractGriffinTest {
                             "\tfinished\t129\t127\t2\n",
                     "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                     null,
+                    true,
                     true
             );
         };
@@ -1073,10 +1083,11 @@ public class CopyTest extends AbstractGriffinTest {
                         "line1001\t1972-09-28T00:00:00.000000Z\t0.918270255022\tdesc 1001\n",
                 "select line,ts,d,description from x limit -10",
                 "ts",
-                true
+                true,
+                false
         );
 
-        assertQuery("cnt\n1001\n", "select count(*) cnt from x", null, false);
+        assertQuery("cnt\n1001\n", "select count(*) cnt from x", null, false, true);
     }
 
     private void assertQuotesTableContentExisting() throws SqlException {
@@ -1112,7 +1123,6 @@ public class CopyTest extends AbstractGriffinTest {
 
             compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log", sqlExecutionContext);
             try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-
                 Thread processingThread = createJobThread(processingJob, processed);
 
                 processingThread.start();
@@ -1150,15 +1160,22 @@ public class CopyTest extends AbstractGriffinTest {
         CopyRunnable test = () -> assertQuery(
                 "cnt\n" + expectedCount + "\n", "select count(*) cnt from alltypes",
                 null,
-                false
+                false,
+                true
         );
 
         testCopy(stmt, test);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
+    protected void assertQuery(
+            String expected,
+            String query,
+            String expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, true);
+            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, expectSize);
         }
     }
 

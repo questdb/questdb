@@ -47,12 +47,13 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "  )\n" +
                         ")\n" +
                         "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true, false);
     }
 
-    @Test//TODO: test with order by x*2 in outer query
-    @Ignore
     // fails with duplicate column : column because alias created for 'x*x' clashes with one created for x+rnd_int(1,10,0)*0
+    // TODO: test with order by x*2 in outer query
+    @Test
+    @Ignore
     public void testOrderByExpressionInJoinedSubquery() throws Exception {
         assertQuery("x\tcolumn\tcolumn1\n" +
                         "1\t100\t50\n" +
@@ -93,7 +94,7 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         "    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc, ext desc\n" +
-                        "limit 3", null, null, true, true, true);
+                        "limit 3", null, null, true, true, false);
     }
 
     @Test

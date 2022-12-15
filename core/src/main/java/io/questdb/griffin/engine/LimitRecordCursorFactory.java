@@ -79,8 +79,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Function hiFunction;
         private final Function loFunction;
         private RecordCursor base;
-        private boolean incompleteHasNext;
+        private long hi;
+        private boolean isLimitCounted;
         private long limit;
+        private long lo;
+        private long rowCount;
         private long size;
 
         public LimitRecordCursor(Function loFunction, Function hiFunction) {
@@ -110,14 +113,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!incompleteHasNext && limit-- <= 0) {
+            // TODO(puzpuzpuz): test suspendability
+            if (!isLimitCounted) {
+                countLimit();
+                isLimitCounted = true;
+            }
+            if (limit <= 0) {
                 return false;
             }
-            incompleteHasNext = true;
-            // TODO(puzpuzpuz): test suspendability
-            boolean baseHasNext = base.hasNext();
-            incompleteHasNext = false;
-            return baseHasNext;
+            if (base.hasNext()) {
+                limit--;
+                return true;
+            }
+            return false;
         }
 
         @Override
@@ -131,7 +139,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
             }
-            // TODO(puzpuzpuz): this is non-suspendable
             toTop();
         }
 
@@ -142,10 +149,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            if (size > -1) {
-                return size;
-            }
-            return -1;
+            return size > -1 ? size : -1;
         }
 
         public void skipTo(long rowCount) {
@@ -155,21 +159,28 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             base.toTop();
-            incompleteHasNext = false;
-            long lo = loFunction.getLong(null);
+            rowCount = 0;
+            size = -1;
+            lo = loFunction.getLong(null);
+            hi = hiFunction != null ? hiFunction.getLong(null) : -1;
+            isLimitCounted = false;
+        }
+
+        private void countLimit() {
+            // TODO(puzpuzpuz): this is non-suspendable (skipTo calls without subsequent countRows)
             if (lo < 0 && hiFunction == null) {
                 // last N rows
-                long count = countRows();
+                countRows();
 
                 base.toTop();
                 // lo is negative, -5 for example
                 // if we have 12 records we need to skip 12-5 = 7
                 // if we have 4 records = return all of them
-                if (count > -lo) {
-                    skipTo(count + lo);
+                if (rowCount > -lo) {
+                    skipTo(rowCount + lo);
                 }
                 // set limit to return remaining rows
-                limit = Math.min(count, -lo);
+                limit = Math.min(rowCount, -lo);
                 size = limit;
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
@@ -182,24 +193,23 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 size = limit;
             } else {
                 // at this stage we have 'hi'
-                long hi = hiFunction.getLong(null);
                 if (lo < 0) {
                     // right, here we are looking for something like
                     // -10,-5 five rows away from tail
 
                     if (lo < hi) {
-                        long count = countRows();
+                        countRows();
                         // when count < -hi we have empty cursor
-                        if (count >= -hi) {
+                        if (rowCount >= -hi) {
                             base.toTop();
 
-                            if (count < -lo) {
+                            if (rowCount < -lo) {
                                 // if we asked for -9,-4 but there are 7 records in cursor
                                 // we would first ignore last 4 and return first 3
-                                limit = count + hi;
+                                limit = rowCount + hi;
                             } else {
-                                skipTo(count + lo);
-                                limit = Math.min(count, -lo + hi);
+                                skipTo(rowCount + lo);
+                                limit = Math.min(rowCount, -lo + hi);
                             }
                             size = limit;
                         }
@@ -210,7 +220,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 } else {
                     if (hi < 0) {
-                        limit = Math.max(countRows() - lo + hi, 0);
+                        countRows();
+                        limit = Math.max(rowCount - lo + hi, 0);
                         size = limit;
                         base.toTop();
                     } else {
@@ -230,17 +241,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        private long countRows() {
-            long count = base.size();
-            if (count > -1L) {
-                return count;
+        private void countRows() {
+            rowCount = base.size();
+            if (rowCount > -1L) {
+                return;
             }
 
-            count = 0L;
+            rowCount = 0L;
             while (base.hasNext()) {
-                count++;
+                rowCount++;
             }
-            return count;
         }
     }
 }

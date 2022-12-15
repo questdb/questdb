@@ -38,6 +38,7 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
+    private boolean areCursorsPrepared;
     private BooleanSupplier next;
     private RowCursor rowCursor;
     private final BooleanSupplier nextFrame = this::nextFrame;
@@ -58,6 +59,11 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+            areCursorsPrepared = true;
+        }
         try {
             return next.getAsBoolean();
         } catch (NoMoreFramesException ignore) {
@@ -78,9 +84,9 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         }
         recordA.of(dataFrameCursor.getTableReader());
         recordB.of(dataFrameCursor.getTableReader());
-        // TODO(puzpuzpuz): this is non-suspendable
-        rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader(), sqlExecutionContext);
+        rowCursorFactory.init(dataFrameCursor.getTableReader(), sqlExecutionContext);
         next = nextFrame;
+        areCursorsPrepared = false;
     }
 
     @Override

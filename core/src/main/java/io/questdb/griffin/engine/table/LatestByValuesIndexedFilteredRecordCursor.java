@@ -121,7 +121,6 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordC
     }
 
     private void buildTreeMap() {
-        // TODO(puzpuzpuz): this is non-suspendable
         if (keyCount < 0) {
             keyCount = symbolKeys.size();
             if (deferredSymbolKeys != null) {

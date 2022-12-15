@@ -38,8 +38,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
 
+    private final int columnIndex;
     private final Function filter;
+    private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
+    private final IntHashSet symbolKeys;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -56,7 +59,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         // this instance is shared between factory and cursor
         // factory will be resolving symbols for cursor and if successful
         // symbol keys will be added to this hash set
-        final IntHashSet symbolKeys = new IntHashSet();
+        symbolKeys = new IntHashSet();
         DataFrameRecordCursor cursor;
         if (indexed) {
             if (filter != null) {
@@ -71,9 +74,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                 cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
             }
         }
-        this.cursor = new DataFrameRecordCursorWrapper(cursor, recordCursorFactory, symbolKeys, func, columnIndex);
+        this.cursor = new DataFrameRecordCursorWrapper(cursor);
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
+        this.columnIndex = columnIndex;
+        this.func = func;
     }
 
     @Override
@@ -88,27 +93,13 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         Misc.free(filter);
     }
 
-    private static class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
+    private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
 
-        private final RecordCursorFactory baseFactory;
-        private final int columnIndex;
         private final DataFrameRecordCursor delegate;
-        private final Record.CharSequenceFunction func;
-        private final IntHashSet symbolKeys;
         private RecordCursor baseCursor;
 
-        private DataFrameRecordCursorWrapper(
-                DataFrameRecordCursor delegate,
-                RecordCursorFactory baseFactory,
-                IntHashSet symbolKeys,
-                Record.CharSequenceFunction func,
-                int columnIndex
-        ) {
+        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
             this.delegate = delegate;
-            this.baseFactory = baseFactory;
-            this.symbolKeys = symbolKeys;
-            this.func = func;
-            this.columnIndex = columnIndex;
         }
 
         @Override
@@ -162,7 +153,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             if (baseCursor != null) {
                 baseCursor = Misc.free(baseCursor);
             }
-            baseCursor = baseFactory.getCursor(executionContext);
+            baseCursor = recordCursorFactory.getCursor(executionContext);
             symbolKeys.clear();
             delegate.of(cursor, executionContext);
         }

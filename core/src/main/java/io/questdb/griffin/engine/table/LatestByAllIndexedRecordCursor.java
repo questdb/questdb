@@ -128,7 +128,6 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     private void buildTreeMap() {
-        // TODO(puzpuzpuz): this is non-suspendable
         int taskCount;
         if (keyCount < 0) {
             keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;

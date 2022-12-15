@@ -28,7 +28,6 @@ import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -63,7 +62,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader) {
         symbolKeys.clear();
 
         final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndex);

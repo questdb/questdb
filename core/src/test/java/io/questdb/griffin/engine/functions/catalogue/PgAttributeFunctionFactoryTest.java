@@ -347,7 +347,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                         "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 true,
                 false,
-                true
+                false
         );
     }
 

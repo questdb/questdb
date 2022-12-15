@@ -8,15 +8,15 @@ public class SortAndLimitTest extends AbstractGriffinTest {
     public void testInsertAndSelectDesc_Lo_10_Hi_20_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n990\n989\n988\n987\n986\n985\n984\n983\n982\n981\n", "select l from sorttest order by l desc limit 10,20");
+        assertQueryExpectSize("l\n990\n989\n988\n987\n986\n985\n984\n983\n982\n981\n", "select l from sorttest order by l desc limit 10,20");
     }
 
-    //randomized cases - descending order
+    // randomized cases - descending order
     @Test
     public void testInsertAndSelectDesc_Lo_10_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n1000\n999\n998\n997\n996\n995\n994\n993\n992\n991\n", "select l from sorttest order by l desc limit 10");
+        assertQueryExpectSize("l\n1000\n999\n998\n997\n996\n995\n994\n993\n992\n991\n", "select l from sorttest order by l desc limit 10");
     }
 
     @Test
@@ -30,14 +30,14 @@ public class SortAndLimitTest extends AbstractGriffinTest {
     public void testInsertAndSelectDesc_Lo_minus10_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from sorttest order by l desc limit -10");
+        assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from sorttest order by l desc limit -10");
     }
 
     @Test
     public void testInsertAndSelectDesc_Lo_minus20_Hi_minus10_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n20\n19\n18\n17\n16\n15\n14\n13\n12\n11\n", "select l from sorttest order by l desc limit -20,-10");
+        assertQueryExpectSize("l\n20\n19\n18\n17\n16\n15\n14\n13\n12\n11\n", "select l from sorttest order by l desc limit -20,-10");
     }
 
     @Test
@@ -53,7 +53,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 3 );");
 
-        assertQuery("i\n1\n2\n3\n", "select i from sorttest order by i limit 3");
+        assertQueryExpectSize("i\n1\n2\n3\n", "select i from sorttest order by i limit 3");
     }
 
     @Test
@@ -61,22 +61,22 @@ public class SortAndLimitTest extends AbstractGriffinTest {
         runQueries("create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 10 );");
 
-        assertQuery("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
+        assertQueryExpectSize("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
     }
 
     @Test
     public void testInsertAndSelect_Lo_10_Hi_20_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n", "select l from sorttest order by l limit 10,20");
+        assertQueryExpectSize("l\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n", "select l from sorttest order by l limit 10,20");
     }
 
-    //randomized cases - ascending order
+    // randomized cases - ascending order
     @Test
     public void testInsertAndSelect_Lo_10_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from sorttest order by l limit 10");
+        assertQueryExpectSize("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from sorttest order by l limit 10");
     }
 
     @Test
@@ -107,7 +107,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
         runQueries("create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 4 );");
 
-        assertQuery("i\n3\n4\n", "select i from sorttest order by i limit 2,5");
+        assertQueryExpectSize("i\n3\n4\n", "select i from sorttest order by i limit 2,5");
     }
 
     @Test
@@ -115,7 +115,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
         runQueries("create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 10 );");
 
-        assertQuery("i\n3\n4\n5\n", "select i from sorttest order by i limit 2,5");
+        assertQueryExpectSize("i\n3\n4\n5\n", "select i from sorttest order by i limit 2,5");
     }
 
     @Test
@@ -129,14 +129,14 @@ public class SortAndLimitTest extends AbstractGriffinTest {
     public void testInsertAndSelect_Lo_minus10_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n991\n992\n993\n994\n995\n996\n997\n998\n999\n1000\n", "select l from sorttest order by l limit -10");
+        assertQueryExpectSize("l\n991\n992\n993\n994\n995\n996\n997\n998\n999\n1000\n", "select l from sorttest order by l limit -10");
     }
 
     @Test
     public void testInsertAndSelect_Lo_minus20_Hi_minus10_on_table_with_random_order() throws Exception {
         prepare_random_order_table();
 
-        assertQuery("l\n981\n982\n983\n984\n985\n986\n987\n988\n989\n990\n", "select l from sorttest order by l limit -20,-10");
+        assertQueryExpectSize("l\n981\n982\n983\n984\n985\n986\n987\n988\n989\n990\n", "select l from sorttest order by l limit -20,-10");
     }
 
     @Test
@@ -151,7 +151,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
         runQueries("create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 3 );");
 
-        assertQuery("i\n1\n2\n3\n", "select i from sorttest order by i limit -5");
+        assertQueryExpectSize("i\n1\n2\n3\n", "select i from sorttest order by i limit -5");
     }
 
     @Test
@@ -159,7 +159,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
         runQueries("create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 10 );");
 
-        assertQuery("i\n6\n7\n8\n9\n10\n", "select i from sorttest order by i limit -5");
+        assertQueryExpectSize("i\n6\n7\n8\n9\n10\n", "select i from sorttest order by i limit -5");
     }
 
     @Test
@@ -168,7 +168,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 10000 );");
 
-        assertQuery("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
+        assertQueryExpectSize("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
     }
 
     @Test
@@ -177,7 +177,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "create table sorttest(i int);",
                 "insert into sorttest select x from long_sequence( 10000 );");
 
-        assertQuery("i\n9996\n9997\n9998\n9999\n10000\n", "select i from sorttest order by i limit -5");
+        assertQueryExpectSize("i\n9996\n9997\n9998\n9999\n10000\n", "select i from sorttest order by i limit -5");
     }
 
     @Test
@@ -196,7 +196,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "insert into sorttest select x from long_sequence( 5 );",
                 "insert into sorttest select rnd_int(6, 10000, 0) from long_sequence( 10000 );");
 
-        assertQuery("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
+        assertQueryExpectSize("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
     }
 
     @Test
@@ -206,7 +206,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "insert into sorttest select rnd_int(6, 10000, 0) from long_sequence( 10000 );",
                 "insert into sorttest select x from long_sequence( 5 );");
 
-        assertQuery("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
+        assertQueryExpectSize("i\n1\n2\n3\n4\n5\n", "select i from sorttest order by i limit 5");
     }
 
     @Test
@@ -216,7 +216,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "insert into sorttest select 9995 + x from long_sequence( 5 );",
                 "insert into sorttest select rnd_int(1, 9995, 0) from long_sequence( 10000 );");
 
-        assertQuery("i\n9996\n9997\n9998\n9999\n10000\n", "select i from sorttest order by i limit -5");
+        assertQueryExpectSize("i\n9996\n9997\n9998\n9999\n10000\n", "select i from sorttest order by i limit -5");
     }
 
     @Test
@@ -226,7 +226,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "insert into sorttest select rnd_int(1, 9995, 0) from long_sequence( 10000 );",
                 "insert into sorttest select 9995 + x from long_sequence( 5 );");
 
-        assertQuery("i\n9996\n9997\n9998\n9999\n10000\n", "select i from sorttest order by i limit -5");
+        assertQueryExpectSize("i\n9996\n9997\n9998\n9999\n10000\n", "select i from sorttest order by i limit -5");
     }
 
     @Test
@@ -236,7 +236,7 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "insert into sorttest select x from long_sequence( 10 );",
                 "insert into sorttest select x from long_sequence( 10 );");
 
-        assertQuery("i\n1\n1\n2\n2\n3\n", "select i from sorttest order by i limit 5");
+        assertQueryExpectSize("i\n1\n1\n2\n2\n3\n", "select i from sorttest order by i limit 5");
     }
 
     @Test
@@ -245,13 +245,31 @@ public class SortAndLimitTest extends AbstractGriffinTest {
                 "insert into sorttest select x from long_sequence( 10 );",
                 "insert into sorttest select x from long_sequence( 10 );");
 
-        assertQuery("i\n8\n9\n9\n10\n10\n", "select i from sorttest order by i limit -5");
+        assertQueryExpectSize("i\n8\n9\n9\n10\n10\n", "select i from sorttest order by i limit -5");
     }
 
     private void assertQuery(String expected, String query) throws Exception {
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 query,
-                null, null, true, false, true);
+                null,
+                null,
+                true,
+                false,
+                false
+        );
+    }
+
+    private void assertQueryExpectSize(String expected, String query) throws Exception {
+        assertQuery(
+                expected,
+                query,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
     }
 
     private void prepare_random_order_table() throws Exception {

@@ -38,8 +38,10 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     private final int columnIndex;
     private final Function filter;
     private final int symbolKey;
-    private boolean empty;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean found;
     private boolean hasNext;
+    private boolean isRecordFound;
 
     public LatestByValueFilteredRecordCursor(
             int columnIndex,
@@ -60,6 +62,12 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        if (!isRecordFound) {
+            findRecord();
+            hasNext = found;
+            isRecordFound = true;
+        }
         if (hasNext) {
             hasNext = false;
             return true;
@@ -70,11 +78,12 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
         filter.init(this, executionContext);
-        findRecord(executionContext);
-        hasNext = !empty;
+        found = false;
+        isRecordFound = false;
     }
 
     @Override
@@ -84,17 +93,14 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toTop() {
-        hasNext = !empty;
+        hasNext = found;
         filter.toTop();
     }
 
-    private void findRecord(SqlExecutionContext executionContext) {
-        // TODO(puzpuzpuz): this is non-suspendable
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        empty = true;
+    private void findRecord() {
         DataFrame frame;
         OUT:
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
@@ -105,7 +111,7 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
                 if (filter.getBool(recordA)) {
                     int key = recordA.getInt(columnIndex);
                     if (key == symbolKey) {
-                        empty = false;
+                        found = true;
                         break OUT;
                     }
                 }

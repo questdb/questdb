@@ -1766,7 +1766,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
                         "), index(s) timestamp(k) partition by DAY",
-                true);
+                false);
     }
 
     @Test
@@ -2298,7 +2298,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
+                        ") timestamp(k) partition by NONE", "k", false, true, false);
     }
 
     @Test
@@ -2313,7 +2313,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
+                        ") timestamp(k) partition by NONE", "k", false, true, false);
     }
 
     @Test
@@ -3145,7 +3145,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 null,
                 true,
                 false,
-                true);
+                false);
     }
 
     @Test

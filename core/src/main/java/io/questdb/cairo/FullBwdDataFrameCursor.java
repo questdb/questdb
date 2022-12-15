@@ -31,7 +31,7 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     @Override
     public DataFrame next() {
-        while (this.partitionIndex > -1) {
+        while (partitionIndex > -1) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
@@ -60,6 +60,7 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
         int partitionIndex = partitionCount - 1;
 
         for (; partitionIndex > -1; partitionIndex--) {
+            // TODO(puzpuzpuz): this is non-suspendable
             partitionRows = getTableReader().openPartition(partitionIndex);
             if (partitionRows < 0) {
                 continue;

@@ -5199,7 +5199,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         factory,
                         true,
                         true,
-                        true
+                        false
                 );
             }
         });

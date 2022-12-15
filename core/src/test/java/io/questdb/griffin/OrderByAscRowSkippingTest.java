@@ -44,12 +44,12 @@ import org.junit.Test;
  */
 public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
-    //partitionedTable with two partitions, 5 rows per partition
+    // partitionedTable with two partitions, 5 rows per partition
     @Test
     public void test2partitionsSelectAll() throws Exception {
         prepare2partitionsTable();
 
-        assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
+        assertQueryExpectSize("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
@@ -214,19 +214,19 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n", "select l from tab order by ts limit -8,-12");
     }
 
-    //normal table without designated timestamp with rows in descending order
+    // normal table without designated timestamp with rows in descending order
     @Test
     public void testNoDesignatedTsTableSelectAll() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
+        assertQueryExpectSize("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
     public void testNoDesignatedTsTableSelectFirstN() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n1\n2\n3\n", "select l from tab order by ts limit 3");
+        assertQueryExpectSize("l\n1\n2\n3\n", "select l from tab order by ts limit 3");
     }
 
     @Test
@@ -240,7 +240,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableSelectLastN() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
+        assertQueryExpectSize("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
@@ -261,14 +261,14 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableSelectMiddleNfromEnd() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n3\n4\n5\n", "select l from tab order by ts limit -8,-5");
+        assertQueryExpectSize("l\n3\n4\n5\n", "select l from tab order by ts limit -8,-5");
     }
 
     @Test
     public void testNoDesignatedTsTableSelectMiddleNfromStart() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n6\n7\n8\n", "select l from tab order by ts limit 5,8");
+        assertQueryExpectSize("l\n6\n7\n8\n", "select l from tab order by ts limit 5,8");
     }
 
     @Test
@@ -289,14 +289,14 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableSelectNintersectingEnd() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n9\n10\n", "select l from tab order by ts limit 8,12");
+        assertQueryExpectSize("l\n9\n10\n", "select l from tab order by ts limit 8,12");
     }
 
     @Test
     public void testNoDesignatedTsTableSelectNintersectingStart() throws Exception {
         prepareNoDesignatedTsTable();
 
-        assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
+        assertQueryExpectSize("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
     }
 
     //normal table without designated timestamp with rows (including duplicates) in descending order
@@ -304,14 +304,14 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableWithDuplicatesSelectAll() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n", "select l from tab order by ts");
+        assertQueryExpectSize("l\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n", "select l from tab order by ts");
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectFirstN() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n1\n1\n2\n", "select l from tab order by ts limit 3");
+        assertQueryExpectSize("l\n1\n1\n2\n", "select l from tab order by ts limit 3");
     }
 
     @Test
@@ -325,7 +325,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableWithDuplicatesSelectLastN() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n9\n10\n10\n", "select l from tab order by ts limit -3");
+        assertQueryExpectSize("l\n9\n10\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
@@ -346,14 +346,14 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromEnd() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n2\n2\n3\n", "select l from tab order by ts limit -18,-15");
+        assertQueryExpectSize("l\n2\n2\n3\n", "select l from tab order by ts limit -18,-15");
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromStart() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n8\n9\n9\n", "select l from tab order by ts limit 15,18");
+        assertQueryExpectSize("l\n8\n9\n9\n", "select l from tab order by ts limit 15,18");
     }
 
     @Test
@@ -374,22 +374,22 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNoDesignatedTsTableWithDuplicatesSelectNintersectingEnd() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n10\n10\n", "select l from tab order by ts limit 18,22");
+        assertQueryExpectSize("l\n10\n10\n", "select l from tab order by ts limit 18,22");
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectNintersectingStart() throws Exception {
         prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n1\n1\n", "select l from tab order by ts limit -22,-18");
+        assertQueryExpectSize("l\n1\n1\n", "select l from tab order by ts limit -22,-18");
     }
 
-    //regular table with one partition
+    // regular table with one partition
     @Test
     public void testNormalTableSelectAll() throws Exception {
         prepareNormalTable();
 
-        assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
+        assertQueryExpectSize("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
@@ -474,7 +474,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testPartitionPerRowSelectAll() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
+        assertQueryExpectSize("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
@@ -547,33 +547,33 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
     }
 
-    //special cases
+    // special cases
     @Test
     public void testPartitionPerRow_select_first_N_ordered_by_multiple_columns() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n1\n2\n3\n", "select l from tab order by ts asc, l asc limit 3");
+        assertQueryExpectSize("l\n1\n2\n3\n", "select l from tab order by ts asc, l asc limit 3");
     }
 
     @Test
     public void testPartitionPerRow_select_first_N_ordered_by_nonTs_column() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n1\n2\n3\n", "select l from tab order by l asc limit 3");
+        assertQueryExpectSize("l\n1\n2\n3\n", "select l from tab order by l asc limit 3");
     }
 
     @Test
     public void testPartitionPerRow_select_last_N_ordered_by_multiple_columns() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts asc, l asc limit -3");
+        assertQueryExpectSize("l\n8\n9\n10\n", "select l from tab order by ts asc, l asc limit -3");
     }
 
     @Test
     public void testPartitionPerRow_select_last_N_ordered_by_nonTs_column() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n8\n9\n10\n", "select l from tab order by l asc limit -3");
+        assertQueryExpectSize("l\n8\n9\n10\n", "select l from tab order by l asc limit -3");
     }
 
     @Test
@@ -636,9 +636,27 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     }
 
     private void assertQuery(String expected, String query) throws Exception {
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 query,
-                null, null, true, false, true);
+                null,
+                null,
+                true,
+                false,
+                false
+        );
+    }
+
+    private void assertQueryExpectSize(String expected, String query) throws Exception {
+        assertQuery(
+                expected,
+                query,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
     }
 
     private void createEmptyTable() throws Exception {

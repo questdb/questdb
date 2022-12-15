@@ -55,13 +55,18 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }
 
     private class SequentialRowCursor implements RowCursor {

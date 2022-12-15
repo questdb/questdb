@@ -230,7 +230,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "except " +
                         "select 1  " +
                         "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, true, true);
+                        "select 3 from long_sequence(1) limit 1", null, null, false, true, false);
     }
 
     @Test
@@ -248,9 +248,9 @@ public class UnionTest extends AbstractGriffinTest {
         assertQuery("x\n0\n2\n",
                 "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 
     @Test
@@ -258,9 +258,9 @@ public class UnionTest extends AbstractGriffinTest {
         assertQuery("x\n0\n2\n",
                 "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by abs(x) desc limit 2) " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 
     @Test
@@ -271,9 +271,9 @@ public class UnionTest extends AbstractGriffinTest {
                 "select * from " +
                         "(select 1 x union all select 2 union all select 3 from long_sequence(1) order by x*2 desc limit 2) " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x*2 limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 
     @Test
@@ -1158,8 +1158,8 @@ public class UnionTest extends AbstractGriffinTest {
                 "with q as  (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
                         "select * from q " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 }
