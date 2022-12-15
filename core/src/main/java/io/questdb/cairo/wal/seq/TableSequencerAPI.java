@@ -39,6 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.BiFunction;
 
+import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
@@ -119,7 +120,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
                         tableId = tableToken.getTableId();
-                        int fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                        int fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
                         lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET); // does not throw
                         ff.close(fdTxn);
                     } else {
@@ -301,20 +302,46 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void resumeTable(TableToken tableToken, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                if (!sequencer.isSuspended()) {
+                    return;
+                }
+                final long nextTxn = sequencer.lastTxn() + 1;
+                if (resumeFromTxn > nextTxn) {
+                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+                }
+                // resume from the latest on negative value
+                if (resumeFromTxn > 0) {
+                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableToken, WAL_2_TABLE_RESUME_REASON)) {
+                        long seqTxn = tableWriter.getSeqTxn();
+                        if (resumeFromTxn - 1 > seqTxn) {
+                            // including resumeFromTxn 
+                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
+                        }
+                    }
+                }
+                sequencer.resumeTable();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public void renameWalTable(TableToken tableToken, TableToken newTableToken) {
         assert tableToken.getDirName().equals(newTableToken.getDirName());
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                tableSequencer.rename(newTableToken);
+                sequencer.rename(newTableToken);
             } finally {
-                tableSequencer.unlockWrite();
+                sequencer.unlockWrite();
             }
         }
         LOG.advisory().$("renamed wal table [table=")
                 .utf8(tableToken.getTableName()).$(", newName=").utf8(newTableToken.getTableName())
                 .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
-
 
     @TestOnly
     public void setDistressed(TableToken tableToken) {
@@ -337,15 +364,21 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
-        final int rootLen = path.length();
-        path.concat(fileName).$();
-        try {
-            return TableUtils.openRO(ff, path, LOG);
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
+//    // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
+//    private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
+//        Path path = Path.getThreadLocal2(root);
+//        return isWalTable(tableName, path, ff);
+//    }
+//
+//    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+//        final int rootLen = path.length();
+//        path.concat(fileName).$();
+//        try {
+//            return TableUtils.openRO(ff, path, LOG);
+//        } finally {
+//            path.trimTo(rootLen);
+//        }
+//    }
 
     @NotNull
     private TableSequencerEntry getTableSequencerEntry(

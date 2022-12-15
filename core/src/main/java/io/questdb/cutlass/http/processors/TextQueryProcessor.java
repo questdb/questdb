@@ -104,6 +104,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
+            circuitBreaker.resetTimer();
             state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(

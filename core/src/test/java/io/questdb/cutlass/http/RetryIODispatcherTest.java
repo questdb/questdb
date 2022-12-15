@@ -38,7 +38,6 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.ComparisonFailure;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -587,7 +586,7 @@ public class RetryIODispatcherTest {
                             int nRows = (parallelCount + 1) * validRequestRecordCount;
                             assertNRowsInserted(nRows);
                             return;
-                        } catch (ComparisonFailure e) {
+                        } catch (AssertionError e) {
                             if (i < 9) {
                                 Os.sleep(50);
                             } else {
@@ -595,7 +594,6 @@ public class RetryIODispatcherTest {
                             }
                         }
                     }
-
                 });
     }
 

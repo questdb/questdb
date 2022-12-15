@@ -128,6 +128,8 @@ public interface ConfigurationOverrides {
 
     Boolean isParallelFilterEnabled();
 
+    int getMaxFileNameLength();
+
     boolean mangleTableDirNames();
 
     void reset();
@@ -229,4 +231,6 @@ public interface ConfigurationOverrides {
     void setWriterCommandQueueCapacity(int writerCommandQueueCapacity);
 
     void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize);
+
+    void setMaxFileNameLength(int maxFileNameLength);
 }

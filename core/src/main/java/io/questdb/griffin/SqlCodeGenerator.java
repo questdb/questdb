@@ -331,8 +331,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
 
-        if (loFunc != null && loFunc.isConstant() &&
-                hiFunc != null && hiFunc.isConstant()) {
+        if (loFunc != null && loFunc.isConstant()
+                && hiFunc != null && hiFunc.isConstant()) {
             try {
                 loFunc.init(null, context);
                 hiFunc.init(null, context);
@@ -1974,7 +1974,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
-        //we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
+        // we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
         if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && model.isLimitImplemented())) {
             return factory;
         }

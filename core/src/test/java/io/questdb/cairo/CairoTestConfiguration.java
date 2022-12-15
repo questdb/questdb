@@ -310,6 +310,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return overrides.mangleTableDirNames();
     }

@@ -152,7 +152,6 @@ public class SecurityTest extends AbstractGriffinTest {
 
             @Override
             public void unsetTimer() {
-
             }
         };
 

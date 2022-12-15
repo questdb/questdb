@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.*;
@@ -98,7 +99,9 @@ public class HttpQueryTestBuilder {
                         return new DefaultSqlExecutionCircuitBreakerConfiguration() {
                             @Override
                             public long getTimeout() {
-                                return queryTimeout > 0 ? queryTimeout : super.getTimeout();
+                                return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
+                                        ? queryTimeout
+                                        : super.getTimeout();
                             }
                         };
                     }

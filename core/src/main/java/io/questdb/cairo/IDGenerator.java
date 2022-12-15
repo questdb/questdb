@@ -50,8 +50,7 @@ public class IDGenerator implements Closeable {
             ff.munmap(uniqueIdMem, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
             uniqueIdMem = 0;
         }
-        if (uniqueIdFd != -1) {
-            ff.close(uniqueIdFd);
+        if (ff.closeChecked(uniqueIdFd)) {
             uniqueIdFd = -1;
         }
     }

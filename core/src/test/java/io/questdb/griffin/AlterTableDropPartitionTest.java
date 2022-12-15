@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.std.TestFilesFacadeImpl;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -302,6 +304,75 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropPartitionWriteInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "x";
+            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.HOUR)) {
+                tm.col("x", ColumnType.INT).timestamp("ts");
+                createPopulateTable(tm, 1, "2022-12-12T09:05", 1);
+            }
+
+            assertReader("x\tts\n" +
+                    "1\t2022-12-12T10:04:59.000000Z\n", "x");
+
+            TableReader rdr1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x");
+            try (TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test")) {
+
+                TableWriter.Row row;
+
+                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T11:55"));
+                row.putInt(0, 1);
+                row.append();
+                tw.commit();
+
+                Assert.assertEquals(2, tw.size());
+                tw.removePartition(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T10:00"));
+                Assert.assertEquals(1, tw.size());
+
+                // Reader refresh after table partition remove.
+                rdr1.close();
+                assertReader("x\tts\n" +
+                        "1\t2022-12-12T11:55:00.000000Z\n", "x");
+
+                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T11:56"));
+                row.putInt(0, 2);
+                row.append();
+
+                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T12:00"));
+                row.putInt(0, 3);
+                row.append();
+                tw.commit();
+
+                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T12:55"));
+                row.putInt(0, 4);
+                row.append();
+
+                tw.removePartition(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T11:00"));
+                Assert.assertEquals(2, tw.size());
+                assertReader("x\tts\n" +
+                        "3\t2022-12-12T12:00:00.000000Z\n" +
+                        "4\t2022-12-12T12:55:00.000000Z\n", "x");
+
+                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T12:56"));
+                row.putInt(0, 5);
+                row.append();
+
+                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T13:00"));
+                row.putInt(0, 6);
+                row.append();
+                tw.commit();
+
+                Assert.assertEquals(4, tw.size());
+                assertReader("x\tts\n" +
+                        "3\t2022-12-12T12:00:00.000000Z\n" +
+                        "4\t2022-12-12T12:55:00.000000Z\n" +
+                        "5\t2022-12-12T12:56:00.000000Z\n" +
+                        "6\t2022-12-12T13:00:00.000000Z\n", "x");
+            }
+        });
+    }
+
+    @Test
     public void testDropPartitionWrongSeparator() throws Exception {
         assertFailure("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
     }
@@ -310,18 +381,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     public void testDropPartitionsByDayUsingWhereClause() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
-
+    
                     String expectedBeforeDrop = "count\n" +
                             "120\n";
-
+    
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
-
+    
                     Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", sqlExecutionContext).getType());
-
+    
                     String expectedAfterDrop = "count\n" +
                             "0\n";
-
+    
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                 }

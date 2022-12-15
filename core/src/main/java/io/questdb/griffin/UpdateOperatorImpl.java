@@ -234,14 +234,11 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
             return rowsUpdated;
         } catch (TableReferenceOutOfDateException e) {
-            tableWriter.rollbackUpdate();
             throw e;
         } catch (SqlException e) {
-            tableWriter.rollbackUpdate();
             throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
         } catch (Throwable th) {
             LOG.error().$("could not update").$(th).$();
-            tableWriter.rollbackUpdate();
             throw th;
         } finally {
             op.closeWriter();

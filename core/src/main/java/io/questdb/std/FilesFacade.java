@@ -36,6 +36,10 @@ public interface FilesFacade {
 
     boolean close(int fd);
 
+    default boolean closeChecked(int fd) {
+        return Files.closeChecked(fd) == 0;
+    }
+    
     boolean closeRemove(int fd, LPSZ path);
 
     int copy(LPSZ from, LPSZ to);
@@ -115,6 +119,8 @@ public interface FilesFacade {
     int openRW(LPSZ name, long opts);
 
     long read(int fd, long buf, long size, long offset);
+
+    byte readNonNegativeByte(int fd, long offset);
 
     int readNonNegativeInt(int fd, long offset);
 

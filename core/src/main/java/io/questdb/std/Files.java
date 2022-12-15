@@ -107,6 +107,14 @@ public final class Files {
         return res;
     }
 
+    // If fd is negative, no action occurs.
+    public static int closeChecked(int fd) {
+        if (fd >= 0) {
+            return close(fd);
+        }
+        return -1;
+    }
+
     public static native int copy(long from, long to);
 
     public static int copy(LPSZ from, LPSZ to) {
@@ -344,6 +352,10 @@ public final class Files {
     }
 
     public native static long read(int fd, long address, long len, long offset);
+
+    public native static byte readNonNegativeByte(int fd, long offset);
+
+    public native static short readNonNegativeShort(int fd, long offset);
 
     public native static int readNonNegativeInt(int fd, long offset);
 

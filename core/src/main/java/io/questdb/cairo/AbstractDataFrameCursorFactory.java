@@ -45,7 +45,7 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
 
     @Override
     public boolean supportTableRowId(TableToken tableToken) {
-        return tableToken.equals(this.tableToken);
+        return this.tableToken.equals(tableToken);
     }
 
     @Override
