@@ -68,15 +68,17 @@ class TxFileStruct {
 
     static class AttachedPartition {
         long DATA_TX;
-        long MASKED_SIZE;
+        long MASK;
         long NAME_TX;
+        long SIZE;
         long TS;
 
         @Override
         public String toString() {
             return "AttachedPartition{" +
                     "TS=" + TS +
-                    ", MASKED_SIZE=" + MASKED_SIZE +
+                    ", MASK=" + MASK +
+                    ", SIZE=" + SIZE +
                     ", NAME_TX=" + NAME_TX +
                     ", DATA_TX=" + DATA_TX +
                     '}';

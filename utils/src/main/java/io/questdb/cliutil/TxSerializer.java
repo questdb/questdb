@@ -27,6 +27,7 @@ package io.questdb.cliutil;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -145,7 +146,8 @@ public class TxSerializer {
             if (tx.ATTACHED_PARTITIONS_COUNT != 0) {
                 for (TxFileStruct.AttachedPartition part : tx.ATTACHED_PARTITIONS) {
                     rwTxMem.putLong(part.TS);
-                    rwTxMem.putLong(part.MASKED_SIZE);
+                    long maskedSize = ((part.MASK << 44) & TxReader.PARTITION_MASK_MASK) | (part.SIZE & TxReader.PARTITION_SIZE_MASK);
+                    rwTxMem.putLong(maskedSize);
                     rwTxMem.putLong(part.NAME_TX);
                     rwTxMem.putLong(part.DATA_TX);
                 }
@@ -208,7 +210,9 @@ public class TxSerializer {
                     partition.TS = roTxMem.getLong(offset);
                     offset += Long.BYTES;
                     if (offset + 7 < roTxMem.size()) {
-                        partition.MASKED_SIZE = roTxMem.getLong(offset);
+                        long maskedSize = roTxMem.getLong(offset);
+                        partition.MASK = (maskedSize & TxReader.PARTITION_MASK_MASK) >>> 44;
+                        partition.SIZE = maskedSize & TxReader.PARTITION_SIZE_MASK;
                         offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {

@@ -36,13 +36,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
+    public static final long PARTITION_MASK_MASK = 0x7FFFF00000000000L;
+    public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
-    protected static final long PARTITION_MASK_MASK = 0x7FFFF00000000000L;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
-    protected static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     // PARTITION_MASKED_SIZE_OFFSET
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
