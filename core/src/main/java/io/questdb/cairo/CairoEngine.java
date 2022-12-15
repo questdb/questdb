@@ -443,6 +443,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         assert null != lockReason;
         securityContext.checkWritePermission();
 
+        // todo: reuse path from callers
         validNameOrThrow(tableName);
         String lockedReason = writerPool.lock(tableName, lockReason);
         if (lockedReason == null) { // not locked
@@ -545,7 +546,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         validNameOrThrow(tableName);
-        CharSequence lockedReason = lock(securityContext, tableName, "removeTable", true);
+        String lockedReason = lock(securityContext, tableName, "removeTable", true);
         if (null == lockedReason) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
@@ -559,7 +560,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 unlock(securityContext, tableName, null, false);
             }
         }
-        throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
+        LOG.error().$("could not lock for table drop [table='").$(tableName).$("', reason='").$(lockedReason).$("']").$();
+        throw EntryUnavailableException.instance(lockedReason);
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {
@@ -588,7 +590,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 unlock(securityContext, tableName, null, false);
             }
         } else {
-            LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
+            LOG.error().$("could not lock for table rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
             throw EntryUnavailableException.instance(lockedReason);
         }
     }

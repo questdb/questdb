@@ -492,4 +492,36 @@ public class CairoEngineTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
     }
+
+    @Test
+    public void testCrossEngineRenameTableFails() {
+        createX();
+        try (CairoEngine eng = new CairoEngine(configuration)) {
+            // acquire reader in anticipation to table rename failing on the main engine
+            try (TableReader ignored = eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try {
+                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "x2");
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testCrossEngineDropTableFails() {
+        createX();
+        try (CairoEngine eng = new CairoEngine(configuration)) {
+            // acquire reader in anticipation to table rename failing on the main engine
+            try (TableReader ignored = eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try {
+                    engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+                }
+            }
+        }
+    }
 }
