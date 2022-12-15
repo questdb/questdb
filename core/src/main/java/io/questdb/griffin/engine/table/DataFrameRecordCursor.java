@@ -24,116 +24,19 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import java.util.function.BooleanSupplier;
+public interface DataFrameRecordCursor extends RecordCursor {
 
-class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
-    private final boolean entityCursor;
-    private final Function filter;
-    private final RowCursorFactory rowCursorFactory;
-    private BooleanSupplier next;
-    private RowCursor rowCursor;
-    private final BooleanSupplier nextRow = this::nextRow;
-    private final BooleanSupplier nextFrame = this::nextFrame;
-
-    public DataFrameRecordCursor(
-            RowCursorFactory rowCursorFactory,
-            boolean entityCursor,
-            // this cursor owns "toTop()" lifecycle of filter
-            @Nullable Function filter,
-            @NotNull IntList columnIndexes
-    ) {
-        super(columnIndexes);
-        this.rowCursorFactory = rowCursorFactory;
-        this.entityCursor = entityCursor;
-        this.filter = filter;
-    }
+    DataFrameCursor getDataFrameCursor();
 
     @Override
-    public boolean hasNext() {
-        try {
-            return next.getAsBoolean();
-        } catch (NoMoreFramesException ignore) {
-            return false;
-        }
-    }
+    StaticSymbolTable getSymbolTable(int columnIndex);
 
-    @Override
-    public boolean isUsingIndex() {
-        return rowCursorFactory.isUsingIndex();
-    }
-
-    @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (this.dataFrameCursor != dataFrameCursor) {
-            close();
-            this.dataFrameCursor = dataFrameCursor;
-        }
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader(), sqlExecutionContext);
-        this.next = nextFrame;
-    }
-
-    @Override
-    public long size() {
-        return entityCursor ? dataFrameCursor.size() : -1;
-    }
-
-    @Override
-    public void skipTo(long rowCount) {
-        if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
-            super.skipTo(rowCount);
-            return;
-        }
-
-        DataFrame dataFrame = dataFrameCursor.skipTo(rowCount);
-        if (dataFrame != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); // move to partition, rowlo doesn't matter
-            next = nextRow;
-        }
-    }
-
-    @Override
-    public void toTop() {
-        if (filter != null) {
-            filter.toTop();
-        }
-        dataFrameCursor.toTop();
-        next = nextFrame;
-    }
-
-    private boolean nextFrame() {
-        DataFrame dataFrame;
-        while ((dataFrame = dataFrameCursor.next()) != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            if (rowCursor.hasNext()) {
-                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
-                next = nextRow;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean nextRow() {
-        if (rowCursor.hasNext()) {
-            recordA.setRecordIndex(rowCursor.next());
-            return true;
-        }
-        return nextFrame();
-    }
-
-
-
-
-
-
+    // TODO remove 'throws SqlException'
+    void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException;
 }

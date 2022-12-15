@@ -72,6 +72,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        buildTreeMap(executionContext);
+    }
+
+    @Override
     public long size() {
         return rows.size();
     }
@@ -125,12 +133,5 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
             }
         }
         index = rows.size() - 1;
-    }
-
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        buildTreeMap(executionContext);
     }
 }

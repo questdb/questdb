@@ -93,6 +93,54 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        dataFrameCursor.toTop();
+        foundKeys.clear();
+        rowIds.clear();
+
+        // Find all record IDs and save in rowIds in descending order
+        // return then row by row in ascending timestamp order
+        // since most of the time factory is supposed to return in ASC timestamp order
+        // It can be optimised later on to not buffer row IDs and return in desc order.
+        if (restrictedByValues) {
+            if (includedSymbolKeys.size() > 0) {
+                // Find only restricted set of symbol keys
+                rowIds.setCapacity(includedSymbolKeys.size());
+                if (filter != null) {
+                    filter.init(this, executionContext);
+                    filter.toTop();
+                    findRestrictedWithFilter(filter, includedSymbolKeys, excludedSymbolKeys, circuitBreaker);
+                } else {
+                    findRestrictedNoFilter(includedSymbolKeys, excludedSymbolKeys, circuitBreaker);
+                }
+            }
+        } else {
+            // Find latest by all distinct symbol values
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            int distinctSymbols = symbolTable.getSymbolCount();
+            if (symbolTable.containsNullValue()) {
+                distinctSymbols++;
+            }
+
+            rowIds.setCapacity(distinctSymbols);
+            if (distinctSymbols > 0) {
+                if (filter != null) {
+                    filter.init(this, executionContext);
+                    filter.toTop();
+                    findAllWithFilter(filter, distinctSymbols, circuitBreaker);
+                } else {
+                    findAllNoFilter(distinctSymbols, circuitBreaker);
+                }
+            }
+        }
+        toTop();
+    }
+
+    @Override
     public long size() {
         return rowIds.size();
     }
@@ -211,53 +259,5 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     IntHashSet getIncludedSymbolKeys() {
         return includedSymbolKeys;
-    }
-
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        dataFrameCursor.toTop();
-        foundKeys.clear();
-        rowIds.clear();
-
-        // Find all record IDs and save in rowIds in descending order
-        // return then row by row in ascending timestamp order
-        // since most of the time factory is supposed to return in ASC timestamp order
-        // It can be optimised later on to not buffer row IDs and return in desc order.
-        if (restrictedByValues) {
-            if (includedSymbolKeys.size() > 0) {
-                // Find only restricted set of symbol keys
-                rowIds.setCapacity(includedSymbolKeys.size());
-                if (filter != null) {
-                    filter.init(this, executionContext);
-                    filter.toTop();
-                    findRestrictedWithFilter(filter, includedSymbolKeys, excludedSymbolKeys, circuitBreaker);
-                } else {
-                    findRestrictedNoFilter(includedSymbolKeys, excludedSymbolKeys, circuitBreaker);
-                }
-            }
-        } else {
-            // Find latest by all distinct symbol values
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
-            int distinctSymbols = symbolTable.getSymbolCount();
-            if (symbolTable.containsNullValue()) {
-                distinctSymbols++;
-            }
-
-            rowIds.setCapacity(distinctSymbols);
-            if (distinctSymbols > 0) {
-                if (filter != null) {
-                    filter.init(this, executionContext);
-                    filter.toTop();
-                    findAllWithFilter(filter, distinctSymbols, circuitBreaker);
-                } else {
-                    findAllNoFilter(distinctSymbols, circuitBreaker);
-                }
-            }
-        }
-        toTop();
     }
 }

@@ -282,5 +282,4 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     protected void postProcessRows() {
         Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
     }
-
 }

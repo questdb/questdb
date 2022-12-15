@@ -87,7 +87,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(
+    protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {

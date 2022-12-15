@@ -65,6 +65,17 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        rows.clear();
+        buildTreeMap(executionContext);
+        this.isOpen = true;
+        index = rows.size() - 1;
+    }
+
+    @Override
     public long size() {
         return rows.size();
     }
@@ -75,15 +86,4 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;
-
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        rows.clear();
-        buildTreeMap(executionContext);
-        this.isOpen = true;
-        index = rows.size() - 1;
-    }
 }

@@ -43,7 +43,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     protected final int pageFrameMinRows;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
     private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
@@ -66,7 +66,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     ) {
         super(metadata, dataFrameCursorFactory);
 
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
+        this.cursor = new DataFrameRecordCursorImpl(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;

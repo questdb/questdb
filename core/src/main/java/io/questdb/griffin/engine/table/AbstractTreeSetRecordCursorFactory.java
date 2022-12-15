@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,7 +36,7 @@ import io.questdb.std.MemoryTag;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     final DirectLongList rows;
-    protected AbstractDataFrameRecordCursor cursor;
+    protected DataFrameRecordCursor cursor;
 
     public AbstractTreeSetRecordCursorFactory(
             RecordMetadata metadata,
@@ -53,7 +54,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(
+    protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {

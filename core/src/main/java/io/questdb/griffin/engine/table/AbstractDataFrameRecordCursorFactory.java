@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+
     protected final DataFrameCursorFactory dataFrameCursorFactory;
 
     public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
@@ -64,5 +65,8 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(dataFrameCursorFactory);
     }
 
-    protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException;
+    protected abstract RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException;
 }

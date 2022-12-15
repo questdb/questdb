@@ -42,7 +42,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
     private final IntList columnIndexes;
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
     private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final Function filter;
@@ -80,9 +80,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             }
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            this.cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            this.cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
     }
@@ -183,8 +183,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext sqlExecutionContext)
-            throws SqlException {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
         }

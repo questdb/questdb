@@ -37,7 +37,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     protected final int columnIndex;
     protected final Function filter;
     private final Function symbolFunc;
-    private AbstractDataFrameRecordCursor cursor;
+    private DataFrameRecordCursor cursor;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -72,7 +72,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         }
     }
 
-    protected abstract AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey);
+    protected abstract DataFrameRecordCursor createDataFrameCursorFor(int symbolKey);
 
     @Override
     protected RecordCursor getCursorInstance(

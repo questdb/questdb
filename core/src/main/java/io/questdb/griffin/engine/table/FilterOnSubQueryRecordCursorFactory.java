@@ -40,7 +40,7 @@ import org.jetbrains.annotations.Nullable;
 public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final int columnIndex;
     private final IntList columnIndexes;
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
@@ -66,7 +66,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.factories = factoriesA;
         this.cursorFactories = new ObjList<>();
         this.cursorFactoriesIdx = new int[]{0};
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+        this.cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         this.func = func;
         this.columnIndexes = columnIndexes;
     }

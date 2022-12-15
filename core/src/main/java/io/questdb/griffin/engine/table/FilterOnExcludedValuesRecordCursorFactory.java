@@ -37,7 +37,7 @@ import org.jetbrains.annotations.Nullable;
 public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final int columnIndex;
     private final IntList columnIndexes;
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx;//used to disable unneeded factories if there are duplicate excluded keys 
@@ -80,9 +80,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         this.cursorFactoriesIdx = new int[]{0};
         this.cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            this.cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            this.cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
         this.columnIndexes = columnIndexes;
@@ -174,8 +174,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
-            throws SqlException {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         TableReader reader = dataFrameCursor.getTableReader();
         if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
             throw ReaderOutOfDateException.of(reader.getTableName());

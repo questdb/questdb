@@ -42,7 +42,7 @@ import org.junit.Test;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 
-public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
+public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFactory() throws Exception {

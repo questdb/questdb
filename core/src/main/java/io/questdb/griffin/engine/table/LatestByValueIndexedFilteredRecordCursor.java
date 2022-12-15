@@ -61,6 +61,16 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
+        findRecord(executionContext);
+        hasNext = found;
+    }
+
+    @Override
     public long size() {
         return -1;
     }
@@ -97,15 +107,5 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
                 }
             }
         }
-    }
-
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        filter.init(this, executionContext);
-        findRecord(executionContext);
-        hasNext = found;
     }
 }
