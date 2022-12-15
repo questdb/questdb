@@ -1221,11 +1221,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
-    public boolean isPartitionReadOnlyByTimestamp(long timestamp) {
-        return partitionFloorMethod != null && txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionFloorMethod.floor(timestamp));
-    }
-
-    @Override
     public Row newRow() {
         return newRow(0L);
     }
@@ -3079,6 +3074,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return true;
     }
 
+    private boolean isPartitionReadOnlyByTimestamp(long timestamp) {
+        return partitionFloorMethod != null && txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionFloorMethod.floor(timestamp));
+    }
+
     private void lock() {
         try {
             path.trimTo(rootLen);
@@ -4482,202 +4481,200 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                     srcOoo = srcOooHi + 1;
 
-                    if (txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                        throw ReadOnlyViolationException.cannotInsert(tableName, partitionTimestamp);
-                    }
-
-                    final long srcDataMax;
-                    final long srcNameTxn;
-                    final int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
-                    if (partitionIndex > -1) {
-                        if (last) {
-                            srcDataMax = transientRowCount;
-                        } else {
-                            srcDataMax = getPartitionSizeByIndex(partitionIndex);
-                        }
-                        srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
-                    } else {
-                        srcDataMax = 0;
-                        // A version needed to housekeep dropped partitions
-                        // When partition created without O3 merge, use `txn-1` as partition version.
-                        // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
-                        // be written within the same commit when new partition initially written in order
-                        // and then O3 triggers a merge of the partition.
-                        srcNameTxn = txWriter.getTxn() - 1;
-                    }
-
-                    // We're appending onto the last partition.
-                    final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
-
-                    // Number of rows to insert from the O3 segment into this partition.
-                    final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
-
-                    // Final partition size after current insertions.
-                    final long partitionSize = srcDataMax + srcOooBatchRowSize;
-
-                    pCount++;
-
-                    LOG.info().
-                            $("o3 partition task [table=").utf8(tableName)
-                            .$(", srcOooLo=").$(srcOooLo)
-                            .$(", srcOooHi=").$(srcOooHi)
-                            .$(", srcOooMax=").$(srcOooMax)
-                            .$(", o3RowCount=").$(o3RowCount)
-                            .$(", o3LagRowCount=").$(o3LagRowCount)
-                            .$(", srcDataMax=").$(srcDataMax)
-                            .$(", o3TimestampMin=").$ts(o3TimestampMin)
-                            .$(", o3Timestamp=").$ts(o3Timestamp)
-                            .$(", o3TimestampMax=").$ts(o3TimestampMax)
-                            .$(", partitionTimestamp=").$ts(partitionTimestamp)
-                            .$(", partitionIndex=").$(partitionIndex)
-                            .$(", partitionSize=").$(partitionSize)
-                            .$(", maxTimestamp=").$ts(maxTimestamp)
-                            .$(", last=").$(last)
-                            .$(", append=").$(append)
-                            .$(", pCount=").$(pCount)
-                            .$(", flattenTimestamp=").$(flattenTimestamp)
-                            .$(", memUsed=").$(Unsafe.getMemUsed())
-                            .I$();
-
-                    if (partitionTimestamp < lastPartitionTimestamp) {
-                        // increment fixedRowCount by number of rows old partition incremented
-                        this.txWriter.fixedRowCount += partitionSize - srcDataMax;
-                    } else if (partitionTimestamp == lastPartitionTimestamp) {
-                        // this is existing "last" partition, we can set the size directly
-                        prevTransientRowCount = partitionSize;
-                    } else {
-                        // this is potentially a new last partition
-                        this.txWriter.fixedRowCount += prevTransientRowCount;
-                        prevTransientRowCount = partitionSize;
-                    }
-
-                    o3PartitionUpdRemaining.incrementAndGet();
-                    final O3Basket o3Basket = o3BasketPool.next();
-                    o3Basket.ensureCapacity(columnCount, indexCount);
-
-                    AtomicInteger columnCounter = o3ColumnCounters.next();
-
-                    // async partition processing set this counter to the column count
-                    // and then manages issues if publishing of column tasks fails
-                    // mid-column-count.
-                    latchCount++;
-
-                    if (append) {
-                        // we are appending last partition, make sure it has been mapped!
-                        // this also might fail, make sure exception is trapped and partitions are
-                        // counted down correctly
-                        try {
-                            setAppendPosition(srcDataMax, false);
-                        } catch (Throwable e) {
-                            o3BumpErrorCount();
-                            o3ClockDownPartitionUpdateCount();
-                            o3CountDownDoneLatch();
-                            throw e;
-                        }
-
-                        columnCounter.set(TableUtils.compressColumnCount(metadata));
-                        Path pathToPartition = Path.getThreadLocal(this.path);
-                        TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
-                        TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
-                        final int plen = pathToPartition.length();
-                        int columnsPublished = 0;
-                        for (int i = 0; i < columnCount; i++) {
-                            final int columnType = metadata.getColumnType(i);
-                            if (columnType < 0) {
-                                continue;
-                            }
-                            final int colOffset = TableWriter.getPrimaryColumnIndex(i);
-                            final boolean notTheTimestamp = i != timestampIndex;
-                            final CharSequence columnName = metadata.getColumnName(i);
-                            final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
-                            final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
-                            final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
-                            final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
-                            final MemoryMA mem1 = columns.getQuick(colOffset);
-                            final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-                            final long srcDataTop = getColumnTop(i);
-                            final long srcOooFixAddr;
-                            final long srcOooVarAddr;
-                            final MemoryMA dstFixMem;
-                            final MemoryMA dstVarMem;
-                            if (!ColumnType.isVariableLength(columnType)) {
-                                srcOooFixAddr = oooMem1.addressOf(0);
-                                srcOooVarAddr = 0;
-                                dstFixMem = mem1;
-                                dstVarMem = null;
+                    if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                        final long srcDataMax;
+                        final long srcNameTxn;
+                        final int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+                        if (partitionIndex > -1) {
+                            if (last) {
+                                srcDataMax = transientRowCount;
                             } else {
-                                srcOooFixAddr = oooMem2.addressOf(0);
-                                srcOooVarAddr = oooMem1.addressOf(0);
-                                dstFixMem = mem2;
-                                dstVarMem = mem1;
+                                srcDataMax = getPartitionSizeByIndex(partitionIndex);
                             }
+                            srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
+                        } else {
+                            srcDataMax = 0;
+                            // A version needed to housekeep dropped partitions
+                            // When partition created without O3 merge, use `txn-1` as partition version.
+                            // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
+                            // be written within the same commit when new partition initially written in order
+                            // and then O3 triggers a merge of the partition.
+                            srcNameTxn = txWriter.getTxn() - 1;
+                        }
 
-                            columnsPublished++;
+                        // We're appending onto the last partition.
+                        final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
+
+                        // Number of rows to insert from the O3 segment into this partition.
+                        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+
+                        // Final partition size after current insertions.
+                        final long partitionSize = srcDataMax + srcOooBatchRowSize;
+
+                        pCount++;
+
+                        LOG.info().
+                                $("o3 partition task [table=").utf8(tableName)
+                                .$(", srcOooLo=").$(srcOooLo)
+                                .$(", srcOooHi=").$(srcOooHi)
+                                .$(", srcOooMax=").$(srcOooMax)
+                                .$(", o3RowCount=").$(o3RowCount)
+                                .$(", o3LagRowCount=").$(o3LagRowCount)
+                                .$(", srcDataMax=").$(srcDataMax)
+                                .$(", o3TimestampMin=").$ts(o3TimestampMin)
+                                .$(", o3Timestamp=").$ts(o3Timestamp)
+                                .$(", o3TimestampMax=").$ts(o3TimestampMax)
+                                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                                .$(", partitionIndex=").$(partitionIndex)
+                                .$(", partitionSize=").$(partitionSize)
+                                .$(", maxTimestamp=").$ts(maxTimestamp)
+                                .$(", last=").$(last)
+                                .$(", append=").$(append)
+                                .$(", pCount=").$(pCount)
+                                .$(", flattenTimestamp=").$(flattenTimestamp)
+                                .$(", memUsed=").$(Unsafe.getMemUsed())
+                                .I$();
+
+                        if (partitionTimestamp < lastPartitionTimestamp) {
+                            // increment fixedRowCount by number of rows old partition incremented
+                            this.txWriter.fixedRowCount += partitionSize - srcDataMax;
+                        } else if (partitionTimestamp == lastPartitionTimestamp) {
+                            // this is existing "last" partition, we can set the size directly
+                            prevTransientRowCount = partitionSize;
+                        } else {
+                            // this is potentially a new last partition
+                            this.txWriter.fixedRowCount += prevTransientRowCount;
+                            prevTransientRowCount = partitionSize;
+                        }
+
+                        o3PartitionUpdRemaining.incrementAndGet();
+                        final O3Basket o3Basket = o3BasketPool.next();
+                        o3Basket.ensureCapacity(columnCount, indexCount);
+
+                        AtomicInteger columnCounter = o3ColumnCounters.next();
+
+                        // async partition processing set this counter to the column count
+                        // and then manages issues if publishing of column tasks fails
+                        // mid-column-count.
+                        latchCount++;
+
+                        if (append) {
+                            // we are appending last partition, make sure it has been mapped!
+                            // this also might fail, make sure exception is trapped and partitions are
+                            // counted down correctly
                             try {
-                                O3OpenColumnJob.appendLastPartition(
-                                        pathToPartition,
-                                        plen,
-                                        columnName,
-                                        columnCounter,
-                                        notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                        srcOooFixAddr,
-                                        srcOooVarAddr,
-                                        srcOooLo,
-                                        srcOooHi,
-                                        srcOooMax,
-                                        o3TimestampMin,
-                                        o3TimestampMax,
-                                        partitionTimestamp,
-                                        srcDataTop,
-                                        srcDataMax,
-                                        indexBlockCapacity,
-                                        dstFixMem,
-                                        dstVarMem,
-                                        this,
-                                        indexWriter,
-                                        getColumnNameTxn(partitionTimestamp, i)
-                                );
+                                setAppendPosition(srcDataMax, false);
                             } catch (Throwable e) {
-                                if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
-                                    o3ClockDownPartitionUpdateCount();
-                                    o3CountDownDoneLatch();
-                                }
+                                o3BumpErrorCount();
+                                o3ClockDownPartitionUpdateCount();
+                                o3CountDownDoneLatch();
                                 throw e;
                             }
+
+                            columnCounter.set(TableUtils.compressColumnCount(metadata));
+                            Path pathToPartition = Path.getThreadLocal(this.path);
+                            TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
+                            TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
+                            final int plen = pathToPartition.length();
+                            int columnsPublished = 0;
+                            for (int i = 0; i < columnCount; i++) {
+                                final int columnType = metadata.getColumnType(i);
+                                if (columnType < 0) {
+                                    continue;
+                                }
+                                final int colOffset = TableWriter.getPrimaryColumnIndex(i);
+                                final boolean notTheTimestamp = i != timestampIndex;
+                                final CharSequence columnName = metadata.getColumnName(i);
+                                final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                                final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
+                                final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
+                                final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
+                                final MemoryMA mem1 = columns.getQuick(colOffset);
+                                final MemoryMA mem2 = columns.getQuick(colOffset + 1);
+                                final long srcDataTop = getColumnTop(i);
+                                final long srcOooFixAddr;
+                                final long srcOooVarAddr;
+                                final MemoryMA dstFixMem;
+                                final MemoryMA dstVarMem;
+                                if (!ColumnType.isVariableLength(columnType)) {
+                                    srcOooFixAddr = oooMem1.addressOf(0);
+                                    srcOooVarAddr = 0;
+                                    dstFixMem = mem1;
+                                    dstVarMem = null;
+                                } else {
+                                    srcOooFixAddr = oooMem2.addressOf(0);
+                                    srcOooVarAddr = oooMem1.addressOf(0);
+                                    dstFixMem = mem2;
+                                    dstVarMem = mem1;
+                                }
+
+                                columnsPublished++;
+                                try {
+                                    O3OpenColumnJob.appendLastPartition(
+                                            pathToPartition,
+                                            plen,
+                                            columnName,
+                                            columnCounter,
+                                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                            srcOooFixAddr,
+                                            srcOooVarAddr,
+                                            srcOooLo,
+                                            srcOooHi,
+                                            srcOooMax,
+                                            o3TimestampMin,
+                                            o3TimestampMax,
+                                            partitionTimestamp,
+                                            srcDataTop,
+                                            srcDataMax,
+                                            indexBlockCapacity,
+                                            dstFixMem,
+                                            dstVarMem,
+                                            this,
+                                            indexWriter,
+                                            getColumnNameTxn(partitionTimestamp, i)
+                                    );
+                                } catch (Throwable e) {
+                                    if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
+                                        o3ClockDownPartitionUpdateCount();
+                                        o3CountDownDoneLatch();
+                                    }
+                                    throw e;
+                                }
+                            }
+
+                            addPhysicallyWrittenRows(srcOooBatchRowSize);
+                        } else {
+                            if (flattenTimestamp && o3RowCount > 0) {
+                                Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
+                                flattenTimestamp = false;
+                            }
+
+                            // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
+                            // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
+                            // then set first value to partition timestamp
+                            long colTopSinkIndex = (long) (pCount - 1) * (metadata.getColumnCount() + 1);
+                            long columnTopSinkAddress = colTopSinkIndex * Long.BYTES;
+                            long columnTopPartitionSinkAddr = o3ColumnTopSink.getAddress() + columnTopSinkAddress;
+                            assert columnTopPartitionSinkAddr + (columnCount + 1L) * Long.BYTES <= o3ColumnTopSink.getAddress() + o3ColumnTopSink.size() * Long.BYTES;
+
+                            o3ColumnTopSink.set(colTopSinkIndex, partitionTimestamp);
+                            o3CommitPartitionAsync(
+                                    columnCounter,
+                                    maxTimestamp,
+                                    sortedTimestampsAddr,
+                                    srcOooMax,
+                                    o3TimestampMin,
+                                    o3TimestampMax,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    partitionTimestamp,
+                                    last,
+                                    srcDataMax,
+                                    srcNameTxn,
+                                    o3Basket,
+                                    columnTopPartitionSinkAddr + Long.BYTES
+                            );
                         }
-
-                        addPhysicallyWrittenRows(srcOooBatchRowSize);
-                    } else {
-                        if (flattenTimestamp && o3RowCount > 0) {
-                            Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
-                            flattenTimestamp = false;
-                        }
-
-                        // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
-                        // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
-                        // then set first value to partition timestamp
-                        long colTopSinkIndex = (long) (pCount - 1) * (metadata.getColumnCount() + 1);
-                        long columnTopSinkAddress = colTopSinkIndex * Long.BYTES;
-                        long columnTopPartitionSinkAddr = o3ColumnTopSink.getAddress() + columnTopSinkAddress;
-                        assert columnTopPartitionSinkAddr + (columnCount + 1L) * Long.BYTES <= o3ColumnTopSink.getAddress() + o3ColumnTopSink.size() * Long.BYTES;
-
-                        o3ColumnTopSink.set(colTopSinkIndex, partitionTimestamp);
-                        o3CommitPartitionAsync(
-                                columnCounter,
-                                maxTimestamp,
-                                sortedTimestampsAddr,
-                                srcOooMax,
-                                o3TimestampMin,
-                                o3TimestampMax,
-                                srcOooLo,
-                                srcOooHi,
-                                partitionTimestamp,
-                                last,
-                                srcDataMax,
-                                srcNameTxn,
-                                o3Basket,
-                                columnTopPartitionSinkAddr + Long.BYTES
-                        );
                     }
                 } catch (CairoException | CairoError e) {
                     LOG.error().$((Sinkable) e).$();

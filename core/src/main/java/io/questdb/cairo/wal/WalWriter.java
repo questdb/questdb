@@ -348,12 +348,6 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public boolean isPartitionReadOnlyByTimestamp(long timestamp) {
-        // wall does not know whether a partition is read only at present 
-        return false;
-    }
-
-    @Override
     public TableWriter.Row newRow() {
         return newRow(0L);
     }

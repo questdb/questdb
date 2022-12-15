@@ -140,10 +140,6 @@ class LineTcpMeasurementEvent implements Closeable {
                 writer.commit();
             }
             long timestamp = buffer.readLong(offset);
-            if (writer.isPartitionReadOnlyByTimestamp(timestamp)) {
-                // skip this event
-                return;
-            }
 
             offset += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {

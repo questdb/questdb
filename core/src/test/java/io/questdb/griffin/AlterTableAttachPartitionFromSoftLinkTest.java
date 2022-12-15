@@ -65,10 +65,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             createTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             executeOperation("ALTER TABLE " + tableName + " ADD COLUMN ss SYMBOL", CompiledQuery.ALTER);
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + readOnlyPartitionName + "T23:59:59.999999Z', '¶')",
-                                    tableName,
-                                    readOnlyPartitionName);
+
+                            // silently ignored because the table is read only
+                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + readOnlyPartitionName + "T23:59:59.999999Z', '¶')");
                             executeOperation("ALTER TABLE " + tableName + " ALTER COLUMN ss ADD INDEX CAPACITY 32", CompiledQuery.ALTER);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
@@ -143,10 +142,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         try {
                             executeOperation("ALTER TABLE " + tableName + " ALTER COLUMN s DROP INDEX", CompiledQuery.ALTER);
                             executeOperation("ALTER TABLE " + tableName + " ALTER COLUMN s ADD INDEX", CompiledQuery.ALTER);
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " VALUES(1492, 10, 'howdy', '" + readOnlyPartitionName + "T23:59:59.999999Z')",
-                                    tableName,
-                                    readOnlyPartitionName);
+
+                            // silently ignored because the partition is read-only
+                            executeInsert("INSERT INTO " + tableName + " VALUES(1492, 10, 'howdy', '" + readOnlyPartitionName + "T23:59:59.999999Z')");
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
@@ -317,23 +315,24 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                 row.putSym(2, "Norway");
                                 row.append();
 
-                                try {
-                                    writer.commit();
-                                    Assert.fail();
-                                } catch (ReadOnlyViolationException expected) {
-                                    TestUtils.assertContains(
-                                            "cannot insert into read-only partition [table=" + tableName + ", partitionTimestamp=" + readOnlyPartitionName + "T00:00:00.000Z]",
-                                            expected.getFlyweightMessage());
-                                }
+                                // goes through but only one row makes it into the table
+                                writer.commit();
 
                                 assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5",
                                         "l\ti\ts\tts\n" +
+                                                "2023\t12\tDecember\t2022-10-18T00:00:00.000000Z\n" +
                                                 "5001\t5001\t\t2022-10-18T00:00:16.779900Z\n" +
                                                 "5002\t5002\tHYRX\t2022-10-18T00:00:34.059800Z\n" +
                                                 "5003\t5003\tCPSW\t2022-10-18T00:00:51.339700Z\n" +
-                                                "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n" +
-                                                "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n"
-                                );
+                                                "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n");
+
+                                assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5",
+                                        "l\ti\ts\tts\n" +
+                                                "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
+                                                "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
+                                                "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
+                                                "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
+                                                "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n");
 
                                 row = writer.newRow(activePartitionTimestamp);
                                 row.putLong(0, 2023);
@@ -351,7 +350,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10002\n");
                             assertSql("SELECT * FROM " + tableName + " WHERE s = 'Octopus'",
                                     "l\ti\ts\tts\n" +
                                             "2023\t10\tOctopus\t2022-10-18T00:00:00.000000Z\n");
@@ -429,11 +428,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
                             "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
 
-            assertInsertFailsBecausePartitionIsReadOnly(
-                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + lastReadOnlyPartitionName + "T23:59:59.500001Z')",
-                    tableName,
-                    lastReadOnlyPartitionName
-            );
+            // silently ignored as the partition is read only
+            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + lastReadOnlyPartitionName + "T23:59:59.500001Z')");
 
             assertUpdateFailsBecausePartitionIsReadOnly(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T23:59:16.000100Z'",
@@ -441,11 +437,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     lastReadOnlyPartitionName
             );
 
-            assertInsertFailsBecausePartitionIsReadOnly(
-                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100005Z')",
-                    tableName,
-                    lastReadOnlyPartitionName
-            );
+            // silently ignored as the partition is read only
+            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100005Z')");
 
             assertUpdateFailsBecausePartitionIsReadOnly(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T00:02:08.999700Z'",
@@ -521,11 +514,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
                             );
 
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + readOnlyPartitionName + "T23:59:59.500001Z')",
-                                    tableName,
-                                    readOnlyPartitionName
-                            );
+                            // silently ignored as the partition is read only
+                            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + readOnlyPartitionName + "T23:59:59.500001Z')");
 
                             assertUpdateFailsBecausePartitionIsReadOnly(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + readOnlyPartitionName + "T23:59:42.220100Z'",
@@ -533,11 +523,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     readOnlyPartitionName
                             );
 
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + readOnlyPartitionName + "T00:00:00.100005Z')",
-                                    tableName,
-                                    readOnlyPartitionName
-                            );
+                            // silently ignored as the partition is read only
+                            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + readOnlyPartitionName + "T00:00:00.100005Z')");
 
                             assertUpdateFailsBecausePartitionIsReadOnly(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
@@ -686,11 +673,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             attachPartitionFromSoftLink(tableName, "REFRIGERATOR", () -> {
                         try {
                             executeOperation("ALTER TABLE " + tableName + " DROP COLUMN s", CompiledQuery.ALTER);
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " VALUES(666, 666, '" + readOnlyPartitionName + "T23:59:59.999999Z')",
-                                    tableName,
-                                    readOnlyPartitionName
-                            );
+
+                            // this lad silently fails..... because the partition is read only
+                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, '" + readOnlyPartitionName + "T23:59:59.999999Z')");
+
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
@@ -746,11 +732,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             createTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             executeOperation("ALTER TABLE " + tableName + " DROP COLUMN s", CompiledQuery.ALTER);
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " VALUES(666, 666, '" + readOnlyPartitionName + "T23:59:59.999999Z')",
-                                    tableName,
-                                    readOnlyPartitionName
-                            );
+
+                            // silently ignored as the partition is read only
+                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, '" + readOnlyPartitionName + "T23:59:59.999999Z')");
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
@@ -778,11 +762,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         try {
                             executeOperation("ALTER TABLE " + tableName + " RENAME COLUMN s TO ss", CompiledQuery.ALTER);
                             executeOperation("ALTER TABLE " + tableName + " ALTER COLUMN ss DROP INDEX", CompiledQuery.ALTER);
-                            assertInsertFailsBecausePartitionIsReadOnly(
-                                    "INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + readOnlyPartitionName + "T23:59:59.999999Z')",
-                                    tableName,
-                                    readOnlyPartitionName
-                            );
+
+                            // silently ignored as the partition is read only
+                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + readOnlyPartitionName + "T23:59:59.999999Z')");
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
@@ -928,19 +910,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             while (purgeJob.run(0)) {
                 Os.pause();
             }
-        }
-    }
-
-    private void assertInsertFailsBecausePartitionIsReadOnly(String insertStmt, String tableName, String partitionName) {
-        try {
-            executeInsert(insertStmt);
-            Assert.fail();
-        } catch (ReadOnlyViolationException e) {
-            TestUtils.assertContains(
-                    "cannot insert into read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
-                    e.getFlyweightMessage());
-        } catch (SqlException | CairoException e) {
-            Assert.fail("not expecting any SqlException | CairoException: " + e.getFlyweightMessage());
         }
     }
 
