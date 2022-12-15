@@ -103,11 +103,35 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return readOffset - offset;
 }
 
+JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
+        (JNIEnv *e, jclass cl,
+         jint fd,
+         jlong offset) {
+    jbyte result;
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jbyte), (off_t) offset);
+    if (readLen != sizeof(jbyte)) {
+        return -1;
+    }
+    return result;
+}
+
+JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
+        (JNIEnv *e, jclass cl,
+         jint fd,
+         jlong offset) {
+    jshort result;
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jshort), (off_t) offset);
+    if (readLen != sizeof(jshort)) {
+        return -1;
+    }
+    return result;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     jint result;
-    ssize_t readLen = pread((int) fd, (void *) &result, (size_t) 4, (off_t) offset);
-    if (readLen != 4) {
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jint), (off_t) offset);
+    if (readLen != sizeof(jint)) {
         return -1;
     }
     return result;
@@ -117,8 +141,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     jlong result;
     ssize_t readLen;
-    RESTARTABLE(pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset), readLen);
-    if (readLen != 8) {
+    RESTARTABLE(pread((int) fd, (void *) &result, sizeof(jlong), (off_t) offset), readLen);
+    if (readLen != sizeof(jlong)) {
         return -1;
     }
     return result;
