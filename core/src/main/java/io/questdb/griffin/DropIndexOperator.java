@@ -91,7 +91,6 @@ public class DropIndexOperator extends PurgingOperator {
             }
         } catch (Throwable th) {
             LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
-            tableWriter.rollbackUpdate();
             updateColumnIndexes.clear();
             cleanupColumnVersions.clear();
 

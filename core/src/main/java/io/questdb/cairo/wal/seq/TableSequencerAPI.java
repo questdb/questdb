@@ -39,6 +39,7 @@ import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXNLOG_FILE_NAME;
+import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.SEQ_META_TABLE_ID;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
@@ -109,17 +110,13 @@ public class TableSequencerAPI implements QuietCloseable {
                                 int metaFd = -1;
                                 int txnFd = -1;
                                 try {
-                                    metaFd = openFileRO(ff, path, META_FILE_NAME);
-                                    txnFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                    metaFd = TableUtils.openRO(ff, path, META_FILE_NAME, LOG);
+                                    txnFd = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
                                     tableId = ff.readNonNegativeInt(metaFd, SEQ_META_TABLE_ID);
                                     lastTxn = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);
                                 } finally {
-                                    if (metaFd > -1) {
-                                        ff.close(metaFd);
-                                    }
-                                    if (txnFd > -1) {
-                                        ff.close(txnFd);
-                                    }
+                                    ff.closeChecked(metaFd);
+                                    ff.closeChecked(txnFd);
                                 }
                             } else {
                                 // Slow path.
@@ -301,6 +298,33 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void resumeTable(final CharSequence tableName, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                if (!sequencer.isSuspended()) {
+                    return;
+                }
+                final long nextTxn = sequencer.lastTxn() + 1;
+                if (resumeFromTxn > nextTxn) {
+                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+                }
+                // resume from the latest on negative value
+                if (resumeFromTxn > 0) {
+                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableName, WAL_2_TABLE_RESUME_REASON)) {
+                        long seqTxn = tableWriter.getSeqTxn();
+                        if (resumeFromTxn - 1 > seqTxn) {
+                            // including resumeFromTxn 
+                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
+                        }
+                    }
+                }
+                sequencer.resumeTable();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     @TestOnly
     public void setDistressed(String tableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
@@ -326,16 +350,6 @@ public class TableSequencerAPI implements QuietCloseable {
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(tableName, path, ff);
-    }
-
-    private static int openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
-        final int rootLen = path.length();
-        path.concat(fileName).$();
-        try {
-            return TableUtils.openRO(ff, path, LOG);
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     @NotNull
