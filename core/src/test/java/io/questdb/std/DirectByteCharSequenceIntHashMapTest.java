@@ -25,9 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -138,7 +140,32 @@ public class DirectByteCharSequenceIntHashMapTest {
                 }
                 p += len;
             }
+        } finally {
+            Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
 
+    @Test
+    public void testHashMapUtf8() {
+        final int memSize = 64;
+        long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+        DirectByteCharSequenceIntHashMap map = new DirectByteCharSequenceIntHashMap();
+        try {
+            final String utf16Str = "таблица-табличка";
+            byte[] utf8Bytes = utf16Str.getBytes(StandardCharsets.UTF_8);
+            for (int i = 0; i < utf8Bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
+            }
+
+            dbcs.of(mem, mem + utf8Bytes.length);
+
+            Assert.assertEquals(-1, map.get(dbcs));
+
+            final StringSink sink = new StringSink();
+            final String utf8Str = sink.put(dbcs).toString();
+            map.put(utf8Str, 42);
+            Assert.assertEquals(42, map.get(dbcs));
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
         }

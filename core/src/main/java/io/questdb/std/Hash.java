@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.DirectByteCharSequence;
+
 public final class Hash {
 
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
@@ -32,6 +34,7 @@ public final class Hash {
     private static final long XXH_PRIME64_3 = 1609587929392839161L;  /* 0b0001011001010110011001111011000110011110001101110111100111111001 */
     private static final long XXH_PRIME64_4 = -8796714831421723037L; /* 0b1000010111101011110010100111011111000010101100101010111001100011 */
     private static final long XXH_PRIME64_5 = 2870177450012600261L;  /* 0b0010011111010100111010110010111100010110010101100110011111000101 */
+    private static final ThreadLocal<StringUtf8MemoryAccessor> stringUtf8MemoryAccessor = new ThreadLocal<>(StringUtf8MemoryAccessor::new);
     private static final MemoryAccessor unsafeAccessor = new MemoryAccessor() {
         @Override
         public byte getByte(long offset) {
@@ -64,7 +67,7 @@ public final class Hash {
     }
 
     /**
-     * Calculates positive integer hash of memory pointer using 32-bit variant of xxHash hash algorithm.
+     * Calculates positive integer hash of memory pointer using 64-bit variant of xxHash hash algorithm.
      *
      * @param p   memory pointer
      * @param len memory length in bytes
@@ -82,7 +85,7 @@ public final class Hash {
      * always collide. (Among known examples are sets of Float keys
      * holding consecutive whole numbers in small tables.)  So we
      * apply a transform that spreads the impact of higher bits
-     * downward. There is a trade off between speed, utility, and
+     * downward. There is a trade-off between speed, utility, and
      * quality of bit-spreading. Because many common sets of hashes
      * are already reasonably distributed (so don't benefit from
      * spreading), and because we use trees to handle large sets of
@@ -96,6 +99,14 @@ public final class Hash {
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
+    }
+
+    /**
+     * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
+     * are also supported, yet with higher chances of hash code collisions.
+     */
+    public static long xxHash64(String str) {
+        return xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
     }
 
     /**
@@ -202,11 +213,55 @@ public final class Hash {
         return h64;
     }
 
+    public static long xxHash64(DirectByteCharSequence charSequence) {
+        return hashMem(charSequence.getLo(), charSequence.length());
+    }
+
     public interface MemoryAccessor {
         byte getByte(long offset);
 
         int getInt(long offset);
 
         long getLong(long offset);
+    }
+
+    /**
+     * This memory accessor interprets string as a sequence of UTF8 bytes.
+     * It means that each string's char is trimmed to a byte when calculating
+     * the hash code.
+     */
+    private static class StringUtf8MemoryAccessor implements MemoryAccessor {
+
+        private String str;
+
+        @Override
+        public byte getByte(long offset) {
+            return (byte) str.charAt((int) offset);
+        }
+
+        @Override
+        public int getInt(long offset) {
+            return (getByte(offset) & 255)
+                    | ((getByte(offset + 1) & 255) << 8)
+                    | ((getByte(offset + 2) & 255) << 16)
+                    | ((getByte(offset + 3) & 255) << 24);
+        }
+
+        @Override
+        public long getLong(long offset) {
+            return (long) (getByte(offset) & 255)
+                    | ((long) (getByte(offset + 1) & 255) << 8)
+                    | ((long) (getByte(offset + 2) & 255) << 16)
+                    | ((long) (getByte(offset + 3) & 255) << 24)
+                    | ((long) (getByte(offset + 4) & 255) << 32)
+                    | ((long) (getByte(offset + 5) & 255) << 40)
+                    | ((long) (getByte(offset + 6) & 255) << 48)
+                    | ((long) (getByte(offset + 7) & 255) << 56);
+        }
+
+        public StringUtf8MemoryAccessor of(String str) {
+            this.str = str;
+            return this;
+        }
     }
 }

@@ -36,6 +36,11 @@ import java.util.Arrays;
  * main victim of itable, suffering from non-deterministic performance loss. With this specific
  * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
  * no longer present in the async profiler.
+ * <p>
+ * Important note:
+ * This map is optimized for ASCII and UTF8 DirectByteCharSequence lookups. Lookups of UTF16
+ * strings (j.l.String) with non-ASCII chars will not work correctly, so make sure to re-encode
+ * the string in UTF8.
  */
 public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -43,6 +48,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     private final double loadFactor;
     private int capacity;
     private int free;
+    private long[] hashCodes;
     private String[] keys;
     private int mask;
     private V[] values;
@@ -61,10 +67,11 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        free = capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
-        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
+        int len = Numbers.ceilPow2((int) (capacity / loadFactor));
         keys = new String[len];
+        hashCodes = new long[len];
         mask = len - 1;
         list = new ObjList<>(capacity);
         values = (V[]) new Object[keys.length];
@@ -74,7 +81,8 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     @Override
     public void clear() {
         Arrays.fill(keys, null);
-        free = this.capacity;
+        Arrays.fill(hashCodes, 0);
+        free = capacity;
         list.clear();
     }
 
@@ -95,31 +103,33 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(DirectByteCharSequence key) {
-        int index = Hash.spread(Chars.hashCode(key)) & mask;
+        long hashCode = Hash.xxHash64(key);
+        int index = (int) (hashCode & mask);
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
-        return probe(key, index);
+        return probe(key, hashCode, index);
     }
 
     public int keyIndex(String key) {
-        int index = Hash.spread(Chars.hashCode(key)) & mask;
+        long hashCode = Hash.xxHash64(key);
+        int index = (int) (hashCode & mask);
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
-        return probe(key, index);
+        return probe(key, hashCode, index);
     }
 
     public ObjList<String> keys() {
@@ -175,11 +185,12 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = Hash.spread(Chars.hashCode(key)) & mask;
+                long hashCode = Hash.xxHash64(key);
+                int idealHit = (int) (hashCode & mask);
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
-                        to = probe(key, idealHit);
+                        to = probe(key, hashCode, idealHit);
                     } else {
                         to = idealHit;
                     }
@@ -208,25 +219,38 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return get(list.getQuick(index));
     }
 
-    private int probe(DirectByteCharSequence key, int index) {
+    private void erase(int index) {
+        keys[index] = null;
+        hashCodes[index] = 0;
+        values[index] = null;
+    }
+
+    private void move(int from, int to) {
+        keys[to] = keys[from];
+        hashCodes[to] = hashCodes[from];
+        values[to] = values[from];
+        erase(from);
+    }
+
+    private int probe(DirectByteCharSequence key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            if (Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
     }
 
-    private int probe(String key, int index) {
+    private int probe(String key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            if (Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
@@ -238,6 +262,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             return false;
         } else {
             keys[index] = key;
+            hashCodes[index] = Hash.xxHash64(key);
             values[index] = value;
             if (--free == 0) {
                 rehash();
@@ -255,8 +280,10 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
         V[] oldValues = values;
         String[] oldKeys = keys;
-        this.keys = new String[len];
-        this.values = (V[]) new Object[len];
+        long[] oldHashCodes = hashCodes;
+        keys = new String[len];
+        hashCodes = new long[len];
+        values = (V[]) new Object[len];
         Arrays.fill(keys, null);
         mask = len - 1;
 
@@ -266,19 +293,9 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;
+                hashCodes[index] = oldHashCodes[i];
                 values[index] = oldValues[i];
             }
         }
-    }
-
-    protected void erase(int index) {
-        keys[index] = null;
-        values[index] = null;
-    }
-
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
     }
 }
