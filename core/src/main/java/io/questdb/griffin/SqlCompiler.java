@@ -535,15 +535,15 @@ public class SqlCompiler implements Closeable {
                             throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
                         }
                     }
-                    if (!TableSequencerAPI.isWalTable(tableName, path.of(configuration.getRoot()), ff)) {
-                        throw SqlException.$(lexer.lastTokenPosition(), tableName).put(" is not a WAL table.");
+                    if (!engine.isWalTable(tableToken)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
                     }
-                    return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
+                    return alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
                 }
             } catch (CairoException e) {
-                LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Throwable) e).$();
+                LOG.info().$("could not alter table [table=").$(tableToken.getTableName()).$(", ex=").$((Throwable) e).$();
                 e.position(lexer.lastTokenPosition());
                 throw e;
             }

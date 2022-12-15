@@ -474,8 +474,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableToken(sink);
     }
 
-    public TableToken getTableTokenByDirName(String tableName, int tableId) {
-        return tableNameRegistry.getTableToken(tableName, tableId);
+    public TableToken getTableTokenByDirName(String dirName, int tableId) {
+        return tableNameRegistry.getTableToken(dirName, tableId);
+    }
+
+    public TableToken getTableTokenByDirName(CharSequence dirName) {
+        return tableNameRegistry.getTokenByDirName(dirName);
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName) {

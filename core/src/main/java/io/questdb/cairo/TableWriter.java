@@ -836,7 +836,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
-    @Override
     public void destroy() {
         // Closes all the files and makes this instance unusable e.g. it cannot return to the pool on close.
         LOG.info().$("closing table files [table=").utf8(tableToken.getTableName())

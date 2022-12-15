@@ -315,8 +315,9 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
             assertReader("x\tts\n" +
                     "1\t2022-12-12T10:04:59.000000Z\n", "x");
 
-            TableReader rdr1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x");
-            try (TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test")) {
+            TableToken tableToken = engine.getTableToken(tableName);
+            TableReader rdr1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+            try (TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
 
                 TableWriter.Row row;
 

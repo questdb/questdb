@@ -75,7 +75,7 @@ public interface TableNameRegistry extends Closeable {
      * @param dirName directory name
      * @return If table does not exist, returns null otherwise returns TableToken
      */
-    TableToken getTokenByDirName(String dirName);
+    TableToken getTokenByDirName(CharSequence dirName);
 
     /**
      * Checks that table token does not belong to a dropped table.

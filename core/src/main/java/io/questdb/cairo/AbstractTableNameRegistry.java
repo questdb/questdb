@@ -76,7 +76,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public TableToken getTokenByDirName(String dirName) {
+    public TableToken getTokenByDirName(CharSequence dirName) {
         ReverseTableMapItem entry = reverseNameTokenMap.get(dirName);
         return entry == null ? null : entry.getToken();
     }

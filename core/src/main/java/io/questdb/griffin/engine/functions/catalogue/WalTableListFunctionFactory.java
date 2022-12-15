@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -148,7 +147,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                     boolean isDir = Files.isDir(ff.findName(findPtr), ff.findType(findPtr), tableNameSink);
                     if (isDir) {
-                        boolean isWalTable = TableSequencerAPI.isWalTable(tableNameSink, rootPath, ff);
+                        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+                        final TableToken tableToken = engine.getTableTokenByDirName(tableNameSink);
+                        final boolean isWalTable = engine.isWalTable(tableToken);
                         rootPath.trimTo(rootLen);
                         if (isWalTable) {
                             if (record.switchTo(tableNameSink)) {
