@@ -211,14 +211,6 @@ public class ColumnPurgeOperator implements Closeable {
                 setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                 int pathTrimToPartition = path.length();
 
-                if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                    LOG.info().$("skipping purge of read-only partition [path=").utf8(path.$())
-                            .$(", column=").utf8(task.getColumnName())
-                            .I$();
-                    completedRowIds.add(updateRowId);
-                    continue;
-                }
-
                 TableUtils.dFile(path, task.getColumnName(), columnVersion);
 
                 // perform existence check ahead of trying to remove files
@@ -252,6 +244,15 @@ public class ColumnPurgeOperator implements Closeable {
                     // we would have mutated the path by checking state of the table
                     // we will have to re-setup that
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+
+                    if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                        LOG.info().$("skipping purge of read-only partition [path=").utf8(path.$())
+                                .$(", column=").utf8(task.getColumnName())
+                                .I$();
+                        completedRowIds.add(updateRowId);
+                        continue;
+                    }
+
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
                     setupScoreboard = false;
                 }
