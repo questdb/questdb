@@ -105,6 +105,7 @@ public class HttpQueryTestBuilder {
                             }
                         };
                     }
+
                     public FilesFacade getFilesFacade() {
                         return filesFacade;
                     }

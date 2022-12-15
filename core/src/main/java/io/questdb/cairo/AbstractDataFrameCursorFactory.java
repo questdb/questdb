@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {

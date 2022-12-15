@@ -79,9 +79,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     }
 
     private static class WalTableListCursorFactory extends AbstractRecordCursorFactory {
+        private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        private final TableListRecordCursor cursor;
         private Path rootPath;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
@@ -109,8 +109,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         }
 
         private class TableListRecordCursor implements RecordCursor {
-            private final TableListRecord record = new TableListRecord();
             private final StringSink dirNameSink = new StringSink();
+            private final TableListRecord record = new TableListRecord();
             private final TxReader txReader = new TxReader(ff);
             private long findPtr = 0;
 
@@ -176,9 +176,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
-                private String tableName;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
+                private String tableName;
                 private long writerTxn;
 
                 @Override

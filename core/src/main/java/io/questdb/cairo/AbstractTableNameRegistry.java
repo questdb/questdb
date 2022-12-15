@@ -36,7 +36,6 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     private Map<CharSequence, TableToken> nameTokenMap;
     private Map<CharSequence, ReverseTableMapItem> reverseNameTokenMap;
 
-
     public AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.nameStore = new TableNameRegistryFileStore(configuration);
     }
@@ -69,8 +68,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         while (iterator.hasNext()) {
             ReverseTableMapItem entry = iterator.next();
             if (includeDropped || !entry.isDropped()) {
-                TableToken token = entry.getToken();
-                bucket.add(token);
+                bucket.add(entry.getToken());
             }
         }
     }
@@ -89,10 +87,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
 
     public TableToken refreshTableToken(TableToken tableToken) {
         ReverseTableMapItem rmi = reverseNameTokenMap.get(tableToken.getDirName());
-        if (rmi != null) {
-            return nameTokenMap.get(rmi.getToken().getTableName());
-        }
-        return null;
+        return rmi != null ? nameTokenMap.get(rmi.getToken().getTableName()) : null;
     }
 
     @Override

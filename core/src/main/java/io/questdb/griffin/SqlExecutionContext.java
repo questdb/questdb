@@ -80,8 +80,6 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    long getMicrosecondTimestamp();
-
     default TableRecordMetadata getMetadata(TableToken tableToken) {
         final CairoEngine engine = getCairoEngine();
         return engine.getMetadata(getCairoSecurityContext(), tableToken);
@@ -91,6 +89,8 @@ public interface SqlExecutionContext extends Closeable {
         final CairoEngine engine = getCairoEngine();
         return engine.getMetadata(getCairoSecurityContext(), tableToken, structureVersion);
     }
+
+    long getMicrosecondTimestamp();
 
     long getNow();
 

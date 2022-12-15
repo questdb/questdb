@@ -27,16 +27,16 @@ package io.questdb.cairo;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.HashMap;
-
+import java.util.Map;
 
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
     private volatile long lastReloadTimestampMs = 0;
-    private HashMap<CharSequence, TableToken> nameTableTokenMap = new HashMap<>();
-    private HashMap<CharSequence, TableToken> nameTableTokenMap2 = new HashMap<>();
-    private HashMap<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap = new HashMap<>();
-    private HashMap<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap2 = new HashMap<>();
+    private Map<CharSequence, TableToken> nameTableTokenMap = new HashMap<>();
+    private Map<CharSequence, TableToken> nameTableTokenMap2 = new HashMap<>();
+    private Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap = new HashMap<>();
+    private Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap2 = new HashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration) {
         super(configuration);
@@ -85,11 +85,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         // Swap the maps
         setNameMaps(nameTableTokenMap2, reverseTableNameTokenMap2);
 
-        HashMap<CharSequence, TableToken> tmp = nameTableTokenMap2;
+        Map<CharSequence, TableToken> tmp = nameTableTokenMap2;
         nameTableTokenMap2 = nameTableTokenMap;
         nameTableTokenMap = tmp;
 
-        HashMap<CharSequence, ReverseTableMapItem> tmp2 = reverseTableNameTokenMap2;
+        Map<CharSequence, ReverseTableMapItem> tmp2 = reverseTableNameTokenMap2;
         reverseTableNameTokenMap2 = reverseTableNameTokenMap;
         reverseTableNameTokenMap = tmp2;
 

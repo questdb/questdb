@@ -34,6 +34,11 @@ public class EmptyOperationCursor implements TableMetadataChangeLog {
     }
 
     @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
     public boolean hasNext() {
         return false;
     }
@@ -41,11 +46,6 @@ public class EmptyOperationCursor implements TableMetadataChangeLog {
     @Override
     public TableMetadataChange next() {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public TableToken getTableToken() {
-        return tableToken;
     }
 
     public EmptyOperationCursor of(TableToken tableToken) {

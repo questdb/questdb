@@ -25,9 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -382,18 +382,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     public void testDropPartitionsByDayUsingWhereClause() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
-    
+
                     String expectedBeforeDrop = "count\n" +
                             "120\n";
-    
+
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
-    
+
                     Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", sqlExecutionContext).getType());
-    
+
                     String expectedAfterDrop = "count\n" +
                             "0\n";
-    
+
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                 }

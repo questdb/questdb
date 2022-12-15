@@ -56,6 +56,7 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean ioURingEnabled = null;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private boolean mangleTableDirNames = true;
+    private int maxFileNameLength = -1;
     private int maxUncommittedRows = -1;
     private long o3MaxLag = -1;
     private boolean o3QuickSortEnabled = false;
@@ -82,7 +83,6 @@ public class Overrides implements ConfigurationOverrides {
     private long writerAsyncCommandMaxTimeout = -1;
     private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
-    private int maxFileNameLength = -1;
 
     @Override
     public String getAttachableDirSuffix() {
@@ -172,6 +172,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getJitMode() {
         return jitMode;
+    }
+
+    @Override
+    public int getMaxFileNameLength() {
+        return maxFileNameLength;
     }
 
     @Override
@@ -322,11 +327,6 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public Boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
-    }
-
-    @Override
-    public int getMaxFileNameLength() {
-        return maxFileNameLength;
     }
 
     @Override
@@ -487,6 +487,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setMaxFileNameLength(int maxFileNameLength) {
+        this.maxFileNameLength = maxFileNameLength;
+    }
+
+    @Override
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
@@ -619,10 +624,5 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
         this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
-    }
-
-    @Override
-    public void setMaxFileNameLength(int maxFileNameLength) {
-        this.maxFileNameLength = maxFileNameLength;
     }
 }

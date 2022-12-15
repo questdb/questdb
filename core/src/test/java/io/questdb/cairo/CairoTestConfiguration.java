@@ -114,6 +114,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return overrides.getMaxUncommittedRows() >= 0 ? overrides.getMaxUncommittedRows() : super.getMaxUncommittedRows();
     }
@@ -307,11 +312,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return true;
-    }
-
-    @Override
-    public int getMaxFileNameLength() {
-        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
     }
 
     @Override

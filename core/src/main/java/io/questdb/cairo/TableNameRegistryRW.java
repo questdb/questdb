@@ -27,9 +27,11 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 
+import java.util.Map;
+
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
-    private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
+    private final Map<CharSequence, TableToken> nameTableTokenMap = new ConcurrentHashMap<>();
+    private final Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);
@@ -59,12 +61,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         TableToken newNameRecord = new TableToken(tableName, dirName, tableId, isWal);
         TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
-
-        if (registeredRecord == null) {
-            return newNameRecord;
-        } else {
-            return null;
-        }
+        return registeredRecord == null ? newNameRecord : null;
     }
 
     @Override

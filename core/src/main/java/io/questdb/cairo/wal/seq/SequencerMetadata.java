@@ -276,13 +276,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return suspended;
     }
 
-    void suspendTable() {
-        suspended = true;
+    void resumeTable() {
+        suspended = false;
         syncToMetaFile();
     }
 
-    void resumeTable() {
-        suspended = false;
+    void suspendTable() {
+        suspended = true;
         syncToMetaFile();
     }
 

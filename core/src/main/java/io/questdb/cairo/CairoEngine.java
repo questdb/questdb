@@ -612,7 +612,6 @@ public class CairoEngine implements Closeable, WriterSource {
             return BUSY_READER;
         }
         return lockedReason;
-
     }
 
     public boolean lockReaders(TableToken tableToken) {

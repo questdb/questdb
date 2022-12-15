@@ -74,10 +74,6 @@ public class Bootstrap {
         this(BANNER, System.getenv(), args);
     }
 
-    public Bootstrap(String banner, String... args) {
-        this(banner, System.getenv(), args);
-    }
-
     public Bootstrap(String banner, @Nullable Map<String, String> env, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");

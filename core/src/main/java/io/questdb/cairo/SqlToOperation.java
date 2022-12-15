@@ -40,8 +40,8 @@ import java.io.Closeable;
 public class SqlToOperation implements Closeable {
     private final BindVariableService bindVariableService;
     private final SqlCompiler compiler;
-    private final WalSqlExecutionContextImpl sqlExecutionContext;
     private final Rnd rnd;
+    private final WalSqlExecutionContextImpl sqlExecutionContext;
 
     public SqlToOperation(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         rnd = new Rnd();

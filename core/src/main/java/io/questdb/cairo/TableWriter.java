@@ -28,9 +28,9 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -339,18 +339,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     @TestOnly
     public TableWriter(CairoConfiguration configuration, TableToken tableToken, MessageBus messageBus, Metrics metrics) {
         this(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
-    }
-
-    @TestOnly
-    TableWriter(
-            CairoConfiguration configuration,
-            TableToken tableToken,
-            @NotNull MessageBus messageBus,
-            boolean lock,
-            LifecycleManager lifecycleManager,
-            Metrics metrics
-    ) {
-        this(configuration, tableToken, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public static int getPrimaryColumnIndex(int index) {

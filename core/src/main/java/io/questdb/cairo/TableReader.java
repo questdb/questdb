@@ -75,12 +75,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryMR> columns;
     private int partitionCount;
-    private long txColumnVersion = -1;
-    private long txPartitionVersion = -1;
-    private long txTruncateVersion = -1;
     private long rowCount;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
+    private long txColumnVersion = -1;
+    private long txPartitionVersion = -1;
+    private long txTruncateVersion = -1;
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
 

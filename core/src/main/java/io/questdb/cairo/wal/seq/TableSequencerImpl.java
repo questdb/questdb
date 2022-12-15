@@ -291,12 +291,6 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void resumeTable() {
-        metadata.resumeTable();
-        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
-    }
-
-    @Override
     public long rename(TableToken newTableToken) {
         checkDropped();
         tableToken = newTableToken;
@@ -306,6 +300,12 @@ public class TableSequencerImpl implements TableSequencer {
             engine.notifyWalTxnCommitted(tableToken, txn);
         }
         return txn;
+    }
+
+    @Override
+    public void resumeTable() {
+        metadata.resumeTable();
+        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
     }
 
     @TestOnly

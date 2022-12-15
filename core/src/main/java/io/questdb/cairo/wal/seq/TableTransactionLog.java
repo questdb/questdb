@@ -242,6 +242,11 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public TableToken getTableToken() {
+            return tableToken;
+        }
+
+        @Override
         public boolean hasNext() {
             return txnMetaOffset < txnMetaOffsetHi;
         }
@@ -256,11 +261,6 @@ public class TableTransactionLog implements Closeable {
             serializer.fromSink(tableMetadataChange, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
             txnMetaOffset += recordSize;
             return tableMetadataChange;
-        }
-
-        @Override
-        public TableToken getTableToken() {
-            return tableToken;
         }
 
         public void of(

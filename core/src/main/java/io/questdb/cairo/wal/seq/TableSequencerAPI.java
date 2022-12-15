@@ -302,6 +302,20 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void renameWalTable(TableToken tableToken, TableToken newTableToken) {
+        assert tableToken.getDirName().equals(newTableToken.getDirName());
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                sequencer.rename(newTableToken);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+        LOG.advisory().$("renamed wal table [table=")
+                .utf8(tableToken.getTableName()).$(", newName=").utf8(newTableToken.getTableName())
+                .$(", dirName=").utf8(newTableToken.getDirName()).I$();
+    }
+
     public void resumeTable(TableToken tableToken, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
@@ -327,20 +341,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 sequencer.unlockWrite();
             }
         }
-    }
-
-    public void renameWalTable(TableToken tableToken, TableToken newTableToken) {
-        assert tableToken.getDirName().equals(newTableToken.getDirName());
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.rename(newTableToken);
-            } finally {
-                sequencer.unlockWrite();
-            }
-        }
-        LOG.advisory().$("renamed wal table [table=")
-                .utf8(tableToken.getTableName()).$(", newName=").utf8(newTableToken.getTableName())
-                .$(", dirName=").utf8(newTableToken.getDirName()).I$();
     }
 
     @TestOnly

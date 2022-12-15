@@ -712,30 +712,6 @@ public class SecurityTest extends AbstractGriffinTest {
         });
     }
 
-    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        memoryRestrictedEngine.releaseInactive();
-        memoryRestrictedEngine.releaseInactiveTableSequencers();
-        memoryRestrictedEngine.closeNameRegistry();
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                circuitBreakerCallLimit = Integer.MAX_VALUE;
-                nCheckInterruptedCalls.set(0);
-                code.run();
-                engine.releaseInactive();
-                Assert.assertEquals("engine's busy writer count", 0, engine.getBusyWriterCount());
-                Assert.assertEquals("engine's busy reader count", 0, engine.getBusyReaderCount());
-                memoryRestrictedEngine.releaseInactive();
-                memoryRestrictedEngine.releaseInactiveTableSequencers();
-                memoryRestrictedEngine.closeNameRegistry();
-                Assert.assertEquals("restricted engine's busy writer count", 0, memoryRestrictedEngine.getBusyWriterCount());
-                Assert.assertEquals("restricted engine's busy reader count", 0, memoryRestrictedEngine.getBusyReaderCount());
-            } finally {
-                engine.clear();
-                memoryRestrictedEngine.clear();
-            }
-        });
-    }
-
     @Test
     public void testMemoryRestrictionsWithSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
@@ -937,6 +913,30 @@ public class SecurityTest extends AbstractGriffinTest {
     private static void setMaxCircuitBreakerChecks(long max) {
         nCheckInterruptedCalls.set(0);
         circuitBreakerCallLimit = max;
+    }
+
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        memoryRestrictedEngine.releaseInactive();
+        memoryRestrictedEngine.releaseInactiveTableSequencers();
+        memoryRestrictedEngine.closeNameRegistry();
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                circuitBreakerCallLimit = Integer.MAX_VALUE;
+                nCheckInterruptedCalls.set(0);
+                code.run();
+                engine.releaseInactive();
+                Assert.assertEquals("engine's busy writer count", 0, engine.getBusyWriterCount());
+                Assert.assertEquals("engine's busy reader count", 0, engine.getBusyReaderCount());
+                memoryRestrictedEngine.releaseInactive();
+                memoryRestrictedEngine.releaseInactiveTableSequencers();
+                memoryRestrictedEngine.closeNameRegistry();
+                Assert.assertEquals("restricted engine's busy writer count", 0, memoryRestrictedEngine.getBusyWriterCount());
+                Assert.assertEquals("restricted engine's busy reader count", 0, memoryRestrictedEngine.getBusyReaderCount());
+            } finally {
+                engine.clear();
+                memoryRestrictedEngine.clear();
+            }
+        });
     }
 
     @Override

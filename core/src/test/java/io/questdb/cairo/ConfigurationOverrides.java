@@ -68,6 +68,8 @@ public interface ConfigurationOverrides {
 
     int getJitMode();
 
+    int getMaxFileNameLength();
+
     int getMaxUncommittedRows();
 
     long getO3MaxLag();
@@ -128,8 +130,6 @@ public interface ConfigurationOverrides {
 
     Boolean isParallelFilterEnabled();
 
-    int getMaxFileNameLength();
-
     boolean mangleTableDirNames();
 
     void reset();
@@ -177,6 +177,8 @@ public interface ConfigurationOverrides {
     void setJitMode(int jitMode);
 
     void setMangleTableDirNames(boolean mangle);
+
+    void setMaxFileNameLength(int maxFileNameLength);
 
     void setMaxUncommittedRows(int configOverrideMaxUncommittedRows);
 
@@ -231,6 +233,4 @@ public interface ConfigurationOverrides {
     void setWriterCommandQueueCapacity(int writerCommandQueueCapacity);
 
     void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize);
-
-    void setMaxFileNameLength(int maxFileNameLength);
 }

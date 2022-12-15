@@ -39,7 +39,7 @@ public interface FilesFacade {
     default boolean closeChecked(int fd) {
         return Files.closeChecked(fd) == 0;
     }
-    
+
     boolean closeRemove(int fd, LPSZ path);
 
     int copy(LPSZ from, LPSZ to);
