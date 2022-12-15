@@ -48,6 +48,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -6282,12 +6283,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
+        void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars);
+
         void putSym(int columnIndex, CharSequence value);
 
         void putSym(int columnIndex, char value);
 
         default void putSymIndex(int columnIndex, int key) {
             putInt(columnIndex, key);
+        }
+
+        default void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            throw new UnsupportedOperationException();
         }
 
         default void putTimestamp(int columnIndex, long value) {
@@ -6431,6 +6438,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8AsUtf16(value, hasNonAsciiChars));
             setRowValueNotNull(columnIndex);
         }
 

@@ -28,6 +28,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 
@@ -52,6 +54,21 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void close(boolean truncate, byte truncateMode) {
+    }
+
+    @Override
+    public void checkAndExtend(long address) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public FloatingDirectCharSink getFloatingSink() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void updateAppendAddress(long appendAddress) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -318,6 +335,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
         throw new UnsupportedOperationException();
     }
 

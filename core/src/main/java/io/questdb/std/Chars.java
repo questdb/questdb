@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.str.*;
@@ -898,6 +899,21 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    public static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
+        if (hasNonAsciiChars) {
+            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
+            return tempSink;
+        }
+        return utf8CharSeq;
+    }
+
+    public static void utf8ToUtf16Unchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+        tempSink.clear();
+        if (!utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
+            throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
+        }
     }
 
     private static boolean equalsChars(CharSequence l, CharSequence r, int len) {

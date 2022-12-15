@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +39,7 @@ import org.jetbrains.annotations.Nullable;
 //contiguous mapped appendable readable writable
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
+    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private long extendSegmentMsb;
@@ -64,6 +66,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
         return pageAddress + offset;
+    }
+
+    @Override
+    public void checkAndExtend(long address) {
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - pageAddress);
     }
 
     @Override
@@ -132,6 +142,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public long getFd() {
         return fd;
+    }
+
+    @Override
+    public FloatingDirectCharSink getFloatingSink() {
+        return floatingDirectCharSink;
     }
 
     @Override
@@ -254,16 +269,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void updateAppendAddress(long appendAddress) {
+        this.appendAddress = appendAddress;
+    }
+
+    @Override
     public void zero() {
         long baseLength = lim - pageAddress;
         Vect.memset(pageAddress, baseLength, 0);
-    }
-
-    private void checkAndExtend(long address) {
-        if (address <= lim) {
-            return;
-        }
-        extend0(address - pageAddress);
     }
 
     private void extend0(long newSize) {

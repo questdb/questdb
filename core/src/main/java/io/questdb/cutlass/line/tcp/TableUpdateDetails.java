@@ -43,7 +43,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -110,7 +110,9 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void addReference(int workerId) {
-        networkIOOwnerCount++;
+        if (writerThreadId != -1) {
+            networkIOOwnerCount++;
+        }
         LOG.info()
                 .$("network IO thread using table [workerId=").$(workerId)
                 .$(", tableName=").$(tableNameUtf16)
@@ -186,7 +188,9 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void removeReference(int workerId) {
-        networkIOOwnerCount--;
+        if (writerThreadId != -1) {
+            networkIOOwnerCount--;
+        }
         localDetailsArray[workerId].clear();
         LOG.info()
                 .$("network IO thread released table [workerId=").$(workerId)

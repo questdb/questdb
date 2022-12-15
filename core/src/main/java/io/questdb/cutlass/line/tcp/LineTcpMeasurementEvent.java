@@ -70,6 +70,38 @@ class LineTcpMeasurementEvent implements Closeable {
         this.stringToCharCastAllowed = stringToCharCastAllowed;
     }
 
+    public static CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
+        // todo: user visible errors should not report writer index, should probably report name
+        return CairoException.critical(0)
+                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
+                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
+                .put(", value=").put(entityValue)
+                .put(']');
+    }
+
+    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
+        return CairoException.critical(0)
+                .put("cast error for line protocol ").put(ilpType)
+                .put(" [columnWriterIndex=").put(columnWriterIndex)
+                .put(", columnType=").put(ColumnType.nameOf(colType))
+                .put(", name=").put(name)
+                .put(']');
+    }
+
+    public static CairoException invalidColNameError(TableUpdateDetails tud, CharSequence colName) {
+        return CairoException.critical(0)
+                .put("invalid column name [table=").put(tud.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
+    }
+
+    public static CairoException newColumnsNotAllowed(TableUpdateDetails tud, String colName) {
+        return CairoException.critical(0)
+                .put("column does not exist, creating new columns is disabled [table=").put(tud.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
+    }
+
     @Override
     public void close() {
         // this is concurrent writer release
@@ -86,37 +118,6 @@ class LineTcpMeasurementEvent implements Closeable {
 
     public void releaseWriter() {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
-    }
-
-    private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
-        return CairoException.critical(0)
-                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
-                .put(", value=").put(entityValue)
-                .put(']');
-    }
-
-    private CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
-        return CairoException.critical(0)
-                .put("cast error for line protocol ").put(ilpType)
-                .put(" [columnWriterIndex=").put(columnWriterIndex)
-                .put(", columnType=").put(ColumnType.nameOf(colType))
-                .put(", name=").put(name)
-                .put(']');
-    }
-
-    private CairoException invalidColNameError(CharSequence colName) {
-        return CairoException.critical(0)
-                .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
-                .put(", columnName=").put(colName)
-                .put(']');
-    }
-
-    private CairoException newColumnsNotAllowed(String colName) {
-        return CairoException.critical(0)
-                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
-                .put(", columnName=").put(colName)
-                .put(']');
     }
 
     void append() throws CommitFailedException {
@@ -323,9 +324,9 @@ class LineTcpMeasurementEvent implements Closeable {
                     offset = buffer.addColumnName(offset, columnName);
                     colType = localDetails.getColumnType(columnName, entityType);
                 } else if (!autoCreateNewColumns) {
-                    throw newColumnsNotAllowed(columnName);
+                    throw newColumnsNotAllowed(tableUpdateDetails, columnName);
                 } else {
-                    throw invalidColNameError(columnName);
+                    throw invalidColNameError(tableUpdateDetails, columnName);
                 }
             } else {
                 // duplicate column, skip

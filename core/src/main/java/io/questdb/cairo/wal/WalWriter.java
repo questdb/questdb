@@ -44,13 +44,16 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
+import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class WalWriter implements TableWriterAPI {
     public static final int NEW_COL_RECORD_SIZE = 6;
@@ -438,6 +441,20 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    public TableWriter.Row newRowSansTimestamp() {
+        checkDistressed();
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+                rollSegmentOnNextRow = false;
+            }
+            return row;
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+    }
+
     @Override
     public void rollback() {
         try {
@@ -803,6 +820,7 @@ public class WalWriter implements TableWriterAPI {
                         MillisecondClock milliClock = configuration.getMillisecondClock();
                         long spinLockTimeout = configuration.getSpinLockTimeout();
 
+                        // todo: use own path
                         Path path = Path.PATH2.get();
                         path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
 
@@ -1528,6 +1546,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private class RowImpl implements TableWriter.Row {
+        private final StringSink tempSink = new StringSink();
         private long timestamp;
 
         @Override
@@ -1669,6 +1688,12 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8AsUtf16(value, hasNonAsciiChars));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
         public void putSym(int columnIndex, CharSequence value) {
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
@@ -1699,6 +1724,14 @@ public class WalWriter implements TableWriterAPI {
         public void putSym(int columnIndex, char value) {
             CharSequence str = SingleCharCharSequence.get(value);
             putSym(columnIndex, str);
+        }
+
+        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            // via temp string the utf8 decoder will be writing directly to our buffer
+            tempSink.clear();
+            // this method will write column name to the buffer if it has to be utf8 decoded
+            // otherwise it will write nothing.
+            putSym(columnIndex, utf8ToUtf16(value, tempSink, hasNonAsciiChars));
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.FloatingDirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -39,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Mutable {
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
+    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
     private final int memoryTag;
@@ -63,6 +65,16 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
         return addressOf(offset);
+    }
+
+    @Override
+    public void checkAndExtend(long address) {
+        assert appendAddress <= lim;
+        assert address >= pageAddress;
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - pageAddress);
     }
 
     @Override
@@ -96,6 +108,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public long getExtendSegmentSize() {
         return 1L << sizeMsb;
+    }
+
+    @Override
+    public FloatingDirectCharSink getFloatingSink() {
+        return floatingDirectCharSink;
     }
 
     @Override
@@ -146,18 +163,14 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
+    public void updateAppendAddress(long appendAddress) {
+        this.appendAddress = appendAddress;
+    }
+
+    @Override
     public void zero() {
         long baseLength = lim - pageAddress;
         Vect.memset(pageAddress, baseLength, 0);
-    }
-
-    private void checkAndExtend(long address) {
-        assert appendAddress <= lim;
-        assert address >= pageAddress;
-        if (address <= lim) {
-            return;
-        }
-        extend0(address - pageAddress);
     }
 
     private void extend0(long size) {

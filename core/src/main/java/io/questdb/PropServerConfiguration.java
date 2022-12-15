@@ -2761,6 +2761,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return lineTcpIOWorkerPoolConfiguration;
         }
