@@ -68,7 +68,6 @@ class TxFileStruct {
 
     static class AttachedPartition {
         long DATA_TX;
-        long MASK;
         long MASKED_SIZE;
         long NAME_TX;
         long TS;
