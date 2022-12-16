@@ -237,7 +237,7 @@ public abstract class AbstractCairoTest {
             if (memAfterCursorClose > limit) {
                 dumpMemoryUsage();
                 printFactoryMemoryUsageDiff();
-                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + ". Diff " + (memAfterCursorClose - memoryUsage));
             }
         }
     }

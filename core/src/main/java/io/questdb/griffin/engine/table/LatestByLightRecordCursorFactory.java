@@ -72,30 +72,10 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // TODO(puzpuzpuz): this is non-suspendable
-        if (!cursor.isOpen) {
-            cursor.isOpen = true;
-            cursor.latestByMap.reopen();
-        }
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
-
-        try {
-            final Record baseRecord = baseCursor.getRecord();
-            if (orderedByTimestampAsc) {
-                // We don't need to store and compare timestamps if the sub-query returns them in asc order.
-                // In this case we'll be good with the very last row id per each unique key.
-                buildMapForOrderedSubQuery(circuitBreaker, baseCursor, baseRecord);
-            } else {
-                // Otherwise - we have to deal with the timestamps.
-                buildMapForUnorderedSubQuery(circuitBreaker, baseCursor, baseRecord);
-            }
-            cursor.of(baseCursor, circuitBreaker);
-            return cursor;
-        } catch (Throwable e) {
-            baseCursor.close();
-            throw e;
-        }
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        cursor.of(baseCursor, circuitBreaker);
+        return cursor;
     }
 
     @Override
@@ -108,51 +88,19 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         return base.usesCompiledFilter();
     }
 
-    private void buildMapForOrderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
-        while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            final MapKey key = cursor.latestByMap.withKey();
-            recordSink.copy(baseRecord, key);
-            final MapValue value = key.createValue();
-            value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
-        }
-    }
-
-    private void buildMapForUnorderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
-        while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            final MapKey key = cursor.latestByMap.withKey();
-            recordSink.copy(baseRecord, key);
-            final MapValue value = key.createValue();
-
-            if (value.isNew()) {
-                value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
-                value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
-            } else {
-                long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
-                long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                if (newTimestamp >= prevTimestamp) {
-                    value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
-                    value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
-                }
-            }
-        }
-    }
-
     @Override
     protected void _close() {
         base.close();
         cursor.close();
     }
 
-    private static class LatestByLightRecordCursor implements RecordCursor {
+    private class LatestByLightRecordCursor implements RecordCursor {
 
         private final Map latestByMap;
         private RecordCursor baseCursor;
         private Record baseRecord;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isMapBuilt;
         private boolean isOpen;
         private RecordCursor mapCursor;
         private MapRecord mapRecord;
@@ -189,6 +137,12 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
+            // TODO(puzpuzpuz): test suspendability
+            if (!isMapBuilt) {
+                buildMap();
+                toTop();
+                isMapBuilt = true;
+            }
             if (!mapCursor.hasNext()) {
                 return false;
             }
@@ -205,11 +159,14 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            if (!isOpen) {
+                isOpen = true;
+                latestByMap.reopen();
+            }
             this.baseCursor = baseCursor;
-            this.baseRecord = baseCursor.getRecord();
-            this.mapCursor = latestByMap.getCursor();
-            this.mapRecord = (MapRecord) mapCursor.getRecord();
+            baseRecord = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
+            isMapBuilt = false;
         }
 
         @Override
@@ -219,12 +176,58 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public long size() {
-            return mapCursor.size();
+            return isMapBuilt ? mapCursor.size() : -1;
         }
 
         @Override
         public void toTop() {
             mapCursor.toTop();
+        }
+
+        private void buildMap() {
+            if (orderedByTimestampAsc) {
+                // We don't need to store and compare timestamps if the sub-query returns them in asc order.
+                // In this case we'll be good with the very last row id per each unique key.
+                buildMapForOrderedSubQuery();
+            } else {
+                // Otherwise - we have to deal with the timestamps.
+                buildMapForUnorderedSubQuery();
+            }
+            mapCursor = latestByMap.getCursor();
+            mapRecord = (MapRecord) mapCursor.getRecord();
+        }
+
+        private void buildMapForOrderedSubQuery() {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
+                final MapKey key = latestByMap.withKey();
+                recordSink.copy(baseRecord, key);
+                final MapValue value = key.createValue();
+                value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
+            }
+        }
+
+        private void buildMapForUnorderedSubQuery() {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
+                final MapKey key = latestByMap.withKey();
+                recordSink.copy(baseRecord, key);
+                final MapValue value = key.createValue();
+
+                if (value.isNew()) {
+                    value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
+                    value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
+                } else {
+                    long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
+                    long newTimestamp = baseRecord.getTimestamp(timestampIndex);
+                    if (newTimestamp >= prevTimestamp) {
+                        value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
+                        value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
+                    }
+                }
+            }
         }
     }
 }

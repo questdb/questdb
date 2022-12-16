@@ -78,13 +78,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
-
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         try {
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
             cursor.of(baseCursor, circuitBreaker);
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();

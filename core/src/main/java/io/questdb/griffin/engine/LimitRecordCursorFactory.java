@@ -167,7 +167,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void countLimit() {
-            // TODO(puzpuzpuz): this is non-suspendable (skipTo calls without subsequent countRows)
+            // TODO(puzpuzpuz): this is non-suspendable (skipTo calls without previous countRows)
             if (lo < 0 && hiFunction == null) {
                 // last N rows
                 countRows();
