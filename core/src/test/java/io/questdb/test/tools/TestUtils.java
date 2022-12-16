@@ -84,32 +84,40 @@ public final class TestUtils {
         return true;
     }
 
-    public static void assertConnect(long fd, long sockAddr) {
+    public static void assertConnect(int fd, long sockAddr) {
         long rc = connect(fd, sockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
+    public static void assertConnect(NetworkFacade nf, int fd, long pSockAddr) {
         long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
         }
     }
 
-    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+    public static void assertConnectAddrInfo(int fd, long sockAddrInfo) {
         long rc = connectAddrInfo(fd, sockAddrInfo);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
-    public static void assertContains(CharSequence _this, CharSequence that) {
-        if (Chars.contains(_this, that)) {
+    public static void assertContains(String message, CharSequence actual, CharSequence expected) {
+        // Assume that "" is contained in any string.
+        if (expected.length() == 0) {
             return;
         }
-        Assert.fail("'" + _this.toString() + "' does not contain: " + that);
+        if (Chars.contains(actual, expected)) {
+            return;
+        }
+        Assert.fail((message != null ? message + ": '" : "'") + actual.toString() + "' does not contain: " + expected);
+    }
+
+    public static void assertContains(CharSequence actual, CharSequence expected) {
+        assertContains(null, actual, expected);
     }
 
     public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink) {
@@ -256,12 +264,12 @@ public final class TestUtils {
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            long fda = Files.openRO(path);
+            int fda = Files.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
                 path.of(b.getAbsolutePath()).$();
-                long fdb = Files.openRO(path);
+                int fdb = Files.openRO(path);
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -304,7 +312,7 @@ public final class TestUtils {
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            long fda = Files.openRO(path);
+            int fda = Files.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -687,12 +695,12 @@ public final class TestUtils {
         }
     }
 
-    public static long connect(long fd, long sockAddr) {
+    public static long connect(int fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
     }
 
-    public static long connectAddrInfo(long fd, long sockAddrInfo) {
+    public static long connectAddrInfo(int fd, long sockAddrInfo) {
         Assert.assertTrue(fd > -1);
         return Net.connectAddrInfo(fd, sockAddrInfo);
     }
@@ -950,7 +958,7 @@ public final class TestUtils {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
-            public int send(long fd, long buffer, int bufferLen) {
+            public int send(int fd, long buffer, int bufferLen) {
                 if (startDelayDelayAfter == 0) {
                     return super.send(fd, buffer, bufferLen);
                 }

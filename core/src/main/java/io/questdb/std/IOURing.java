@@ -36,7 +36,7 @@ public interface IOURing extends Closeable {
     @TestOnly
     long enqueueNop();
 
-    long enqueueRead(long fd, long offset, long bufPtr, int len);
+    long enqueueRead(int fd, long offset, long bufPtr, int len);
 
     long getCqeId();
 

@@ -205,10 +205,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
-
         FilesFacade myFf = new FilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(long fd, long offset) {
+            public long readNonNegativeLong(int fd, long offset) {
                 return 17;
             }
         };
@@ -238,11 +237,10 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionFailsBecauseWeCannotReadPrevMaxPartition() throws Exception {
-
         FilesFacade myFf = new FilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(long fd, long offset) {
-                return -1L;
+            public long readNonNegativeLong(int fd, long offset) {
+                return -1;
             }
         };
 

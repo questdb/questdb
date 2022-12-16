@@ -31,6 +31,7 @@ import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
+
     void closeSlider();
 
     void configureFollowerAndWriter(
@@ -46,7 +47,7 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void distress();
 
-    long getFd();
+    int getFd();
 
     long getSequence();
 

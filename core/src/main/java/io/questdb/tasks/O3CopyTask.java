@@ -35,17 +35,17 @@ public class O3CopyTask extends AbstractLockable {
     private AtomicInteger columnCounter;
     private int columnType;
     private long dstFixAddr;
-    private long dstFixFd;
+    private int dstFixFd;
     private long dstFixFileOffset;
     private long dstFixOffset;
     private long dstFixSize;
     private long dstIndexAdjust;
     private long dstIndexOffset;
-    private long dstKFd;
-    private long dstVFd;
+    private int dstKFd;
+    private int dstVFd;
     private long dstVarAddr;
     private long dstVarAdjust;
-    private long dstVarFd;
+    private int dstVarFd;
     private long dstVarOffset;
     private long dstVarOffsetEnd;
     private long dstVarSize;
@@ -55,7 +55,7 @@ public class O3CopyTask extends AbstractLockable {
     private boolean partitionMutates;
     private long partitionTimestamp;
     private long srcDataFixAddr;
-    private long srcDataFixFd;
+    private int srcDataFixFd;
     private long srcDataFixOffset;
     private long srcDataFixSize;
     private long srcDataHi;
@@ -63,7 +63,7 @@ public class O3CopyTask extends AbstractLockable {
     private long srcDataMax;
     private long srcDataTop;
     private long srcDataVarAddr;
-    private long srcDataVarFd;
+    private int srcDataVarFd;
     private long srcDataVarOffset;
     private long srcDataVarSize;
     private long srcOooFixAddr;
@@ -74,7 +74,7 @@ public class O3CopyTask extends AbstractLockable {
     private long srcOooPartitionLo;
     private long srcOooVarAddr;
     private long srcTimestampAddr;
-    private long srcTimestampFd;
+    private int srcTimestampFd;
     private long srcTimestampSize;
     private TableWriter tableWriter;
     private long timestampMax;
@@ -98,7 +98,7 @@ public class O3CopyTask extends AbstractLockable {
         return dstFixAddr;
     }
 
-    public long getDstFixFd() {
+    public int getDstFixFd() {
         return dstFixFd;
     }
 
@@ -122,11 +122,11 @@ public class O3CopyTask extends AbstractLockable {
         return dstIndexOffset;
     }
 
-    public long getDstKFd() {
+    public int getDstKFd() {
         return dstKFd;
     }
 
-    public long getDstVFd() {
+    public int getDstVFd() {
         return dstVFd;
     }
 
@@ -138,7 +138,7 @@ public class O3CopyTask extends AbstractLockable {
         return dstVarAdjust;
     }
 
-    public long getDstVarFd() {
+    public int getDstVarFd() {
         return dstVarFd;
     }
 
@@ -174,7 +174,7 @@ public class O3CopyTask extends AbstractLockable {
         return srcDataFixAddr;
     }
 
-    public long getSrcDataFixFd() {
+    public int getSrcDataFixFd() {
         return srcDataFixFd;
     }
 
@@ -206,7 +206,7 @@ public class O3CopyTask extends AbstractLockable {
         return srcDataVarAddr;
     }
 
-    public long getSrcDataVarFd() {
+    public int getSrcDataVarFd() {
         return srcDataVarFd;
     }
 
@@ -250,7 +250,7 @@ public class O3CopyTask extends AbstractLockable {
         return srcTimestampAddr;
     }
 
-    public long getSrcTimestampFd() {
+    public int getSrcTimestampFd() {
         return srcTimestampFd;
     }
 
@@ -289,11 +289,11 @@ public class O3CopyTask extends AbstractLockable {
             int blockType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
-            long srcDataFixFd,
+            int srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataFixSize,
-            long srcDataVarFd,
+            int srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
@@ -311,23 +311,23 @@ public class O3CopyTask extends AbstractLockable {
             long timestampMin,
             long timestampMax,
             long oooTimestampHi,
-            long dstFixFd,
+            int dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
             long dstFixFileOffset,
             long dstFixSize,
-            long dstVarFd,
+            int dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
             long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
-            long dstKFd,
-            long dstVFd,
+            int dstKFd,
+            int dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
             int indexBlockCapacity,
-            long srcTimestampFd,
+            int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,

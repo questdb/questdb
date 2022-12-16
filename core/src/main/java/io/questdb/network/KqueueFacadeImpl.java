@@ -41,4 +41,19 @@ public class KqueueFacadeImpl implements KqueueFacade {
     public int kqueue() {
         return KqueueAccessor.kqueue();
     }
+
+    @Override
+    public long pipe() {
+        return KqueueAccessor.pipe();
+    }
+
+    @Override
+    public int readPipe(int fd) {
+        return KqueueAccessor.readPipe(fd);
+    }
+
+    @Override
+    public int writePipe(int fd) {
+        return KqueueAccessor.writePipe(fd);
+    }
 }

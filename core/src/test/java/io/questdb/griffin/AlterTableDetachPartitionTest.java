@@ -1822,7 +1822,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 dFile(src.chop$(), "ts", -1);
-                long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
+                int fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 8);
                 } finally {
@@ -1979,7 +1979,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab foobar",
                     16,
-                    "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected",
+                    "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected",
                     tableModel
             );
         }

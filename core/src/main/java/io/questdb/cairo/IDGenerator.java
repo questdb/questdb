@@ -34,7 +34,7 @@ public class IDGenerator implements Closeable {
     private final String uniqueIdFileName;
     private final long uniqueIdMemSize;
 
-    private long uniqueIdFd = -1;
+    private int uniqueIdFd = -1;
     private long uniqueIdMem = 0;
 
     public IDGenerator(CairoConfiguration configuration, String uniqueIdFileName) {
@@ -50,8 +50,7 @@ public class IDGenerator implements Closeable {
             ff.munmap(uniqueIdMem, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
             uniqueIdMem = 0;
         }
-        if (uniqueIdFd != -1) {
-            ff.close(uniqueIdFd);
+        if (ff.closeChecked(uniqueIdFd)) {
             uniqueIdFd = -1;
         }
     }
