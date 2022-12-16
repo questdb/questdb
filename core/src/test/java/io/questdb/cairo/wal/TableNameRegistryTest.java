@@ -27,6 +27,8 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -317,9 +319,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            tt2 = engine.rename(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), "tab2", Path.getThreadLocal2(""), "tab2_ࠄ");
-            Assert.assertTrue(engine.isWalTable(tt2));
-            drainWalQueue();
+            try (MemoryMARW mem = Vm.getMARWInstance()) {
+                tt2 = engine.rename(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), mem, "tab2", Path.getThreadLocal2(""), "tab2_ࠄ");
+                Assert.assertTrue(engine.isWalTable(tt2));
+                drainWalQueue();
+
+                tt3 = engine.rename(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), mem, "tab3", Path.getThreadLocal2(""), "tab3_ࠄ");
+            }
 
             engine.closeNameRegistry();
 
@@ -329,7 +335,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             Assert.assertEquals(tt1, engine.getTableToken("tab1"));
             Assert.assertEquals(tt2, engine.getTableToken("tab2_ࠄ"));
-            Assert.assertEquals(tt3, engine.getTableToken("tab3"));
+            Assert.assertEquals(tt3, engine.getTableToken("tab3_ࠄ"));
         });
     }
 

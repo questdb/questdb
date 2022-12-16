@@ -28,6 +28,8 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -244,10 +246,11 @@ public class CairoEngineTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createX(engine);
-                TableToken y = engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
-
-                assertWriter(engine, y);
-                assertReader(engine, y);
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                    TableToken y = engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
+                    assertWriter(engine, y);
+                    assertReader(engine, y);
+                }
             }
         });
     }
@@ -344,12 +347,15 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, x);
                 assertReader(engine, x);
 
-                TableToken y = engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
 
-                assertWriter(engine, y);
-                assertReader(engine, y);
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                    TableToken y = engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
 
-                Assert.assertTrue(engine.clear());
+                    assertWriter(engine, y);
+                    assertReader(engine, y);
+
+                    Assert.assertTrue(engine.clear());
+                }
             }
         });
     }
@@ -367,11 +373,11 @@ public class CairoEngineTest extends AbstractCairoTest {
                     } catch (CairoException ignored) {
                     }
 
-                    try {
-                        engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
+                    try (MemoryMARW mem = Vm.getMARWInstance()) {
+                        engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "annot lock table");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=missing or owned by other process]");
                     }
                 }
             }
@@ -399,13 +405,17 @@ public class CairoEngineTest extends AbstractCairoTest {
             };
             AbstractCairoTest.ff = ff;
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
                 TableToken x = createX(engine);
 
                 assertReader(engine, x);
                 assertWriter(engine, x);
+
                 try {
-                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
+                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
@@ -413,7 +423,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertReader(engine, x);
                 assertWriter(engine, x);
-                TableToken y = engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
+                TableToken y = engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
                 assertReader(engine, y);
                 assertWriter(engine, y);
             }
@@ -431,8 +441,11 @@ public class CairoEngineTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    MemoryMARW mem = Vm.getMARWInstance()
+            ) {
+                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
@@ -450,8 +463,8 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertWriter(engine, x);
                 assertReader(engine, x);
-                try {
-                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
+                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "exists");

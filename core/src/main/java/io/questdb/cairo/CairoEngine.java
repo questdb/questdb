@@ -666,10 +666,6 @@ public class CairoEngine implements Closeable, WriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
-    public TableToken refreshTableToken(TableToken tableToken) {
-        return tableNameRegistry.refreshTableToken(tableToken);
-    }
-
     public void registerTableToken(TableToken tableToken) {
         tableNameRegistry.registerName(tableToken);
     }
@@ -722,6 +718,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableToken rename(
             CairoSecurityContext securityContext,
             Path path,
+            MemoryMARW memory,
             CharSequence tableName,
             Path otherPath,
             CharSequence newName
@@ -736,22 +733,24 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken != null) {
             if (tableToken.isWal()) {
                 newTableToken = tableNameRegistry.rename(tableName, newName, tableToken);
+                TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);
                 tableSequencerAPI.renameWalTable(tableToken, newTableToken);
                 return newTableToken;
             } else {
-                try (TableWriter tableWriter = lockTableGetWriter(securityContext, tableToken)) {
+                String lockedReason = lock(securityContext, tableToken, "renameTable");
+                if (null == lockedReason) {
                     try {
-                        newTableToken = rename0(path, tableToken, tableName, otherPath, newName, tableWriter);
+                        newTableToken = rename0(path, tableToken, tableName, otherPath, newName);
+                        TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);
                     } finally {
-                        readerPool.unlock(tableToken);
-                        metadataPool.unlock(tableToken);
+                        unlock(securityContext, tableToken, null, false);
                     }
                     tableNameRegistry.dropTable(tableToken);
-                    return newTableToken;
-                } catch (EntryUnavailableException e) {
-                    LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(e.getReason()).$("']").$();
-                    throw e;
+                } else {
+                    LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
+                    throw EntryUnavailableException.instance(lockedReason);
                 }
+                return newTableToken;
             }
         } else {
             LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
@@ -800,32 +799,7 @@ public class CairoEngine implements Closeable, WriterSource {
         writerPool.unlock(tableToken);
     }
 
-    private TableWriter lockTableGetWriter(
-            CairoSecurityContext securityContext,
-            TableToken tableToken
-    ) {
-        securityContext.checkWritePermission();
-
-        boolean success = false;
-        TableWriter tableWriter = writerPool.get(tableToken, "rename table");
-        try {
-            if (readerPool.lock(tableToken)) {
-                if (metadataPool.lock(tableToken)) {
-                    LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
-                    success = true;
-                    return tableWriter;
-                }
-                readerPool.unlock(tableToken);
-            }
-            throw EntryUnavailableException.instance("reader locked");
-        } finally {
-            if (!success) {
-                tableWriter.close();
-            }
-        }
-    }
-
-    private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to, TableWriter tableWriter) {
+    private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
@@ -850,7 +824,6 @@ public class CairoEngine implements Closeable, WriterSource {
                         .put("', error=").put(error);
             }
             tableNameRegistry.registerName(dstTableToken);
-            tableWriter.changeTableName(0L, dstTableToken);
             return dstTableToken;
         } finally {
             tableNameRegistry.unlockTableName(dstTableToken);

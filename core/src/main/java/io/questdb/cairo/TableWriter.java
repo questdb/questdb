@@ -205,7 +205,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
-    private MemoryMARW tempRwMem;
     private LongConsumer timestampSetter;
     private long todoTxn;
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
@@ -761,26 +760,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             return;
         }
         updateMetaStructureVersion();
-    }
-
-    public void changeTableName(long seqTxn, TableToken tableToken) {
-        // This is change of the logical name of WAL table used for logging.
-        // Private Table Name and all paths remains the same.
-        updateTableToken(tableToken);
-        markSeqTxnCommitted(seqTxn);
-
-        // Update name in _name file.
-        // This is potentially racy but the file only read on startup when the tables.d file is missing 
-        // so very limited circumstances.
-        if (tempRwMem == null) {
-            tempRwMem = Vm.getMARWInstance();
-        }
-        Path nameFilePath = Path.getThreadLocal2(configuration.getRoot()).concat(tableToken).concat(TABLE_NAME_FILE).$();
-        tempRwMem.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
-        tempRwMem.jumpTo(0);
-        tempRwMem.putStr(tableToken.getTableName());
-        tempRwMem.putByte((byte) 0);
-        tempRwMem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {

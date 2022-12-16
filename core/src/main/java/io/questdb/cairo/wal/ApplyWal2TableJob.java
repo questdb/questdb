@@ -47,9 +47,9 @@ import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
+    public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
-    public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final int WAL_APPLY_FAILED = -2;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
@@ -319,17 +319,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         case DROP_TABLE_WALID:
                             tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
                             return;
-
-                        case RENAME_TABLE_WALID:
-                            // Get table name from structure change cursor
-                            TableToken updatedToken = engine.refreshTableToken(tableToken);
-                            if (updatedToken == null) {
-                                LOG.info().$("detected table delete during WAL replay [dirName=").$(tableToken.getDirName()).I$();
-                                // Return will handle table drop on next iteration.
-                                return;
-                            }
-                            writer.changeTableName(seqTxn, updatedToken);
-                            break;
 
                         case 0:
                             throw CairoException.critical(0)

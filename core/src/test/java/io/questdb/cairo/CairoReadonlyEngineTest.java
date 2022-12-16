@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -123,10 +125,11 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                 createTable(tableName, engine);
 
                 roEngine.reloadTableNames();
-                try {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     roEngine.rename(
                             AllowAllCairoSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
+                            mem,
                             tableName,
                             Path.getThreadLocal2(root),
                             tableName + "_renamed"

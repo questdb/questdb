@@ -868,6 +868,17 @@ public final class TableUtils {
         }
     }
 
+    public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
+        // Update name in _name file.
+        // This is potentially racy but the file only read on startup when the tables.d file is missing 
+        // so very limited circumstances.
+        Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();
+        memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
+        memory.jumpTo(0);
+        createTableNameFile(memory, newTableToken.getTableName());
+        memory.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
