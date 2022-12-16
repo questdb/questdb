@@ -37,7 +37,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final AbstractNoRecordSampleByCursor cursor;
+    private final SampleByFillPrevRecordCursor cursor;
 
     public SampleByFillPrevRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -68,7 +68,7 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 recordFunctions
         );
         final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        this.cursor = new SampleByFillPrevRecordCursor(
+        cursor = new SampleByFillPrevRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,

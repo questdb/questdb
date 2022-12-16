@@ -55,21 +55,13 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 offsetFuncPos
         );
         this.simpleMapValue = simpleMapValue;
-        this.record.of(simpleMapValue);
+        record.of(simpleMapValue);
     }
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): this is non-suspendable
+        // TODO(puzpuzpuz): test suspendability
+        initTimestamps();
         return baseRecord != null && notKeyedLoop(simpleMapValue);
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        // TODO(puzpuzpuz): this is non-suspendable
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-        }
     }
 }

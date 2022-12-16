@@ -60,6 +60,9 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
 
     @Override
     public boolean hasNext() {
+        // TODO(puzpuzpuz): test suspendability
+        initTimestamps();
+
         if (baseRecord == null) {
             return false;
         }
@@ -70,20 +73,11 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
-            this.sampleLocalEpoch = expectedLocalEpoch;
-            this.nextSampleLocalEpoch = expectedLocalEpoch;
+            sampleLocalEpoch = expectedLocalEpoch;
+            nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
-        // TODO(puzpuzpuz): this is non-suspendable
-        return notKeyedLoop(simpleMapValue);
-    }
 
-    @Override
-    public void toTop() {
-        super.toTop();
-        // TODO(puzpuzpuz): this is non-suspendable
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-        }
+        return notKeyedLoop(simpleMapValue);
     }
 }

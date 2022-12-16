@@ -223,9 +223,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public long getNextTimestamp() {
             long lastTimestampLocUtc = localEpoch - tzOffset;
             long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);
-            if (nextLastTimestampLoc - tzOffset >= nextDstUTC) {
+            if (nextLastTimestampLoc - tzOffset >= nextDstUtc) {
                 tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);
-                nextDstUTC = rules.getNextDST(nextLastTimestampLoc - tzOffset);
+                nextDstUtc = rules.getNextDST(nextLastTimestampLoc - tzOffset);
                 while (nextLastTimestampLoc - tzOffset <= lastTimestampLocUtc) {
                     nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);
                 }
@@ -278,7 +278,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     // we really need UTC timestamp to get offset correctly
                     // this will converge to UTC timestamp
                     tzOffset = rules.getOffset(timestamp + tzOffset);
-                    nextDstUTC = rules.getNextDST(timestamp + tzOffset);
+                    nextDstUtc = rules.getNextDST(timestamp + tzOffset);
                 }
                 if (fixedOffset != Long.MIN_VALUE) {
                     localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;

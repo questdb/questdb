@@ -103,7 +103,6 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        // TODO(puzpuzpuz): this is non-suspendable
         this.dataFrameCursor = dataFrameCursor;
         recordA.of(dataFrameCursor.getTableReader());
         recordB.of(dataFrameCursor.getTableReader());
