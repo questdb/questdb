@@ -34,6 +34,7 @@ public class WalUtils {
     public static final int METADATA_WALID = -1;
     public static final int RENAME_TABLE_WALID = -3;
     public static final String SEQ_DIR = "txn_seq";
+    public static final String SEQ_DIR_DEPRECATED = "seq";
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
     public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;

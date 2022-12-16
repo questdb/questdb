@@ -65,8 +65,7 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
@@ -5258,15 +5257,15 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-
             if (
                     Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
                             || Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
                             || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
-                            || Chars.startsWith(fileNameSink, SEQ_DIR)
+                            || Chars.equals(fileNameSink, SEQ_DIR)
+                            || Chars.equals(fileNameSink, SEQ_DIR_DEPRECATED)
             ) {
-                // Do not remove detached partitions, wal and sequencer directories
-                // They are probably about to be attached.
+                // Do not remove detached partitions, they are probably about to be attached
+                // Do not remove wal and sequencer directories either
                 return;
             }
 
@@ -5293,8 +5292,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             }
             path.trimTo(rootLen);
             path.concat(pUtf8NameZ).$();
-            int errno;
-            if ((errno = ff.rmdir(path)) == 0) {
+            final int errno = ff.rmdir(path);
+            if (errno == 0) {
                 LOG.info().$("removed partition dir: ").$(path).$();
             } else {
                 LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(errno).I$();
