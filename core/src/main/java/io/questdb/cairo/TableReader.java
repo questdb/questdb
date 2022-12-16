@@ -420,18 +420,24 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (acquireTxn()) {
             return false;
         }
-        final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
-        final long prevColumnVersion = this.txFile.getColumnVersion();
-        final long prevTruncateVersion = this.txFile.getTruncateVersion();
-        try {
-            reloadSlow(true);
-            // partition reload will apply truncate if necessary
-            // applyTruncate for non-partitioned tables only
-            reconcileOpenPartitions(prevPartitionVersion, prevColumnVersion, prevTruncateVersion);
-            return true;
-        } catch (Throwable e) {
-            releaseTxn();
-            throw e;
+        
+        if (txnScoreboard.getActiveReaderCount(txn) != -1) {
+            // happy path, table is intact 
+            final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
+            final long prevColumnVersion = this.txFile.getColumnVersion();
+            final long prevTruncateVersion = this.txFile.getTruncateVersion();
+            try {
+                reloadSlow(true);
+                // partition reload will apply truncate if necessary
+                // applyTruncate for non-partitioned tables only
+                reconcileOpenPartitions(prevPartitionVersion, prevColumnVersion, prevTruncateVersion);
+                return true;
+            } catch (Throwable e) {
+                releaseTxn();
+                throw e;
+            }
+        } else {
+            throw CairoException.nonCritical(CairoException.E_TABLE_DOES_NOT_EXIST).put("table does not exist [name=").put(tableName).put(']');
         }
     }
 
@@ -551,7 +557,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
-            throw CairoException.critical(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
+            throw CairoException.critical().put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
 
         MemoryR col = columns.getQuick(globalIndex);
@@ -794,7 +800,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
-                CairoException exception = CairoException.critical(0).put("Partition '");
+                CairoException exception = CairoException.critical().put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
                 exception.put("' does not exist in table '")
                         .put(tableName)
@@ -803,7 +809,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 exception.put("'] to repair the table or restore the partition directory.");
                 throw exception;
             } else {
-                throw CairoException.critical(0).put("Table '").put(tableName)
+                throw CairoException.critical().put("Table '").put(tableName)
                         .put("' data directory does not exist on the disk at ")
                         .put(path)
                         .put(". Restore data on disk or drop the table.");
@@ -879,7 +885,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             count++;
             if (clock.getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical().put("Transaction read timeout");
             }
             Os.pause();
         }
@@ -1057,7 +1063,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         return false;
                     }
                     LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableName).I$();
-                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableName).put(']');
+                    throw CairoException.critical().put("Metadata read timeout [table=").put(tableName).put(']');
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

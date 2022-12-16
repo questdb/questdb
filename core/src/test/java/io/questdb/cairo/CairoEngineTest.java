@@ -32,10 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import static org.junit.Assert.fail;
 
@@ -507,6 +504,59 @@ public class CairoEngineTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testCrossEngineRenameTable() throws Exception {
+        Assume.assumeFalse(Os.type == Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createX();
+            try (CairoEngine eng = new CairoEngine(configuration)) {
+                long fileCount = Files.getOpenFileCount();
+                // ensure reader is cached in the second engine
+                eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x").close();
+                // rename should succeed
+                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "x2");
+                // getting table "x" from second engine should yield "table does not exist" error
+                try {
+                    eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x").close();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertEquals(CairoException.E_TABLE_DOES_NOT_EXIST, e.getErrno());
+                }
+                // reader should be released
+                Assert.assertEquals(0, eng.getReaderCount());
+                Assert.assertEquals(fileCount,  Files.getOpenFileCount());
+                // should be able to open new table
+                eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x2").close();
+                eng.releaseInactive();
+            }
+        });
+    }
+
+    @Test
+    public void testCrossEngineDropTable() throws Exception {
+        Assume.assumeFalse(Os.type == Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createX();
+            try (CairoEngine eng = new CairoEngine(configuration)) {
+                long fileCount = Files.getOpenFileCount();
+                // ensure reader is cached in the second engine
+                eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x").close();
+                // rename should succeed
+                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                // getting table "x" from second engine should yield "table does not exist" error
+                try {
+                    eng.getReader(AllowAllCairoSecurityContext.INSTANCE, "x").close();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertEquals(CairoException.E_TABLE_DOES_NOT_EXIST, e.getErrno());
+                }
+                // reader should be released
+                Assert.assertEquals(0, eng.getReaderCount());
+                Assert.assertEquals(fileCount,  Files.getOpenFileCount());
+            }
+        });
     }
 
     @Test

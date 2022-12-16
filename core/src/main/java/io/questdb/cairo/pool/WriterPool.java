@@ -234,7 +234,7 @@ public class WriterPool extends AbstractPool {
                 // calling thread must be trying to unlock writer that hasn't been locked.
                 // This qualifies for "illegal state".
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
-                throw CairoException.critical(0).put("Writer ").put(name).put(" is not locked");
+                throw CairoException.critical().put("Writer ").put(name).put(" is not locked");
             }
 
             if (newTable) {
@@ -272,7 +272,7 @@ public class WriterPool extends AbstractPool {
             LOG.debug().$("unlocked [table=`").utf8(name).$("`, thread=").$(thread).I$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.critical(0).put("Not lock owner of ").put(name);
+            throw CairoException.critical().put("Not lock owner of ").put(name);
         }
     }
 

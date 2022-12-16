@@ -154,7 +154,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     public void removeColumn(CharSequence columnName) {
         final int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+            throw CairoException.critical().put("Column not found: ").put(columnName);
         }
 
         columnNameIndexMap.remove(columnName);
@@ -167,7 +167,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         final int columnIndex = columnNameIndexMap.get(columnName);
         if (columnIndex < 0) {
-            throw CairoException.critical(0).put("Column not found: ").put(columnName);
+            throw CairoException.critical().put("Column not found: ").put(columnName);
         }
         final String newNameStr = newName.toString();
         columnMetadata.getQuick(columnIndex).setName(newNameStr);

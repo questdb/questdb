@@ -34,12 +34,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
-    public static final int ILLEGAL_OPERATION = -101;
-    public static final int METADATA_VALIDATION = -100;
-    public static final int NON_CRITICAL = -1;
+    public static final int E_GENERIC = 0;
+    public static final int E_ILLEGAL_OPERATION = -101;
+    public static final int E_METADATA_VALIDATION = -100;
+    public static final int E_TABLE_DOES_NOT_EXIST = -102;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
+    protected boolean critical;
     protected int errno;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
@@ -53,11 +55,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         ex.errno = errno;
         ex.cacheable = false;
         ex.interruption = false;
+        ex.critical = true;
         return ex;
     }
 
+    public static CairoException critical() {
+        return critical(E_GENERIC);
+    }
+
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
-        return critical(METADATA_VALIDATION)
+        return critical(E_METADATA_VALIDATION)
                 .put("Detached column [index=")
                 .put(columnIndex)
                 .put(", name=")
@@ -68,7 +75,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException detachedMetadataMismatch(CharSequence attribute) {
-        return critical(METADATA_VALIDATION)
+        return critical(E_METADATA_VALIDATION)
                 .put("Detached partition metadata [")
                 .put(attribute)
                 .put("] is not compatible with current table metadata");
@@ -87,11 +94,23 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
-        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+        return critical(E_METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+    }
+
+    public static void main(String[] args) {
+        System.out.println(Integer.toBinaryString(E_METADATA_VALIDATION));
     }
 
     public static CairoException nonCritical() {
-        return critical(NON_CRITICAL);
+        CairoException e = critical(E_GENERIC);
+        e.critical = false;
+        return e;
+    }
+
+    public static CairoException nonCritical(int errno) {
+        CairoException e = critical(errno);
+        e.critical = false;
+        return e;
     }
 
     public int getErrno() {
@@ -126,7 +145,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCritical() {
-        return errno != NON_CRITICAL;
+        return critical;
     }
 
     public boolean isInterruption() {
@@ -135,7 +154,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     // logged and skipped by WAL applying code
     public boolean isWALTolerable() {
-        return !isCritical() || errno == METADATA_VALIDATION;
+        return !isCritical() || errno == E_METADATA_VALIDATION;
     }
 
     public CairoException position(int position) {

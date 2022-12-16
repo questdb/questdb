@@ -84,7 +84,7 @@ final class Mig607 {
                         long fileLen = ff.length(fd);
 
                         if (fileLen < offset) {
-                            throw CairoException.critical(0).put("file is too short [path=").put(path).put("]");
+                            throw CairoException.critical().put("file is too short [path=").put(path).put("]");
                         }
 
                         TableUtils.allocateDiskSpace(ff, fd, offset + 8);

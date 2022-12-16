@@ -753,7 +753,7 @@ public class FastMap implements Map, Reopenable {
         private void writeOffset() {
             long len = appendAddress - startAddress;
             if (len > Integer.MAX_VALUE) {
-                throw CairoException.critical(0).put("row data is too large");
+                throw CairoException.critical().put("row data is too large");
             }
             Unsafe.getUnsafe().putInt(nextColOffset, (int) len);
             nextColOffset += 4;

@@ -101,7 +101,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
                     rows++;
                 }
                 if (rows != expectedRowCount) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put(" rebuild var index file failed [path=").put(path)
                             .put(", expectedRows=").put(expectedRowCount)
                             .put(", actualRows=").put(rows).put(']');

@@ -505,7 +505,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     addColumn(walWriter, "c", ColumnType.SHORT);
                     fail("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[-1] duplicate column name: c", e.getMessage());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "duplicate column name: c");
                 }
 
                 row = walWriter.newRow();

@@ -146,7 +146,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
             count++;
             if (clock.getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical().put("Transaction read timeout");
             }
             Os.pause();
         }
@@ -167,7 +167,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
                         return false;
                     }
                     LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.critical(0).put("Metadata read timeout");
+                    throw CairoException.critical().put("Metadata read timeout");
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

@@ -140,7 +140,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 int nCalls = nCheckInterruptedCalls.incrementAndGet();
                 long max = circuitBreakerCallLimit;
                 if (nCalls > max || MicrosecondClockImpl.INSTANCE.getTicks() > deadline) {
-                    throw CairoException.critical(0).put("Interrupting SQL processing, max calls is ").put(max);
+                    throw CairoException.critical().put("Interrupting SQL processing, max calls is ").put(max);
                 }
             }
 

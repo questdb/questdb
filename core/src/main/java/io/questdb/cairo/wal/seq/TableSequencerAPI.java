@@ -366,7 +366,7 @@ public class TableSequencerAPI implements QuietCloseable {
             }
         }
 
-        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableName).put(']');
+        throw CairoException.critical().put("sequencer is distressed [table=").put(tableName).put(']');
     }
 
     private TableSequencerEntry openSequencerInstance(CharSequence tableNameStr) {

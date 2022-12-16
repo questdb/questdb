@@ -70,7 +70,7 @@ public class TxnScoreboard implements Closeable, Mutable {
             return false;
         }
         final long min = fromInternalTxn(-response - 2);
-        throw CairoException.critical(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
+        throw CairoException.critical().put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
     }
 
     @Override
@@ -165,7 +165,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     public long releaseTxn(long txn) {
         long released = releaseTxn(mem, txn);
-//        assert released > -2 : "released count " + txn + " must be positive: " + (released + 1);
+        assert released > -2 : "released count " + txn + " must be positive: " + (released + 1);
         return released;
     }
 

@@ -407,7 +407,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         if (seq > -1) {
             try {
                 if (tab.isWriterInError()) {
-                    throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
+                    throw CairoException.critical().put("writer is in error, aborting ILP pipeline");
                 }
                 queue[writerThreadId].get(seq).createMeasurementEvent(
                         tab,

@@ -34,7 +34,8 @@ public class LimitOverflowException extends CairoException {
     public static LimitOverflowException instance() {
         LimitOverflowException ex = tlException.get();
         ex.message.clear();
-        ex.errno = NON_CRITICAL;
+        ex.errno = E_GENERIC;
+        ex.critical = false;
         return ex;
     }
 }

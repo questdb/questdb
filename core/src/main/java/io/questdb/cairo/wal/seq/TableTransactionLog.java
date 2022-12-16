@@ -208,7 +208,7 @@ public class TableTransactionLog implements Closeable {
         long txnMetaOffset = txnMetaMemIndex.getLong(structureVersion * Long.BYTES);
         int recordSize = txnMetaMem.getInt(txnMetaOffset);
         if (recordSize < 0 || recordSize > Files.PAGE_SIZE) {
-            throw CairoException.critical(0).put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
+            throw CairoException.critical().put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
         }
         txnMetaOffset += Integer.BYTES;
         AlterOperation alterToDeserializeTo = tlAlterOperation.get();
@@ -248,7 +248,7 @@ public class TableTransactionLog implements Closeable {
         public TableMetadataChange next() {
             int recordSize = txnMetaMem.getInt(txnMetaOffset);
             if (recordSize < 0 || recordSize > Files.PAGE_SIZE) {
-                throw CairoException.critical(0).put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
+                throw CairoException.critical().put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
             }
             txnMetaOffset += Integer.BYTES;
             serializer.fromSink(tableMetadataChange, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
@@ -308,7 +308,7 @@ public class TableTransactionLog implements Closeable {
                     }
                 }
 
-                throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
+                throw CairoException.critical().put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
                 if (txnFd > -1) {
                     ff.close(txnFd);

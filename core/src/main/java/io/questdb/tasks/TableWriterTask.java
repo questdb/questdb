@@ -33,7 +33,6 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int CMD_ALTER_TABLE = 2;
-    public static final int CMD_UNUSED = 1;
     public static final int CMD_UPDATE_TABLE = 3;
 
     public static final int TSK_BEGIN = 64;
@@ -156,7 +155,7 @@ public class TableWriterTask implements Closeable {
 
     private void checkCapacity(long byteCount) {
         if (appendPtr + byteCount > appendLim) {
-            throw CairoException.critical(0).put("async command/event queue buffer overflow");
+            throw CairoException.critical().put("async command/event queue buffer overflow");
         }
     }
 

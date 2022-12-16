@@ -897,7 +897,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
             responseAsciiSink.reset();
             freeFactory();
-            throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
+            throw CairoException.critical().put("server configuration error: not enough space in send buffer for row data");
         }
     }
 
@@ -1621,7 +1621,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 LOG.error().$("not enough space in buffer for row description [buffer=").$(sendBufferSize).I$();
                 responseAsciiSink.reset();
                 freeFactory();
-                throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row description");
+                throw CairoException.critical().put("server configuration error: not enough space in send buffer for row description");
             }
         } else {
             prepareNoDataMessage();
@@ -1640,7 +1640,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
         prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (errno == CairoException.NON_CRITICAL) {
+        if (ex.isCritical()) {
             LOG.error()
                     .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)

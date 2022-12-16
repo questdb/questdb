@@ -45,7 +45,7 @@ public class DropTableTest extends AbstractGriffinTest {
                     compiler.compile("drop table 'large table'", sqlExecutionContext);
                 }
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
             }
         });
     }
@@ -59,7 +59,7 @@ public class DropTableTest extends AbstractGriffinTest {
             try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "large table", "testing")) {
                 compiler.compile("drop table 'large table'", sqlExecutionContext);
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
             }
         });
     }

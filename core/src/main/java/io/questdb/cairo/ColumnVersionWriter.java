@@ -89,7 +89,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             int srcEnd = src.binarySearchBlock(srcIndex, BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_DOWN);
             dest.insertFromSource(index, src, srcIndex, srcEnd + BLOCK_SIZE);
         } else {
-            throw CairoException.critical(0)
+            throw CairoException.critical()
                     .put("invalid Column Version state ")
                     .ts(partitionTimestamp)
                     .put(" column version state, cannot update partition information");

@@ -97,7 +97,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
-        return CairoException.critical(0)
+        return CairoException.critical()
                 .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
                 .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
                 .put(", value=").put(entityValue)
@@ -105,7 +105,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     private CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
-        return CairoException.critical(0)
+        return CairoException.critical()
                 .put("cast error for line protocol ").put(ilpType)
                 .put(" [columnWriterIndex=").put(columnWriterIndex)
                 .put(", columnType=").put(ColumnType.nameOf(colType))
@@ -114,14 +114,14 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     private CairoException invalidColNameError(CharSequence colName) {
-        return CairoException.critical(0)
+        return CairoException.critical()
                 .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
                 .put(", columnName=").put(colName)
                 .put(']');
     }
 
     private CairoException newColumnsNotAllowed(String colName) {
-        return CairoException.critical(0)
+        return CairoException.critical()
                 .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
                 .put(", columnName=").put(colName)
                 .put(']');

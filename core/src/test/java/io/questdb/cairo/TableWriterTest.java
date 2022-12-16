@@ -1695,7 +1695,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int findNext(long findPtr) {
                 if (--count == 0) {
-                    throw CairoException.critical(0).put("FindNext failed");
+                    throw CairoException.critical().put("FindNext failed");
                 }
                 return super.findNext(findPtr);
             }

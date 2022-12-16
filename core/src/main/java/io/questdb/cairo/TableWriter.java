@@ -1032,7 +1032,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     .$(", column=").utf8(columnName)
                     .I$();
         } catch (Throwable e) {
-            throw CairoException.critical(0)
+            throw CairoException.critical()
                     .put("Cannot DROP INDEX for [txn=").put(txWriter.getTxn())
                     .put(", table=").put(tableName)
                     .put(", column=").put(columnName)
@@ -1045,7 +1045,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         if (index > -1) {
             return index;
         }
-        throw CairoException.critical(0).put("column '").put(name).put("' does not exist");
+        throw CairoException.critical().put("column '").put(name).put("' does not exist");
     }
 
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
@@ -1375,7 +1375,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
             // Set the writer to distressed state and throw exception so that writer is re-created.
             distressed = true;
-            throw CairoException.critical(0).put("cannot process WAL while in transaction");
+            throw CairoException.critical().put("cannot process WAL while in transaction");
         }
 
         txWriter.beginPartitionSizeUpdate();
@@ -2057,7 +2057,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         } else {
             long fileSize = ff.length(partitionPath);
             if (fileSize < (columnSize << ColumnType.pow2SizeOf(columnType))) {
-                throw CairoException.critical(0)
+                throw CairoException.critical()
                         .put("Column file is too small. ")
                         .put("Partition files inconsistent [file=")
                         .put(partitionPath)
@@ -2098,7 +2098,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 long fileSize = ff.length(indexFd);
                 long expectedFileSize = (columnSize + 1) * typeSize;
                 if (fileSize < expectedFileSize) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("Column file is too small. ")
                             .put("Partition files inconsistent [file=")
                             .put(partitionPath)
@@ -2115,7 +2115,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     for (long offset = columnSize * typeSize; offset >= 0; offset -= typeSize) {
                         long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
                         if (dataAddress < 0 || dataAddress > dataLength) {
-                            throw CairoException.critical(0).put("Variable size column has invalid data address value [path=").put(path)
+                            throw CairoException.critical().put("Variable size column has invalid data address value [path=").put(path)
                                     .put(", indexOffset=").put(offset)
                                     .put(", dataAddress=").put(dataAddress)
                                     .put(", dataFileSize=").put(dataLength)
@@ -2124,7 +2124,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                         // Check that addresses are monotonic
                         if (dataAddress > prevDataAddress) {
-                            throw CairoException.critical(0).put("Variable size column has invalid data address value [path=").put(partitionPath)
+                            throw CairoException.critical().put("Variable size column has invalid data address value [path=").put(partitionPath)
                                     .put(", indexOffset=").put(offset)
                                     .put(", dataAddress=").put(dataAddress)
                                     .put(", prevDataAddress=").put(prevDataAddress)
@@ -2164,7 +2164,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             int typeSize = Integer.BYTES;
             long expectedSize = columnSize * typeSize;
             if (fileSize < expectedSize) {
-                throw CairoException.critical(0)
+                throw CairoException.critical()
                         .put("Column file is too small. ")
                         .put("Partition files inconsistent [file=")
                         .put(partitionPath)
@@ -2180,7 +2180,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 int maxKey = Vect.maxInt(address, columnSize);
                 int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
                 if (maxKey >= symbolValues) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("Symbol file does not match symbol column [file=")
                             .put(path)
                             .put(", key=")
@@ -2191,7 +2191,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 }
                 int minKey = Vect.minInt(address, columnSize);
                 if (minKey != SymbolTable.VALUE_IS_NULL && minKey < 0) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("Symbol file does not match symbol column, invalid key [file=")
                             .put(path)
                             .put(", key=")
@@ -2205,14 +2205,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             if (metadata.isColumnIndexed(columnIndex)) {
                 valueFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("Symbol index value file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
                 }
                 keyFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("Symbol index key file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
@@ -4303,7 +4303,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             if (ff.exists(path)) {
                 long fileLen = ff.length(path);
                 if (fileLen < 32) {
-                    throw CairoException.critical(0).put("corrupt ").put(path);
+                    throw CairoException.critical().put("corrupt ").put(path);
                 }
 
                 todoMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
@@ -4696,7 +4696,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             o3InError = !success || o3ErrorCount.get() > 0;
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
-                throw CairoException.critical(0).put("bulk update failed and will be rolled back");
+                throw CairoException.critical().put("bulk update failed and will be rolled back");
             }
         }
 
@@ -4765,7 +4765,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.critical(0).put("Partition does not exist [path=").put(other).put(']');
+                throw CairoException.critical().put("Partition does not exist [path=").put(other).put(']');
             }
         } finally {
             other.trimTo(rootLen);
@@ -4786,7 +4786,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             }
             if (partitionFloorMethod.floor(attachMinTimestamp) != partitionTimestamp
                     || partitionFloorMethod.floor(attachMaxTimestamp) != partitionTimestamp) {
-                throw CairoException.critical(0)
+                throw CairoException.critical()
                         .put("invalid timestamp column data in detached partition, data does not match partition directory name [path=").put(path)
                         .put(", minTimestamp=").ts(attachMinTimestamp)
                         .put(", maxTimestamp=").ts(attachMaxTimestamp).put(']');
@@ -4957,7 +4957,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                 if (!ColumnType.isSymbol(columnType)) {
                     // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
-                    throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                    throw CairoException.critical().put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
                             .put(", walPath=").put(walPath)
                             .put(']');
                 }
@@ -4998,7 +4998,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                                 // This symbol was not mapped in the WAL
                                 // The WAL is invalid
                                 // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
-                                throw CairoException.critical(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
+                                throw CairoException.critical().put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
                                         .put(", columnKey=").put(symKey)
                                         .put(", walPath=").put(walPath)
                                         .put(", walRowId=").put(rowId)
@@ -5272,7 +5272,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
             } while (index < retries);
 
-            throw CairoException.critical(0).put("could not rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
+            throw CairoException.critical().put("could not rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);

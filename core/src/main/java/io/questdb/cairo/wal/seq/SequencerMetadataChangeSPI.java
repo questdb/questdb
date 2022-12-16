@@ -33,27 +33,27 @@ public interface SequencerMetadataChangeSPI extends MetadataChangeSPI {
 
     @Override
     default void addIndex(CharSequence columnName, int indexValueBlockSize) {
-        throw CairoException.critical(0).put("add index does not update sequencer metadata");
+        throw CairoException.critical().put("add index does not update sequencer metadata");
     }
 
     @Override
     default AttachDetachStatus attachPartition(long partitionTimestamp) {
-        throw CairoException.critical(0).put("attach partition does not update sequencer metadata");
+        throw CairoException.critical().put("attach partition does not update sequencer metadata");
     }
 
     @Override
     default void changeCacheFlag(int columnIndex, boolean isCacheOn) {
-        throw CairoException.critical(0).put("change cache flag does not update sequencer metadata");
+        throw CairoException.critical().put("change cache flag does not update sequencer metadata");
     }
 
     @Override
     default AttachDetachStatus detachPartition(long partitionTimestamp) {
-        throw CairoException.critical(0).put("detach partition does not update sequencer metadata");
+        throw CairoException.critical().put("detach partition does not update sequencer metadata");
     }
 
     @Override
     default void dropIndex(CharSequence columnName) {
-        throw CairoException.critical(0).put("drop index does not update sequencer metadata");
+        throw CairoException.critical().put("drop index does not update sequencer metadata");
     }
 
     @Override
@@ -78,17 +78,17 @@ public interface SequencerMetadataChangeSPI extends MetadataChangeSPI {
 
     @Override
     default boolean removePartition(long partitionTimestamp) {
-        throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+        throw CairoException.critical().put("remove partition does not update sequencer metadata");
     }
 
     @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
+        throw CairoException.critical().put("change max uncommitted does not update sequencer metadata");
     }
 
     @Override
     default void setMetaO3MaxLag(long o3MaxLagUs) {
-        throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
+        throw CairoException.critical().put("change of o3MaxLag does not update sequencer metadata");
     }
 
     @Override
@@ -98,7 +98,7 @@ public interface SequencerMetadataChangeSPI extends MetadataChangeSPI {
 
     @Override
     default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
-        throw CairoException.critical(0).put("change commit interval does not update sequencer metadata");
+        throw CairoException.critical().put("change commit interval does not update sequencer metadata");
     }
 }
 

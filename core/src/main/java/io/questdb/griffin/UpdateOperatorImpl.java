@@ -137,7 +137,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     if (rowId < lastRowId) {
                         // We're assuming, but not enforcing the fact that
                         // factory produces rows in incrementing order.
-                        throw CairoException.critical(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
+                        throw CairoException.critical().put("Update statement generated invalid query plan. Rows are not returned in order.");
                     }
                     lastRowId = rowId;
 
@@ -238,7 +238,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             throw e;
         } catch (SqlException e) {
             tableWriter.rollbackUpdate();
-            throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
+            throw CairoException.critical().put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
         } catch (Throwable th) {
             LOG.error().$("could not update").$(th).$();
             tableWriter.rollbackUpdate();

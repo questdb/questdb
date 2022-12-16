@@ -42,7 +42,8 @@ public class DataUnavailableException extends CairoException {
     public static DataUnavailableException instance(CharSequence table, CharSequence partition, SuspendEvent event) {
         DataUnavailableException ex = tlException.get();
         ex.message.clear();
-        ex.errno = CairoException.NON_CRITICAL;
+        ex.errno = CairoException.E_GENERIC;
+        ex.critical = false;
         ex.event = event;
         ex.put("partition is located in cold storage, query will be suspended [table=").put(table)
             .put(", partition=").put(partition)

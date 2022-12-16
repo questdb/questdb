@@ -125,7 +125,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                             .$("invalid alter table command [code=").$(command)
                             .$(" ,table=").$(tableWriter.getTableName())
                             .I$();
-                    throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
+                    throw CairoException.critical().put("invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException ex) {
             throw ex;
@@ -162,7 +162,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
         // This is not hot path, do safe deserialization
         if (readPtr + 10 >= hi) {
-            throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [1]");
+            throw CairoException.critical().put("invalid alter statement serialized to writer queue [1]");
         }
 
         if (deserializeMem == null) {
@@ -178,7 +178,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         long readPtr = offsetLo;
         if (readPtr + 10 > offsetHi) {
             throw CairoException
-                    .critical(0)
+                    .critical()
                     .put("cannot read alter statement serialized, data is too short to read 10 bytes header [offset=")
                     .put(offsetLo)
                     .put(", size=")
@@ -192,7 +192,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int longSize = buffer.getInt(readPtr);
         readPtr += 4;
         if (longSize < 0 || readPtr + longSize * 8L >= offsetHi) {
-            throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [2]");
+            throw CairoException.critical().put("invalid alter statement serialized to writer queue [2]");
         }
         longList.clear();
         for (int i = 0; i < longSize; i++) {
@@ -304,7 +304,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableName)
+                throw CairoException.critical(CairoException.E_METADATA_VALIDATION).put("could not attach partition [table=").put(tableName)
                         .put(", detachStatus=").put(attachDetachStatus.name())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
@@ -319,7 +319,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableName)
+                throw CairoException.critical(CairoException.E_METADATA_VALIDATION).put("could not detach partition [table=").put(tableName)
                         .put(", detachStatus=").put(attachDetachStatus.name())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
@@ -438,18 +438,18 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
         public void of(MemoryCR buffer, long lo, long hi) {
             if (lo + Integer.BYTES > hi) {
-                throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [11]");
+                throw CairoException.critical().put("invalid alter statement serialized to writer queue [11]");
             }
             int size = buffer.getInt(lo);
             lo += 4;
             for (int i = 0; i < size; i++) {
                 if (lo + Integer.BYTES > hi) {
-                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [12]");
+                    throw CairoException.critical().put("invalid alter statement serialized to writer queue [12]");
                 }
                 int stringSize = 2 * buffer.getInt(lo);
                 lo += 4;
                 if (lo + stringSize > hi) {
-                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [13]");
+                    throw CairoException.critical().put("invalid alter statement serialized to writer queue [13]");
                 }
                 long address = buffer.addressOf(lo);
                 offsets.add(address, address + stringSize);

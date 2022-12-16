@@ -268,7 +268,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (!existenceChecked) {
                     path.trimTo(plen).slash$();
                     if (!ff.exists(path)) {
-                        throw CairoException.critical(2).put("table does not exist [table=").put(tableName).put(']');
+                        throw CairoException.critical().put("table does not exist [table=").put(tableName).put(']');
                     }
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }

@@ -48,7 +48,7 @@ final class Mig614 {
         }
 
         if (fileLen < readOffset + Long.BYTES) {
-            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+            throw CairoException.critical().put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
         metaMem.of(

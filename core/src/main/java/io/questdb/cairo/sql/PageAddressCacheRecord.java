@@ -320,7 +320,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             if (len + Long.BYTES + offset <= pageLimit) {
                 return view.of(address + Long.BYTES, len);
             }
-            throw CairoException.critical(0)
+            throw CairoException.critical()
                     .put("Bin is outside of file boundary [offset=")
                     .put(offset)
                     .put(", len=")
@@ -339,7 +339,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             if (len + 4 + offset <= size) {
                 return view.of(address + Vm.STRING_LENGTH_BYTES, len);
             }
-            throw CairoException.critical(0)
+            throw CairoException.critical()
                     .put("String is outside of file boundary [offset=")
                     .put(offset)
                     .put(", len=")

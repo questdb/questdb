@@ -333,7 +333,7 @@ public class LineTcpEventBuffer {
 
     private void checkCapacity(long address, int length) {
         if (address + length > bufSize) {
-            throw CairoException.critical(0).put("queue buffer overflow");
+            throw CairoException.critical().put("queue buffer overflow");
         }
     }
 }

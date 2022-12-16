@@ -140,7 +140,7 @@ public class Mig620 {
         }
 
         if (fileLen < readOffset + Long.BYTES) {
-            throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+            throw CairoException.critical().put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
         return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
@@ -213,11 +213,11 @@ public class Mig620 {
         long txSize = txMemory.size() - 4 * 8;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             if (offset > txSize) {
-                throw CairoException.critical(0).put("corrupt _txn file ").put(path.trimTo(pathLen).$()).put(", file is too small to read offset ").put(offset);
+                throw CairoException.critical().put("corrupt _txn file ").put(path.trimTo(pathLen).$()).put(", file is too small to read offset ").put(offset);
             }
             long partitionTs = txMemory.getLong(offset);
             if (partitionTs <= prevPartition) {
-                throw CairoException.critical(0).put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen).$());
+                throw CairoException.critical().put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen).$());
             }
             long partitionNameTxn = txMemory.getLong(offset + PARTITION_NAME_TX_OFFSET_MIG * 8);
             readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, partitionTs, partitionNameTxn, ff, path, pathLen);
@@ -298,7 +298,7 @@ public class Mig620 {
 
             if (maxPartitionIndexWithNoColumn != -1) {
                 if (maxPartitionIndexWithNoColumn + topStep >= columnTops.size()) {
-                    throw CairoException.critical(0).put("Table ").put(tablePath).put(" column '").put(columnNames.getQuick(columnIndex)).put("' is not present in the last partition.");
+                    throw CairoException.critical().put("Table ").put(tablePath).put(" column '").put(columnNames.getQuick(columnIndex)).put("' is not present in the last partition.");
                 }
                 long columnAddedPartitionTs = columnTops.getQuick(maxPartitionIndexWithNoColumn + topStep);
                 columnVersions.add(CV_COL_TOP_DEFAULT_PARTITION_MIG, columnIndex, -1L, columnAddedPartitionTs);

@@ -73,7 +73,7 @@ public class WalEventReader implements Closeable {
 
             if (size < WALE_HEADER_SIZE + Integer.BYTES) {
                 // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
-                throw CairoException.critical(0).put("File is too small, size=").put(size).put(", required=").put(WALE_HEADER_SIZE);
+                throw CairoException.critical().put("File is too small, size=").put(size).put(", required=").put(WALE_HEADER_SIZE);
             }
             eventMem.of(ff, path, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_WAL_READER, CairoConfiguration.O_NONE, -1);
             validateMetaVersion(eventMem, WAL_FORMAT_OFFSET, expectedVersion);
@@ -82,7 +82,7 @@ public class WalEventReader implements Closeable {
                 return eventCursor;
             }
 
-            throw CairoException.critical(0).put("segment does not have txn with id ").put(segmentTxn);
+            throw CairoException.critical().put("segment does not have txn with id ").put(segmentTxn);
         } catch (Throwable e) {
             close();
             throw e;

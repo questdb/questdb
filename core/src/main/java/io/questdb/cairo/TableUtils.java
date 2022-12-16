@@ -166,7 +166,7 @@ public final class TableUtils {
     public static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+            throw CairoException.critical().put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
     }
@@ -941,7 +941,7 @@ public final class TableUtils {
             // We must discard and try again
             if (clock.getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical().put("Transaction read timeout");
             }
 
             LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
@@ -1161,7 +1161,7 @@ public final class TableUtils {
     }
 
     public static CairoException validationException(MemoryMR mem) {
-        return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+        return CairoException.critical(CairoException.E_METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     public static void writeIntOrFail(FilesFacade ff, int fd, long offset, int value, long tempMem8b, Path path) {
@@ -1195,21 +1195,21 @@ public final class TableUtils {
         }
         final long storageLength = Vm.getStorageLength(strLength);
         if (offset + storageLength > memSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
+            throw CairoException.critical().put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStr(offset);
     }
 
     private static int getInt(MemoryMR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+            throw CairoException.critical().put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
     }
 
     private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
         int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.E_METADATA_VALIDATION;
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
@@ -1264,7 +1264,7 @@ public final class TableUtils {
                             .$(']').$();
                 }
             } while (++index < retryCount);
-            throw CairoException.critical(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
+            throw CairoException.critical().put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
         } finally {
             path.trimTo(rootLen);
         }

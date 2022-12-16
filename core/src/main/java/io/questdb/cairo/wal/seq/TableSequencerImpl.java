@@ -207,7 +207,7 @@ public class TableSequencerImpl implements TableSequencer {
 
                 applyToMetadata(deserializedAlter);
                 if (metadata.getStructureVersion() != expectedStructureVersion + 1) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("applying structure change to WAL table failed [table=").put(tableName)
                             .put(", oldVersion: ").put(expectedStructureVersion)
                             .put(", newVersion: ").put(metadata.getStructureVersion())

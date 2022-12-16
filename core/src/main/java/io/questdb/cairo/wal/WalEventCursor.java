@@ -67,7 +67,7 @@ public class WalEventCursor {
                 final long storageLength = Vm.getStorageLength(strLength);
                 o += storageLength;
             } else {
-                throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
+                throw CairoException.critical().put("WAL event file is too small, size=").put(memSize)
                         .put(", required=").put(o + Integer.BYTES);
             }
         }
@@ -75,14 +75,14 @@ public class WalEventCursor {
 
     public DataInfo getDataInfo() {
         if (type != DATA) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
+            throw CairoException.critical(CairoException.E_ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
         return dataInfo;
     }
 
     public SqlInfo getSqlInfo() {
         if (type != SQL) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not SQL, type=").put(type);
+            throw CairoException.critical(CairoException.E_ILLEGAL_OPERATION).put("WAL event type is not SQL, type=").put(type);
         }
         return sqlInfo;
     }
@@ -121,7 +121,7 @@ public class WalEventCursor {
 
     private void checkMemSize(long requiredBytes) {
         if (memSize < offset + requiredBytes) {
-            throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
+            throw CairoException.critical().put("WAL event file is too small, size=").put(memSize)
                     .put(", required=").put(offset + requiredBytes);
         }
     }
@@ -197,7 +197,7 @@ public class WalEventCursor {
             case TRUNCATE:
                 break;
             default:
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
+                throw CairoException.critical(CairoException.E_METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
         }
     }
 
@@ -339,7 +339,7 @@ public class WalEventCursor {
                 populateIndexedVariables(bindVariableService);
                 populateNamedVariables(bindVariableService);
             } catch (SqlException e) {
-                throw CairoException.critical(0).put(e.getMessage());
+                throw CairoException.critical().put(e.getMessage());
             }
         }
 

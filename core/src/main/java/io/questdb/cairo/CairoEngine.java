@@ -305,6 +305,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return reader;
     }
 
+    @TestOnly
+    public int getReaderCount() {
+        return readerPool.getCount();
+    }
+
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }
@@ -622,6 +627,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         readerPool.unlock(tableName);
     }
 
+    public void unlockReaders(CharSequence tableName) {
+        unlockReaders(tableName, Path.getThreadLocal(configuration.getRoot()));
+    }
+
     private boolean lockReaders(CharSequence tableName, Path path) {
         // this method must be invoked only when thread has lock on writer pool
         path.of(configuration.getRoot()).concat(tableName);
@@ -726,10 +735,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
-    public void unlockReaders(CharSequence tableName) {
-        unlockReaders(tableName, Path.getThreadLocal(configuration.getRoot()));
-    }
-    
     private void unlockReaders(CharSequence tableName, Path path) {
         // this method must be invoked only when thread has lock on writer pool
         path.of(configuration.getRoot()).concat(tableName);

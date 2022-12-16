@@ -136,13 +136,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long seqTxn = transactionLogCursor.getTxn();
 
                     if (seqTxn != writer.getSeqTxn() + 1) {
-                        throw CairoException.critical(0)
+                        throw CairoException.critical()
                                 .put("unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1)
                                 .put(" but was ").put(seqTxn);
                     }
 
                     if (walId == 0) {
-                        throw CairoException.critical(0)
+                        throw CairoException.critical()
                                 .put("broken table transaction record in sequencer log, walId cannot be 0 [table=")
                                 .put(writer.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
                     }
@@ -158,7 +158,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // to be taken from TableSequencer directly
                         final long newStructureVersion = transactionLogCursor.getStructureVersion();
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
-                            throw CairoException.critical(0)
+                            throw CairoException.critical()
                                     .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
                                     .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                     .put(']');
@@ -179,7 +179,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             // There is a transaction in WAL but no structure change record.
                             // TODO: make sequencer distressed and try to reconcile on sequencer opening
                             //  or skip the transaction?
-                            throw CairoException.critical(0)
+                            throw CairoException.critical()
                                     .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                     .put(newStructureVersion)
                                     .put(']');

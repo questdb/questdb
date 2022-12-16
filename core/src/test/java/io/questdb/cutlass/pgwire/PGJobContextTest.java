@@ -1691,7 +1691,7 @@ if __name__ == "__main__":
                         connection.prepareStatement("drop table xyz").execute();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
+                        TestUtils.assertContains(e.getMessage(), "table busy");
                         Assert.assertEquals("00000", e.getSQLState());
                     }
                 }

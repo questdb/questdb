@@ -226,10 +226,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                             }
 
                             if (!walWriter.goActive(transaction.structureVersion)) {
-                                throw CairoException.critical(0).put("cannot apply structure change");
+                                throw CairoException.critical().put("cannot apply structure change");
                             }
                             if (walWriter.getStructureVersion() != transaction.structureVersion) {
-                                throw CairoException.critical(0)
+                                throw CairoException.critical()
                                         .put("cannot update wal writer to correct structure version");
                             }
 
@@ -348,10 +348,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         }
 
                         if (!walWriter.goActive(transaction.structureVersion)) {
-                            throw CairoException.critical(0).put("cannot apply structure change");
+                            throw CairoException.critical().put("cannot apply structure change");
                         }
                         if (walWriter.getStructureVersion() != transaction.structureVersion) {
-                            throw CairoException.critical(0)
+                            throw CairoException.critical()
                                     .put("cannot update wal writer to correct structure version");
                         }
 

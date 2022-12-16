@@ -147,7 +147,7 @@ public final class PartitionBy {
         try {
             return getPartitionDirFormatMethod(partitionBy).parse(partitionName, null);
         } catch (NumericException e) {
-            final CairoException ee = CairoException.critical(0);
+            final CairoException ee = CairoException.critical();
             switch (partitionBy) {
                 case DAY:
                     ee.put("'YYYY-MM-DD'");

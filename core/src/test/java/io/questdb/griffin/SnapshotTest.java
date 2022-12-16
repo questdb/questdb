@@ -243,7 +243,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 latch1.countDown();
                 t.join();
                 Assert.assertFalse(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted [fd=-1]");
             } finally {
                 compiler.compile("snapshot complete", sqlExecutionContext);
                 Assert.assertFalse(lock.isLocked());

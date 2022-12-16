@@ -139,7 +139,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (inTransaction()) {
-            throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
+            throw CairoException.critical().put("cannot alter table with uncommitted inserts [table=").put(tableName).put(']');
         }
         if (operation.isStructureChange()) {
             long txn;
@@ -554,7 +554,7 @@ public class WalWriter implements TableWriterAPI {
 
                 if (++metadataVersion != getStructureVersion()) {
                     distressed = true;
-                    throw CairoException.critical(0)
+                    throw CairoException.critical()
                             .put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
@@ -563,7 +563,7 @@ public class WalWriter implements TableWriterAPI {
 
     private long applyNonStructuralOperation(AbstractOperation operation) {
         if (operation.getSqlExecutionContext() == null) {
-            throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
+            throw CairoException.critical().put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
         }
         try {
             lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
@@ -579,7 +579,7 @@ public class WalWriter implements TableWriterAPI {
         if (!distressed) {
             return;
         }
-        throw CairoException.critical(0)
+        throw CairoException.critical()
                 .put("WAL writer is distressed and cannot be used any more [table=").put(tableName)
                 .put(", wal=").put(walId).put(']');
     }
@@ -1541,7 +1541,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
                 } else {
-                    throw CairoException.critical(0).put("column '").put(columnName)
+                    throw CairoException.critical().put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
                 }
             } else {
@@ -1597,7 +1597,7 @@ public class WalWriter implements TableWriterAPI {
                         markColumnRemoved(index);
                         LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
                     } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
+                        throw CairoException.critical().put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
                     }
                 }
@@ -1640,7 +1640,7 @@ public class WalWriter implements TableWriterAPI {
 
                         LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
                     } else {
-                        throw CairoException.critical(0).put("column '").put(columnName)
+                        throw CairoException.critical().put("column '").put(columnName)
                                 .put("' was removed, cannot apply commit because of concurrent table definition change");
                     }
                 }

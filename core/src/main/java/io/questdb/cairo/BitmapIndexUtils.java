@@ -122,7 +122,7 @@ public final class BitmapIndexUtils {
 
             return low + 1;
         }
-        throw CairoException.critical(0)
+        throw CairoException.critical()
                 .put("index is corrupt, rowid not found [offset=").put(offset)
                 .put(", cellCount=").put(cellCount)
                 .put(", value=").put(value)

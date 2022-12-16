@@ -2933,7 +2933,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else {
                         // Shouldn't really happen, we cannot recompile below, QueryModel is changed during compilation
                         Misc.free(factory);
-                        throw CairoException.critical(0).put("Optimization error, incorrect path chosen, please contact support.");
+                        throw CairoException.critical().put("Optimization error, incorrect path chosen, please contact support.");
                     }
                 }
             }

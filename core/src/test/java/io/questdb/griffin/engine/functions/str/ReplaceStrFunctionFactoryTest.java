@@ -118,14 +118,14 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() {
-        assertFailure("[-1] breached memory limit set for replace(SSS) [maxLength=1048576, requiredLength=1048580]",
+        assertFailure("[0] breached memory limit set for replace(SSS) [maxLength=1048576, requiredLength=1048580]",
                 "select replace(replace(replace(replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')");
     }
 
     @Test
     public void testWhenSingleCallExceedsMaxLengthExceptionIsThrown() throws SqlException {
         try {
-            call(multiply("a", 100), "a", multiply("a", 100000)).andAssert(null);
+            call(multiply(100), "a", multiply(100000)).andAssert(null);
             Assert.fail();
         } catch (CairoException e) {
             MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for replace(SSS)"));
@@ -137,10 +137,10 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         return new ReplaceStrFunctionFactory();
     }
 
-    StringBuilder multiply(String s, int times) {
-        StringBuilder sb = new StringBuilder(s.length() * times);
+    StringBuilder multiply(int times) {
+        StringBuilder sb = new StringBuilder("a".length() * times);
         for (int i = 0; i < times; i++) {
-            sb.append(s);
+            sb.append("a");
         }
         return sb;
     }

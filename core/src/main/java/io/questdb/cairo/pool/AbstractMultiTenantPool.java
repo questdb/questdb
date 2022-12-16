@@ -96,7 +96,17 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                         e.assignTenant(i, tenant);
                         notifyListener(thread, tableName, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        tenant.refresh();
+                        try {
+                            tenant.refresh();
+                        } catch (CairoException ex){
+                            if (ex.getErrno() == CairoException.E_TABLE_DOES_NOT_EXIST) {
+                                e.assignTenant(i, null);
+                                tenant.goodbye();
+                                tenant.close();
+                                LOG.info().$('\'').utf8(tableName).$("' expunged").$();
+                            }
+                            throw ex;
+                        }
                         notifyListener(thread, tableName, PoolListener.EV_GET, e.index, i);
                     }
 
@@ -134,6 +144,22 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && e.getTenant(i) != null) {
+                        count++;
+                    }
+                }
+                e = e.next;
+            } while (e != null);
+        }
+        return count;
+    }
+
+    public int getCount() {
+        int count = 0;
+        for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+            Entry<T> e = me.getValue();
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    if ( e.getTenant(i) != null) {
                         count++;
                     }
                 }
@@ -336,7 +362,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
-        throw CairoException.critical(0).put("double close [table=").put(tableName).put(", index=").put(index).put(']');
+        throw CairoException.critical().put("double close [table=").put(tableName).put(", index=").put(index).put(']');
     }
 
     public static final class Entry<T> {
