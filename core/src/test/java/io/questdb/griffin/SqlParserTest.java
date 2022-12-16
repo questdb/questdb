@@ -7011,7 +7011,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing", false);
+            Path path = Path.getThreadLocal(configuration.getRoot());
+            CharSequence lockedReason = engine.lock(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    "tab",
+                    "testing",
+                    false,
+                    path
+            );
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
@@ -7029,13 +7036,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableModel.getName()).slash$();
-                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                        Path path2 = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableModel.getName()).slash$();
+                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path2));
                         tableModel.close();
                     }
                 }
             } finally {
-                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null, false);
+                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null, false, path);
             }
         });
     }

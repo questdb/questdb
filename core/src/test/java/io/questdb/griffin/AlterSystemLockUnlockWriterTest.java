@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -104,7 +105,16 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createX();
             compile("alter system lock writer x", sqlExecutionContext);
-            TestUtils.assertEquals("alterSystem", engine.lock(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock", true));
+            TestUtils.assertEquals(
+                    "alterSystem", 
+                    engine.lock(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            "x",
+                            "new lock",
+                            true,
+                            Path.getThreadLocal(configuration.getRoot())
+                    )
+            );
             compile("alter system unlock writer x", sqlExecutionContext);
         });
     }
@@ -120,7 +130,15 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
                 fail("write lock cannot be acquired in the read-only mode");
             } catch (SqlException expected) {
                 // check the writer wasn't actually locked
-                assertNull(engine.lock(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock", true));
+                assertNull(
+                        engine.lock(
+                                sqlExecutionContext.getCairoSecurityContext(),
+                                "x",
+                                "new lock",
+                                true,
+                                Path.getThreadLocal(configuration.getRoot())
+                        )
+                );
                 compile("alter system unlock writer x", sqlExecutionContext);
             } finally {
                 Misc.free(readOnlyContext);
@@ -151,8 +169,17 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             createX();
             compile("alter system lock writer x", sqlExecutionContext);
             compile("alter system unlock writer x", sqlExecutionContext);
-            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, engine.lock(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock 2", true));
-            engine.unlock(sqlExecutionContext.getCairoSecurityContext(), "x", null, false);
+            Assert.assertEquals(
+                    WriterPool.OWNERSHIP_REASON_NONE,
+                    engine.lock(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            "x", 
+                            "new lock 2",
+                            true,
+                            Path.getThreadLocal(configuration.getRoot())
+                    )
+            );
+            engine.unlock(sqlExecutionContext.getCairoSecurityContext(), "x", null, false, Path.getThreadLocal(configuration.getRoot()));
         });
     }
 
@@ -168,7 +195,16 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
                 fail("write lock cannot be released in the read-only mode");
             } catch (SqlException expected) {
                 // check the writer wasn't actually released
-                TestUtils.assertEquals("alterSystem", engine.lock(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock", true));
+                TestUtils.assertEquals(
+                        "alterSystem",
+                        engine.lock(
+                                sqlExecutionContext.getCairoSecurityContext(),
+                                "x",
+                                "new lock",
+                                true,
+                                Path.getThreadLocal(configuration.getRoot())
+                        )
+                );
                 compile("alter system unlock writer x", sqlExecutionContext);
             } finally {
                 Misc.free(readOnlyContext);

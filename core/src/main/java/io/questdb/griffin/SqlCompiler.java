@@ -379,7 +379,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), tok, "alterSystem", true);
+            CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), tok, "alterSystem", true, path);
             if (lockedReason != WriterPool.OWNERSHIP_REASON_NONE) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
@@ -396,7 +396,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
-            engine.unlock(executionContext.getCairoSecurityContext(), tok, null, false);
+            engine.unlock(executionContext.getCairoSecurityContext(), tok, null, false, Path.getThreadLocal(configuration.getRoot()));
             return compiledQuery.ofUnlock();
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
@@ -1498,7 +1498,7 @@ public class SqlCompiler implements Closeable {
         this.insertCount = -1;
 
         // Slow path with lock attempt
-        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable", false);
+        CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable", false, path);
         if (null == lockedReason) {
             TableWriter tableWriter = null;
             boolean newTable = false;
@@ -1529,7 +1529,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
-                engine.unlock(executionContext.getCairoSecurityContext(), name.token, tableWriter, newTable);
+                engine.unlock(executionContext.getCairoSecurityContext(), name.token, tableWriter, newTable, path);
             }
         } else {
             if (!createTableModel.isIgnoreIfExists()) {
