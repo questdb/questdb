@@ -208,14 +208,14 @@ public class WalDataRecord implements Record, Sinkable {
     public long getUuidHi(int col) {
         final long offset = recordIndex * UuidUtil.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }
 
     @Override
     public long getUuidLo(int col) {
         final long offset = recordIndex * UuidUtil.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 
     public void incrementRecordIndex() {

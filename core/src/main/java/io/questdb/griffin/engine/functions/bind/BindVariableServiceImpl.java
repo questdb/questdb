@@ -633,15 +633,15 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setUuid(int index, long hi, long lo) throws SqlException {
+    public void setUuid(int index, long lo, long hi) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setUuid(function, hi, lo, index, null);
+            setUuid(function, lo, hi, index, null);
         } else {
             indexedVariables.setQuick(index, function = uuidVarPool.next());
-            ((UuidBindVariable) function).set(hi, lo);
+            ((UuidBindVariable) function).set(lo, hi);
         }
     }
 
@@ -1053,14 +1053,14 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setUuid(Function function, long hi, long lo, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setUuid(Function function, long lo, long hi, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.UUID:
-                ((UuidBindVariable) function).set(hi, lo);
+                ((UuidBindVariable) function).set(lo, hi);
                 break;
             case ColumnType.STRING:
-                ((StrBindVariable) function).setUuidValue(hi, lo);
+                ((StrBindVariable) function).setUuidValue(lo, hi);
                 break;
             default:
                 reportError(function, ColumnType.UUID, index, name);

@@ -50,7 +50,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            if (SqlUtil.implicitCastUuidAsStr(func.getUuidHi(null), func.getUuidLo(null), sink)) {
+            if (SqlUtil.implicitCastUuidAsStr(func.getUuidLo(null), func.getUuidHi(null), sink)) {
                 return new StrConstant(Chars.toString(sink));
             } else {
                 return StrConstant.NULL;
@@ -76,25 +76,25 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             sinkA.clear();
-            return SqlUtil.implicitCastUuidAsStr(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkA) ? sinkA : null;
+            return SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec), arg.getUuidHi(rec), sinkA) ? sinkA : null;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            SqlUtil.implicitCastUuidAsStr(arg.getUuidHi(rec), arg.getUuidLo(rec), sink);
+            SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec), arg.getUuidHi(rec), sink);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            return SqlUtil.implicitCastUuidAsStr(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkB) ? sinkB : null;
+            return SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec), arg.getUuidHi(rec), sinkB) ? sinkB : null;
         }
 
         @Override
         public int getStrLen(Record rec) {
-            long hi = arg.getUuidHi(rec);
             long lo = arg.getUuidLo(rec);
-            return UuidUtil.isNull(hi, lo) ? TableUtils.NULL_LEN : UuidUtil.UUID_LENGTH;
+            long hi = arg.getUuidHi(rec);
+            return UuidUtil.isNull(lo, hi) ? TableUtils.NULL_LEN : UuidUtil.UUID_LENGTH;
         }
     }
 }

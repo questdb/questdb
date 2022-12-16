@@ -49,9 +49,9 @@ public final class UuidUtil {
             throw NumericException.INSTANCE;
         }
         if (uuid.charAt(FIRST_DASH_POS) != '-'
-            || uuid.charAt(SECOND_DASH_POS) != '-'
-            || uuid.charAt(UuidUtil.THIRD_DASH_POS) != '-'
-            || uuid.charAt(UuidUtil.FOURTH_DASH_POS) != '-') {
+                || uuid.charAt(SECOND_DASH_POS) != '-'
+                || uuid.charAt(UuidUtil.THIRD_DASH_POS) != '-'
+                || uuid.charAt(UuidUtil.FOURTH_DASH_POS) != '-') {
             throw NumericException.INSTANCE;
         }
     }
@@ -59,11 +59,11 @@ public final class UuidUtil {
     /**
      * Check if UUID is null.
      *
-     * @param hi high 64 bits of UUID
      * @param lo low 64 bits of UUID
+     * @param hi high 64 bits of UUID
      * @return true if UUID is null
      */
-    public static boolean isNull(long hi, long lo) {
+    public static boolean isNull(long lo, long hi) {
         return hi == NULL_HI_AND_LO && lo == NULL_HI_AND_LO;
     }
 

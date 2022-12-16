@@ -214,8 +214,6 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testEqualityComparisonConstantOnLeft() throws Exception {
-        MutableUuid uuid = new MutableUuid();
-        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
@@ -236,8 +234,6 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testEqualityComparisonImplicitCast() throws Exception {
-        MutableUuid uuid = new MutableUuid();
-        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
@@ -457,8 +453,6 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testNegatedEqualityComparisonImplicitCast() throws Exception {
-        MutableUuid uuid = new MutableUuid();
-        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
@@ -640,16 +634,16 @@ public class UuidTest extends AbstractGriffinTest {
     public void testRndUuid() throws Exception {
         assertCompile("create table x as (select rnd_uuid4() from long_sequence(10))");
         assertQuery("rnd_uuid4\n" +
-                        "0010a928-bb8b-4650-8010-cde812ce60ee\n" +
-                        "6b813981-5c50-4341-9f9b-2131d49fcd1d\n" +
-                        "72a215ba-0462-4d15-bbcd-48d8c77aa655\n" +
-                        "965d4c98-4f0f-4a8a-b5b2-159a23565217\n" +
-                        "db2d3458-6f62-45fa-a8be-ef38cd7bb3d8\n" +
-                        "797fa69e-b8fe-46cc-b22a-2198864beb14\n" +
-                        "6846d7a3-aa5a-4cce-980e-ca62a219a0f1\n" +
-                        "c72bfc52-3015-4059-81e6-31285c1ab288\n" +
-                        "9fa2397a-5d8c-44c4-b16d-e3d25dcc2d91\n" +
-                        "2f1a8266-e792-4e3b-8b0f-595f143e5d72\n",
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "b5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                        "e8beef38-cd7b-43d8-9b2d-34586f6275fa\n" +
+                        "322a2198-864b-4b14-b97f-a69eb8fec6cc\n" +
+                        "980eca62-a219-40f1-a846-d7a3aa5aecce\n" +
+                        "c1e63128-5c1a-4288-872b-fc5230158059\n" +
+                        "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
+                        "4b0f595f-143e-4d72-af1a-8266e7921e3b\n",
                 "select * from x", null, null, true, true, true);
     }
 

@@ -60,18 +60,18 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                     }
                     try {
                         UuidUtil.checkDashesAndLength(value);
-                        set.add(UuidUtil.parseHi(value), UuidUtil.parseLo(value));
+                        set.add(UuidUtil.parseLo(value), UuidUtil.parseHi(value));
                     } catch (NumericException e) {
                         // the given string is not a valid UUID -> no UUID value can match it -> we can ignore it
                     }
                     break;
                 case ColumnType.UUID:
-                    long hi = func.getUuidHi(null);
                     long lo = func.getUuidLo(null);
+                    long hi = func.getUuidHi(null);
                     if (hi == UuidUtil.NULL_HI_AND_LO && lo == UuidUtil.NULL_HI_AND_LO) {
                         throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
                     }
-                    set.add(hi, lo);
+                    set.add(lo, hi);
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING or UUID constant expected in IN list");
@@ -79,12 +79,12 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         }
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            long hi = var.getUuidHi(null);
             long lo = var.getUuidLo(null);
-            if (UuidUtil.isNull(hi, lo)) {
+            long hi = var.getUuidHi(null);
+            if (UuidUtil.isNull(lo, hi)) {
                 return BooleanConstant.FALSE;
             }
-            return BooleanConstant.of(set.contains(hi, lo));
+            return BooleanConstant.of(set.contains(lo, hi));
         }
         return new Func(var, set);
     }
@@ -105,12 +105,12 @@ public final class InUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long hi = arg.getUuidHi(rec);
             long lo = arg.getUuidLo(rec);
-            if (UuidUtil.isNull(hi, lo)) {
+            long hi = arg.getUuidHi(rec);
+            if (UuidUtil.isNull(lo, hi)) {
                 return false;
             }
-            return set.contains(hi, lo);
+            return set.contains(lo, hi);
         }
     }
 }

@@ -69,8 +69,8 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
-        final int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(I)J");
         final int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(I)J");
+        final int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(I)J");
 
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
@@ -275,11 +275,11 @@ public class RecordSinkFactory {
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetUuidHi, 1);
+                    asm.invokeInterface(rGetUuidLo, 1);
 
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetUuidLo, 1);
+                    asm.invokeInterface(rGetUuidHi, 1);
 
                     asm.invokeInterface(wPutUuid, 4);
                     break;

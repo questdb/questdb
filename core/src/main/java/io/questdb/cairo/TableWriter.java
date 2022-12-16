@@ -6260,7 +6260,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             putLong(columnIndex, value);
         }
 
-        void putUuid(int columnIndex, long hi, long lo);
+        void putUuid(int columnIndex, long lo, long hi);
 
         void putUuid(int columnIndex, CharSequence uuid);
     }
@@ -6417,8 +6417,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         @Override
-        public void putUuid(int columnIndex, long hi, long lo) {
-            getPrimaryColumn(columnIndex).putLongLong(hi, lo);
+        public void putUuid(int columnIndex, long lo, long hi) {
+            getPrimaryColumn(columnIndex).putLongLong(lo, hi);
             setRowValueNotNull(columnIndex);
         }
 

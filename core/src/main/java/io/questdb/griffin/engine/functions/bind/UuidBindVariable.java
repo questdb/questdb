@@ -48,7 +48,7 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
         return value.getLo();
     }
 
-    void set(long hi, long lo) {
-        value.of(hi, lo);
+    void set(long lo, long hi) {
+        value.of(lo, hi);
     }
 }

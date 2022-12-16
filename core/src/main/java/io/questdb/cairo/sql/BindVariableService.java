@@ -489,5 +489,13 @@ public interface BindVariableService extends Mutable {
      */
     void setTimestamp(CharSequence name, long value) throws SqlException;
 
-    void setUuid(int index, long hi, long lo) throws SqlException;
+    /**
+     * Set type of bind variable by index as UUID and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param lo    lower 64 bits of UUID
+     * @param hi    higher 64 bits of UUID
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setUuid(int index, long lo, long hi) throws SqlException;
 }

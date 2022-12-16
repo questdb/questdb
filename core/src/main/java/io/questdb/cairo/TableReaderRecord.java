@@ -265,7 +265,7 @@ public class TableReaderRecord implements Record, Sinkable {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }
 
     @Override
@@ -273,7 +273,7 @@ public class TableReaderRecord implements Record, Sinkable {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 
     public void incrementRecordIndex() {

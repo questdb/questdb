@@ -470,7 +470,7 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
-    public static void appendUuid(long hi, long lo, CharSink sink) {
+    public static void appendUuid(long lo, long hi, CharSink sink) {
         appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 4);
         sink.put('-');
         appendHexPadded(sink, (hi >> 16) & 0xFFFF, 2);

@@ -958,21 +958,21 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void appendUuidColumn(Record record, int columnIndex) {
-        final long hi = record.getUuidHi(columnIndex);
         final long lo = record.getUuidLo(columnIndex);
-        if (UuidUtil.isNull(hi, lo)) {
+        final long hi = record.getUuidHi(columnIndex);
+        if (UuidUtil.isNull(lo, hi)) {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            Numbers.appendUuid(hi, lo, responseAsciiSink);
+            Numbers.appendUuid(lo, hi, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
     }
 
     private void appendUuidColumnBin(Record record, int columnIndex) {
-        final long hi = record.getUuidHi(columnIndex);
         final long lo = record.getUuidLo(columnIndex);
-        if (UuidUtil.isNull(hi, lo)) {
+        final long hi = record.getUuidHi(columnIndex);
+        if (UuidUtil.isNull(lo, hi)) {
             responseAsciiSink.setNullValue();
         } else {
             responseAsciiSink.putNetworkInt(Long.BYTES * 2);
@@ -2589,7 +2589,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         ensureValueLength(index, UuidUtil.BYTES, valueLen);
         long hi = getLongUnsafe(address);
         long lo = getLongUnsafe(address + Long.BYTES);
-        bindVariableService.setUuid(index, hi, lo);
+        bindVariableService.setUuid(index, lo, hi);
     }
 
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {

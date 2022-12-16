@@ -1135,8 +1135,8 @@ public final class TestUtils {
             case ColumnType.UUID:
                 long hi = r.getUuidHi(i);
                 long lo = r.getUuidLo(i);
-                if (!UuidUtil.isNull(hi, lo)) {
-                    MutableUuid uuid = new MutableUuid(hi, lo);
+                if (!UuidUtil.isNull(lo, hi)) {
+                    MutableUuid uuid = new MutableUuid(lo, hi);
                     uuid.toSink(sink);
                 }
                 break;

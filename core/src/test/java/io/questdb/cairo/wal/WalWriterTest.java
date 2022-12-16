@@ -1485,7 +1485,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
-                    .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long hi, long lo)
+                    .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
                     .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .timestamp("ts")
                     .wal()
@@ -1622,11 +1622,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals(String.valueOf(i), record.getSym(24));
                         assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
 
-                        assertEquals(i, record.getUuidHi(26));
-                        assertEquals(i + 1, record.getUuidLo(26));
+                        assertEquals(i, record.getUuidLo(26));
+                        assertEquals(i + 1, record.getUuidHi(26));
 
-                        assertEquals(i, record.getUuidHi(27));
-                        assertEquals(i + 1, record.getUuidLo(27));
+                        assertEquals(i, record.getUuidLo(27));
+                        assertEquals(i + 1, record.getUuidHi(27));
 
                         assertEquals(ts, record.getTimestamp(28));
                         assertEquals(i, record.getRowId());

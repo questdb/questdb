@@ -302,7 +302,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getUuidHi(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * UuidUtil.BYTES);
+        return Unsafe.getUnsafe().getLong(address + rowIndex * UuidUtil.BYTES + Long.BYTES);
     }
 
     @Override
@@ -311,7 +311,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getUuidLo(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * UuidUtil.BYTES + Long.BYTES);
+        return Unsafe.getUnsafe().getLong(address + rowIndex * UuidUtil.BYTES);
     }
 
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {

@@ -2894,9 +2894,9 @@ public class JoinTest extends AbstractGriffinTest {
                     "join x y on y.uuid = x.uuid";
 
             final String expected = "i\ti1\tuuid\n" +
-                    "1\t1\t0010a928-bb8b-4650-8010-cde812ce60ee\n" +
-                    "2\t2\t6b813981-5c50-4341-9f9b-2131d49fcd1d\n" +
-                    "3\t3\t72a215ba-0462-4d15-bbcd-48d8c77aa655\n";
+                    "1\t1\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                    "2\t2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "3\t3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
 
             compiler.compile(
                     "create table x as (" +

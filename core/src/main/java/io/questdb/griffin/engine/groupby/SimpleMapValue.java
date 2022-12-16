@@ -232,7 +232,7 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void putUuid(int index, long hi, long lo) {
+    public void putUuid(int index, long lo, long hi) {
         final int idx = 4 * index;
         values[idx] = hi;
         values[idx + 1] = lo;

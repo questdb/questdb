@@ -54,16 +54,16 @@ final class UuidEqUtils {
     static BooleanFunction eqStrUuid(Function strFun, Function uuidFun) {
         if (strFun.isConstant()) {
             CharSequence uuidStr = strFun.getStr(null);
-            long hi;
             long lo;
+            long hi;
             if (uuidStr == null) {
-                hi = UuidUtil.NULL_HI_AND_LO;
                 lo = UuidUtil.NULL_HI_AND_LO;
+                hi = UuidUtil.NULL_HI_AND_LO;
             } else {
                 try {
                     UuidUtil.checkDashesAndLength(uuidStr);
-                    hi = UuidUtil.parseHi(uuidStr);
                     lo = UuidUtil.parseLo(uuidStr);
+                    hi = UuidUtil.parseHi(uuidStr);
                 } catch (NumericException e) {
                     // ok, so the constant string is not a UUID format -> it cannot be equal to any UUID
                     return BooleanConstant.FALSE;
@@ -72,16 +72,16 @@ final class UuidEqUtils {
             if (uuidFun.isConstant()) {
                 return BooleanConstant.of(hi == uuidFun.getUuidHi(null) && lo == uuidFun.getUuidHi(null));
             } else {
-                return new ConstStrFun(hi, lo, uuidFun);
+                return new ConstStrFun(lo, hi, uuidFun);
             }
         } else {
             if (uuidFun.isConstant()) {
-                long hi = uuidFun.getUuidHi(null);
                 long lo = uuidFun.getUuidLo(null);
-                if (UuidUtil.isNull(hi, lo)) {
+                long hi = uuidFun.getUuidHi(null);
+                if (UuidUtil.isNull(lo, hi)) {
                     return new EqStrFunctionFactory.NullCheckFunc(strFun);
                 } else {
-                    return new ConstUuidFun(hi, lo, strFun);
+                    return new ConstUuidFun(lo, hi, strFun);
                 }
             } else {
                 return new Fun(strFun, uuidFun);
@@ -97,9 +97,9 @@ final class UuidEqUtils {
         private final long constStrLo;
         private final Function fun;
 
-        private ConstStrFun(long constStrHi, long constStrLo, Function fun) {
-            this.constStrHi = constStrHi;
+        private ConstStrFun(long constStrLo, long constStrHi, Function fun) {
             this.constStrLo = constStrLo;
+            this.constStrHi = constStrHi;
             this.fun = fun;
         }
 
@@ -122,9 +122,9 @@ final class UuidEqUtils {
         private final long constUuidLo;
         private final Function fun;
 
-        private ConstUuidFun(long constUuidHi, long constUuidLo, Function fun) {
-            this.constUuidHi = constUuidHi;
+        private ConstUuidFun(long constUuidLo, long constUuidHi, Function fun) {
             this.constUuidLo = constUuidLo;
+            this.constUuidHi = constUuidHi;
             this.fun = fun;
         }
 
@@ -164,10 +164,10 @@ final class UuidEqUtils {
         @Override
         public boolean getBool(Record rec) {
             CharSequence str = strFunction.getStr(rec);
-            long hi = uuidFunction.getUuidHi(rec);
             long lo = uuidFunction.getUuidLo(rec);
+            long hi = uuidFunction.getUuidHi(rec);
             if (str == null) {
-                return negated != UuidUtil.isNull(hi, lo);
+                return negated != UuidUtil.isNull(lo, hi);
             }
             try {
                 UuidUtil.checkDashesAndLength(str);

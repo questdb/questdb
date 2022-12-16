@@ -30,8 +30,8 @@ public final class MutableUuid implements Sinkable {
     private long hi = UuidUtil.NULL_HI_AND_LO;
     private long lo = UuidUtil.NULL_HI_AND_LO;
 
-    public MutableUuid(long hi, long lo) {
-        of(hi, lo);
+    public MutableUuid(long lo, long hi) {
+        of(lo, hi);
     }
 
     public MutableUuid() {
@@ -60,27 +60,27 @@ public final class MutableUuid implements Sinkable {
 
     @Override
     public int hashCode() {
-        return Hash.hash(hi, lo);
+        return Hash.hash(lo, hi);
     }
 
-    public void of(long hi, long lo) {
-        this.hi = hi;
+    public void of(long lo, long hi) {
         this.lo = lo;
+        this.hi = hi;
     }
 
     public void of(CharSequence uuid) throws NumericException {
         UuidUtil.checkDashesAndLength(uuid);
-        this.hi = UuidUtil.parseHi(uuid);
         this.lo = UuidUtil.parseLo(uuid);
+        this.hi = UuidUtil.parseHi(uuid);
     }
 
     public void ofNull() {
-        this.hi = UuidUtil.NULL_HI_AND_LO;
         this.lo = UuidUtil.NULL_HI_AND_LO;
+        this.hi = UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override
     public void toSink(CharSink sink) {
-        Numbers.appendUuid(hi, lo, sink);
+        Numbers.appendUuid(lo, hi, sink);
     }
 }

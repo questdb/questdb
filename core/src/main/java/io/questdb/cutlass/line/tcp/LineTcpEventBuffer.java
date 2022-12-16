@@ -243,9 +243,9 @@ public class LineTcpEventBuffer {
         long lo = UuidUtil.parseLo(tempSink);
         Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
         offset += Byte.BYTES;
-        Unsafe.getUnsafe().putLong(offset, hi);
-        offset += Long.BYTES;
         Unsafe.getUnsafe().putLong(offset, lo);
+        offset += Long.BYTES;
+        Unsafe.getUnsafe().putLong(offset, hi);
         return offset + Long.BYTES;
     }
 

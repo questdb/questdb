@@ -583,8 +583,8 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                        Assert.assertEquals(rnd2.nextLong(), value.getUuidHi(9));
                         Assert.assertEquals(rnd2.nextLong(), value.getUuidLo(9));
+                        Assert.assertEquals(rnd2.nextLong(), value.getUuidHi(9));
                         Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(10));
                         Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
                         Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
@@ -708,8 +708,8 @@ public class CompactMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9));
             Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9));
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -777,11 +777,11 @@ public class CompactMapTest extends AbstractCairoTest {
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12));
                 Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12));
+                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12));
             } else {
-                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12));
                 Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12));
             }
 
         }

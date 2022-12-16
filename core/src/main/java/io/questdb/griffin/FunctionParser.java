@@ -938,7 +938,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof UuidConstant) {
                     return function;
                 } else {
-                    return new UuidConstant(function.getUuidHi(null), function.getUuidLo(null));
+                    return new UuidConstant(function.getUuidLo(null), function.getUuidHi(null));
                 }
             default:
                 return function;

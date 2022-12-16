@@ -258,9 +258,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void putUuid(long hi, long lo) {
-        mem.putLong(hi);
+    public void putUuid(long lo, long hi) {
         mem.putLong(lo);
+        mem.putLong(hi);
     }
 
     @Override
@@ -450,12 +450,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public long getUuidHi(int col) {
-            return mem.getLong(fixedWithColumnOffset(col));
+            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
         }
 
         @Override
         public long getUuidLo(int col) {
-            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
+            return mem.getLong(fixedWithColumnOffset(col));
         }
 
         private long fixedWithColumnOffset(int index) {

@@ -9481,9 +9481,9 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testUuidFillNull() throws Exception {
         assertQuery(
                 "s\tk\tfirst\tlast\n" +
-                        "TJW\t1970-01-03T00:00:00.000000Z\te8beef38-cd7b-43d8-b97f-a69eb8fec6cc\te8beef38-cd7b-43d8-b97f-a69eb8fec6cc\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\t797fa69e-b8fe-46cc-a8be-ef38cd7bb3d8\t797fa69e-b8fe-46cc-a8be-ef38cd7bb3d8\n" +
                         "TJW\t1970-01-03T00:30:00.000000Z\t\t\n" +
-                        "TJW\t1970-01-03T01:00:00.000000Z\t980eca62-a219-40f1-872b-fc5230158059\t980eca62-a219-40f1-872b-fc5230158059\n",
+                        "TJW\t1970-01-03T01:00:00.000000Z\tc72bfc52-3015-4059-980e-ca62a219a0f1\tc72bfc52-3015-4059-980e-ca62a219a0f1\n",
                 "select s, k, " +
                         "first(u), " +
                         "last(u) " +

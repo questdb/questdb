@@ -158,12 +158,12 @@ public class CompactMapValue implements MapValue {
 
     @Override
     public long getUuidHi(int columnIndex) {
-        return entries.getLong(getValueColumnOffset(columnIndex));
+        return entries.getLong(getValueColumnOffset(columnIndex) + Long.BYTES);
     }
 
     @Override
     public long getUuidLo(int columnIndex) {
-        return entries.getLong(getValueColumnOffset(columnIndex) + Long.BYTES);
+        return entries.getLong(getValueColumnOffset(columnIndex));
     }
 
     @Override
@@ -227,10 +227,10 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void putUuid(int columnIndex, long hi, long lo) {
+    public void putUuid(int columnIndex, long lo, long hi) {
         long valueColumnOffset = getValueColumnOffset(columnIndex);
-        entries.putLong(valueColumnOffset, hi);
-        entries.putLong(valueColumnOffset + Long.BYTES, lo);
+        entries.putLong(valueColumnOffset, lo);
+        entries.putLong(valueColumnOffset + Long.BYTES, hi);
     }
 
     @Override

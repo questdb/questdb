@@ -400,14 +400,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putUuidValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        long hi = rec.getUuidHi(col);
         long lo = rec.getUuidLo(col);
-        if (UuidUtil.isNull(hi, lo)) {
+        long hi = rec.getUuidHi(col);
+        if (UuidUtil.isNull(lo, hi)) {
             socket.put("null");
             return;
         }
         socket.put('"');
-        Numbers.appendUuid(hi, lo, socket);
+        Numbers.appendUuid(lo, hi, socket);
         socket.put('"');
     }
 

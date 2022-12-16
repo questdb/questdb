@@ -494,11 +494,11 @@ public class SqlUtil {
         }
     }
 
-    public static boolean implicitCastUuidAsStr(long hi, long lo, CharSink sink) {
-        if (UuidUtil.isNull(hi, lo)) {
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
+        if (UuidUtil.isNull(lo, hi)) {
             return false;
         }
-        Numbers.appendUuid(hi, lo, sink);
+        Numbers.appendUuid(lo, hi, sink);
         return true;
     }
 

@@ -530,9 +530,9 @@ public class CompactMap implements Map, Reopenable {
         }
 
         @Override
-        public void putUuid(long hi, long lo) {
-            entries.putLong(hi);
+        public void putUuid(long lo, long hi) {
             entries.putLong(lo);
+            entries.putLong(hi);
         }
 
         @Override

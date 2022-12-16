@@ -89,7 +89,7 @@ public interface MapValue extends Record {
 
     void putTimestamp(int index, long value);
 
-    void putUuid(int index, long hi, long lo);
+    void putUuid(int index, long lo, long hi);
 
     void setMapRecordHere();
 }

@@ -169,12 +169,12 @@ public class CompactMapRecord implements MapRecord {
 
     @Override
     public long getUuidHi(int col) {
-        return entries.getLong(getColumnOffset(col));
+        return entries.getLong(getColumnOffset(col) + Long.BYTES);
     }
 
     @Override
     public long getUuidLo(int col) {
-        return entries.getLong(getColumnOffset(col) + Long.BYTES);
+        return entries.getLong(getColumnOffset(col));
     }
 
     @Override

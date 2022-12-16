@@ -35,12 +35,12 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     private final long lo;
 
     public UuidConstant(MutableUuid that) {
-        this(that.getHi(), that.getLo());
+        this(that.getLo(), that.getHi());
     }
 
-    public UuidConstant(long hi, long lo) {
-        this.hi = hi;
+    public UuidConstant(long lo, long hi) {
         this.lo = lo;
+        this.hi = hi;
     }
 
     @Override

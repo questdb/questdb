@@ -49,7 +49,7 @@ public class MutableUuidTest {
         MutableUuid m2 = new MutableUuid();
         for (int i = 0; i < 100; i++) {
             UUID uuid = UUID.randomUUID();
-            m1.of(uuid.getMostSignificantBits(), uuid.getLeastSignificantBits());
+            m1.of(uuid.getLeastSignificantBits(), uuid.getMostSignificantBits());
             m2.of(uuid.toString());
             assertEquals(m1, m1);
             assertEquals(m1, m2);
@@ -83,7 +83,7 @@ public class MutableUuidTest {
     @Test
     public void testHappySinking() {
         UUID javaUuid = UUID.randomUUID();
-        MutableUuid uuid = new MutableUuid(javaUuid.getMostSignificantBits(), javaUuid.getLeastSignificantBits());
+        MutableUuid uuid = new MutableUuid(javaUuid.getLeastSignificantBits(), javaUuid.getMostSignificantBits());
 
         assertEqualsString(javaUuid, uuid);
     }
@@ -99,10 +99,15 @@ public class MutableUuidTest {
     @Test
     public void testRandomized() {
         for (int i = 0; i < 100_000; i++) {
-            long msb = ThreadLocalRandom.current().nextLong();
-            long lsb = ThreadLocalRandom.current().nextLong();
-            assertEqualsString(msb, lsb);
+            long lo = ThreadLocalRandom.current().nextLong();
+            long hi = ThreadLocalRandom.current().nextLong();
+            assertEqualsString(lo, hi);
         }
+    }
+
+    @Test
+    public void testSmoke() {
+        assertEqualsString(-4442449726822927731L, -8889930662239044040L);
     }
 
     @Test
@@ -124,10 +129,10 @@ public class MutableUuidTest {
         assertEquals("Bad parsing " + expected, expected.getLeastSignificantBits(), actual.getLo());
     }
 
-    private static void assertEqualsString(long msb, long lsb) {
-        UUID javaUuid = new UUID(msb, lsb);
+    private static void assertEqualsString(long lo, long hi) {
+        UUID javaUuid = new UUID(hi, lo);
         MutableUuid uuid = new MutableUuid();
-        uuid.of(msb, lsb);
+        uuid.of(lo, hi);
 
         assertEqualsString(javaUuid, uuid);
     }
