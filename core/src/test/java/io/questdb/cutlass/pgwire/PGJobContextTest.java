@@ -62,6 +62,8 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
@@ -4145,6 +4147,24 @@ nodejs code:
     }
 
     @Test
+    public void testNumericType() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+            try (final PGWireServer server = createPGServer(1);
+                 final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(LONG256 '0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199bf5c2aa91ba39c022fa261bdede7') from long_sequence(1)");
+                     ResultSet rs = ps.executeQuery()) {
+                    assertTrue(rs.next());
+                    BigDecimal fromQuest = rs.getBigDecimal(1);
+                    BigDecimal expected = new BigDecimal(new BigInteger("7ee65ec7b6e3bc3a422a8855e9d7bfd29199bf5c2aa91ba39c022fa261bdede7", 16));
+                    assertEquals(expected, fromQuest);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPHPSelectHex() throws Exception {
         //         PHP client script to reproduce
         //        $dbName = 'qdb';
@@ -7141,6 +7161,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUnsupportedParameterType() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -7176,10 +7200,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdate() throws Exception {

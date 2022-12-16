@@ -774,6 +774,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
+    private void appendNumericColumn(Record record, int columnIndex) {
+        final Long256 long256Value = record.getLong256A(columnIndex);
+        final long a = responseAsciiSink.skip();
+        Numbers.appendLong256Dec(long256Value, responseAsciiSink);
+        responseAsciiSink.putLenEx(a);
+    }
+
     private void appendRecord(Record record, int columnCount) throws SqlException {
         responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
         final long offset = responseAsciiSink.skip();
@@ -873,6 +880,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     break;
                 case ColumnType.NULL:
                     responseAsciiSink.setNullValue();
+                    break;
+                case ColumnType.NUMERIC:
+                    appendNumericColumn(record, i);
                     break;
                 default:
                     assert false;

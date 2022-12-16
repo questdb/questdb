@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.Long256;
 
 public class PGOids {
 
@@ -40,6 +41,7 @@ public class PGOids {
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
+    public static final int BINARY_TYPE_NUMERIC = (1 << 31) | ColumnType.NUMERIC;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
     public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
@@ -56,10 +58,11 @@ public class PGOids {
     public static final int PG_INT4 = 23;
     public static final int PG_INT8 = 20;
     public static final int PG_NAMESPACE_OID = 2615;
+    public static final int PG_NUMERIC = 1700;
     public static final int PG_PUBLIC_OID = 2200;
     public static final int PG_TIMESTAMP = 1114;
     public static final IntList PG_TYPE_OIDS = new IntList();
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final int PG_VARCHAR = 1043;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
@@ -83,6 +86,9 @@ public class PGOids {
     public static final int X_B_PG_INT4 = 1 | X_PG_INT4;
     public static final int X_PG_INT8 = ((PG_INT8 >> 24) & 0xff) | ((PG_INT8 << 8) & 0xff0000) | ((PG_INT8 >> 8) & 0xff00) | ((PG_INT8 << 24) & 0xff000000);
     public static final int X_B_PG_INT8 = 1 | X_PG_INT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_NUMERIC = ((PG_NUMERIC >> 24) & 0xff) | ((PG_NUMERIC << 8) & 0xff0000) | ((PG_NUMERIC >> 8) & 0xff00) | ((PG_NUMERIC << 24) & 0xff000000);
+    public static final int X_B_PG_NUMERIC = 1 | X_PG_NUMERIC;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
@@ -133,6 +139,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.NUMERIC, PG_NUMERIC); // NUMERIC
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
@@ -145,6 +152,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_BOOL);
         PG_TYPE_OIDS.add(PG_BYTEA);
         PG_TYPE_OIDS.add(PG_DATE);
+        PG_TYPE_OIDS.add(PG_NUMERIC);
 
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);
@@ -153,6 +161,7 @@ public class PGOids {
         PG_TYPE_TO_SIZE_MAP.put(PG_CHAR, Character.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Long.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_NUMERIC, Long256.BYTES);
 
         PG_TYPE_TO_NAME[0] = "varchar";
         PG_TYPE_TO_NAME[1] = "timestamp";
@@ -165,5 +174,6 @@ public class PGOids {
         PG_TYPE_TO_NAME[8] = "bool";
         PG_TYPE_TO_NAME[9] = "binary";
         PG_TYPE_TO_NAME[10] = "date";
+        PG_TYPE_TO_NAME[11] = "numeric";
     }
 }

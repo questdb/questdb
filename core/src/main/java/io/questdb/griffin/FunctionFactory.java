@@ -61,6 +61,7 @@ public interface FunctionFactory {
      * <li>p = REGCLASS - this type is used in cast()</li>
      * <li>q = REGPROCEDURE - this type is used in cast()</li>
      * <li>J = long128</li>
+     * <li>x = numeric</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and

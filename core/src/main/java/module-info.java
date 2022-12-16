@@ -358,6 +358,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLong256ToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToBooleanFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastLong256ToNumericFunctionFactory,
 //                  cast date to ...,
             io.questdb.griffin.engine.functions.cast.CastDateToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDateToByteFunctionFactory,

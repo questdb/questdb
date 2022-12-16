@@ -73,13 +73,14 @@ public final class ColumnType {
     public static final short LONG128 = 24; // Limited support, few tests only
     public static final short LONG256 = 13;
     public static final int NO_OVERLOAD = 10000;
-    public static final short NULL = 28;
+    public static final short NULL = 29;
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
-    public static final short PARAMETER = 19;
+    public static final short NUMERIC = 19;
+    public static final short PARAMETER = 28;
     public static final short RECORD = 22;
     // PG specific types to work with 3rd party software with canned catalogue queries
     public static final short REGCLASS = 25;
@@ -120,6 +121,7 @@ public final class ColumnType {
             /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
             /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
             /* 18 BINARY    */, {BINARY}
+            /* 19 NUMERIC   */, {NUMERIC}
     };
     private static final int[] overloadPriorityMatrix;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -396,6 +398,7 @@ public final class ColumnType {
         typeNameMap.put(REGCLASS, "regclass");
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
+        typeNameMap.put(NUMERIC, "NUMERIC");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -424,6 +427,7 @@ public final class ColumnType {
         nameTypeMap.put("regclass", REGCLASS);
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
+        nameTypeMap.put("numeric", NUMERIC);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
@@ -464,6 +468,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
+        TYPE_SIZE_POW2[NUMERIC] = 5; // 256 bits, for now
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -490,5 +495,6 @@ public final class ColumnType {
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
+        TYPE_SIZE[NUMERIC] = Long256.BYTES;
     }
 }
