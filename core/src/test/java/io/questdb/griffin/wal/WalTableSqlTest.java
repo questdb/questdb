@@ -889,6 +889,61 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String newTableName = testName.getMethodName() + "_new中";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+
+            drainWalQueue();
+
+            TableToken table2directoryName = engine.getTableToken(tableName);
+            compile("rename table " + tableName + " to " + newTableName);
+            compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
+
+            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
+            Assert.assertNotEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
+
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter(newTableName)) {
+                Assert.assertEquals(newTableName, writer.getTableToken().getTableName());
+            }
+
+            assertSql(newTableName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "100\t\t2022-02-25T00:00:00.000000Z\n");
+
+            assertSql("select name from tables() order by name", "name\n" +
+                    newTableName + "\n");
+
+            for (int i = 0; i < 2; i++) {
+                engine.releaseInactive();
+                refreshTablesInBaseEngine();
+
+                TableToken newTabledirectoryName2 = engine.getTableToken(newTableName);
+                Assert.assertEquals(newTabledirectoryName, newTabledirectoryName2);
+                assertSql(newTableName, "x\tsym2\tts\n" +
+                        "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                        "100\t\t2022-02-25T00:00:00.000000Z\n");
+            }
+
+            assertSql("select name, directoryName from tables() order by name", "name\tdirectoryName\n" +
+                    newTableName + "\t" + newTabledirectoryName.getDirName() + "\n");
+            assertSql("select table from all_tables()", "table\n" +
+                    newTableName + "\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
+                    newTableName + "\n");
+        });
+    }
+
+    @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

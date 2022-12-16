@@ -267,6 +267,12 @@ public class TableNameRegistryFileStore implements Closeable {
                                 continue;
                             }
 
+                            if (nameTableTokenMap.containsKey(tableName)) {
+                                LOG.critical().$("duplicate table name found [dirName=").$(dirName).$(", name=").$(tableName)
+                                        .$(", existingTableDir=").$(nameTableTokenMap.get(tableName).getDirName()).I$();
+                                continue;
+                            }
+
                             TableToken token = new TableToken(tableName, dirName, tableId, isWal);
                             nameTableTokenMap.put(tableName, token);
                             reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));

@@ -739,19 +739,19 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableSequencerAPI.renameWalTable(tableToken, newTableToken);
                 return newTableToken;
             } else {
-                String lockedReason = lock(securityContext, tableToken, "renameTable");
-                if (null == lockedReason) {
+                try (TableWriter tableWriter = lockTableGetWriter(securityContext, tableToken)) {
                     try {
-                        newTableToken = rename0(path, tableToken, tableName, otherPath, newName);
+                        newTableToken = rename0(path, tableToken, tableName, otherPath, newName, tableWriter);
                     } finally {
-                        unlock(securityContext, tableToken, null, false);
+                        readerPool.unlock(tableToken);
+                        metadataPool.unlock(tableToken);
                     }
                     tableNameRegistry.dropTable(tableToken);
-                } else {
-                    LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
-                    throw EntryUnavailableException.instance(lockedReason);
+                    return newTableToken;
+                } catch (EntryUnavailableException e) {
+                    LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(e.getReason()).$("']").$();
+                    throw e;
                 }
-                return newTableToken;
             }
         } else {
             LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
@@ -800,7 +800,32 @@ public class CairoEngine implements Closeable, WriterSource {
         writerPool.unlock(tableToken);
     }
 
-    private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to) {
+    private TableWriter lockTableGetWriter(
+            CairoSecurityContext securityContext,
+            TableToken tableToken
+    ) {
+        securityContext.checkWritePermission();
+
+        boolean success = false;
+        TableWriter tableWriter = writerPool.get(tableToken, "rename table");
+        try {
+            if (readerPool.lock(tableToken)) {
+                if (metadataPool.lock(tableToken)) {
+                    LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
+                    success = true;
+                    return tableWriter;
+                }
+                readerPool.unlock(tableToken);
+            }
+            throw EntryUnavailableException.instance("reader locked");
+        } finally {
+            if (!success) {
+                tableWriter.close();
+            }
+        }
+    }
+
+    private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to, TableWriter tableWriter) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
@@ -825,6 +850,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         .put("', error=").put(error);
             }
             tableNameRegistry.registerName(dstTableToken);
+            tableWriter.changeTableName(0L, dstTableToken);
             return dstTableToken;
         } finally {
             tableNameRegistry.unlockTableName(dstTableToken);
