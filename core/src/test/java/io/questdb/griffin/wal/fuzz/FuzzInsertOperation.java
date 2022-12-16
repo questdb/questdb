@@ -52,7 +52,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOSHORT,
             ColumnType.GEOINT,
             ColumnType.GEOLONG,
-            ColumnType.BOOLEAN
+            ColumnType.BOOLEAN,
+            ColumnType.UUID
     };
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
@@ -200,7 +201,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                             case ColumnType.GEOLONG:
                                 row.putGeoHash(index, rnd.nextLong());
                                 break;
-
+                            case ColumnType.UUID:
+                                row.putUuid(index, rnd.nextLong(), rnd.nextLong());
+                                break;
                             default:
                                 throw new UnsupportedOperationException();
                         }
