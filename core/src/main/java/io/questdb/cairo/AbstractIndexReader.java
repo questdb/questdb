@@ -90,6 +90,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
+    @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);

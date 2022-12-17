@@ -806,6 +806,16 @@ public final class TableUtils {
         return openRW(ff, path, LOG, opts);
     }
 
+    public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+        final int rootLen = path.length();
+        path.concat(fileName).$();
+        try {
+            return TableUtils.openRO(ff, path, log);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public static int openRO(FilesFacade ff, LPSZ path, Log log) {
         final int fd = ff.openRO(path);
         if (fd > -1) {

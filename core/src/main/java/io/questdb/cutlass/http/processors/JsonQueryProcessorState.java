@@ -779,8 +779,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
-        // Enable column pre-touch in REST API only when limit=n,m is not specified since when limit is defined we do
-        // a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
+        // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
+        // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();

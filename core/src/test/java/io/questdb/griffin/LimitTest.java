@@ -380,8 +380,8 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , sqlExecutionContext
+                                ") timestamp(timestamp)",
+                        sqlExecutionContext
                 );
 
                 bindVariableService.setLong("lo", 4);
@@ -567,8 +567,8 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , sqlExecutionContext
+                                ") timestamp(timestamp)",
+                        sqlExecutionContext
                 );
 
                 bindVariableService.setLong(0, 4);
@@ -622,8 +622,8 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , sqlExecutionContext
+                                ") timestamp(timestamp)",
+                        sqlExecutionContext
                 );
 
                 bindVariableService.setLong("lim", 4);
@@ -692,8 +692,8 @@ public class LimitTest extends AbstractGriffinTest {
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n" +
                             " from long_sequence(30)" +
-                            ") timestamp(timestamp)"
-                    , sqlExecutionContext
+                            ") timestamp(timestamp)",
+                    sqlExecutionContext
             );
             assertQueryAndCache(expected1, query, "timestamp", true, true);
 
@@ -717,8 +717,8 @@ public class LimitTest extends AbstractGriffinTest {
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n" +
                             " from long_sequence(30)" +
-                            ") timestamp(timestamp)"
-                    , sqlExecutionContext
+                            ") timestamp(timestamp)",
+                    sqlExecutionContext
             );
 
             assertQuery(expected2, query, "timestamp", true, true);

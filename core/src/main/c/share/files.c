@@ -103,11 +103,35 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return readOffset - offset;
 }
 
+JNIEXPORT jbyte JNICALL Java_io_questdb_std_Files_readNonNegativeByte
+        (JNIEnv *e, jclass cl,
+         jint fd,
+         jlong offset) {
+    jbyte result;
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jbyte), (off_t) offset);
+    if (readLen != sizeof(jbyte)) {
+        return -1;
+    }
+    return result;
+}
+
+JNIEXPORT jshort JNICALL Java_io_questdb_std_Files_readNonNegativeShort
+        (JNIEnv *e, jclass cl,
+         jint fd,
+         jlong offset) {
+    jshort result;
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jshort), (off_t) offset);
+    if (readLen != sizeof(jshort)) {
+        return -1;
+    }
+    return result;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     jint result;
-    ssize_t readLen = pread((int) fd, (void *) &result, (size_t) 4, (off_t) offset);
-    if (readLen != 4) {
+    ssize_t readLen = pread((int) fd, (void *) &result, sizeof(jint), (off_t) offset);
+    if (readLen != sizeof(jint)) {
         return -1;
     }
     return result;
@@ -117,8 +141,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl, jint fd, jlong offset) {
     jlong result;
     ssize_t readLen;
-    RESTARTABLE(pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset), readLen);
-    if (readLen != 8) {
+    RESTARTABLE(pread((int) fd, (void *) &result, sizeof(jlong), (off_t) offset), readLen);
+    if (readLen != sizeof(jlong)) {
         return -1;
     }
     return result;
@@ -216,36 +240,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
     }
     return JNI_FALSE;
 }
-
-#ifdef __APPLE__
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
-        (JNIEnv *e, jclass cl, jint fd, jlong len) {
-    // MACOS allocates additional space. Check what size the file currently is
-    struct stat st;
-    int _fd = (int) fd;
-    if (fstat(_fd, &st) != 0) {
-        return JNI_FALSE;
-    }
-    const jlong fileLen = st.st_blksize * st.st_blocks;
-    jlong deltaLen = len - fileLen;
-    if (deltaLen > 0) {
-        // F_ALLOCATECONTIG - try to allocate continuous space.
-        fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, deltaLen, 0};
-        int result = fcntl(_fd, F_PREALLOCATE, &flags);
-        if (result == -1) {
-            // F_ALLOCATEALL - try to allocate non-continuous space.
-            flags.fst_flags = F_ALLOCATEALL;
-            result = fcntl((int) fd, F_PREALLOCATE, &flags);
-            if (result == -1) {
-                return JNI_FALSE;
-            }
-        }
-    }
-    return ftruncate((int) fd, len) == 0;
-}
-
-#endif
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
     return msync((void *) addr, len, async ? MS_ASYNC : MS_SYNC);
