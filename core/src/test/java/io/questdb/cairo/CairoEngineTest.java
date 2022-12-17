@@ -128,7 +128,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 };
 
                 try {
-                    new CairoEngine(configuration);
+                    new CairoEngine(configuration).close();
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "No space left");

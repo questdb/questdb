@@ -890,7 +890,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 compile("alter table " + tableName + " resume wal from transaction 999"); // fails
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
+                TestUtils.assertContains(ex.getMessage(), "[0] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
             }
 
             compile("alter table " + tableName + " resume wal from txn 3");
@@ -977,7 +977,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 compile("alter table " + tableName + " resume wal from txn 2");
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[-1] invalid table name [table=" + tableName + "]");
+                TestUtils.assertContains(ex.getMessage(), "[0] invalid table name [table=" + tableName + "]");
             } finally {
                 node1.getConfigurationOverrides().setMaxFileNameLength(-1);
             }
