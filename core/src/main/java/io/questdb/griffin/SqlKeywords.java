@@ -1833,6 +1833,17 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'l';
     }
 
+    public static boolean isTxnKeyword(CharSequence tok) {
+        if (tok.length() != 3) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
     public static boolean isWeekKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
@@ -1920,6 +1931,20 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 'e';
+    }
+
+    public static boolean isResumeKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'r'
+            && (tok.charAt(i++) | 32) == 'e'
+            && (tok.charAt(i++) | 32) == 's'
+            && (tok.charAt(i++) | 32) == 'u'
+            && (tok.charAt(i++) | 32) == 'm'
+            && (tok.charAt(i) | 32) == 'e';
     }
 
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {

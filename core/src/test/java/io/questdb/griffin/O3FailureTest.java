@@ -750,6 +750,12 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
+            public boolean closeChecked(int fd) {
+                counter.incrementAndGet();
+                return super.closeChecked(fd);
+            }
+
+            @Override
             public int openAppend(LPSZ name) {
                 if (counter.decrementAndGet() < 0) {
                     return -1;

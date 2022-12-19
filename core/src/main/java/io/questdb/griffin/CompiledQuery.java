@@ -55,6 +55,7 @@ public interface CompiledQuery {
     short SET = 6;
     short SNAPSHOT_DB_COMPLETE = 23;
     short SNAPSHOT_DB_PREPARE = 22;
+    short TABLE_RESUME = 25;
     short TRUNCATE = 3;
     short TYPES_COUNT = EXPLAIN;
     short UNLOCK = 16;

@@ -1973,7 +1973,7 @@ if __name__ == "__main__":
                 statement.execute();
                 Assert.fail();
             } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
             }
         });
     }
@@ -5485,7 +5485,7 @@ nodejs code:
                         statement.execute();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
                     }
                 }
             }

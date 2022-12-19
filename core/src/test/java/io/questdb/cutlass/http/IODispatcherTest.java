@@ -29,6 +29,7 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.*;
@@ -77,6 +78,8 @@ public class IODispatcherTest {
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
+    private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
+    private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
     private static final Metrics metrics = Metrics.enabled();
     private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
@@ -4423,6 +4426,55 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryTimeout() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
+                .run((engine) -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                        new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                                "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                336,
+                                "timeout, query aborted"
+                        );
+                    }
+                });
+    }
+
+    @Test
+    public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
+        final int timeout = 50;
+        final int iterations = 3;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(timeout)
+                .run((engine) -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                        for (int i = 0; i < iterations; i++) {
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                    "ea\r\n" +
+                                            "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\",\"columns\":[{\"name\":\"i\",\"type\":\"INT\"},{\"name\":\"avg\",\"type\":\"DOUBLE\"},{\"name\":\"max\",\"type\":\"LONG\"}],\"dataset\":[[0,55.0,100],[1,46.0,91],[2,47.0,92]],\"count\":3}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n"
+                            );
+                            Os.sleep(timeout);
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testJsonQueryTopLimit() throws Exception {
         testJsonQuery(
                 20,
@@ -7083,6 +7135,67 @@ public class IODispatcherTest {
                             false,
                             true
                     );
+                });
+    }
+
+    @Test
+    public void testTextQueryTimeout() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
+                .run((engine) -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                        new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                                "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                387,
+                                "timeout, query aborted"
+                        );
+                    }
+                });
+    }
+
+    @Test
+    public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
+        final int timeout = 50;
+        final int iterations = 3;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withQueryTimeout(timeout)
+                .run((engine) -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
+                        for (int i = 0; i < iterations; i++) {
+                            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                    "HTTP/1.1 200 OK\r\n" +
+                                            "Server: questDB/1.0\r\n" +
+                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                            "Transfer-Encoding: chunked\r\n" +
+                                            "Content-Type: text/csv; charset=utf-8\r\n" +
+                                            "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                                            "\r\n" +
+                                            "33\r\n" +
+                                            "\"i\",\"avg\",\"max\"\r\n" +
+                                            "0,55.0,100\r\n" +
+                                            "1,46.0,91\r\n" +
+                                            "2,47.0,92\r\n" +
+                                            "\r\n" +
+                                            "00\r\n" +
+                                            "\r\n"
+                            );
+                            Os.sleep(timeout);
+                        }
+                    }
                 });
     }
 

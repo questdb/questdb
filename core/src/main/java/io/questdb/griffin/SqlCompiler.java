@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -516,12 +517,41 @@ public class SqlCompiler implements Closeable {
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
+                } else if (SqlKeywords.isResumeKeyword(tok)) {
+                    tok = expectToken(lexer, "'wal'");
+                    if (!SqlKeywords.isWalKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                    }
+
+                    tok = SqlUtil.fetchNext(lexer); // optional from part
+                    long fromTxn = -1;
+                    if (tok != null) {
+                        if (SqlKeywords.isFromKeyword(tok)) {
+                            tok = expectToken(lexer, "'transaction' or 'txn'");
+                            if (!(SqlKeywords.isTransactionKeyword(tok) || SqlKeywords.isTxnKeyword(tok))) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
+                            }
+                            CharSequence txnValue = expectToken(lexer, "transaction value");
+                            try {
+                                fromTxn = Numbers.parseLong(txnValue);
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(txnValue).put(']');
+                            }
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
+                        }
+                    }
+                    if (!TableSequencerAPI.isWalTable(tableName, path.of(configuration.getRoot()), ff)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), tableName).put(" is not a WAL table.");
+                    }
+                    return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Throwable) e).$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' could not be altered: ").put(e);
+                e.position(lexer.lastTokenPosition());
+                throw e;
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -1020,6 +1050,20 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
         return compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private CompiledQuery alterTableResume(int tableNamePosition, String tableName, long resumeFromTxn, SqlExecutionContext executionContext) {
+        try {
+            engine.getTableSequencerAPI().resumeTable(tableName, resumeFromTxn, executionContext.getCairoSecurityContext());
+            return compiledQuery.ofTableResume();
+        } catch (CairoException ex) {
+            LOG.critical().$("table resume failed [table=").$(tableName)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
+        }
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableNamePosition, int tableId) throws SqlException {

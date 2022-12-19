@@ -250,8 +250,7 @@ public class WriterPool extends AbstractPool {
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
 
-                if (e.lockFd != -1) {
-                    ff.close(e.lockFd);
+                if (ff.closeChecked(e.lockFd)) {
                     Path path = Path.getThreadLocal(root).concat(name);
                     TableUtils.lockName(path);
                     if (!ff.remove(path)) {
@@ -569,7 +568,7 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.lockFd != -1L && deadline == Long.MAX_VALUE) {
+            } else if (e.lockFd != -1 && deadline == Long.MAX_VALUE) {
                 // do not release locks unless pool is shutting down, which is
                 // indicated via deadline to be Long.MAX_VALUE
                 if (ff.close(e.lockFd)) {
