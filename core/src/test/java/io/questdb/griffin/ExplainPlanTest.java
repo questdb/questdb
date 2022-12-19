@@ -774,7 +774,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "]\n";
 
         if (!JitUtil.isJitSupported()) {
-            expected.replace("JIT", "");
+            expected = expected.replace("JIT", "");
         }
 
         try {
