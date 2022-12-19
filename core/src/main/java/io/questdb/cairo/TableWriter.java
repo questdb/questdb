@@ -65,8 +65,7 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
@@ -5182,38 +5181,44 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
-        try {
-            int checkedType = Files.checkIsDirOrSoftLinkNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
-            // Do not remove detached partitions, wal and sequencer directories
-            // They are probably about to be attached.
-            if (checkedType != Files.DT_UNKNOWN &&
-                    !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
-                    !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
-                    !Chars.startsWith(fileNameSink, SEQ_DIR) &&
-                    !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())) {
-                try {
-                    long txn = 0;
-                    int txnSep = Chars.indexOf(fileNameSink, '.');
-                    if (txnSep < 0) {
-                        txnSep = fileNameSink.length();
-                    } else {
-                        txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.length());
-                    }
-                    long dirTimestamp = partitionDirFmt.parse(fileNameSink, 0, txnSep, null);
-                    if (txn <= txWriter.txn &&
-                            (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
-                        return;
-                    }
-                } catch (NumericException ignore) {
-                    // not a date?
-                    // ignore exception and leave the directory
-                    LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
+        int checkedType = Files.checkIsDirOrSoftLinkNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
+        if (checkedType != Files.DT_UNKNOWN &&
+                !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
+                !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
+                !Chars.startsWith(fileNameSink, SEQ_DIR) &&
+                !Chars.startsWith(fileNameSink, SEQ_DIR_DEPRECATED) &&
+                !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())) {
+
+            try {
+                long txn = 0;
+                int txnSep = Chars.indexOf(fileNameSink, '.');
+                if (txnSep < 0) {
+                    txnSep = fileNameSink.length();
+                } else {
+                    txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.length());
+                }
+                long dirTimestamp = partitionDirFmt.parse(fileNameSink, 0, txnSep, null);
+                if (txn <= txWriter.txn &&
+                        (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
                     return;
                 }
-                ff.unlinkRemove(path, checkedType, LOG);
+            } catch (NumericException ignore) {
+                // not a date?
+                // ignore exception and leave the directory
+                path.trimTo(rootLen);
+                path.concat(pUtf8NameZ).$();
+                LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
+                return;
             }
-        } finally {
-            path.trimTo(rootLen);
+            ff.unlinkRemove(path, checkedType, LOG);
+        }
+        path.trimTo(rootLen);
+        path.concat(pUtf8NameZ).$();
+        final int errno = ff.rmdir(path);
+        if (errno == 0) {
+            LOG.info().$("removed partition dir: ").$(path).$();
+        } else {
+            LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(errno).I$();
         }
     }
 
