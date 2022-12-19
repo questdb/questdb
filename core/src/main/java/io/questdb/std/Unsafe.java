@@ -58,8 +58,8 @@ public final class Unsafe {
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
     private static final Method implAddExports;
-    private static final boolean littleEndian = ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN);
     //#endif
+    private static final boolean littleEndian = ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN);
 
     private Unsafe() {
     }
