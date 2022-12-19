@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+// @formatter:off
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -31,6 +32,7 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -56,6 +58,7 @@ public final class Unsafe {
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
     private static final Method implAddExports;
+    private static final boolean littleEndian = ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN);
     //#endif
 
     private Unsafe() {
@@ -177,6 +180,10 @@ public final class Unsafe {
         return UNSAFE;
     }
 
+    public static boolean isLittleEndian() {
+        return littleEndian;
+    }
+
     //#if jdk.version!=8
 
     /**
@@ -223,18 +230,6 @@ public final class Unsafe {
         assert mem >= 0;
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
-    }
-
-    public static long swapEndianness(long value) {
-        long b0 = value & 0xff;
-        long b1 = (value >> 8) & 0xff;
-        long b2 = (value >> 16) & 0xff;
-        long b3 = (value >> 24) & 0xff;
-        long b4 = (value >> 32) & 0xff;
-        long b5 = (value >> 40) & 0xff;
-        long b6 = (value >> 48) & 0xff;
-        long b7 = (value >> 56) & 0xff;
-        return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
     }
 
     //#if jdk.version!=8
@@ -293,7 +288,7 @@ public final class Unsafe {
     }
     //#endif
 
-    //most significant bit
+    // most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

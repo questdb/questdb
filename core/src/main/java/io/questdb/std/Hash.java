@@ -241,22 +241,24 @@ public final class Hash {
 
         @Override
         public int getInt(long offset) {
-            return (getByte(offset) & 255)
-                    | ((getByte(offset + 1) & 255) << 8)
-                    | ((getByte(offset + 2) & 255) << 16)
-                    | ((getByte(offset + 3) & 255) << 24);
+            final int n = (getByte(offset) & 255)
+                    | ((getByte(offset + 1) & 0xff) << 8)
+                    | ((getByte(offset + 2) & 0xff) << 16)
+                    | ((getByte(offset + 3) & 0xff) << 24);
+            return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
         }
 
         @Override
         public long getLong(long offset) {
-            return (long) (getByte(offset) & 255)
-                    | ((long) (getByte(offset + 1) & 255) << 8)
-                    | ((long) (getByte(offset + 2) & 255) << 16)
-                    | ((long) (getByte(offset + 3) & 255) << 24)
-                    | ((long) (getByte(offset + 4) & 255) << 32)
-                    | ((long) (getByte(offset + 5) & 255) << 40)
-                    | ((long) (getByte(offset + 6) & 255) << 48)
-                    | ((long) (getByte(offset + 7) & 255) << 56);
+            final long n = (long) (getByte(offset) & 255)
+                    | ((long) (getByte(offset + 1) & 0xff) << 8)
+                    | ((long) (getByte(offset + 2) & 0xff) << 16)
+                    | ((long) (getByte(offset + 3) & 0xff) << 24)
+                    | ((long) (getByte(offset + 4) & 0xff) << 32)
+                    | ((long) (getByte(offset + 5) & 0xff) << 40)
+                    | ((long) (getByte(offset + 6) & 0xff) << 48)
+                    | ((long) (getByte(offset + 7) & 0xff) << 56);
+            return Unsafe.isLittleEndian() ? n : Long.reverseBytes(n);
         }
 
         public StringUtf8MemoryAccessor of(String str) {
