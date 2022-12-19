@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -48,6 +49,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 public class WalTableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
+    private static final String SIGNATURE = "wal_tables()";
     private static final int nameColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
@@ -55,7 +57,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "wal_tables()";
+        return SIGNATURE;
     }
 
     @Override
@@ -65,11 +67,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-        int position,
-        ObjList<Function> args,
-        IntList argPositions,
-        CairoConfiguration configuration,
-        SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return new CursorFunction(new WalTableListCursorFactory(configuration, sqlExecutionContext)) {
             @Override
@@ -80,9 +82,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     }
 
     private static class WalTableListCursorFactory extends AbstractRecordCursorFactory {
+        private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        private final TableListRecordCursor cursor;
         private Path rootPath;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
@@ -102,6 +104,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
 
         @Override
