@@ -45,10 +45,8 @@ public class TimestampFormatUtils {
     public static final DateFormat SEC_UTC_FORMAT;
     public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
     public static final DateFormat USEC_UTC_FORMAT;
-    public static final DateFormat UTC_DATE_FORMAT;
-    public static final String UTC_DATE_PATTERN = "yyyy-MM-dd";
     public static final DateFormat UTC_FORMAT;
-    public static final String UTC_PATTERN = UTC_DATE_PATTERN + "THH:mm:ss.SSSz";
+    public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
     private static final DateFormat[] FORMATS;
     private static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
@@ -107,14 +105,6 @@ public class TimestampFormatUtils {
         } else {
             sink.put(locale.getAMPM(1));
         }
-    }
-
-    // YYYY-MM-DDZ
-    public static void appendDate(CharSink sink, long micros) {
-        if (micros == Long.MIN_VALUE) {
-            return;
-        }
-        UTC_DATE_FORMAT.format(micros, null, "Z", sink);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
@@ -461,6 +451,5 @@ public class TimestampFormatUtils {
         SEC_UTC_FORMAT = dateFormats.get(SEC_UTC_PATTERN);
         GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
-        UTC_DATE_FORMAT = compiler.compile(UTC_DATE_PATTERN);
     }
 }

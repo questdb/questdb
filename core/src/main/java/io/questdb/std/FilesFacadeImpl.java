@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 public class FilesFacadeImpl implements FilesFacade {
 

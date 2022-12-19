@@ -37,7 +37,6 @@ import static io.questdb.cairo.TableUtils.*;
 
 final class Mig609 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
-    private static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     private static final long TX_OFFSET_FIXED_ROW_COUNT_505 = 16;
     private static final long TX_OFFSET_MAP_WRITER_COUNT_608 = 128;
 

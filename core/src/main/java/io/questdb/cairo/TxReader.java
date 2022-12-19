@@ -43,7 +43,6 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
-    // PARTITION_MASKED_SIZE_OFFSET
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
     // | reserved | read-only | available bits | partition size |
@@ -433,7 +432,8 @@ public class TxReader implements Closeable, Mutable {
                     }
                 }
                 int offset = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET;
-                attachedPartitions.setQuick(offset, transientRowCount & PARTITION_SIZE_MASK);
+                long mask = attachedPartitions.getQuick(offset) & PARTITION_MASK_MASK;
+                attachedPartitions.setQuick(offset, mask | (transientRowCount & PARTITION_SIZE_MASK)); // preserve mask
                 attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {
                 attachedPartitionsSize = 0;

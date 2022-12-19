@@ -463,38 +463,68 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n");
 
-            // the previously read-only partition becomes now writeable, because it is the active partition
+            // the previously partition, read-only, becomes now the active partition, and cannot be written to
             engine.releaseAllWriters();
             engine.releaseAllReaders();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TxReader txFile = reader.getTxFile();
-                for (int i = 0; i < 3; i++) {
+                for (int i = 0; i < 4; i++) {
                     Assert.assertTrue(txFile.isPartitionReadOnly(i));
                 }
-                Assert.assertFalse(txFile.isPartitionReadOnly(3));
             }
-            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100002Z')");
-            executeOperation("UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T23:59:59.200000Z'", CompiledQuery.UPDATE);
+
             assertSql(tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5",
                     "l\ti\ts\tts\n" +
-                            "-1\t-1\tµ\t2022-10-20T00:00:00.100002Z\n" +
                             "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
                             "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
                             "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
-                            "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n");
+                            "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n" +
+                            "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n");
             assertSql(tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5",
                     "l\ti\ts\tts\n" +
                             "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
                             "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
                             "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
                             "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
-                            "13\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
+                            "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
+
+            // silently ignored as the partition is read only
+            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100002Z')");
+            assertUpdateFailsBecausePartitionIsReadOnly(
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T23:59:59.200000Z'",
+                    tableName,
+                    lastReadOnlyPartitionName);
+
+            // create new partition at the end and append data to it
+            String newPartitionName = "2022-10-21";
+            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + newPartitionName + "T20:00:00.202312Z')");
+            executeOperation("UPDATE " + tableName + " SET l = 13 WHERE ts = '" + newPartitionName + "T20:00:00.202312Z'", CompiledQuery.UPDATE);
+            assertSql(tableName + " WHERE ts in '" + newPartitionName + "'",
+                    "l\ti\ts\tts\n" +
+                            "13\t-1\tµ\t2022-10-21T20:00:00.202312Z\n");
+
+            assertSql(tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5",
+                    "l\ti\ts\tts\n" +
+                            "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
+                            "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
+                            "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
+                            "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n" +
+                            "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n");
+            assertSql(tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5",
+                    "l\ti\ts\tts\n" +
+                            "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
+                            "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
+                            "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
+                            "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
+                            "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
+
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                             "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
-                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2001\n" +
-                            "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n");
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n" +
+                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n");
 
         });
     }

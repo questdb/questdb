@@ -76,11 +76,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryMR> columns;
     private int partitionCount;
+    private long rowCount;
+    private long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion = -1;
     private long txPartitionVersion = -1;
     private long txTruncateVersion = -1;
-    private long rowCount;
-    private long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
 
@@ -131,7 +131,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
                 int baseOffset = i * PARTITIONS_SLOT_SIZE;
                 openPartitionInfo.setQuick(baseOffset, txFile.getPartitionTimestamp(i));
-                this.openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
+                this.openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1L); // -1L means it is not open
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txFile.getPartitionColumnVersion(i));
             }

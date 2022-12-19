@@ -140,7 +140,6 @@ class LineTcpMeasurementEvent implements Closeable {
                 writer.commit();
             }
             long timestamp = buffer.readLong(offset);
-
             offset += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
                 timestamp = clock.getTicks();

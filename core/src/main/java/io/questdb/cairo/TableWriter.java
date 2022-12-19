@@ -699,7 +699,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 // main columnVersionWriter is now aligned with the detached partition values read from partition _cv file
                 // in case of an error it has to be clean up
 
-                if (validateDataFiles && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are RO, no copy involved
+                if (validateDataFiles && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are read-only, no copy involved
                     // Copy partition if configured to do so and it's not CSV import
                     if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
                         LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
@@ -3073,10 +3073,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return true;
     }
 
-    private boolean isPartitionReadOnlyByTimestamp(long timestamp) {
-        return partitionFloorMethod != null && txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionFloorMethod.floor(timestamp));
-    }
-
     private void lock() {
         try {
             path.trimTo(rootLen);
@@ -5181,14 +5177,16 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
+        // Do not remove detached partitions, they are probably about to be attached
+        // Do not remove wal and sequencer directories either
         int checkedType = Files.checkIsDirOrSoftLinkNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
                 !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
                 !Chars.startsWith(fileNameSink, SEQ_DIR) &&
                 !Chars.startsWith(fileNameSink, SEQ_DIR_DEPRECATED) &&
-                !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())) {
-
+                !Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
+        ) {
             try {
                 long txn = 0;
                 int txnSep = Chars.indexOf(fileNameSink, '.');
@@ -5202,23 +5200,16 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
                     return;
                 }
+                ff.unlinkRemove(path, checkedType, LOG);
             } catch (NumericException ignore) {
                 // not a date?
                 // ignore exception and leave the directory
                 path.trimTo(rootLen);
                 path.concat(pUtf8NameZ).$();
                 LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
-                return;
+            } finally {
+                path.trimTo(rootLen);
             }
-            ff.unlinkRemove(path, checkedType, LOG);
-        }
-        path.trimTo(rootLen);
-        path.concat(pUtf8NameZ).$();
-        final int errno = ff.rmdir(path);
-        if (errno == 0) {
-            LOG.info().$("removed partition dir: ").$(path).$();
-        } else {
-            LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(errno).I$();
         }
     }
 
