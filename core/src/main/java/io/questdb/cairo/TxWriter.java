@@ -285,8 +285,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setPartitionReadOnly(int i, boolean isReadOnly) {
-        setPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
+    public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
+        setPartitionReadOnlyByIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
     }
 
     public void setPartitionReadOnlyByIndex(int index, boolean isReadOnly) {
