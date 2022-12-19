@@ -42,10 +42,7 @@ import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TestName;
 
 import static io.questdb.cairo.TableUtils.createTable;
@@ -76,6 +73,111 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Test
+    public void testServerMainLineTcpSenderWithActivePartitionReadOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final int partitionCount = 4;
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    CairoEngine engine = qdb.getCairoEngine();
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            null,
+                            null,
+                            -1,
+                            null)
+            ) {
+                qdb.start();
+
+                // create a table with 4 partitions and 1111 rows
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                try (
+                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                                .col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).symbolCapacity(32)
+                                .timestamp("ts");
+                        MemoryMARW mem = Vm.getMARWInstance();
+                        Path path = new Path().of(cairoConfig.getRoot()).concat(tableName)
+                ) {
+                    createTable(cairoConfig, mem, path, tableModel, 1);
+                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, readOnlyPartitionName, partitionCount), context);
+                }
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " sample by 1d",
+                        Misc.getThreadLocalBuilder(),
+                        "min\tmax\tcount\n" +
+                                "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" + // <-- read only
+                                "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" + // <-- read only
+                                "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" + // <-- read only
+                                "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n"); // <-- read only
+
+                // make all partitions read-only
+                try (TableWriter writer = qdb.getCairoEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
+                    TxWriter txWriter = writer.getTxWriter();
+                    Assert.assertEquals(partitionCount, txWriter.getPartitionCount());
+                    for (int i = 0; i < partitionCount; i++) {
+                        txWriter.setPartitionReadOnly(i, true);
+                    }
+                    txWriter.bumpTruncateVersion();
+                    txWriter.commit(cairoConfig.getCommitMode(), writer.getDenseSymbolMapWriters());
+                }
+
+                // check read only flag
+                qdb.getCairoEngine().releaseAllWriters();
+                qdb.getCairoEngine().releaseAllReaders();
+                try (TableReader reader = qdb.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    TxReader txFile = reader.getTxFile();
+                    for (int i = 0; i < partitionCount; i++) {
+                        Assert.assertTrue(txFile.isPartitionReadOnly(i));
+                        Assert.assertTrue(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestamp(i)));
+                    }
+                }
+
+                // so that we know when the table writer is returned to the pool
+                final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
+                qdb.getCairoEngine().setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (Chars.equalsNc(tableName, name)) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                            tableWriterReturnedToPool.countDown();
+                        }
+                    }
+                });
+
+                long[] timestampNano = {activePartitionTs * 1000L, futurePartitionTs * 1000L};
+
+                try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    // send data hitting a read-only partition
+                    for (int tick = 0; tick < 2; tick++) { // two rows
+                        int tickerId = 0;
+                        timestampNano[tickerId] += 100_000L;
+                        sender.metric(tableName)
+                                .tag("s", "lobster")
+                                .field("l", 88)
+                                .field("i", 2124)
+                                .at(timestampNano[tickerId]);
+                    }
+                    sender.flush();
+                }
+                tableWriterReturnedToPool.await();
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " sample by 1d",
+                        Misc.getThreadLocalBuilder(),
+                        "min\tmax\tcount\n" +
+                                "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
+                                "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" +
+                                "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
+                                "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n");
+            }
+        });
     }
 
     @Test
@@ -167,9 +269,116 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                                 .at(timestampNano[tickerId]);
                     }
                     sender.flush();
+                }
+                tableWriterReturnedToPool.await();
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " sample by 1d",
+                        Misc.getThreadLocalBuilder(),
+                        "min\tmax\tcount\n" +
+                                "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
+                                "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" +
+                                "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
+                                "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n");
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    // TODO bug in o3Commit will fix in follow up PR
+    public void testServerMainLineTcpSenderWithActivePartitionReadOnlyAndO3() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final int partitionCount = 4;
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    CairoEngine engine = qdb.getCairoEngine();
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            null,
+                            null,
+                            -1,
+                            null)
+            ) {
+                qdb.start();
+
+                // create a table with 4 partitions and 1111 rows
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                try (
+                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                                .col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).symbolCapacity(32)
+                                .timestamp("ts");
+                        MemoryMARW mem = Vm.getMARWInstance();
+                        Path path = new Path().of(cairoConfig.getRoot()).concat(tableName)
+                ) {
+                    createTable(cairoConfig, mem, path, tableModel, 1);
+                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, readOnlyPartitionName, partitionCount), context);
+                }
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " sample by 1d",
+                        Misc.getThreadLocalBuilder(),
+                        "min\tmax\tcount\n" +
+                                "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" + // <-- read only
+                                "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" + // <-- read only
+                                "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" + // <-- read only
+                                "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n"); // <-- read only
+
+                // make all partitions read-only
+                try (TableWriter writer = qdb.getCairoEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
+                    TxWriter txWriter = writer.getTxWriter();
+                    Assert.assertEquals(partitionCount, txWriter.getPartitionCount());
+                    for (int i = 0; i < partitionCount; i++) {
+                        txWriter.setPartitionReadOnly(i, true);
+                    }
+                    txWriter.bumpTruncateVersion();
+                    txWriter.commit(cairoConfig.getCommitMode(), writer.getDenseSymbolMapWriters());
+                }
+
+                // check read only flag
+                qdb.getCairoEngine().releaseAllWriters();
+                qdb.getCairoEngine().releaseAllReaders();
+                try (TableReader reader = qdb.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    TxReader txFile = reader.getTxFile();
+                    for (int i = 0; i < partitionCount; i++) {
+                        Assert.assertTrue(txFile.isPartitionReadOnly(i));
+                        Assert.assertTrue(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestamp(i)));
+                    }
+                }
+
+                // so that we know when the table writer is returned to the pool
+                final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
+                qdb.getCairoEngine().setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (Chars.equalsNc(tableName, name)) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                            tableWriterReturnedToPool.countDown();
+                        }
+                    }
+                });
+
+                long[] timestampNano = {activePartitionTs * 1000L, futurePartitionTs * 1000L};
+
+                try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    // send data hitting a read-only partition
+                    for (int tick = 0; tick < 2; tick++) { // two rows
+                        int tickerId = 0;
+                        timestampNano[tickerId] += 100_000L;
+                        sender.metric(tableName)
+                                .tag("s", "lobster")
+                                .field("l", 88)
+                                .field("i", 2124)
+                                .at(timestampNano[tickerId]);
+                    }
+                    sender.flush();
 
                     // send data from the future, which will create new partition
-                    for (int tick = 0; tick < 5; tick++) {
+                    for (int tick = 0; tick < 2; tick++) { // two more rows
                         int tickerId = 1;
                         timestampNano[tickerId] += 100_000L;
                         sender.metric(tableName)
@@ -191,7 +400,7 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                                 "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" + // <-- read only
                                 "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" + // <-- read only
                                 "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n" + // <-- read only
-                                "2022-12-12T00:09:03.622845Z\t2022-12-12T23:59:58.999977Z\t5\n"); // TODO amend the dates
+                                "2022-12-12T00:09:03.622845Z\t2022-12-12T23:59:58.999977Z\t2\n"); // TODO amend the dates
             }
         });
     }

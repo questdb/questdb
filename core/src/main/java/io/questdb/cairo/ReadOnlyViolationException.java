@@ -43,16 +43,6 @@ public class ReadOnlyViolationException extends RuntimeException implements Sink
 
     private final StringSink message = new StringSink();
 
-    public static ReadOnlyViolationException cannotInsert(String tableName, long partitionTimestamp) {
-        ReadOnlyViolationException ex = THREAD_LOCAL.get();
-        ex.message.put("cannot insert into read-only partition [table=").put(tableName)
-                .put(", partitionTimestamp=");
-        TimestampFormatUtils.appendDateTime(ex.message, partitionTimestamp);
-
-        ex.message.put("]");
-        return ex;
-    }
-
     public static ReadOnlyViolationException cannotUpdate(String tableName, long partitionTimestamp) {
         ReadOnlyViolationException ex = THREAD_LOCAL.get();
         ex.message.put("cannot update read-only partition [table=").put(tableName)
