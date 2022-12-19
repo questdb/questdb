@@ -47,7 +47,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
 
     static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink sink) {
         if (Numbers.extractLong256(value, value.length(), long256Builder)) {
-            Numbers.appendLong256(
+            Numbers.appendLong256Hex(
                     long256Builder.getLong0(),
                     long256Builder.getLong1(),
                     long256Builder.getLong2(),

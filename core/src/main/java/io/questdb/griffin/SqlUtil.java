@@ -435,7 +435,7 @@ public class SqlUtil {
 
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
-            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+            Long256FromCharSequenceDecoder.decodeHex(value, 0, value.length(), long256Acceptor);
         } else {
             long256Acceptor.setAll(
                     Long256Impl.NULL_LONG256.getLong0(),

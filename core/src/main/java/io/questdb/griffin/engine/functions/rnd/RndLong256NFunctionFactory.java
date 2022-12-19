@@ -60,7 +60,7 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink sink) {
-            Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
+            Numbers.appendLong256Hex(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
         }
 
         @Override

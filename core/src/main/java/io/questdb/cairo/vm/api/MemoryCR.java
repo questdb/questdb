@@ -87,7 +87,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
         c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
         d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256Hex(a, b, c, d, sink);
     }
 
     default long getPageSize() {

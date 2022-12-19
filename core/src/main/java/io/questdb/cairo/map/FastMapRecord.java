@@ -221,7 +221,7 @@ final class FastMapRecord implements MapRecord {
         final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
         final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
         final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256Hex(a, b, c, d, sink);
     }
 
     @Override

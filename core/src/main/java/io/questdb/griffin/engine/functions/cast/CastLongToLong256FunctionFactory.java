@@ -65,7 +65,7 @@ public class CastLongToLong256FunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NaN) {
                 return;
             }
-            Numbers.appendLong256(value, 0, 0, 0, sink);
+            Numbers.appendLong256Hex(value, 0, 0, 0, sink);
         }
 
         @Override

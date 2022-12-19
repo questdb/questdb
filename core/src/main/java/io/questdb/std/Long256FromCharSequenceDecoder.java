@@ -28,8 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 
 public abstract class Long256FromCharSequenceDecoder implements Long256Acceptor {
-
-    public static void decode(
+    
+    public static void decodeHex(
             final CharSequence hexString,
             final int startPos,
             final int endPos,

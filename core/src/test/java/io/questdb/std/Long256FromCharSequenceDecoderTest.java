@@ -150,7 +150,7 @@ public class Long256FromCharSequenceDecoderTest {
     }
 
     private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) {
-        Long256FromCharSequenceDecoder.decode(hexString, prefixSize, hexString.length() - suffixSize, decoder);
+        Long256FromCharSequenceDecoder.decodeHex(hexString, prefixSize, hexString.length() - suffixSize, decoder);
         Assert.assertEquals(l0, this.l0);
         Assert.assertEquals(l1, this.l1);
         Assert.assertEquals(l2, this.l2);

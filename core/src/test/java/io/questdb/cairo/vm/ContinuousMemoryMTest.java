@@ -448,7 +448,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final int N = 1_000_000;
             StringSink sink = new StringSink();
             for (int i = 0; i < N; i++) {
-                Numbers.appendLong256(
+                Numbers.appendLong256Hex(
                         rnd.nextLong(),
                         rnd.nextLong(),
                         rnd.nextLong(),

@@ -36,7 +36,7 @@ import io.questdb.std.*;
 
 import java.lang.ThreadLocal;
 
-import static io.questdb.std.Long256FromCharSequenceDecoder.decode;
+import static io.questdb.std.Long256FromCharSequenceDecoder.decodeHex;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<Long256Decoder> DECODER = ThreadLocal.withInitial(Long256Decoder::new);
@@ -111,7 +111,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         }
 
         private Func newInstance(Function arg, CharSequence hexLong256) {
-            decode(hexLong256, 2, hexLong256.length(), decoder);
+            decodeHex(hexLong256, 2, hexLong256.length(), decoder);
             return new Func(arg, long0, long1, long2, long3);
         }
     }

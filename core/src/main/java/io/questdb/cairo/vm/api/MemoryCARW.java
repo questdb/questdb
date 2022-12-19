@@ -161,7 +161,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     default void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
-        Long256FromCharSequenceDecoder.decode(hexString, start, end, acceptor);
+        Long256FromCharSequenceDecoder.decodeHex(hexString, start, end, acceptor);
     }
 
     default void putLong256Null() {

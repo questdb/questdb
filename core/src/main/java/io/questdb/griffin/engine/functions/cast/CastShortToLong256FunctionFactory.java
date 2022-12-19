@@ -61,7 +61,7 @@ public class CastShortToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink sink) {
-            Numbers.appendLong256(arg.getShort(rec), 0, 0, 0, sink);
+            Numbers.appendLong256Hex(arg.getShort(rec), 0, 0, 0, sink);
         }
 
         @Override

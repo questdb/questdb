@@ -29,11 +29,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -410,7 +406,22 @@ public final class Numbers {
         }
     }
 
-    public static void appendLong256(long a, long b, long c, long d, CharSink sink) {
+    public static void appendLong256Dec(Long256 long256, CharSink sink) {
+        if (Long256Util.isZero(long256)) {
+            sink.put('0');
+            return;
+        }
+        
+        long l0 = long256.getLong0();
+        long l1 = long256.getLong1();
+        long l2 = long256.getLong2();
+        long l3 = long256.getLong3();
+
+        appendLong256Dec0(long256, sink);
+        long256.setAll(l0, l1, l2, l3);
+    }
+
+    public static void appendLong256Hex(long a, long b, long c, long d, CharSink sink) {
         if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
             return;
         }
@@ -542,10 +553,19 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
-    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+    public static boolean extractLong256(CharSequence value, int len, Long256 long256) {
+        // starting with 0x ? it is hex!
         if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
             try {
-                Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
+                Long256FromCharSequenceDecoder.decodeHex(value, 2, len, long256);
+                return true;
+            } catch (ImplicitCastException e) {
+                return false;
+            }
+        // ok, not hex, let's try decimal
+        } else if (len > 0 && len < 79) {
+            try {
+                Long256Util.decodeDec(value, 0, len, long256);
                 return true;
             } catch (ImplicitCastException e) {
                 return false;
@@ -1740,6 +1760,30 @@ public final class Numbers {
     private static void appendLong2(CharSink sink, long i) {
         sink.put((char) ('0' + i / 10));
         sink.put((char) ('0' + i % 10));
+    }
+
+    private static void appendLong256Dec0(Long256 long256, CharSink sink) {
+        // be aware this method is destructive - it modifies long256
+        // callers must store long256 state and restore it when this method returns
+        
+        // remainder has the last (least significant) 9 digits of the passed long256 number 
+        int remainder = Long256Util.divideByInt(long256, 1_000_000_000);
+        if (Long256Util.isZero(long256)) {
+            // remainder has the most significant digits from the original long256 number
+            append(sink, remainder);
+            return;
+        }
+        
+        // at this point we know long256 after division is greater than zero
+        // this means there are more significant digits to print.
+        // we are (ab)using recursion to keep the current remainder on stack
+        // while we calculate and print the more significant digits.
+        appendLong256Dec0(long256, sink);
+        
+        // upon returning from recursion all more significant digits are printed and it's our turn. 
+        // let's print our remainder padded with leading zeros to make it 9 digits long.
+        // why 9 digits? because we were dividing by 1_000_000_000. If the remainder is 1234 then we want to print 000001234.
+        appendInt9(sink, remainder);
     }
 
     private static void appendLong256Four(long a, long b, long c, long d, CharSink sink) {

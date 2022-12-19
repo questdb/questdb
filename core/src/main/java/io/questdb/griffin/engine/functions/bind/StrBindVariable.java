@@ -97,7 +97,7 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     public void setValue(long l0, long l1, long l2, long l3) {
         sink.clear();
         isNull = false;
-        Numbers.appendLong256(l0, l1, l2, l3, sink);
+        Numbers.appendLong256Hex(l0, l1, l2, l3, sink);
     }
 
     public void setValue(short value) {

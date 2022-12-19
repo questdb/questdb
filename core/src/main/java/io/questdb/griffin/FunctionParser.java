@@ -466,6 +466,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (NumericException ignore) {
         }
 
+        // long256
+        if (Numbers.extractLong256(tok, len, long256Sink)) {
+            return new Long256Constant(long256Sink); // values are copied from this sink
+        }
+
         try {
             return DoubleConstant.newInstance(Numbers.parseDouble(tok));
         } catch (NumericException ignore) {
@@ -501,11 +506,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             if (geoConstant != null) {
                 return geoConstant;
             }
-        }
-
-        // long256
-        if (Numbers.extractLong256(tok, len, long256Sink)) {
-            return new Long256Constant(long256Sink); // values are copied from this sink
         }
 
         throw SqlException.position(position).put("invalid constant: ").put(tok);

@@ -105,7 +105,7 @@ public class Long256Impl implements Long256, Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        Numbers.appendLong256(l0, l1, l2, l3, sink);
+        Numbers.appendLong256Hex(l0, l1, l2, l3, sink);
     }
 
     static {

@@ -48,7 +48,7 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
         final long c = value.getLong2();
         final long d = value.getLong3();
 
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256Hex(a, b, c, d, sink);
     }
 
     @Override

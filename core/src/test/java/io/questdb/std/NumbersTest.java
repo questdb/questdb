@@ -30,6 +30,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.math.BigInteger;
 import java.util.Random;
 
 public class NumbersTest {
@@ -59,9 +60,24 @@ public class NumbersTest {
     }
 
     @Test
+    public void testAppendLong256Dec_randomized() {
+        Long256 value = new Long256Impl();
+        Random random = new Random();
+        for (int i = 0; i < 10_000; i++) {
+            BigInteger bi = new BigInteger(256, random);
+            String biStr = bi.toString();
+            Long256Util.decodeDec(biStr, 0, biStr.length(), value);
+
+            sink.clear();
+            Numbers.appendLong256Dec(value, sink);
+            Assert.assertEquals(biStr, sink.toString());
+        }
+    }
+
+    @Test
     public void testAppendZeroLong256() {
         sink.clear();
-        Numbers.appendLong256(0, 0, 0, 0, sink);
+        Numbers.appendLong256Hex(0, 0, 0, 0, sink);
         TestUtils.assertEquals("0x00", sink);
     }
 
@@ -409,7 +425,7 @@ public class NumbersTest {
     public void testLong256() throws NumericException {
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         Long256Impl long256 = new Long256Impl();
-        Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
+        Long256FromCharSequenceDecoder.decodeHex(tok, 2, tok.length(), long256);
         long256.toSink(sink);
         CharSequence tokLong256 = sink.toString();
         Assert.assertEquals(tok, tokLong256);

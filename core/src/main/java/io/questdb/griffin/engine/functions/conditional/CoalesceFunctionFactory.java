@@ -237,7 +237,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
-                    Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+                    Numbers.appendLong256Hex(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
                     return;
                 }
             }
@@ -502,7 +502,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             if (!isNotNull(value)) {
                 value = args1.getLong256A(rec);
             }
-            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+            Numbers.appendLong256Hex(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
         }
 
         @Override

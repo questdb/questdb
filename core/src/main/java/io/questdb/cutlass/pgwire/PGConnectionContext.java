@@ -743,7 +743,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            Numbers.appendLong256(
+            Numbers.appendLong256Hex(
                     long256Value.getLong0(),
                     long256Value.getLong1(),
                     long256Value.getLong2(),

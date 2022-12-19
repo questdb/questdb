@@ -43,6 +43,7 @@ public class MemoryPARWImpl implements MemoryARW {
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
     private final CharSequenceView csview2 = new CharSequenceView();
+    private final Long256Impl decDecoderSupport = new Long256Impl();
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
@@ -213,7 +214,7 @@ public class MemoryPARWImpl implements MemoryARW {
             c = getLong(offset + Long.BYTES * 2);
             d = getLong(offset + Long.BYTES * 3);
         }
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256Hex(a, b, c, d, sink);
     }
 
     @Override
@@ -1211,7 +1212,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
-            decode(hexString, start, end, inPageLong256Decoder);
+            decodeHex(hexString, start, end, inPageLong256Decoder);
             appendPointer += Long256.BYTES;
         }
     }
@@ -1238,7 +1239,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         private void putLong256(CharSequence hexString, int start, int end) {
-            decode(hexString, start, end, this);
+            decodeHex(hexString, start, end, this);
         }
     }
 }
