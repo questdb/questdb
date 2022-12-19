@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.*;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -719,58 +720,65 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainWithJsonFormat2() throws Exception {
         compiler.setFullFatJoins(true);
+
+        String expected = "QUERY PLAN\n" +
+                "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"SelectedRecord\",\n" +
+                "        \"Plans\": [\n" +
+                "        {\n" +
+                "            \"Node Type\": \"Filter\",\n" +
+                "            \"filter\": \"0<a.l+b.l\",\n" +
+                "            \"Plans\": [\n" +
+                "            {\n" +
+                "                \"Node Type\": \"Hash join\",\n" +
+                "                \"condition\": \"b.l=a.l\",\n" +
+                "                \"Plans\": [\n" +
+                "                {\n" +
+                "                    \"Node Type\": \"DataFrame\",\n" +
+                "                    \"Plans\": [\n" +
+                "                    {\n" +
+                "                        \"Node Type\": \"Row forward scan\"\n" +
+                "                    },\n" +
+                "                    {\n" +
+                "                        \"Node Type\": \"Frame forward scan\",\n" +
+                "                        \"on\": \"a\"\n" +
+                "                    } ]\n" +
+                "                },\n" +
+                "                {\n" +
+                "                    \"Node Type\": \"Hash\",\n" +
+                "                    \"Plans\": [\n" +
+                "                    {\n" +
+                "                        \"Node Type\": \"Async JIT Filter\",\n" +
+                "                        \"limit\": \"4\",\n" +
+                "                        \"filter\": \"10<l\",\n" +
+                "                        \"workers\": \"1\",\n" +
+                "                        \"Plans\": [\n" +
+                "                        {\n" +
+                "                            \"Node Type\": \"DataFrame\",\n" +
+                "                            \"Plans\": [\n" +
+                "                            {\n" +
+                "                                \"Node Type\": \"Row forward scan\"\n" +
+                "                            },\n" +
+                "                            {\n" +
+                "                                \"Node Type\": \"Frame forward scan\",\n" +
+                "                                \"on\": \"a\"\n" +
+                "                            } ]\n" +
+                "                        } ]\n" +
+                "                } ]\n" +
+                "            } ]\n" +
+                "        } ]\n" +
+                "    }\n" +
+                "  }\n" +
+                "]\n";
+
+        if (!JitUtil.isJitSupported()) {
+            expected.replace("JIT", "");
+        }
+
         try {
-            assertQuery("QUERY PLAN\n" +
-                            "[\n" +
-                            "  {\n" +
-                            "    \"Plan\": {\n" +
-                            "        \"Node Type\": \"SelectedRecord\",\n" +
-                            "        \"Plans\": [\n" +
-                            "        {\n" +
-                            "            \"Node Type\": \"Filter\",\n" +
-                            "            \"filter\": \"0<a.l+b.l\",\n" +
-                            "            \"Plans\": [\n" +
-                            "            {\n" +
-                            "                \"Node Type\": \"Hash join\",\n" +
-                            "                \"condition\": \"b.l=a.l\",\n" +
-                            "                \"Plans\": [\n" +
-                            "                {\n" +
-                            "                    \"Node Type\": \"DataFrame\",\n" +
-                            "                    \"Plans\": [\n" +
-                            "                    {\n" +
-                            "                        \"Node Type\": \"Row forward scan\"\n" +
-                            "                    },\n" +
-                            "                    {\n" +
-                            "                        \"Node Type\": \"Frame forward scan\",\n" +
-                            "                        \"on\": \"a\"\n" +
-                            "                    } ]\n" +
-                            "                },\n" +
-                            "                {\n" +
-                            "                    \"Node Type\": \"Hash\",\n" +
-                            "                    \"Plans\": [\n" +
-                            "                    {\n" +
-                            "                        \"Node Type\": \"Async JIT Filter\",\n" +
-                            "                        \"limit\": \"4\",\n" +
-                            "                        \"filter\": \"10<l\",\n" +
-                            "                        \"workers\": \"1\",\n" +
-                            "                        \"Plans\": [\n" +
-                            "                        {\n" +
-                            "                            \"Node Type\": \"DataFrame\",\n" +
-                            "                            \"Plans\": [\n" +
-                            "                            {\n" +
-                            "                                \"Node Type\": \"Row forward scan\"\n" +
-                            "                            },\n" +
-                            "                            {\n" +
-                            "                                \"Node Type\": \"Frame forward scan\",\n" +
-                            "                                \"on\": \"a\"\n" +
-                            "                            } ]\n" +
-                            "                        } ]\n" +
-                            "                } ]\n" +
-                            "            } ]\n" +
-                            "        } ]\n" +
-                            "    }\n" +
-                            "  }\n" +
-                            "]\n", "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
+            assertQuery(expected, "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
                     "create table a ( l long)", null, false, true, true);
         } finally {
             compiler.setFullFatJoins(false);
