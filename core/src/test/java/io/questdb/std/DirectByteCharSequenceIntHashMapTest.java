@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 public class DirectByteCharSequenceIntHashMapTest {
+
     @Test
     public void testHashMapCompatibility() {
         final Rnd rnd = new Rnd();

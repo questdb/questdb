@@ -241,29 +241,39 @@ public final class Hash {
 
         @Override
         public int getInt(long offset) {
-            final int n = (getByte(offset) & 255)
-                    | ((getByte(offset + 1) & 0xff) << 8)
-                    | ((getByte(offset + 2) & 0xff) << 16)
-                    | ((getByte(offset + 3) & 0xff) << 24);
+            final int index = (int) offset;
+            final int n = byteAsUnsignedInt(index)
+                    | (byteAsUnsignedInt(index + 1) << 8)
+                    | (byteAsUnsignedInt(index + 2) << 16)
+                    | (byteAsUnsignedInt(index + 3) << 24);
             return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
         }
 
         @Override
         public long getLong(long offset) {
-            final long n = (long) (getByte(offset) & 255)
-                    | ((long) (getByte(offset + 1) & 0xff) << 8)
-                    | ((long) (getByte(offset + 2) & 0xff) << 16)
-                    | ((long) (getByte(offset + 3) & 0xff) << 24)
-                    | ((long) (getByte(offset + 4) & 0xff) << 32)
-                    | ((long) (getByte(offset + 5) & 0xff) << 40)
-                    | ((long) (getByte(offset + 6) & 0xff) << 48)
-                    | ((long) (getByte(offset + 7) & 0xff) << 56);
+            final int index = (int) offset;
+            final long n = byteAsUnsignedLong(index)
+                    | (byteAsUnsignedLong(index + 1) << 8)
+                    | (byteAsUnsignedLong(index + 2) << 16)
+                    | (byteAsUnsignedLong(index + 3) << 24)
+                    | (byteAsUnsignedLong(index + 4) << 32)
+                    | (byteAsUnsignedLong(index + 5) << 40)
+                    | (byteAsUnsignedLong(index + 6) << 48)
+                    | (byteAsUnsignedLong(index + 7) << 56);
             return Unsafe.isLittleEndian() ? n : Long.reverseBytes(n);
         }
 
         public StringUtf8MemoryAccessor of(String str) {
             this.str = str;
             return this;
+        }
+
+        private int byteAsUnsignedInt(int index) {
+            return ((byte) str.charAt(index)) & 0xff;
+        }
+
+        private long byteAsUnsignedLong(int index) {
+            return (long) ((byte) str.charAt(index)) & 0xff;
         }
     }
 }
