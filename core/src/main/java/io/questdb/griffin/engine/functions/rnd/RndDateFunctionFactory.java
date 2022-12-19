@@ -74,7 +74,7 @@ public class RndDateFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_date(").put(lo).put(',').put(range).put(')');
+            sink.val("rnd_date(").val(lo).val(',').val(range).val(')');
         }
     }
 }

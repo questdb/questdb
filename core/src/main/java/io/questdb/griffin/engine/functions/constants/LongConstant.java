@@ -56,6 +56,6 @@ public class LongConstant extends LongFunction implements ConstantFunction {
     }
 
     public void toPlan(PlanSink sink) {
-        sink.put(value).put('L');
+        sink.val(value).val('L');
     }
 }

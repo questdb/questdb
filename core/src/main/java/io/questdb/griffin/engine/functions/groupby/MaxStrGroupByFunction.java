@@ -131,7 +131,7 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("max(").put(arg).put(')');
+        sink.val("max(").val(arg).val(')');
     }
 
     @Override

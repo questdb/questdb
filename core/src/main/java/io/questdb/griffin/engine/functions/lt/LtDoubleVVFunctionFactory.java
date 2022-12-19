@@ -79,13 +79,13 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(left);
+            sink.val(left);
             if (negated) {
-                sink.put(">=");
+                sink.val(">=");
             } else {
-                sink.put('<');
+                sink.val('<');
             }
-            sink.put(right);
+            sink.val(right);
         }
     }
 }

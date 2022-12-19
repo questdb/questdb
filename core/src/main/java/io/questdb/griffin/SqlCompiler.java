@@ -1227,7 +1227,7 @@ public class SqlCompiler implements Closeable {
                     return compiledQuery.ofUpdate(updateOperation);
                 }
             case ExecutionModel.EXPLAIN:
-                return compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));    
+                return compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
             default:
                 final InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
@@ -1749,7 +1749,7 @@ public class SqlCompiler implements Closeable {
                     executionContext
             );
 
-            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, executionContext);
+            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
         } else {
             return codeGenerator.generateExplain(model, executionContext);
         }

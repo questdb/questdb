@@ -128,7 +128,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("replace(").put(value).put(',').put(oldSubStr).put(',').put(newSubStr).put(')');
+            sink.val("replace(").val(value).val(',').val(oldSubStr).val(',').val(newSubStr).val(')');
         }
 
         private void checkLengthLimit(int length) {

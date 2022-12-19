@@ -32,6 +32,6 @@ public abstract class AbstractCastToDoubleFunction extends DoubleFunction implem
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::double");
+        sink.val(getArg()).val("::double");
     }
 }

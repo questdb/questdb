@@ -82,7 +82,7 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_double(").put(nanRate).put(")");
+            sink.val("rnd_double(").val(nanRate).val(")");
         }
     }
 }

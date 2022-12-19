@@ -54,6 +54,6 @@ public class Long128Constant extends Long128Function implements ConstantFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(hi).put(lo);
+        sink.val(hi).val(lo);
     }
 }

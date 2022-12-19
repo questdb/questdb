@@ -169,11 +169,11 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg);
+            sink.val(arg);
             if (negated) {
-                sink.put('!');
+                sink.val('!');
             }
-            sink.put('=').put(getHash()).put("::geohash");
+            sink.val('=').val(getHash()).val("::geohash");
         }
 
         protected abstract long getHash();

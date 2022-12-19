@@ -93,7 +93,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("timestamp_ceil('").put(symbol).put("',").put(arg).put(')');
+            sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
         }
 
         abstract long ceil(long timestamp);

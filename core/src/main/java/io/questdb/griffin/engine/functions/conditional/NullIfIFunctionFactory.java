@@ -76,7 +76,7 @@ public class NullIfIFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("nullif(").put(value).put(',').put(replacement).put(')');
+            sink.val("nullif(").val(value).val(',').val(replacement).val(')');
         }
     }
 }

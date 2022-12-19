@@ -136,13 +136,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         sink.type("SampleByFirstLast");
         sink.attr("keys");
         boolean first = true;
-        sink.put('[');
+        sink.val('[');
         for (int i = 0; i < isKeyColumn.length; i++) {
             if (isKeyColumn[i]) {
                 if (first) {
                     first = false;
                 } else {
-                    sink.put(", ");
+                    sink.val(", ");
                 }
                 sink.putBaseColumnName(i);
             }

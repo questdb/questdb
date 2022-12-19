@@ -58,7 +58,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     public void toPlan(PlanSink sink) {
         sink.type("Index backward scan").meta("on").putColumnName(cursor.columnIndex);
         sink.optAttr("filter", filter);
-        sink.attr("symbolFilter").putColumnName(cursor.columnIndex).put('=').put(cursor.symbolKey);
+        sink.attr("symbolFilter").putColumnName(cursor.columnIndex).val('=').val(cursor.symbolKey);
         sink.child(dataFrameCursorFactory);
     }
 

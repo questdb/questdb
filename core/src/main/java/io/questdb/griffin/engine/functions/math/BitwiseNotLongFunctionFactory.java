@@ -73,7 +73,7 @@ public class BitwiseNotLongFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put('~').put(value);
+            sink.val('~').val(value);
         }
     }
 }

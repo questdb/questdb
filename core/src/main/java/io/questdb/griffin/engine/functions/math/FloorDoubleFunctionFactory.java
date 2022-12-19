@@ -66,7 +66,7 @@ public class FloorDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("floor(").put(function).put(')');
+            sink.val("floor(").val(function).val(')');
         }
     }
 }

@@ -34,7 +34,9 @@ import io.questdb.std.str.CharSink;
  */
 public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<ExplainModel> FACTORY = ExplainModel::new;
-
+    public static final int FORMAT_JSON = 2;
+    public static final int FORMAT_TEXT = 1;
+    private int format;
     private ExecutionModel model;
 
     private ExplainModel() {
@@ -43,6 +45,10 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     @Override
     public void clear() {
 
+    }
+
+    public int getFormat() {
+        return format;
     }
 
     public ExecutionModel getInnerExecutionModel() {
@@ -54,6 +60,10 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
         return EXPLAIN;
     }
 
+    public void setFormat(int format) {
+        this.format = format;
+    }
+
     public void setModel(ExecutionModel model) {
         this.model = model;
     }
@@ -61,5 +71,6 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     @Override
     public void toSink(CharSink sink) {
         sink.put("EXPLAIN");
+        sink.put(" (FORMAT ").put(format == FORMAT_TEXT ? "TEXT" : "JSON").put(") ");
     }
 }

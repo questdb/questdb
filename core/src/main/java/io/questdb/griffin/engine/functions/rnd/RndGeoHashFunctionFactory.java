@@ -98,7 +98,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_geohash(").put(bits).put(')');
+            sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 
@@ -134,7 +134,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_geohash(").put(bits).put(')');
+            sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 
@@ -170,7 +170,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_geohash(").put(bits).put(')');
+            sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 
@@ -201,7 +201,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_geohash(").put(bits).put(')');
+            sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 }

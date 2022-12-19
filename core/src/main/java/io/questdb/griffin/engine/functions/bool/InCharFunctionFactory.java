@@ -104,7 +104,7 @@ public class InCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put(" in ").put(set);
+            sink.val(arg).val(" in ").val(set);
         }
     }
 }

@@ -57,6 +57,6 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::long");
+        sink.val("?::long");
     }
 }

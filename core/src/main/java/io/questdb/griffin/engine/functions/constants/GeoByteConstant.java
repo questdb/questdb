@@ -47,6 +47,6 @@ public class GeoByteConstant extends GeoByteFunction implements ConstantFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        GeoHashes.append(hash, ColumnType.getGeoHashBits(type), sink.getSink());
+        sink.val(hash, ColumnType.getGeoHashBits(type));
     }
 }

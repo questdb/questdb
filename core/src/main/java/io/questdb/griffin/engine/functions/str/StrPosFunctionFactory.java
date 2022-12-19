@@ -116,7 +116,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("strpos(").put(strFunc).put(",'").put(substr).put("')");
+            sink.val("strpos(").val(strFunc).val(",'").val(substr).val("')");
         }
     }
 

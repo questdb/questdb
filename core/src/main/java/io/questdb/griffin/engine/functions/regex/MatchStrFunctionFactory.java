@@ -91,7 +91,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put(" ~ ").put(matcher.pattern().toString());
+            sink.val(value).val(" ~ ").val(matcher.pattern().toString());
         }
     }
 
@@ -142,7 +142,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put(" ~ ").put(pattern.toString());
+            sink.val(value).val(" ~ ").val(pattern.toString());
         }
     }
 }

@@ -59,6 +59,6 @@ public class Long256Constant extends Long256Function implements ConstantFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(value);
+        sink.val(value);
     }
 }

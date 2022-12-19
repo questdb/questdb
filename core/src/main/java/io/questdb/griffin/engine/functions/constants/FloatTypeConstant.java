@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.FloatFunction;
 
@@ -36,10 +35,5 @@ public class FloatTypeConstant extends FloatFunction implements TypeConstant {
     @Override
     public float getFloat(Record rec) {
         return Float.NaN;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("FloatType");
     }
 }

@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 
@@ -52,11 +51,6 @@ public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
     @Override
     public boolean isSymbolTableStatic() {
         return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("SymbolType");
     }
 
     @Override

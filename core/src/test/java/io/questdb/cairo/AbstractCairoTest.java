@@ -37,6 +37,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
@@ -62,7 +63,7 @@ import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCairoTest {
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
-    protected static final PlanSink planSink = new PlanSink();
+    protected static final PlanSink planSink = new TextPlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final StringSink sink = new StringSink();
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];

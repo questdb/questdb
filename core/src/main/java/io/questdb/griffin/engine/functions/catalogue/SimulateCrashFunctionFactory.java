@@ -79,7 +79,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("simulate_crash(jvm)");
+            sink.val("simulate_crash(jvm)");
         }
     }
 
@@ -91,7 +91,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("simulate_crash(oom)");
+            sink.val("simulate_crash(oom)");
         }
     }
 
@@ -104,7 +104,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("simulate_crash(dummy)");
+            sink.val("simulate_crash(dummy)");
         }
     }
 }

@@ -92,7 +92,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("to_date(").put(arg).put(',').put(pattern).put(')');
+            sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
         }
     }
 }

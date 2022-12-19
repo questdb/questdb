@@ -60,6 +60,6 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::int");
+        sink.val("?::int");
     }
 }

@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.ExplainPlanFactory;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.ops.AbstractOperation;
-import io.questdb.griffin.engine.ops.OperationDispatcher;
-import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
@@ -1087,9 +1084,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
-            planSink.reset();
+            planSink.clear();
             factory.toPlan(planSink);
-            assertCursor(expectedPlan, new ExplainPlanFactory(factory), false, checkSameStr, expectSize, sizeCanBeVariable);
+            assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT), false, checkSameStr, expectSize, sizeCanBeVariable);
         }
         try {
             assertTimestamp(expectedTimestamp, factory);

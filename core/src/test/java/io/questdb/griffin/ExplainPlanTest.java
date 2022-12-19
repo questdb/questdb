@@ -618,7 +618,44 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExplainSelectWith() throws Exception {
+    public void testExplainSelectWithCte1() throws Exception {
+        assertPlan("create table a ( i int, s string);",
+                "with b as (select * from a where i = 0)" +
+                        "select * from a union all select * from b",
+                "Union All\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n" +
+                        "    Async JIT Filter\n" +
+                        "      filter: i=0\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testExplainSelectWithCte2() throws Exception {
+        assertPlan("create table a ( i int, s string);",
+                "with b as (select i from a order by s)" +
+                        "select * from a join b on a.i = b.i",
+                "SelectedRecord\n" +
+                        "    Hash Join Light\n" +
+                        "      condition: b.i=a.i\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n" +
+                        "        Hash\n" +
+                        "            SelectedRecord\n" +
+                        "                Sort light\n" +
+                        "                  keys: [s]\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testExplainSelectWithCte3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
             assertSql("explain with b as (select * from a limit 10) select * from b;",
@@ -660,6 +697,174 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Row forward scan\n" +
                         "                Interval forward scan on: a\n" +
                         "                  intervals: [static=[0,9223372036854775807,281481419161601,4294967296] dynamic=[dateadd('d',-1,now())]]\n");
+    }
+
+    @Test
+    public void testExplainWithJsonFormat1() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"Count\",\n" +
+                "        \"Plans\": [\n" +
+                "        {\n" +
+                "            \"Node Type\": \"long_sequence\",\n" +
+                "            \"count\":  10\n" +
+                "        } ]\n" +
+                "    }\n" +
+                "  }\n" +
+                "]\n", "explain (format json) select count (*) from long_sequence(10)", null, null, false, true, true);
+    }
+
+    @Test
+    public void testExplainWithJsonFormat2() throws Exception {
+        compiler.setFullFatJoins(true);
+        try {
+            assertQuery("QUERY PLAN\n" +
+                            "[\n" +
+                            "  {\n" +
+                            "    \"Plan\": {\n" +
+                            "        \"Node Type\": \"SelectedRecord\",\n" +
+                            "        \"Plans\": [\n" +
+                            "        {\n" +
+                            "            \"Node Type\": \"Filter\",\n" +
+                            "            \"filter\": \"0<a.l+b.l\",\n" +
+                            "            \"Plans\": [\n" +
+                            "            {\n" +
+                            "                \"Node Type\": \"Hash join\",\n" +
+                            "                \"condition\": \"b.l=a.l\",\n" +
+                            "                \"Plans\": [\n" +
+                            "                {\n" +
+                            "                    \"Node Type\": \"DataFrame\",\n" +
+                            "                    \"Plans\": [\n" +
+                            "                    {\n" +
+                            "                        \"Node Type\": \"Row forward scan\"\n" +
+                            "                    },\n" +
+                            "                    {\n" +
+                            "                        \"Node Type\": \"Frame forward scan\",\n" +
+                            "                        \"on\": \"a\"\n" +
+                            "                    } ]\n" +
+                            "                },\n" +
+                            "                {\n" +
+                            "                    \"Node Type\": \"Hash\",\n" +
+                            "                    \"Plans\": [\n" +
+                            "                    {\n" +
+                            "                        \"Node Type\": \"Async JIT Filter\",\n" +
+                            "                        \"limit\": \"4\",\n" +
+                            "                        \"filter\": \"10<l\",\n" +
+                            "                        \"workers\": \"1\",\n" +
+                            "                        \"Plans\": [\n" +
+                            "                        {\n" +
+                            "                            \"Node Type\": \"DataFrame\",\n" +
+                            "                            \"Plans\": [\n" +
+                            "                            {\n" +
+                            "                                \"Node Type\": \"Row forward scan\"\n" +
+                            "                            },\n" +
+                            "                            {\n" +
+                            "                                \"Node Type\": \"Frame forward scan\",\n" +
+                            "                                \"on\": \"a\"\n" +
+                            "                            } ]\n" +
+                            "                        } ]\n" +
+                            "                } ]\n" +
+                            "            } ]\n" +
+                            "        } ]\n" +
+                            "    }\n" +
+                            "  }\n" +
+                            "]\n", "explain (format json) select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
+                    "create table a ( l long)", null, false, true, true);
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+    @Test
+    public void testExplainWithJsonFormat3() throws Exception {
+        assertQuery("QUERY PLAN\n" +
+                        "[\n" +
+                        "  {\n" +
+                        "    \"Plan\": {\n" +
+                        "        \"Node Type\": \"GroupByRecord\",\n" +
+                        "        \"vectorized\":  false,\n" +
+                        "        \"keys\": \"[d]\",\n" +
+                        "        \"values\": \"[max(i)]\",\n" +
+                        "        \"Plans\": [\n" +
+                        "        {\n" +
+                        "            \"Node Type\": \"Union\",\n" +
+                        "            \"Plans\": [\n" +
+                        "            {\n" +
+                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Plans\": [\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"Row forward scan\"\n" +
+                        "                },\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"Frame forward scan\",\n" +
+                        "                    \"on\": \"a\"\n" +
+                        "                } ]\n" +
+                        "            },\n" +
+                        "            {\n" +
+                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Plans\": [\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"Row forward scan\"\n" +
+                        "                },\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"Frame forward scan\",\n" +
+                        "                    \"on\": \"a\"\n" +
+                        "                } ]\n" +
+                        "            } ]\n" +
+                        "        } ]\n" +
+                        "    }\n" +
+                        "  }\n" +
+                        "]\n", "explain (format json) select d, max(i) from (select * from a union select * from a)",
+                "create table a ( i int, d double)", null, false, true, true);
+    }
+
+    @Test
+    public void testExplainWithJsonFormat4() throws Exception {
+        assertCompile("create table taba (a1 int, a2 long)");
+        assertCompile("create table tabb (b1 int, b2 long)");
+        assertQuery("QUERY PLAN\n" +
+                        "[\n" +
+                        "  {\n" +
+                        "    \"Plan\": {\n" +
+                        "        \"Node Type\": \"SelectedRecord\",\n" +
+                        "        \"Plans\": [\n" +
+                        "        {\n" +
+                        "            \"Node Type\": \"Filter\",\n" +
+                        "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
+                        "            \"Plans\": [\n" +
+                        "            {\n" +
+                        "                \"Node Type\": \"Cross join\",\n" +
+                        "                \"Plans\": [\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"DataFrame\",\n" +
+                        "                    \"Plans\": [\n" +
+                        "                    {\n" +
+                        "                        \"Node Type\": \"Row forward scan\"\n" +
+                        "                    },\n" +
+                        "                    {\n" +
+                        "                        \"Node Type\": \"Frame forward scan\",\n" +
+                        "                        \"on\": \"taba\"\n" +
+                        "                    } ]\n" +
+                        "                },\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"DataFrame\",\n" +
+                        "                    \"Plans\": [\n" +
+                        "                    {\n" +
+                        "                        \"Node Type\": \"Row forward scan\"\n" +
+                        "                    },\n" +
+                        "                    {\n" +
+                        "                        \"Node Type\": \"Frame forward scan\",\n" +
+                        "                        \"on\": \"tabb\"\n" +
+                        "                    } ]\n" +
+                        "                } ]\n" +
+                        "            } ]\n" +
+                        "        } ]\n" +
+                        "    }\n" +
+                        "  }\n" +
+                        "]\n",
+                " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2", null, null, false, true, true);
     }
 
     @Test
@@ -731,7 +936,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         }
     }
 
-
     @Test
     public void testFunctions() {
         final StringSink sink = new StringSink();
@@ -792,18 +996,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         colFuncs.put(ColumnType.BINARY, new BinColumn(1));
         colFuncs.put(ColumnType.LONG128, new Long128Column(1));
 
-        PlanSink planSink = new PlanSink() {
+        PlanSink planSink = new TextPlanSink() {
             @Override
             public PlanSink putColumnName(int no) {
-                put("column(").put(no).put(")");
+                val("column(").val(no).val(")");
                 return this;
             }
         };
 
-        PlanSink tmpPlanSink = new PlanSink() {
+        PlanSink tmpPlanSink = new TextPlanSink() {
             @Override
             public PlanSink putColumnName(int no) {
-                put("column(").put(no).put(")");
+                val("column(").val(no).val(")");
                 return this;
             }
         };
@@ -933,7 +1137,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         function.toPlan(planSink);
                         goodArgsFound = true;
 
-                        Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly but got " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
+                        Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly", Chars.contains(planSink.getSink(), "io.questdb"));
                         LOG.info().$(sink).$(planSink.getSink()).$();
 
                         if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
@@ -945,7 +1149,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 throw new AssertionError("Same output generated regardless of negatable flag! Factory: " + factory.getSignature() + " " + function);
                             }
 
-                            Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly but got " + tmpPlanSink.getSink(),
+                            Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly",
                                     Chars.contains(tmpPlanSink.getSink(), "io.questdb"));
                         }
                     } catch (Exception t) {
@@ -1156,6 +1360,17 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByNotKeyed11() throws Exception {
+        assertPlan("create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
+                "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
+                "GroupByNotKeyed vectorized: false\n" +
+                        "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n");
     }
 
     @Test//expressions in aggregates disable vectorized impl
@@ -1385,7 +1600,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntersect() throws Exception {
+    public void testIntersect1() throws Exception {
         assertPlan("create table a ( i int, s string);",
                 "select * from a intersect select * from a",
                 "Intersect\n" +
@@ -1396,6 +1611,23 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testIntersect2() throws Exception {
+        assertPlan("create table a ( i int, s string);",
+                "select * from a intersect select * from a where i > 0",
+                "Intersect\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n" +
+                        "    Hash\n" +
+                        "        Async JIT Filter\n" +
+                        "          filter: 0<i\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n");
     }
 
     @Test
@@ -4527,4 +4759,3 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 }
-

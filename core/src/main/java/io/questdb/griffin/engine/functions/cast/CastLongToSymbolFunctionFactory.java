@@ -146,7 +146,7 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put("::symbol");
+            sink.val(arg).val("::symbol");
         }
 
         @Override

@@ -238,7 +238,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("Timestamp");
+            sink.val("Timestamp");
         }
     }
 }

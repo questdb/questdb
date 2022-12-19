@@ -138,7 +138,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put("::geohash");
+            sink.val(arg).val("::geohash");
         }
 
         private long getGeoHashLong0(Record rec) {

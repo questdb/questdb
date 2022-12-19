@@ -72,7 +72,7 @@ public class RemDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(left).put('%').put(right);
+            sink.val(left).val('%').val(right);
         }
     }
 }

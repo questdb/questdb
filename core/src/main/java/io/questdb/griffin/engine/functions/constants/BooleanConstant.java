@@ -94,7 +94,7 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(value);
+        sink.val(value);
     }
 
     @Override

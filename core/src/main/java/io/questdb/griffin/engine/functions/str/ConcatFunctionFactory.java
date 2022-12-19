@@ -164,7 +164,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("concat(").val(functions).put(')');
+            sink.val("concat(").val(functions).val(')');
         }
     }
 

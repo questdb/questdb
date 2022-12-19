@@ -93,7 +93,7 @@ public class RndLogFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_log(").put(totalLogLines).put(',').put(errorRatio).put(')');
+            sink.val("rnd_log(").val(totalLogLines).val(',').val(errorRatio).val(')');
         }
     }
 }

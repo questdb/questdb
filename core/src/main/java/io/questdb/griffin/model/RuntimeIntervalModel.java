@@ -85,10 +85,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     @Override
     public void toPlan(PlanSink sink) {
         if (intervals != null && intervals.size() > 0) {
-            sink.put("[static=").val(intervals);
+            sink.val("[static=").val(intervals);
         }
         if (dynamicRangeList != null && dynamicRangeList.size() > 0) {
-            sink.put(" dynamic=").val(dynamicRangeList).put("]");
+            sink.val(" dynamic=").val(dynamicRangeList).val("]");
         }
     }
 

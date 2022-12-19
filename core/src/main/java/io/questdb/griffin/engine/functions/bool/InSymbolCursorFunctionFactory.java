@@ -134,7 +134,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(valueArg).put(" in ").put(cursorArg);
+            sink.val(valueArg).val(" in ").val(cursorArg);
         }
     }
 
@@ -189,7 +189,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(valueArg).put(" in ").put(cursorArg);
+            sink.val(valueArg).val(" in ").val(cursorArg);
         }
     }
 }

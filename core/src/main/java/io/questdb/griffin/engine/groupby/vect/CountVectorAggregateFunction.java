@@ -97,7 +97,7 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("count(").put(valueOffset).put(')');
+        sink.val("count(").val(valueOffset).val(')');
     }
 
     @Override

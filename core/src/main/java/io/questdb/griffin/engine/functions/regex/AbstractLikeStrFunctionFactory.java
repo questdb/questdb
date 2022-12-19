@@ -165,11 +165,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value);
-            sink.put(" ~ ");//impl is regex 
-            sink.put(pattern);
+            sink.val(value);
+            //impl is regex 
+            sink.val(" ~ ");
+            sink.val(pattern);
             if (!caseInsensitive) {
-                sink.put(" [case-sensitive]");
+                sink.val(" [case-sensitive]");
             }
         }
     }
@@ -201,11 +202,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value);
-            sink.put(" ~ ");//impl is regex 
-            sink.put(matcher.pattern().toString());
+            sink.val(value);
+            //impl is regex 
+            sink.val(" ~ ");
+            sink.val(matcher.pattern().toString());
             if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
-                sink.put(" [case-sensitive]");
+                sink.val(" [case-sensitive]");
             }
         }
     }

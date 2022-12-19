@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 
@@ -60,11 +59,6 @@ public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant
     @Override
     public short getGeoShort(Record rec) {
         return GeoHashes.SHORT_NULL;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("GeoHashType");
     }
 
     static {

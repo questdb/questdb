@@ -60,7 +60,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     @Override
     public void toPlan(PlanSink sink) {
         sink.optAttr("filter", filter);
-        sink.attr("symbolFilter").putColumnName(columnIndex).put('=').put(symbolFunc);
+        sink.attr("symbolFilter").putColumnName(columnIndex).val('=').val(symbolFunc);
         sink.child(dataFrameCursorFactory);
     }
 

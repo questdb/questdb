@@ -32,6 +32,6 @@ public abstract class AbstractCastToDateFunction extends DateFunction implements
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::date");
+        sink.val(getArg()).val("::date");
     }
 }

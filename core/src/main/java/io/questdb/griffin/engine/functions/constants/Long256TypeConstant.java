@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
@@ -49,10 +48,5 @@ public class Long256TypeConstant extends Long256Function implements TypeConstant
     @Override
     public Long256 getLong256B(Record rec) {
         return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("Long256Type");
     }
 }

@@ -2246,7 +2246,7 @@ if __name__ == "__main__":
                 pstmt.execute();
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where str = '\n' order by str,x limit 10")) {
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where str = '\b\f\n\r\t\u0005' order by str,x limit 10")) {
                 statement.execute();
                 try (ResultSet rs = statement.getResultSet()) {
                     assertResultSet(
@@ -2254,7 +2254,7 @@ if __name__ == "__main__":
                                     "Sort light lo: 10\n" +
                                     "  keys: [str, x]\n" +
                                     "    Async Filter\n" +
-                                    "      filter: str='\\n'\n" +
+                                    "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
                                     "      workers: 2\n" +
                                     "        DataFrame\n" +
                                     "            Row forward scan\n" +

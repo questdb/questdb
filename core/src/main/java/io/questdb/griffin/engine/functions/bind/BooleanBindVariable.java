@@ -55,6 +55,6 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::boolean");
+        sink.val("?::boolean");
     }
 }

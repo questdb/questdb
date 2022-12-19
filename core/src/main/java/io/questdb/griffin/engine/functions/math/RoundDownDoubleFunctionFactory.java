@@ -105,7 +105,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("round_down(").put(left).put(",-").put(right).put(')');
+            sink.val("round_down(").val(left).val(",-").val(right).val(')');
         }
     }
 
@@ -135,7 +135,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("round_down(").put(arg).put(",-").put(scale).put(')');
+            sink.val("round_down(").val(arg).val(",-").val(scale).val(')');
         }
     }
 
@@ -165,7 +165,7 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("round_down(").put(arg).put(',').put(scale).put(')');
+            sink.val("round_down(").val(arg).val(',').val(scale).val(')');
         }
     }
 }

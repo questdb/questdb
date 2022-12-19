@@ -139,7 +139,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("to_str(").put(arg).put(',').put(formatStr).put(')');
+            sink.val("to_str(").val(arg).val(',').val(formatStr).val(')');
         }
 
         @Nullable

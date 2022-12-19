@@ -63,7 +63,7 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan");
-        sink.attr("symbolFilter").putColumnName(columnIndex).put('=').put(symbolKey);
+        sink.attr("symbolFilter").putColumnName(columnIndex).val('=').val(symbolKey);
     }
 
     @Override

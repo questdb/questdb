@@ -90,7 +90,7 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put("::regclass");
+            sink.val(arg).val("::regclass");
         }
     }
 

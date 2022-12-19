@@ -55,6 +55,6 @@ class OffsetTimestampFunctionFromRules extends TimestampFunction implements Unar
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("to_utc(").put(timestamp).put(',').put(multiplier).put(')');
+        sink.val("to_utc(").val(timestamp).val(',').val(multiplier).val(')');
     }
 }

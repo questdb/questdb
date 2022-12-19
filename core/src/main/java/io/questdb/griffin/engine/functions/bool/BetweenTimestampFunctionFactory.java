@@ -94,7 +94,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(left).put(" between ").put(from).put(" and ").put(to);
+            sink.val(left).val(" between ").val(from).val(" and ").val(to);
         }
     }
 
@@ -146,7 +146,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put(" between ").put(from).put(" and ").put(to);
+            sink.val(arg).val(" between ").val(from).val(" and ").val(to);
         }
     }
 }

@@ -47,6 +47,6 @@ public class ByteConstant extends ByteFunction implements ConstantFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(value);
+        sink.val(value);
     }
 }

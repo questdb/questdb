@@ -84,7 +84,7 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.put(getSymbol()).put('(').put(getArgs()).put(')');
+        sink.val(getSymbol()).val('(').val(getArgs()).val(')');
     }
 
     @Override

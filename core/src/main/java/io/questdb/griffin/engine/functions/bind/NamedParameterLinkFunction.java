@@ -215,7 +215,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(variableName).put("::").put(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
+        sink.val(variableName).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
     private Function getBase() {

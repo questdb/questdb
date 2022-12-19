@@ -131,7 +131,7 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("min(").put(arg).put(')');
+        sink.val("min(").val(arg).val(')');
     }
 
     @Override

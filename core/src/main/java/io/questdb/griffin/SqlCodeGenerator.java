@@ -180,9 +180,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model, executionContext, true);
     }
 
-    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, SqlExecutionContext executionContext) {
+    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
         RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
-        return new ExplainPlanFactory(recordCursorFactory);
+        return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
     public RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -198,7 +198,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = new RecordCursorFactoryStub(innerModel, null);
         }
 
-        return new ExplainPlanFactory(factory);
+        return new ExplainPlanFactory(factory, model.getFormat());
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {

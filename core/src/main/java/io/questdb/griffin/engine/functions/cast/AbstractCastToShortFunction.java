@@ -32,6 +32,6 @@ public abstract class AbstractCastToShortFunction extends ShortFunction implemen
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::short");
+        sink.val(getArg()).val("::short");
     }
 }

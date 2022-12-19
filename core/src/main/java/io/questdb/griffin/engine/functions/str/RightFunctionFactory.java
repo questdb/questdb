@@ -113,7 +113,7 @@ public class RightFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("right(").put(strFunc).put(',').put(count).put(')');
+            sink.val("right(").val(strFunc).val(',').val(count).val(')');
         }
 
         private int getPos(int len) {

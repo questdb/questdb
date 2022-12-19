@@ -70,7 +70,7 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("log(").put(function).put(')');
+            sink.val("log(").val(function).val(')');
         }
     }
 }

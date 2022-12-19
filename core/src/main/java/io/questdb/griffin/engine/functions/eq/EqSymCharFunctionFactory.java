@@ -107,11 +107,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg);
+            sink.val(arg);
             if (negated) {
-                sink.put('!');
+                sink.val('!');
             }
-            sink.put("='").put(constant).put('\'');
+            sink.val("='").val(constant).val('\'');
         }
     }
 
@@ -136,11 +136,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg);
+            sink.val(arg);
             if (negated) {
-                sink.put('!');
+                sink.val('!');
             }
-            sink.put("='").put(constant).put('\'');
+            sink.val("='").val(constant).val('\'');
         }
     }
 

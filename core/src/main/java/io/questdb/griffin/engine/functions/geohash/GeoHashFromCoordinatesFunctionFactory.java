@@ -133,7 +133,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SYMBOL).put('(').put(lon).put(',').put(lat).put(',').put(bits).put(')');
+            sink.val(SYMBOL).val('(').val(lon).val(',').val(lat).val(',').val(bits).val(')');
         }
 
         private long getLongValue(Record rec) {

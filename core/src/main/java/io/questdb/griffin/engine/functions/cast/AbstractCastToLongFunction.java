@@ -43,6 +43,6 @@ public abstract class AbstractCastToLongFunction extends LongFunction implements
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::long");
+        sink.val(getArg()).val("::long");
     }
 }

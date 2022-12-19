@@ -35,10 +35,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalOperation;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 import static io.questdb.griffin.model.IntervalUtils.*;
 
@@ -97,11 +94,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(left);
+            sink.val(left);
             if (negated) {
-                sink.put(" not");
+                sink.val(" not");
             }
-            sink.put(" in ").put(intervals);
+            sink.val(" in ").val(intervals);
         }
     }
 

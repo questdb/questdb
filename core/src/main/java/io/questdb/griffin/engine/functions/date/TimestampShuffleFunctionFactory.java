@@ -91,7 +91,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("timestamp_shuffle(").put(start).put(',').put(end).put(')');
+            sink.val("timestamp_shuffle(").val(start).val(',').val(end).val(')');
         }
 
         @Override

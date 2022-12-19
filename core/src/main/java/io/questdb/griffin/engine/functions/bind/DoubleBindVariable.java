@@ -55,6 +55,6 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::double");
+        sink.val("?::double");
     }
 }

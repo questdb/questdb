@@ -60,6 +60,6 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::binary");
+        sink.val("?::binary");
     }
 }

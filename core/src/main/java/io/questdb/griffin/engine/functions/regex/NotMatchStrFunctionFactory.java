@@ -97,7 +97,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put(" !~ ").put(matcher.pattern().toString());
+            sink.val(arg).val(" !~ ").val(matcher.pattern().toString());
         }
     }
 }

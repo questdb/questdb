@@ -43,6 +43,6 @@ public abstract class AbstractCastToStrFunction extends StrFunction implements U
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::string");
+        sink.val(getArg()).val("::string");
     }
 }

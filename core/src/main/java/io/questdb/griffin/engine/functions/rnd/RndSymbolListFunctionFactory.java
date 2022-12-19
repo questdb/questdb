@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Sinkable;
 
 public class RndSymbolListFunctionFactory implements FunctionFactory {
     @Override
@@ -97,7 +98,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_symbol(").put(symbols).put(')');
+            sink.val("rnd_symbol(").val((Sinkable) symbols).val(')');
         }
 
         @Override

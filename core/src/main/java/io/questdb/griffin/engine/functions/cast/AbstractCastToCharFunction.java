@@ -31,6 +31,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 public abstract class AbstractCastToCharFunction extends CharFunction implements UnaryFunction {
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::char");
+        sink.val(getArg()).val("::char");
     }
 }

@@ -142,7 +142,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SIGNATURE);
+            sink.val(SIGNATURE);
         }
     }
 
@@ -220,7 +220,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SIGNATURE);
+            sink.val(SIGNATURE);
         }
     }
 
@@ -273,7 +273,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SIGNATURE);
+            sink.val(SIGNATURE);
         }
 
         @Override

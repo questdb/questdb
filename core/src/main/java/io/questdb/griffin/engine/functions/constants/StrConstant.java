@@ -72,9 +72,9 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     @Override
     public void toPlan(PlanSink sink) {
         if (value == null) {
-            sink.put("null");
+            sink.val("null");
         } else {
-            sink.put('\'').put(value).put('\'');
+            sink.val('\'').val(value).val('\'');
         }
     }
 }

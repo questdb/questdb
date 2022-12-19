@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.str.CharSink;
@@ -51,10 +50,5 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     @Override
     public int getStrLen(Record rec) {
         return -1;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("StrType");
     }
 }

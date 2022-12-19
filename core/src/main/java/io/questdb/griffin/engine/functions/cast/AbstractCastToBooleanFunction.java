@@ -43,6 +43,6 @@ public abstract class AbstractCastToBooleanFunction extends BooleanFunction impl
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::boolean");
+        sink.val(getArg()).val("::boolean");
     }
 }

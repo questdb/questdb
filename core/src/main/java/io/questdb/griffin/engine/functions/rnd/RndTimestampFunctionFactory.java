@@ -99,7 +99,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_timestamp(").put(lo).put(',').put(range + lo - 1).put(',').put(nanRate - 1).put(')');
+            sink.val("rnd_timestamp(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
     }
 }

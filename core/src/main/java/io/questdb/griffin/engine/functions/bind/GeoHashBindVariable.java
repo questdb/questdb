@@ -76,7 +76,7 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::geohash");
+        sink.val("?::geohash");
     }
 
     void setType(int type) {

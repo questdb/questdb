@@ -47,6 +47,6 @@ public class CharConstant extends CharFunction implements ConstantFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put('\'').put(value).put('\'');
+        sink.val('\'').val(value).val('\'');
     }
 }

@@ -77,6 +77,6 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::long256");
+        sink.val("?::long256");
     }
 }

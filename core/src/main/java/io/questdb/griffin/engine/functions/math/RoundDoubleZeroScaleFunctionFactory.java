@@ -66,7 +66,7 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("round(").put(arg).put(')');
+            sink.val("round(").val(arg).val(')');
         }
     }
 }

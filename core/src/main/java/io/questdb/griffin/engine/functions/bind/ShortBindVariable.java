@@ -55,6 +55,6 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::short");
+        sink.val("?::short");
     }
 }

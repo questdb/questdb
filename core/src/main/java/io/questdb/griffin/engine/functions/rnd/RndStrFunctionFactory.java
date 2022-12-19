@@ -94,7 +94,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_str(").put(len).put(',').put(len).put(',').put(nullRate - 1).put(')');
+            sink.val("rnd_str(").val(len).val(',').val(len).val(',').val(nullRate - 1).val(')');
         }
     }
 }

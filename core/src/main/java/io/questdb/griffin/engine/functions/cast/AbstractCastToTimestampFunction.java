@@ -35,6 +35,6 @@ public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimes
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::timestamp");
+        sink.val(getArg()).val("::timestamp");
     }
 }

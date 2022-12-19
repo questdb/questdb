@@ -108,7 +108,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("dateadd('").put(periodSymbol).put("',").put(interval).put(',').put(arg).put(')');
+            sink.val("dateadd('").val(periodSymbol).val("',").val(interval).val(',').val(arg).val(')');
         }
     }
 
@@ -147,7 +147,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("dateadd('").put(periodSymbol).put("',").put(left).put(',').put(right).put(')');
+            sink.val("dateadd('").val(periodSymbol).val("',").val(left).val(',').val(right).val(')');
         }
     }
 

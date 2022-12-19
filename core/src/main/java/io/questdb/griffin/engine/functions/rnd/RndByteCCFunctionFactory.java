@@ -87,7 +87,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_byte(").put(lo).put(',').put(range).put(')');
+            sink.val("rnd_byte(").val(lo).val(',').val(range).val(')');
         }
     }
 }

@@ -118,7 +118,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_symbol(").put(count).put(',').put(strMem.getLo()).put(',').put(strMem.getHi()).put(',').put(nullRate - 1).put(')');
+            sink.val("rnd_symbol(").val(count).val(',').val(strMem.getLo()).val(',').val(strMem.getHi()).val(',').val(nullRate - 1).val(')');
         }
 
         @Override

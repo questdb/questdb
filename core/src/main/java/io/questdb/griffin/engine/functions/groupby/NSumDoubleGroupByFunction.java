@@ -103,7 +103,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("nsum(").put(arg).put(')');
+        sink.val("nsum(").val(arg).val(')');
     }
 
     private void sum(MapValue mapValue, double value, double sum, double c) {

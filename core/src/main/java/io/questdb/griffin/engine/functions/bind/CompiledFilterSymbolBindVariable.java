@@ -82,7 +82,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::symbol");
+        sink.val("?::symbol");
     }
 
     @Override

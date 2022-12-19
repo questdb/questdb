@@ -60,9 +60,9 @@ public interface UnaryFunction extends Function {
     @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
-            sink.put(getSymbol()).put(getArg());
+            sink.val(getSymbol()).val(getArg());
         } else {
-            sink.put(getSymbol()).put('(').put(getArg()).put(')');
+            sink.val(getSymbol()).val('(').val(getArg()).val(')');
         }
     }
 

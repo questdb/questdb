@@ -118,7 +118,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("datediff('").put(left).put("',").put(center).put(',').put(right).put(')');
+            sink.val("datediff('").val(left).val("',").val(center).val(',').val(right).val(')');
         }
     }
 
@@ -151,7 +151,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("datediff('").put(symbol).put("',").put(arg).put(',').put(constantTime).put(')');
+            sink.val("datediff('").val(symbol).val("',").val(arg).val(',').val(constantTime).val(')');
         }
     }
 
@@ -190,7 +190,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("datediff('").put(symbol).put("',").put(left).put(',').put(right).put(')');
+            sink.val("datediff('").val(symbol).val("',").val(left).val(',').val(right).val(')');
         }
     }
 

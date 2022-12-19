@@ -84,7 +84,7 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_long256(").put(values.length / 4).put(')');
+            sink.val("rnd_long256(").val(values.length / 4).val(')');
         }
 
         @NotNull

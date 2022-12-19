@@ -55,6 +55,6 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::float");
+        sink.val("?::float");
     }
 }

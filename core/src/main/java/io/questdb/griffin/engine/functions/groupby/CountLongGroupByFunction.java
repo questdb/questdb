@@ -78,7 +78,7 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     public void toPlan(PlanSink sink) {
-        sink.put("count(").put(valueIndex).put(')');
+        sink.val("count(").val(valueIndex).val(')');
     }
 
 }

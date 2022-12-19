@@ -76,9 +76,9 @@ public interface BinaryFunction extends Function {
     @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
-            sink.put(getLeft()).put(getSymbol()).put(getRight());
+            sink.val(getLeft()).val(getSymbol()).val(getRight());
         } else {
-            sink.put(getSymbol()).put('(').put(getLeft()).put(',').put(getRight()).put(')');
+            sink.val(getSymbol()).val('(').val(getLeft()).val(',').val(getRight()).val(')');
         }
     }
 

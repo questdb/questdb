@@ -93,7 +93,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put(" <> all ").put(set);
+            sink.val(arg).val(" <> all ").val(set);
         }
     }
 }

@@ -187,7 +187,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.put(getSymbol()).put("()");
+        sink.val(getSymbol()).val("()");
     }
 
     default void toTop() {

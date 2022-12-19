@@ -43,6 +43,6 @@ public abstract class AbstractCastToIntFunction extends IntFunction implements U
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::int");
+        sink.val(getArg()).val("::int");
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
@@ -40,10 +39,5 @@ public class IntTypeConstant extends IntFunction implements TypeConstant {
     @Override
     public int getInt(Record rec) {
         return Numbers.INT_NaN;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("IntType");
     }
 }

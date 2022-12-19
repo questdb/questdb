@@ -72,7 +72,7 @@ public class LikeCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put(" like '").put(expected).put("'");
+            sink.val(value).val(" like '").val(expected).val("'");
         }
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UntypedFunction;
 
@@ -35,10 +34,5 @@ public class RegClassTypeConstant extends UntypedFunction implements TypeConstan
     @Override
     public int getType() {
         return ColumnType.REGCLASS;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("RegClassType");
     }
 }

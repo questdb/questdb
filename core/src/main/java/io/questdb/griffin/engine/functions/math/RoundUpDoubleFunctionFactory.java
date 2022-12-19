@@ -138,7 +138,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SYMBOL).put('(').put(arg).put(',').put(scale).put(')');
+            sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
         }
     }
 
@@ -168,7 +168,7 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SYMBOL).put('(').put(arg).put(',').put(scale).put(')');
+            sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
         }
     }
 }

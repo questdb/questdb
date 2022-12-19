@@ -31,9 +31,8 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
+import io.questdb.griffin.model.ExplainModel;
 import io.questdb.std.str.CharSink;
 
 /**
@@ -45,10 +44,13 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final ExplainPlanRecordCursor cursor;
 
-    public ExplainPlanFactory(RecordCursorFactory base) {
+    private boolean isBaseClosed;
+
+    public ExplainPlanFactory(RecordCursorFactory base, int format) {
         super(METADATA);
         this.base = base;
-        this.cursor = new ExplainPlanRecordCursor();
+        this.cursor = new ExplainPlanRecordCursor(format);
+        this.isBaseClosed = false;
     }
 
     @Override
@@ -69,7 +71,10 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
+        if (!isBaseClosed) {
+            base.close();
+            isBaseClosed = true;
+        }
     }
 
     public class ExplainPlanRecord implements Record {
@@ -106,8 +111,12 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         private int row = 0;
         private int rowCount;
 
-        public ExplainPlanRecordCursor() {
-            this.planSink = new PlanSink();
+        public ExplainPlanRecordCursor(int format) {
+            if (format == ExplainModel.FORMAT_JSON) {
+                this.planSink = new JsonPlanSink();
+            } else {
+                this.planSink = new TextPlanSink();
+            }
             this.record = new ExplainPlanRecord(planSink);
         }
 
@@ -132,15 +141,14 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
             //we can't use getCursor() because that could take a lot of time and execute e.g. table hashing
-            //on the other hand until we run it factories may be incomplete ...
-            //TODO: initialize factory hierarchy without paying the startup cost 
-            //try (RecordCursor cursor = base.getCursor(executionContext)) {
-            planSink.of(base, executionContext);
+            //on the other hand until we run it factories may be incomplete
+            if (!isBaseClosed) {
+                planSink.of(base, executionContext);
+                base.close();//close vase factory and associated cursors, otherwise it may keep holding eagerly allocated memory
+                isBaseClosed = true;
+            }
             rowCount = planSink.getLineCount();
             toTop();
-//            } finally {
-//                Misc.free(cursor);
-//            }
         }
 
         @Override

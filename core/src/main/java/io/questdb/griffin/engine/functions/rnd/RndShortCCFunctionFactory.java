@@ -88,7 +88,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_short(").put(lo).put(',').put(range + lo - 1).put(')');
+            sink.val("rnd_short(").val(lo).val(',').val(range + lo - 1).val(')');
         }
     }
 }

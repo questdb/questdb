@@ -31,6 +31,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 public abstract class AbstractCastToByteFunction extends ByteFunction implements UnaryFunction {
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::byte");
+        sink.val(getArg()).val("::byte");
     }
 }

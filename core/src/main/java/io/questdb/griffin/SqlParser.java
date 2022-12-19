@@ -979,7 +979,7 @@ public final class SqlParser {
 
     //doesn't allow copy, rename  
     private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+        CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
         if (isSelectKeyword(tok)) {
             return parseSelect(lexer);
@@ -1002,6 +1002,31 @@ public final class SqlParser {
         }
 
         return parseSelect(lexer);
+    }
+
+    private int parseExplainOptions(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
+        if (Chars.equals(tok, '(')) {
+            tok = tok(lexer, "'format'");
+            if (isFormatKeyword(tok)) {
+                tok = tok(lexer, "'text' or 'json'");
+                if (SqlKeywords.isTextKeyword(tok) || SqlKeywords.isJsonKeyword(tok)) {
+                    int format = SqlKeywords.isJsonKeyword(tok) ? ExplainModel.FORMAT_JSON : ExplainModel.FORMAT_TEXT;
+                    tok = tok(lexer, "')'");
+                    if (!Chars.equals(tok, ')')) {
+                        throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+                    }
+                    return format;
+                } else {
+                    throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain format found");
+                }
+            } else {
+                throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+            }
+        } else {
+            lexer.unparseLast();
+            return ExplainModel.FORMAT_TEXT;
+        }
     }
 
     private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
@@ -2106,8 +2131,10 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
+            int format = parseExplainOptions(lexer);
             ExecutionModel model = parseExplain(lexer, executionContext);
             ExplainModel explainModel = explainModelPool.next();
+            explainModel.setFormat(format);
             explainModel.setModel(model);
             return explainModel;
         }

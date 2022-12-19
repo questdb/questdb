@@ -55,6 +55,6 @@ class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::char");
+        sink.val("?::char");
     }
 }

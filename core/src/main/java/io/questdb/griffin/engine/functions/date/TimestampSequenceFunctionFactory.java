@@ -104,7 +104,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("timestamp_sequence(").put(start).put(',').put(longIncrement).put(')');
+            sink.val("timestamp_sequence(").val(start).val(',').val(longIncrement).val(')');
         }
 
         @Override
@@ -156,7 +156,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("timestamp_sequence(").put(start).put(',').put(longIncrement).put(')');
+            sink.val("timestamp_sequence(").val(start).val(',').val(longIncrement).val(')');
         }
 
         @Override

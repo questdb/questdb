@@ -113,7 +113,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_str(").put(count).put(',').put(strMem.getLo()).put(',').put(strMem.getHi()).put(',').put(nullRate).put(')');
+            sink.val("rnd_str(").val(count).val(',').val(strMem.getLo()).val(',').val(strMem.getHi()).val(',').val(nullRate).val(')');
         }
     }
 }

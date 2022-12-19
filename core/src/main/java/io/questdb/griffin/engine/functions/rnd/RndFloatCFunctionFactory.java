@@ -82,7 +82,7 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_float(").put(nanRate).put(')');
+            sink.val("rnd_float(").val(nanRate).val(')');
         }
     }
 }

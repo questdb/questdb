@@ -62,6 +62,6 @@ public class TrimConstFunction extends StrFunction implements UnaryFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put('\'').put(sink1).put('\'');
+        sink.val('\'').val(sink1).val('\'');
     }
 }

@@ -51,6 +51,6 @@ public final class Long256NullConstant extends Long256Function implements Consta
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("null::long256");
+        sink.val("null::long256");
     }
 }

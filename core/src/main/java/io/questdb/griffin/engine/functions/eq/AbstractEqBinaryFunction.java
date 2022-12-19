@@ -28,8 +28,8 @@ public abstract class AbstractEqBinaryFunction extends NegatableBooleanFunction 
     public void toPlan(PlanSink sink) {
         sink.val(left);
         if (negated) {
-            sink.put('!');
+            sink.val('!');
         }
-        sink.put('=').val(right);
+        sink.val('=').val(right);
     }
 }

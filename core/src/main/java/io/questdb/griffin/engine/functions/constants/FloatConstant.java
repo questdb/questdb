@@ -47,6 +47,6 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(value).put('f');
+        sink.val((double) value).val('f');
     }
 }

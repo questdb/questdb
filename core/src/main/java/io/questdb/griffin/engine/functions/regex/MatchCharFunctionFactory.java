@@ -72,7 +72,7 @@ public class MatchCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put(" ~ '").put(expected).put('\'');
+            sink.val(value).val(" ~ '").val(expected).val('\'');
         }
     }
 }

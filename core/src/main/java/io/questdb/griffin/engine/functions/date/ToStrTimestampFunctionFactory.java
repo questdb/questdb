@@ -137,7 +137,7 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("to_str(").put(arg).put(')');
+            sink.val("to_str(").val(arg).val(')');
         }
 
         @Nullable

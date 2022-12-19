@@ -182,7 +182,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(items).put("::string[]");
+        sink.val(items).val("::string[]");
     }
 
     private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {

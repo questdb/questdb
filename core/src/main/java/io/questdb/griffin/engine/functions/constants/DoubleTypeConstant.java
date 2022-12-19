@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 
@@ -36,10 +35,5 @@ public class DoubleTypeConstant extends DoubleFunction implements TypeConstant {
     @Override
     public double getDouble(Record rec) {
         return Double.NaN;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("DoubleType");
     }
 }

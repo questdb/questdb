@@ -113,7 +113,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("to_timestamp(").put(arg).put(')');
+            sink.val("to_timestamp(").val(arg).val(')');
         }
     }
 }

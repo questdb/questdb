@@ -128,7 +128,7 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("string_agg(").put(arg).put(',').put(delimiter).put(')');
+            sink.val("string_agg(").val(arg).val(',').val(delimiter).val(')');
         }
 
         private void append(CharSequence str) {

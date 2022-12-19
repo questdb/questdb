@@ -56,6 +56,6 @@ class TimestampBindVariable extends TimestampFunction implements ScalarFunction,
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::timestamp");
+        sink.val("?::timestamp");
     }
 }

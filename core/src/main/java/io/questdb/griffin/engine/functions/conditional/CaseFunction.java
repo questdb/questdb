@@ -30,6 +30,6 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 public interface CaseFunction extends MultiArgFunction {
     @Override
     default void toPlan(PlanSink sink) {
-        sink.put("case(").val(getArgs()).put(')');
+        sink.val("case(").val(getArgs()).val(')');
     }
 }

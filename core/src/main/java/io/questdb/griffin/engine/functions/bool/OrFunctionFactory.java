@@ -99,7 +99,7 @@ public class OrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put('(').put(left).put(" or ").put(right).put(')');
+            sink.val('(').val(left).val(" or ").val(right).val(')');
         }
     }
 }

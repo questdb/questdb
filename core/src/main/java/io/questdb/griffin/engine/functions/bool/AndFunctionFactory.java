@@ -101,7 +101,7 @@ public class AndFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val('(');
             sink.val(left);
-            sink.put(" and ");
+            sink.val(" and ");
             sink.val(right);
             sink.val(')');
         }

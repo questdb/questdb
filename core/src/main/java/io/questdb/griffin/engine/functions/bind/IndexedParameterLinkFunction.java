@@ -225,7 +225,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("$").put(variableIndex).put("::").put(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
+        sink.val("$").val(variableIndex).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
     private Function getBase() {

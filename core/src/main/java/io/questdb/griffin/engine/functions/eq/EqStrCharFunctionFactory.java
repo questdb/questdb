@@ -103,12 +103,12 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(strFunc);
+            sink.val(strFunc);
             if (negated) {
-                sink.put('!');
+                sink.val('!');
             }
-            sink.put("='");
-            sink.put(chrConst).put("'");
+            sink.val("='");
+            sink.val(chrConst).val("'");
         }
     }
 
@@ -126,7 +126,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(getBool(null));
+            sink.val(getBool(null));
         }
     }
 
@@ -151,12 +151,12 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(chrFunc);
+            sink.val(chrFunc);
             if (negated) {
-                sink.put('!');
+                sink.val('!');
             }
-            sink.put('=');
-            sink.put(chrConst);
+            sink.val('=');
+            sink.val(chrConst);
         }
     }
 
@@ -180,7 +180,7 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(getBool(null));
+            sink.val(getBool(null));
         }
     }
 }

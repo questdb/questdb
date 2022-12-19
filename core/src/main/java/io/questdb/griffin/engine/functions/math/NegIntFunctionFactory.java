@@ -73,7 +73,7 @@ public class NegIntFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put('-').put(arg);
+            sink.val('-').val(arg);
         }
     }
 }

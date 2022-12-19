@@ -97,9 +97,9 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public void toPlan(PlanSink sink) {
         if (value == null) {
-            sink.put("null::symbol");
+            sink.val("null::symbol");
         } else {
-            sink.put('\'').put(value).put('\'');
+            sink.val('\'').val(value).val('\'');
         }
     }
 

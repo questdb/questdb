@@ -43,6 +43,6 @@ public abstract class AbstractCastToLong256Function extends Long256Function impl
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::long256");
+        sink.val(getArg()).val("::long256");
     }
 }

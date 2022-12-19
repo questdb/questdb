@@ -56,6 +56,6 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::date");
+        sink.val("?::date");
     }
 }

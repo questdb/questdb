@@ -67,7 +67,7 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(arg).put("::string");
+            sink.val(arg).val("::string");
         }
 
         private StringSink toSink(Record rec, StringSink sinkA) {

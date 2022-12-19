@@ -157,6 +157,6 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("?::string");
+        sink.val("?::string");
     }
 }

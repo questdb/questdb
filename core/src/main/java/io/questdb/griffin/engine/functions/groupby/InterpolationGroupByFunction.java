@@ -293,6 +293,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("Interpolated(").put(wrappedFunction).put(")");
+        sink.val("Interpolated(").val(wrappedFunction).val(")");
     }
 }

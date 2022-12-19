@@ -32,6 +32,6 @@ public abstract class AbstractCastToFloatFunction extends FloatFunction implemen
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(getArg()).put("::float");
+        sink.val(getArg()).val("::float");
     }
 }

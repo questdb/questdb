@@ -140,11 +140,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(tsFunc);
+            sink.val(tsFunc);
             if (negated) {
-                sink.put(" not");
+                sink.val(" not");
             }
-            sink.put(" in ").put(inList);
+            sink.val(" in ").val(inList);
         }
     }
 
@@ -190,12 +190,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(args.getQuick(0));
+            sink.val(args.getQuick(0));
             if (negated) {
-                sink.put(" not");
+                sink.val(" not");
             }
-            sink.put(" in ");
-            sink.put(args, 1);
+            sink.val(" in ");
+            sink.val(args, 1);
         }
     }
 }

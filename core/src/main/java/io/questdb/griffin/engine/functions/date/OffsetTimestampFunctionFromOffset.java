@@ -51,6 +51,6 @@ class OffsetTimestampFunctionFromOffset extends TimestampFunction implements Una
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(timestamp).put('+').put(offset);
+        sink.val(timestamp).val('+').val(offset);
     }
 }

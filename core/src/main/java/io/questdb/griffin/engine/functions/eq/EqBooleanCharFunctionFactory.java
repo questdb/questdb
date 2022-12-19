@@ -82,11 +82,11 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(left);
+            sink.val(left);
             if (negated) {
-                sink.put('!');
+                sink.val('!');
             }
-            sink.put('=').put(right);
+            sink.val('=').val(right);
         }
     }
 }

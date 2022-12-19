@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
@@ -42,10 +41,5 @@ public final class BinTypeConstant extends BinFunction implements TypeConstant {
     @Override
     public long getBinLen(Record rec) {
         return TableUtils.NULL_LEN;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("BinType");
     }
 }

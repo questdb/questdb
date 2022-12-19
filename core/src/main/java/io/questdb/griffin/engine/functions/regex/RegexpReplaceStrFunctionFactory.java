@@ -170,7 +170,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("regexp_replace(").put(value).put(',').put(pattern).put(',').put(replacement).put(')');
+            sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
         }
     }
 

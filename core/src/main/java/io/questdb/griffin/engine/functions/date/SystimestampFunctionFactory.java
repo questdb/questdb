@@ -66,7 +66,7 @@ public class SystimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(SIGNATURE);
+            sink.val(SIGNATURE);
         }
     }
 }

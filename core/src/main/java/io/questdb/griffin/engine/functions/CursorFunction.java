@@ -187,6 +187,6 @@ public class CursorFunction implements ScalarFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put("cursor ").put(factory);
+        sink.val("cursor ").child(factory);
     }
 }

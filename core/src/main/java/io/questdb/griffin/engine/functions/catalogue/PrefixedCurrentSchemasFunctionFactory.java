@@ -86,7 +86,7 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("pg_catalog.current_schemas()");
+            sink.val("pg_catalog.current_schemas()");
         }
     }
 }

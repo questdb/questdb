@@ -93,9 +93,9 @@ public class LtLongFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
-                sink.put(">=");
+                sink.val(">=");
             } else {
-                sink.put('<');
+                sink.val('<');
             }
             sink.val(right);
         }

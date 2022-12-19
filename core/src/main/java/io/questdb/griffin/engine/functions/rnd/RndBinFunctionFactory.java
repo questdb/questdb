@@ -77,7 +77,7 @@ public class RndBinFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_bin()");
+            sink.val("rnd_bin()");
         }
     }
 

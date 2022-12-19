@@ -74,7 +74,7 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("power(").put(left).put(',').put(right).put(')');
+            sink.val("power(").val(left).val(',').val(right).val(')');
         }
     }
 }

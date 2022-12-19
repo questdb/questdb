@@ -104,7 +104,7 @@ public class Base64FunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("base64(").put(data).put(',').put(maxLength).put(')');
+            sink.val("base64(").val(data).val(',').val(maxLength).val(')');
         }
     }
 }

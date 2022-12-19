@@ -93,7 +93,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put("rnd_long(").put(lo).put(',').put(range + lo - 1).put(',').put(nanRate - 1).put(')');
+            sink.val("rnd_long(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
     }
 }

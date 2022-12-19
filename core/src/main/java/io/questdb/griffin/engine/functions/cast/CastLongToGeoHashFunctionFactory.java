@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.IntList;
@@ -89,7 +88,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put("::geobyte");
+            sink.val(value).val("::geobyte");
         }
     }
 
@@ -114,7 +113,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put("::geoint");
+            sink.val(value).val("::geoint");
         }
     }
 
@@ -139,7 +138,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put("::geoshort");
+            sink.val(value).val("::geoshort");
         }
     }
 
@@ -164,7 +163,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.put(value).put("::geolong");
+            sink.val(value).val("::geolong");
         }
     }
 }

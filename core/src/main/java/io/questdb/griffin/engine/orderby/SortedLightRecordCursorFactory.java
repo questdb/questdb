@@ -100,7 +100,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             int colIdx = filter.get(i);
             int col = (colIdx > 0 ? colIdx : -colIdx) - 1;
             if (i > 0) {
-                sink.put(", ");
+                sink.val(", ");
             }
             sink.putBaseColumnName(col);
             if (colIdx < 0) {

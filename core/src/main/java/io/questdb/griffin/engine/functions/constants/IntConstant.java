@@ -51,6 +51,6 @@ public class IntConstant extends IntFunction implements ConstantFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.put(value);
+        sink.val(value);
     }
 }
