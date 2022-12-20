@@ -467,8 +467,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // long256
-        if (Numbers.extractLong256(tok, len, long256Sink)) {
-            return new Long256Constant(long256Sink); // values are copied from this sink
+        if (Numbers.extractLong256Hex(tok, len, long256Sink)) {
+            return new Long256Constant(long256Sink);
+        }
+        if (len > 1 && len < 80 && tok.charAt(len - 1) == 'L' && Numbers.extractLong256Dec(tok, len - 1, long256Sink)) {
+            return new Long256Constant(long256Sink);
         }
 
         try {
@@ -490,6 +493,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.REGCLASS
                         || columnType == ColumnType.REGPROCEDURE
                         || columnType == ColumnType.ARRAY_STRING
+                        || columnType == ColumnType.NUMERIC
         ) {
             return Constants.getTypeConstant(columnType);
         }

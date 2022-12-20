@@ -28,24 +28,25 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.NumericFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class CastStrToLong256FunctionFactory implements FunctionFactory {
+public class CastStrToNumericFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(Sh)";
+        return "cast(Sx)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends Long256Function implements UnaryFunction {
+    private static class Func extends NumericFunction implements UnaryFunction {
         private final Function arg;
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
@@ -87,3 +88,4 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
         }
     }
 }
+    

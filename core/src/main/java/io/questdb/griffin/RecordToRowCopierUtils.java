@@ -632,6 +632,8 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetBin);
                     asm.invokeInterface(wPutBin, 2);
                     break;
+                case ColumnType.NUMERIC:
+                    // fall through
                 case ColumnType.LONG256:
                     assert toColumnTypeTag == ColumnType.LONG256;
                     asm.invokeInterface(rGetLong256);

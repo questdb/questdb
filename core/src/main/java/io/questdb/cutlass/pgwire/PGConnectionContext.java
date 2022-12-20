@@ -123,6 +123,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final NetworkFacade nf;
+    private final ShortStack numericStack = new ShortStack();
     private final Path path = new Path();
     private final CharSequenceObjHashMap<TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
@@ -776,9 +777,46 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void appendNumericColumn(Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
-        final long a = responseAsciiSink.skip();
-        Numbers.appendLong256Dec(long256Value, responseAsciiSink);
-        responseAsciiSink.putLenEx(a);
+        if (long256Value.getLong0() == Numbers.LONG_NaN &&
+                long256Value.getLong1() == Numbers.LONG_NaN &&
+                long256Value.getLong2() == Numbers.LONG_NaN &&
+                long256Value.getLong3() == Numbers.LONG_NaN) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.appendLong256Dec(long256Value, responseAsciiSink);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
+    private void appendNumericColumnBin(Record record, int i) {
+        final Long256 long256Value = record.getLong256A(i);
+        if (long256Value.getLong0() == Numbers.LONG_NaN &&
+                long256Value.getLong1() == Numbers.LONG_NaN &&
+                long256Value.getLong2() == Numbers.LONG_NaN &&
+                long256Value.getLong3() == Numbers.LONG_NaN) {
+            responseAsciiSink.setNullValue();
+        } else {
+            // todo: remove allocations
+            final long a = responseAsciiSink.skip();
+            numericStack.clear();
+            do {
+                //todo: division is destructive, is it a good idea? I guess it is not 
+                short s = (short) (Long256Util.divideByInt(long256Value, 10000));
+                if (s != 0 || numericStack.notEmpty()) {
+                    numericStack.push(s);
+                }
+            } while (!Long256Util.isZero(long256Value));
+            responseAsciiSink.putNetworkShort((short) numericStack.size());  // number of 2-byte shorts representing 4 decimal digits
+            responseAsciiSink.putNetworkShort((short) (numericStack.size() - 1)); //0 based number of 4 decimal digits (i.e. 2-byte shorts) before the decimal
+            responseAsciiSink.putNetworkShort((short) 0); //0 indicates positive number, 0x4000 indicates negative number
+            responseAsciiSink.putNetworkShort((short) 0); //number of 4 decimal digits after decimal point
+
+            while (numericStack.notEmpty()) {
+                responseAsciiSink.putNetworkShort(numericStack.pop());
+            }
+            responseAsciiSink.putLenEx(a);
+        }
     }
 
     private void appendRecord(Record record, int columnCount) throws SqlException {
@@ -883,6 +921,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     break;
                 case ColumnType.NUMERIC:
                     appendNumericColumn(record, i);
+                    break;
+                case BINARY_TYPE_NUMERIC:
+                    appendNumericColumnBin(record, i);
                     break;
                 default:
                     assert false;

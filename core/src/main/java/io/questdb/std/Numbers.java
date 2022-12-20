@@ -554,18 +554,26 @@ public final class Numbers {
     }
 
     public static boolean extractLong256(CharSequence value, int len, Long256 long256) {
-        // starting with 0x ? it is hex!
-        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
+        return extractLong256Hex(value, len, long256) || extractLong256Dec(value, len, long256);
+    }
+
+    public static boolean extractLong256Dec(CharSequence value, int len, Long256 long256) {
+        if (len > 0 && len < 79) {
             try {
-                Long256FromCharSequenceDecoder.decodeHex(value, 2, len, long256);
+                Long256Util.decodeDec(value, 0, len, long256);
                 return true;
             } catch (ImplicitCastException e) {
                 return false;
             }
-        // ok, not hex, let's try decimal
-        } else if (len > 0 && len < 79) {
+        }
+        return false;
+    }
+
+    public static boolean extractLong256Hex(CharSequence value, int len, Long256 long256) {
+        // starting with 0x ? it is hex!
+        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
             try {
-                Long256Util.decodeDec(value, 0, len, long256);
+                Long256FromCharSequenceDecoder.decodeHex(value, 2, len, long256);
                 return true;
             } catch (ImplicitCastException e) {
                 return false;

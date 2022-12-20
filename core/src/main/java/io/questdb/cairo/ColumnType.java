@@ -121,7 +121,7 @@ public final class ColumnType {
             /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
             /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
             /* 18 BINARY    */, {BINARY}
-            /* 19 NUMERIC   */, {NUMERIC}
+            /* 19 NUMERIC   */, {NUMERIC, LONG256}
     };
     private static final int[] overloadPriorityMatrix;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -341,6 +341,7 @@ public final class ColumnType {
                 || (fromType == STRING && toType == FLOAT)
                 || (fromType == STRING && toType == DOUBLE)
                 || (fromType == STRING && toType == CHAR)
+                || (fromType == NUMERIC && toType == LONG256)
                 ;
     }
 
