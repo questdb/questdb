@@ -470,7 +470,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (Numbers.extractLong256Hex(tok, len, long256Sink)) {
             return new Long256Constant(long256Sink);
         }
-        if (len > 1 && len < 80 && tok.charAt(len - 1) == 'L' && Numbers.extractLong256Dec(tok, len - 1, long256Sink)) {
+        // compatibility issue: numbers previously parsed as double may be parsed as long256
+        // we cannot rely on a well known prefix/suffix, because pgwire in text format
+        // sends numbers as strings without any prefix/suffix
+        // this could also be a performance issue, because parsing long256 in dec is expensive
+        if (Numbers.extractLong256Dec(tok, len, long256Sink)) {
             return new Long256Constant(long256Sink);
         }
 

@@ -126,6 +126,8 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VAR_ARG:
                 setStr(index);
                 return ColumnType.STRING;
+            case ColumnType.NUMERIC:
+                // fall through
             case ColumnType.LONG256:
                 setLong256(index);
                 return type;

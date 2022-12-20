@@ -75,6 +75,7 @@ public class RecordToRowCopierUtils {
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
+        int wPutLong256l = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(IJJJJ)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
@@ -209,6 +210,14 @@ public class RecordToRowCopierUtils {
                             asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
+                        case ColumnType.LONG256:
+                            // todo: check it's not null and it's not negative
+                            asm.i2l();
+                            asm.lconst_0();
+                            asm.lconst_0();
+                            asm.lconst_0();
+                            asm.invokeInterface(wPutLong256l, 9);
+                            break;
                         default:
                             assert false;
                             break;
@@ -245,6 +254,13 @@ public class RecordToRowCopierUtils {
                         case ColumnType.DOUBLE:
                             asm.l2d();
                             asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        case ColumnType.LONG256:
+                            //todo: validate long is not null and it's not negative
+                            asm.lconst_0();
+                            asm.lconst_0();
+                            asm.lconst_0();
+                            asm.invokeInterface(wPutLong256l, 9);
                             break;
                         default:
                             assert false;

@@ -265,6 +265,16 @@ public class Long256Util {
         add(l, l0, l1, l2, l3);
     }
 
+    public static void multipleBy10000(Long256 l) {
+        if (isZero(l)) {
+            return;
+        }
+        multipleBy10(l);
+        multipleBy10(l);
+        multipleBy10(l);
+        multipleBy10(l);
+    }
+
     public static void multipleByInt(Long256 l, int i) {
         if (i == 0) {
             l.setAll(0, 0, 0, 0);

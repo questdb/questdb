@@ -2707,7 +2707,7 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertBigDecimalToLong256Column() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
@@ -3140,7 +3140,7 @@ nodejs code:
                     stmt.execute("create table x (l long256)");
                 }
                 try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("insert into x values (57398447894837100344168337480586971291799409762944964421131331554666233064935L)");
+                    stmt.execute("insert into x values (57398447894837100344168337480586971291799409762944964421131331554666233064935)");
                 }
 
                 try (PreparedStatement ps = connection.prepareStatement("select asNumeric(l) from x");
@@ -4199,14 +4199,14 @@ nodejs code:
 
     @Test
     public void testNumericType_parsingDecConstant() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
 
                 // dec
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(57398447894837100344168337480586971291799409762944964421131331554666233064935L) from long_sequence(1)");
+                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(57398447894837100344168337480586971291799409762944964421131331554666233064935) from long_sequence(1)");
                      ResultSet rs = ps.executeQuery()) {
                     assertTrue(rs.next());
                     BigDecimal fromQuest = rs.getBigDecimal(1);
@@ -4219,14 +4219,14 @@ nodejs code:
 
     @Test
     public void testNumericType_parsingDecConstantPrepared() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
 
                 // dec
-                try (PreparedStatement ps = connection.prepareStatement("select ? from long_sequence(1)")) {
+                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(?) from long_sequence(1)")) {
                     ps.setBigDecimal(1, new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935"));
                     try (ResultSet rs = ps.executeQuery()) {
                         assertTrue(rs.next());
@@ -4241,7 +4241,7 @@ nodejs code:
 
     @Test
     public void testNumericType_parsingHexConstant() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
@@ -5477,7 +5477,7 @@ nodejs code:
 
     @Test
     public void testQueryLong256ColumnWithBigDecimal() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
@@ -5490,6 +5490,8 @@ nodejs code:
                     stmt.setBigDecimal(1, new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935"));
                     stmt.execute();
                     stmt.setBigDecimal(1, new BigDecimal("123434354353423321"));
+                    stmt.execute();
+                    stmt.setBigDecimal(1, new BigDecimal("42"));
                     stmt.execute();
                 }
 

@@ -220,7 +220,9 @@ public final class ColumnType {
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromType, toType);
+                || isImplicitParsingCast(fromType, toType)
+                || fromType == ColumnType.LONG && toType == ColumnType.LONG256 // todo: extract long256 conversion rules into separate method
+                || fromType == ColumnType.INT && toType == ColumnType.LONG256;
     }
 
     public static boolean isUndefined(int columnType) {

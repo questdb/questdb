@@ -117,6 +117,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
+    private final Long256 long256 = new Long256Impl();
     private final int maxBlobSizeOnQuery;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
@@ -1084,6 +1085,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         break;
                     case X_B_PG_BYTEA:
                         setBinBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_NUMERIC:
+                        setBinNumericBindVariable(j, lo, valueLen);
                         break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
@@ -2601,6 +2605,50 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareReadyForQuery();
         sendAndReset();
+    }
+
+    private void setBinNumericBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        short shortCount = getShort(address, address + valueLen, "error parsing binary numeric");
+        if (shortCount < 0) {
+            throw BadProtocolException.INSTANCE;
+        }
+        address += Short.BYTES;
+        valueLen -= Short.BYTES;
+        short beforeDecimal = (short) (getShort(address, address + valueLen, "error while parsing binary numeric") + 1);
+        if (beforeDecimal < 0) {
+            LOG.error().$("numeric with fractional part not supported").$();
+            throw BadProtocolException.INSTANCE;
+        }
+        if (beforeDecimal != shortCount) {
+            throw BadProtocolException.INSTANCE;
+        }
+        address += Short.BYTES;
+        valueLen -= Short.BYTES;
+        short sign = getShort(address, address + valueLen, "error while parsing binary numeric");
+        if (sign != 0) {
+            LOG.error().$("negative numeric not support").$();
+            throw BadProtocolException.INSTANCE;
+        }
+        address += Short.BYTES;
+        valueLen -= Short.BYTES;
+        short afterDecimal = getShort(address, address + valueLen, "error while parsing binary numeric");
+        if (afterDecimal > 0) {
+            LOG.error().$("numeric with fractional part not supported").$();
+            throw BadProtocolException.INSTANCE;
+        }
+        address += Short.BYTES;
+        valueLen -= Short.BYTES;
+        long256.setAll(0, 0, 0, 0);
+        // todo: check overflow
+        for (int i = 0; i < shortCount; i++) {
+            Long256Util.multipleBy10000(long256);
+            short v = getShort(address, address + valueLen, "error while parsing binary numeric");
+            assert v >= 0;
+            address += Short.BYTES;
+            valueLen -= Short.BYTES;
+            Long256Util.add(long256, v, 0, 0, 0);
+        }
+        bindVariableService.setLong256(index, long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
     }
 
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
