@@ -653,6 +653,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                    // Implicit cast from positive INT constants to LONG256
+                    overloadPossible |= argTypeTag == ColumnType.INT && arg.isConstant() &&
+                            sigArgTypeTag == ColumnType.LONG256 && !factory.isGroupBy() && arg.getInt(null) >= 0;
+
+                    // Implicit cast from positive LONG constants to LONG256
+                    overloadPossible |= argTypeTag == ColumnType.LONG && arg.isConstant() &&
+                            sigArgTypeTag == ColumnType.LONG256 && !factory.isGroupBy() && arg.getLong(null) >= 0;
+
                     overloadPossible |= arg.isUndefined();
 
                     // can we use overload mechanism?
@@ -762,6 +770,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                     args.set(k, castFn);
                 }
+            } else if ((argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.LONG256 && arg.isConstant())) {
+                // todo: deal with nulls
+                args.set(k, new Long256Constant(arg.getInt(null), 0, 0, 0));
+            } else if ((argTypeTag == ColumnType.LONG && sigArgTypeTag == ColumnType.LONG256 && arg.isConstant())) {
+                // todo: deal with nulls
+                args.set(k, new Long256Constant(arg.getLong(null), 0, 0, 0));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);

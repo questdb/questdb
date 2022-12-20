@@ -62,8 +62,6 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
@@ -89,24 +87,6 @@ import static org.junit.Assert.*;
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
-
-    public static final int CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
-    public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
-    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
-    public static final int CONN_AWARE_ALL =
-            CONN_AWARE_SIMPLE_BINARY
-                    | CONN_AWARE_SIMPLE_TEXT
-                    | CONN_AWARE_EXTENDED_BINARY
-                    | CONN_AWARE_EXTENDED_TEXT
-                    | CONN_AWARE_EXTENDED_PREPARED_BINARY
-                    | CONN_AWARE_EXTENDED_PREPARED_TEXT
-                    | CONN_AWARE_EXTENDED_CACHED_BINARY
-                    | CONN_AWARE_EXTENDED_CACHED_TEXT;
 
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
@@ -2706,32 +2686,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testInsertBigDecimalToLong256Column() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PGWireServer server = createPGServer(1);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("create table x (l long256)");
-                }
-                try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                    stmt.setBigDecimal(1, new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935"));
-                    stmt.execute();
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(l) from x");
-                     ResultSet rs = ps.executeQuery()) {
-                    assertTrue(rs.next());
-                    BigDecimal bigDecimal = rs.getBigDecimal(1);
-                    assertEquals("57398447894837100344168337480586971291799409762944964421131331554666233064935", bigDecimal.toPlainString());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertBinaryBindVariable1() throws Exception {
         testInsertBinaryBindVariable(true);
     }
@@ -3126,31 +3080,6 @@ nodejs code:
                 script,
                 getHexPgWireConfig()
         );
-    }
-
-    @Test
-    public void testInsertLong256DecToLong256Column() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PGWireServer server = createPGServer(1);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("create table x (l long256)");
-                }
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("insert into x values (57398447894837100344168337480586971291799409762944964421131331554666233064935)");
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(l) from x");
-                     ResultSet rs = ps.executeQuery()) {
-                    assertTrue(rs.next());
-                    BigDecimal bigDecimal = rs.getBigDecimal(1);
-                    assertEquals("57398447894837100344168337480586971291799409762944964421131331554666233064935", bigDecimal.toPlainString());
-                }
-            }
-        });
     }
 
     @Test
@@ -4193,68 +4122,6 @@ nodejs code:
                 testNullTypeSerialization0(server.getPort(), true, false);
                 testNullTypeSerialization0(server.getPort(), false, false);
                 testNullTypeSerialization0(server.getPort(), false, true);
-            }
-        });
-    }
-
-    @Test
-    public void testNumericType_parsingDecConstant() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PGWireServer server = createPGServer(1);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                // dec
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(57398447894837100344168337480586971291799409762944964421131331554666233064935) from long_sequence(1)");
-                     ResultSet rs = ps.executeQuery()) {
-                    assertTrue(rs.next());
-                    BigDecimal fromQuest = rs.getBigDecimal(1);
-                    BigDecimal expected = new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935");
-                    assertEquals(expected, fromQuest);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testNumericType_parsingDecConstantPrepared() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PGWireServer server = createPGServer(1);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                // dec
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(?) from long_sequence(1)")) {
-                    ps.setBigDecimal(1, new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935"));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertTrue(rs.next());
-                        BigDecimal fromQuest = rs.getBigDecimal(1);
-                        BigDecimal expected = new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935");
-                        assertEquals(expected, fromQuest);
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testNumericType_parsingHexConstant() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PGWireServer server = createPGServer(1);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199bf5c2aa91ba39c022fa261bdede7) from long_sequence(1)");
-                     ResultSet rs = ps.executeQuery()) {
-                    assertTrue(rs.next());
-                    BigDecimal fromQuest = rs.getBigDecimal(1);
-                    BigDecimal expected = new BigDecimal(new BigInteger("7ee65ec7b6e3bc3a422a8855e9d7bfd29199bf5c2aa91ba39c022fa261bdede7", 16));
-                    assertEquals(expected, fromQuest);
-                }
-
             }
         });
     }
@@ -5470,39 +5337,6 @@ nodejs code:
                     }
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testQueryLong256ColumnWithBigDecimal() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (final PGWireServer server = createPGServer(1);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("create table x (l long256)");
-                }
-                try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                    stmt.setBigDecimal(1, new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935"));
-                    stmt.execute();
-                    stmt.setBigDecimal(1, new BigDecimal("123434354353423321"));
-                    stmt.execute();
-                    stmt.setBigDecimal(1, new BigDecimal("42"));
-                    stmt.execute();
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("select asNumeric(l) from x where l = ?")) {
-                    ps.setBigDecimal(1, new BigDecimal("57398447894837100344168337480586971291799409762944964421131331554666233064935"));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertTrue(rs.next());
-                        BigDecimal bigDecimal = rs.getBigDecimal(1);
-                        assertEquals("57398447894837100344168337480586971291799409762944964421131331554666233064935", bigDecimal.toPlainString());
-                        assertFalse(rs.next());
-                    }
                 }
             }
         });
@@ -7812,74 +7646,6 @@ create table tab as (
         }
     }
 
-    private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
-    }
-
-    private void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
-        if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
-        }
-    }
-
-    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold, long queryTimeout) throws Exception {
-        LOG.info().$("asserting PG Wire server [mode=").$(mode)
-                .$(", binary=").$(binary)
-                .$(", prepareThreshold=").$(prepareThreshold)
-                .I$();
-        setUp();
-        try {
-            assertMemoryLeak(() -> {
-                try (
-                        final PGWireServer server = createPGServer(2, queryTimeout);
-                        WorkerPool workerPool = server.getWorkerPool()
-                ) {
-                    workerPool.start(LOG);
-                    try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
-                        runnable.run(connection, binary);
-                    }
-                }
-            });
-        } finally {
-            tearDown();
-        }
-    }
 
     private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
             PGWireConfiguration conf,

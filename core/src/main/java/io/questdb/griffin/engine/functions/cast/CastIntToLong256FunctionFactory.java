@@ -45,7 +45,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends Long256Function implements UnaryFunction {
+    public static class Func extends Long256Function implements UnaryFunction {
         private final Function arg;
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
