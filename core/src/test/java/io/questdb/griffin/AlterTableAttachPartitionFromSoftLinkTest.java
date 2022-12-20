@@ -947,12 +947,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         try {
             executeOperation(updateStmt, CompiledQuery.UPDATE);
             Assert.fail();
-        } catch (ReadOnlyViolationException e) {
+        } catch (CairoException e) {
             TestUtils.assertContains(
                     "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
                     e.getFlyweightMessage());
-        } catch (SqlException | CairoException e) {
-            Assert.fail("not expecting any SqlException | CairoException: " + e.getFlyweightMessage());
+        } catch (SqlException e) {
+            Assert.fail("not expecting any SqlException: " + e.getFlyweightMessage());
         }
     }
 
