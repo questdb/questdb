@@ -433,11 +433,11 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static void implicitCastStrAsLong256(CharSequence value, Long256 long256) {
+    public static void implicitCastStrAsLong256(CharSequence value, Long256 long256Acceptor) {
         if (value != null) {
-            Long256Util.decodeDec(value, 0, value.length(), long256);
+            Long256FromCharSequenceDecoder.decodeHex(value, 0, value.length(), long256Acceptor);
         } else {
-            long256.setAll(
+            long256Acceptor.setAll(
                     Long256Impl.NULL_LONG256.getLong0(),
                     Long256Impl.NULL_LONG256.getLong1(),
                     Long256Impl.NULL_LONG256.getLong2(),

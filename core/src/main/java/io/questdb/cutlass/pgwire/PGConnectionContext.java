@@ -513,6 +513,18 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         bindVariableService.setLong(index, getLongUnsafe(address));
     }
 
+    public void setNumericBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8Decode(address, address + valueLen, e)) {
+            CharSequence charSequence = characterStore.toImmutable();
+            Long256Util.decodeDec(charSequence, 0, charSequence.length(), long256);
+            bindVariableService.setLong256(index, long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
+        } else {
+            LOG.error().$("invalid str UTF8 bytes [index=").$(index).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(index, Short.BYTES, valueLen);
         bindVariableService.setShort(index, getShortUnsafe(address));
@@ -1088,6 +1100,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         break;
                     case X_B_PG_NUMERIC:
                         setBinNumericBindVariable(j, lo, valueLen);
+                        break;
+                    case X_PG_NUMERIC:
+                        setNumericBindVariable(j, lo, valueLen);
                         break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
