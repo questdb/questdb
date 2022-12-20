@@ -166,11 +166,11 @@ public class ColumnPurgeOperator implements Closeable {
         }
 
         // In exclusive mode we still need to check that purge will delete column in correct table,
-        // e.g. table is not truncated after the update happened
+        // e.g. table is not truncated after the update happened, as well as partition read only state
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL || scoreboardUseMode == ScoreboardUseMode.EXCLUSIVE) {
             int tableId = readTableId(path);
             if (tableId != task.getTableId()) {
-                LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
+                LOG.info().$("cannot purge orphan table [path=").utf8(path.trimTo(pathTableLen)).I$();
                 return false;
             }
 
@@ -245,16 +245,19 @@ public class ColumnPurgeOperator implements Closeable {
                     // we will have to re-setup that
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
 
-                    if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-                        LOG.info().$("skipping purge of read-only partition [path=").utf8(path.$())
-                                .$(", column=").utf8(task.getColumnName())
-                                .I$();
-                        completedRowIds.add(updateRowId);
-                        continue;
-                    }
 
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
                     setupScoreboard = false;
+                }
+                
+                if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                    // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL
+                    // or it was open by openScoreboardAndTxn
+                    LOG.info().$("skipping purge of read-only partition [path=").utf8(path.$())
+                            .$(", column=").utf8(task.getColumnName())
+                            .I$();
+                    completedRowIds.add(updateRowId);
+                    continue;
                 }
 
                 if (columnVersion < minUnlockedTxnRangeStarts) {
