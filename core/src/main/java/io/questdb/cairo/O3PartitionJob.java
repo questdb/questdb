@@ -1085,7 +1085,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         } finally {
             final int delta = columnsInFlight - columnCount;
-            LOG.debug().$("idle [delta=").$(delta).$(']').$();
+            LOG.debug().$("idle [delta=").$(delta).I$();
             if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
                 O3CopyJob.closeColumnIdleQuick(
                         timestampMergeIndexAddr,

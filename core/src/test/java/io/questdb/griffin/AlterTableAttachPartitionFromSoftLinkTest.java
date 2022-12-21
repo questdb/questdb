@@ -42,6 +42,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     // in WINDOWS the user performing the tests needs to have the 'Create Symbolic Links' privilege. 
     // this privilege is not granted by default. in addition, if User Account Control (UAC) is on, and 
     // the user has administrator privileges, tests must 'Run as administrator'.
+    // besides this, isSoftLink is not supported in WINDOWS
 
     private static final String activePartitionName = "2022-10-18";
     private static final long activePartitionTimestamp;
