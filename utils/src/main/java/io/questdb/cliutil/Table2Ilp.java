@@ -144,7 +144,7 @@ public class Table2Ilp {
             }
 
             if (symbolColumns != null) {
-                String[] symbolColumNames = symbolColumns.split("\\s*,\\s*");
+                String[] symbolColumnNames = symbolColumns.split("\\s*,\\s*");
 
                 for (int i = symbolColumNames.length - 1; i > -1; i--) {
                     if (!TableUtils.isValidColumnName(symbolColumNames[i], 255)) {
