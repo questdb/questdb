@@ -2546,7 +2546,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             prepareCommandComplete(true);
         } else {
             prepareSuspended();
-            // Prevents to re-send current record row when buffer is sent fully.
+            // Prevents re-sending current record row when buffer is sent fully.
             resumeProcessor = null;
         }
     }
