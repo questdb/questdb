@@ -146,13 +146,13 @@ public class Table2Ilp {
             if (symbolColumns != null) {
                 String[] symbolColumnNames = symbolColumns.split("\\s*,\\s*");
 
-                for (int i = symbolColumNames.length - 1; i > -1; i--) {
-                    if (!TableUtils.isValidColumnName(symbolColumNames[i], 255)) {
-                        System.err.println("Error: invalid symbol column name '" + symbolColumNames[i] + "'");
+                for (int i = symbolColumnNames.length - 1; i > -1; i--) {
+                    if (!TableUtils.isValidColumnName(symbolColumnNames[i], 255)) {
+                        System.err.println("Error: invalid symbol column name '" + symbolColumnNames[i] + "'");
                         return params;
                     }
                 }
-                params.symbols = symbolColumNames;
+                params.symbols = symbolColumnNames;
             } else {
                 params.symbols = new String[0];
             }
