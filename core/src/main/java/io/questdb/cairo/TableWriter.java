@@ -1306,7 +1306,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             long rowHi,
             long o3TimestampMin,
             long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor
+            SymbolMapDiffCursor mapDiffCursor,
+            long commitToTimestamp
     ) {
         this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
@@ -1314,6 +1315,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         try {
             mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
+            long o3LagRowCount = 0L;
 
             try {
                 o3Columns = walMappedColumns;
@@ -1346,9 +1348,26 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 }
 
                 o3Columns = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi, walPath);
-                processO3Block(0L, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
+
+                if (commitToTimestamp < o3TimestampMax) {
+                    if (ordered) {
+                        int i = 0;
+                    }
+                    final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
+                            timestampAddr,
+                            commitToTimestamp - 1,
+                            0,
+                            o3RowCount - 1,
+                            BinarySearch.SCAN_DOWN
+                    );
+                    o3LagRowCount = o3RowCount - lagThresholdRow - 1;
+                    o3Hi = lagThresholdRow + 1;
+                    o3TimestampMax = getTimestampIndexValue(timestampAddr, lagThresholdRow);
+                }
+
+                processO3Block(o3LagRowCount, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
             } finally {
-                finishO3Append(0L);
+                finishO3Append(o3LagRowCount);
                 o3Columns = o3MemColumns;
                 closeWalColumns();
             }
@@ -1367,7 +1386,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             long o3TimestampMin,
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
-            long seqTxn
+            long seqTxn,
+            long commitToTimestamp
     ) {
         if (inTransaction()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1377,14 +1397,15 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         txWriter.beginPartitionSizeUpdate();
-        LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi)
+        LOG.info().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi)
                 .$(", tsMin=").$ts(o3TimestampMin).$(" , txMax=").$ts(o3TimestampMax)
+                .$(", commitToTimestamp=").$ts(commitToTimestamp)
                 .I$();
         if (rowAction == ROW_ACTION_OPEN_PARTITION && txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
             // table truncated, open partition file.
             openFirstPartition(o3TimestampMin);
         }
-        processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor);
+        processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp);
         final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 

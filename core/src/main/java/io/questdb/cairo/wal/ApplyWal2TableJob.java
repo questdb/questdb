@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -53,6 +54,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final int WAL_APPLY_FAILED = -2;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
+    private final MicrosecondClock microClock;
+    private final LongList minTimestamps = new LongList();
     private final SqlToOperation sqlToOperation;
     private final WalEventReader walEventReader;
 
@@ -60,6 +63,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
         this.sqlToOperation = new SqlToOperation(engine, workerCount, sharedWorkerCount);
+        this.microClock = engine.getConfiguration().getMicrosecondClock();
         walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
     }
 
@@ -268,7 +272,61 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
+
             try {
+
+                int transactionCount = 0;
+                long rowsAdded = 0;
+                long startTime = microClock.getTicks();
+
+                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();
+                int rootLen = tempPath.length();
+                int longsPerTxn = 6;
+                try (WalEventReader eventReader = walEventReader) {
+                    minTimestamps.clear();
+                    while (transactionLogCursor.hasNext()) {
+
+                        final int walId = transactionLogCursor.getWalId();
+                        final int segmentId = transactionLogCursor.getSegmentId();
+                        final long segmentTxn = transactionLogCursor.getSegmentTxn();
+
+                        if (walId > 0) {
+                            tempPath.trimTo(rootLen).put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                            final WalEventCursor walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+                            final byte walTxnType = walEventCursor.getType();
+                            if (walTxnType == DATA) {
+                                var commitInfo = walEventCursor.getDataInfo();
+                                minTimestamps.add(walId);
+                                minTimestamps.add(segmentId);
+                                minTimestamps.add(segmentTxn);
+                                minTimestamps.add(0); // commit to timestamp 
+                                minTimestamps.add(commitInfo.getMaxTimestamp());
+                                minTimestamps.add(commitInfo.getMinTimestamp());
+                            }
+                        }
+                    }
+                }
+
+                // find min timestamp after every transaction
+                long runningMinTimestamp = Long.MAX_VALUE;
+                long maxLag = 0;
+                for (int i = minTimestamps.size() - 1; i > -1; i -= longsPerTxn) {
+
+                    long currentMinTimestamp = minTimestamps.getQuick(i);
+                    long currentMaxTimestamp = minTimestamps.getQuick(i - 1);
+
+                    long nextMinTimestamp = Math.min(currentMaxTimestamp, runningMinTimestamp);
+                    long lag = currentMaxTimestamp - nextMinTimestamp;
+                    if (lag > maxLag) {
+                        maxLag = lag;
+                    }
+
+                    runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
+                    minTimestamps.setQuick(i, runningMinTimestamp);
+                    minTimestamps.setQuick(i - 2, nextMinTimestamp);
+                }
+
+                transactionLogCursor.toTop();
                 while (transactionLogCursor.hasNext()) {
                     final int walId = transactionLogCursor.getWalId();
                     final int segmentId = transactionLogCursor.getSegmentId();
@@ -329,8 +387,34 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             // Always set full path when using thread static path
                             sqlToOperation.setNowAndFixClock(commitTimestamp);
                             tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                            processWalCommit(writer, tempPath, segmentTxn, sqlToOperation, seqTxn);
+                            long start = microClock.getTicks();
+
+                            long commitToTimestamp = -1;
+                            if (transactionCount < minTimestamps.size()) {
+                                commitToTimestamp = minTimestamps.get(transactionCount * longsPerTxn + 3);
+                            } else {
+                                // Go to another iteration of WAL application.
+                                return;
+                            }
+                            long added = processWalCommit(writer, tempPath, segmentTxn, sqlToOperation, seqTxn, commitToTimestamp);
+
+                            long timeTaken = microClock.getTicks() - start;
+                            LOG.info().$("WAL write rate [table=").$(writer.getTableToken())
+                                    .$(", rowsPerSec=").$(added * 1000000L / timeTaken)
+                                    .I$();
+
+                            rowsAdded += added;
+                            transactionCount++;
                     }
+                }
+                if (transactionCount > 0) {
+                    long finisTime = microClock.getTicks();
+                    LOG.info().$("WAL apply job finished [table=").$(writer.getTableToken())
+                            .$(", transactions=").$(transactionCount)
+                            .$(", rows=").$(rowsAdded)
+                            .$(", time=").$((finisTime - startTime) / 1000)
+                            .$("ms, rowsPerSec=").$(rowsAdded * 1000000L / ((finisTime - startTime)))
+                            .I$();
                 }
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -338,7 +422,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private void processWalCommit(TableWriter writer, @Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation, long seqTxn) {
+    private long processWalCommit(TableWriter writer, @Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation, long seqTxn, long commitToTimestamp) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
             final byte walTxnType = walEventCursor.getType();
@@ -353,17 +437,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             dataInfo.getMinTimestamp(),
                             dataInfo.getMaxTimestamp(),
                             dataInfo,
-                            seqTxn
+                            seqTxn,
+                            commitToTimestamp > 0 ? commitToTimestamp : dataInfo.getMaxTimestamp()
                     );
-                    break;
+                    return dataInfo.getEndRowID() - dataInfo.getStartRowID();
+
                 case SQL:
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     processWalSql(writer, sqlInfo, sqlToOperation, seqTxn);
-                    break;
+                    return 0L;
+
                 case TRUNCATE:
                     writer.setSeqTxn(seqTxn);
                     writer.removeAllPartitions();
-                    break;
+                    return 0L;
                 default:
                     throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
             }

@@ -337,6 +337,7 @@ public class TableTransactionLog implements Closeable {
         private FilesFacade ff;
         private long txn;
         private long txnCount;
+        private long txnLo;
         private long txnOffset;
 
         public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
@@ -347,6 +348,12 @@ public class TableTransactionLog implements Closeable {
         public void close() {
             ff.closeChecked(fd);
             ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
+        }
+
+        @Override
+        public long countLeft() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            return newTxnCount - txn;
         }
 
         @Override
@@ -397,6 +404,14 @@ public class TableTransactionLog implements Closeable {
             return false;
         }
 
+        @Override
+        public void toTop() {
+            if (txnCount > -1L) {
+                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+                this.txn = txnLo;
+            }
+        }
+
         private long getMappedLen() {
             return txnCount * RECORD_SIZE + HEADER_SIZE;
         }
@@ -419,6 +434,7 @@ public class TableTransactionLog implements Closeable {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             }
+            this.txnLo = txnLo;
             txn = txnLo;
             return this;
         }

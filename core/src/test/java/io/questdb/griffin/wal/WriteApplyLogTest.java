@@ -50,7 +50,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     private void applyWalData(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
-        writer.processWalData(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null, 1);
+        writer.processWalData(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null, 1, timestampHi);
     }
 
     @SuppressWarnings("SameParameterValue")
