@@ -141,6 +141,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofTableResume() {
+        type = TABLE_RESUME;
+        return this;
+    }
+
     public CompiledQuery ofUnlock() {
         type = UNLOCK;
         return this;

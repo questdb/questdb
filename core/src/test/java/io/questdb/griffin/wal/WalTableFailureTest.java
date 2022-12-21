@@ -31,10 +31,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -82,8 +79,9 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 try {
                     twa.apply(dodgyAlterOp, true);
                     Assert.fail("Expected exception is missing");
-                } catch (IndexOutOfBoundsException ex) {
+                } catch (CairoException ex) {
                     //expected
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter table command");
                 }
             }
 
@@ -146,7 +144,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             int counter = 0;
 
             @Override
-            public long openRW(LPSZ name, long mode) {
+            public int openRW(LPSZ name, long mode) {
                 if (Chars.endsWith(name, "2022-02-25" + Files.SEPARATOR + "x.d.1") && counter++ < 2) {
                     return -1;
                 }
@@ -238,16 +236,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             AlterOperationBuilder alterOpBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
             AlterOperation alterOp = alterOpBuilder.ofDropColumn("non_existing_column").build();
 
-            int badWriterId;
             try (
                 TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
                 TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
             ) {
 
-                walIdSet.remove(badWriterId = ((WalWriter) insertWriter).getWalId());
-
                 // Serialize into WAL sequencer a drop column operation of non-existing column
-                // So that it will fail during application to other WAL writers
+                // So that it will fail during application to WAL sequencer
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
@@ -266,18 +261,17 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
                 };
 
-                alterWriter.apply(dodgyAlter, true);
+                try {
+                    alterWriter.apply(dodgyAlter, true);
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "Column not found: non_existing_column");
+                }
 
                 TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
                 row.putLong(0, 123L);
                 row.append();
+                insertWriter.commit();
 
-                try {
-                    insertWriter.commit();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains("column 'non_existing_column' does not exists", e.getFlyweightMessage());
-                }
             } finally {
                 Misc.free(alterOp);
             }
@@ -292,8 +286,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     Assert.assertTrue(walIdSet.contains(walWriter2.getWalId()));
 
                     try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                        Assert.assertTrue(walIdSet.excludes(walWriter3.getWalId()));
-                        Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
+                        Assert.assertTrue(walIdSet.contains(walWriter3.getWalId()));
                     }
                 }
             }
@@ -411,9 +404,50 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     twa.apply(dodgyAlterOp, true);
                     Assert.fail();
                 } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "applying structure change to WAL table failed " +
-                                    "[table=testDodgyAddColumDoesNotChangeMetadata, oldVersion: 0, newVersion: 0]");
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter table command [code=0]");
+                }
+            }
+
+            drainWalQueue();
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+        });
+    }
+
+    @Test
+    public void testDodgyAlterSerializesBrokenStructureChange() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                AlterOperation dodgyAlterOp = new AlterOperation() {
+                    @Override
+                    public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isStructural() {
+                        return true;
+                    }
+
+                    @Override
+                    public void serializeBody(MemoryA sink) {
+                        // Do nothing, deserialization should fail
+                    }
+                };
+
+                try {
+                    twa.apply(dodgyAlterOp, true);
+                    Assert.fail("Dodgy alter application should fail");
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read alter statement serialized, data is too short to read 10 bytes header");
                 }
             }
 
@@ -568,7 +602,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         FilesFacade ffOverride = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
@@ -612,7 +646,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         FilesFacade ffOverride = new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
@@ -746,7 +780,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
         runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "sym5.c")) {
                     return -1;
                 }
@@ -820,6 +854,219 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalTableSuspendResume() throws Exception {
+        FilesFacade filesFacade = new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            compile("update " + tableName + " set x = 1111");
+            compile("update " + tableName + " set sym = 'XXX'");
+            compile("update " + tableName + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            compile("alter table " + tableName + " resume wal");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeFromTxn() throws Exception {
+        FilesFacade filesFacade = new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+
+            String tableName = testName.getMethodName();
+            //1
+            createStandardWalTable(tableName);
+            //2 fail
+            compile("update " + tableName + " set x = 1111");
+            //3
+            compile("update " + tableName + " set sym = 'XXX'");
+            //4
+            compile("update " + tableName + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            try {
+                compile("alter table " + tableName + " resume wal from transaction 999"); // fails
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
+            }
+
+            compile("alter table " + tableName + " resume wal from txn 3");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+            engine.releaseInactive(); // release writer from the pool
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeSql() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+            String nonWalTable = "W";
+            try {
+                compile("create table " + nonWalTable + " as (" +
+                        "select x, " +
+                        " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                        " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                        " from long_sequence(1)" +
+                        ") timestamp(ts)");
+
+                compile("alter table W resume wal");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[21] " + nonWalTable + " is not a WAL table.");
+            }
+            try {
+                compile("alter table " + tableName + " resum wal");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[41] 'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wall");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[48] 'wal' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal frol");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[52] 'from' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[56] 'transaction' or 'txn' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from tx");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[57] 'transaction' or 'txn' expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from txn");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[60] transaction value expected");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from txn -10");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=-]");
+            }
+            try {
+                compile("alter table " + tableName + " resume wal from txn 10AA");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=10AA]");
+            }
+            try {
+                engine.getTableSequencerAPI().suspendTable(tableName);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+                //simulate resumeTable fail
+                node1.getConfigurationOverrides().setMaxFileNameLength(2);
+                compile("alter table " + tableName + " resume wal from txn 2");
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[-1] invalid table name [table=" + tableName + "]");
+            } finally {
+                node1.getConfigurationOverrides().setMaxFileNameLength(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testWalTableSuspendResumeStatusTable() throws Exception {
+        FilesFacade filesFacade = new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(filesFacade, () -> {
+
+            String tableName = testName.getMethodName();
+
+            //1
+            createStandardWalTable(tableName);
+            //2 fail
+            compile("update " + tableName + " set x = 1111");
+            //3
+            compile("update " + tableName + " set sym = 'XXX'");
+            //4
+            compile("update " + tableName + " set sym2 = 'YYY'");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\ttrue\t1\t4\n");
+
+            compile("alter table " + tableName + " resume wal");
+            compile("alter table " + tableName + " resume wal from transaction 0"); // ignored
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            engine.releaseInactive(); // release writer from the pool
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n");
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" + tableName + "\tfalse\t4\t4\n");
+        });
+    }
+
+    @Test
     public void testWalUpdateFailedSuspendsTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1111";
@@ -827,7 +1074,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             private int attempt = 0;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
@@ -893,10 +1140,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
         FilesFacade dodgyFf = new FilesFacadeImpl() {
-            long fd = -1;
+            int fd = -1;
 
             @Override
-            public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+            public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
                 if (destFd == fd) {
                     return -1;
                 }
@@ -904,7 +1151,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "1" + Files.SEPARATOR + failToRollFile)) {
                     fd = super.openRW(name, opts);
                     return fd;

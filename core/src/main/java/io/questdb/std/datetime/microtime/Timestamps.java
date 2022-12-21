@@ -31,7 +31,7 @@ import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
-final public class Timestamps {
+public final class Timestamps {
 
     public static final long DAY_MICROS = 86400000000L;
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;

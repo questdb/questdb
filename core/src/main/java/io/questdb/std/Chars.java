@@ -135,7 +135,7 @@ public final class Chars {
         }
     }
 
-    public static boolean empty(final CharSequence value) {
+    public static boolean empty(@Nullable CharSequence value) {
         return value == null || value.length() < 1;
     }
 
@@ -162,7 +162,7 @@ public final class Chars {
         return csl != 0 && c == cs.charAt(csl - 1);
     }
 
-    public static boolean equals(CharSequence l, CharSequence r) {
+    public static boolean equals(@NotNull CharSequence l, @NotNull CharSequence r) {
         if (l == r) {
             return true;
         }
@@ -175,11 +175,11 @@ public final class Chars {
         return equalsChars(l, r, ll);
     }
 
-    public static boolean equals(String l, String r) {
+    public static boolean equals(@NotNull String l, @NotNull String r) {
         return l.equals(r);
     }
 
-    public static boolean equals(DirectByteCharSequence l, String r) {
+    public static boolean equals(@NotNull DirectByteCharSequence l, @NotNull String r) {
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;
@@ -188,7 +188,7 @@ public final class Chars {
         return equalsChars(l, r, ll);
     }
 
-    public static boolean equals(CharSequence l, CharSequence r, int rLo, int rHi) {
+    public static boolean equals(@NotNull CharSequence l, @NotNull CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
         }
@@ -206,7 +206,7 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equals(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+    public static boolean equals(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
         }
@@ -224,7 +224,7 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equals(CharSequence l, char r) {
+    public static boolean equals(@NotNull CharSequence l, char r) {
         return l.length() == 1 && l.charAt(0) == r;
     }
 
@@ -236,7 +236,11 @@ public final class Chars {
      * @param r right sequence
      * @return true if sequences match exactly (ignoring char case)
      */
-    public static boolean equalsIgnoreCase(CharSequence l, CharSequence r) {
+    public static boolean equalsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r) {
+        if (l == r) {
+            return true;
+        }
+
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;
@@ -251,11 +255,11 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsIgnoreCaseNc(CharSequence l, CharSequence r) {
-        return l != null && equalsIgnoreCase(l, r);
+    public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
+        return r != null && equalsIgnoreCase(l, r);
     }
 
-    public static boolean equalsLowerCase(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+    public static boolean equalsLowerCase(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
         }
@@ -273,7 +277,7 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsLowerCaseAscii(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
         }
@@ -291,7 +295,7 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, CharSequence r) {
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, @NotNull CharSequence r) {
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;
@@ -306,20 +310,19 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsLowerCaseAsciiNc(@Nullable CharSequence l, @NotNull CharSequence r) {
-        return l != null && equalsLowerCaseAscii(l, r);
+    public static boolean equalsLowerCaseAsciiNc(@NotNull CharSequence l, @Nullable CharSequence r) {
+        return r != null && equalsLowerCaseAscii(l, r);
     }
 
-    public static boolean equalsNc(CharSequence l, char r) {
+    public static boolean equalsNc(@Nullable CharSequence l, char r) {
         return (l == null && r == CharConstant.ZERO.getChar(null)) || (l != null && equals(l, r));
     }
 
-    public static boolean equalsNc(CharSequence l, CharSequence r) {
+    public static boolean equalsNc(@NotNull CharSequence l, @Nullable CharSequence r) {
         return r != null && equals(l, r);
     }
 
-    public static int hashCode(CharSequence value, int lo, int hi) {
-
+    public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
         if (hi == lo) {
             return 0;
         }
@@ -331,7 +334,7 @@ public final class Chars {
         return h;
     }
 
-    public static int hashCode(CharSequence value) {
+    public static int hashCode(@NotNull CharSequence value) {
         if (value instanceof String) {
             return value.hashCode();
         }
@@ -348,11 +351,11 @@ public final class Chars {
         return h;
     }
 
-    public static int hashCode(String value) {
+    public static int hashCode(@NotNull String value) {
         return value.hashCode();
     }
 
-    public static int hashCode(DirectByteCharSequence value) {
+    public static int hashCode(@NotNull DirectByteCharSequence value) {
         int len = value.length();
         if (len == 0) {
             return 0;

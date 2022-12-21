@@ -40,7 +40,7 @@ int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketTcp0
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketTcp0
         (JNIEnv *e, jclass cl, jboolean blocking) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd > 0 && !blocking) {
@@ -58,7 +58,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketTcp0
     return fd;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketUdp0
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_socketUdp0
         (JNIEnv *e, jclass cl) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -87,18 +87,18 @@ JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr0
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_shutdown
-        (JNIEnv *e, jclass cl, jlong fd, jint how) {
+        (JNIEnv *e, jclass cl, jint fd, jint how) {
     return shutdown((int) fd, how);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_sendTo
-        (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
+        (JNIEnv *e, jclass cl, jint fd, jlong ptr, jint len, jlong sockaddr) {
     return (jint) sendto((int) fd, (const void *) ptr, (size_t) len, 0, (const struct sockaddr *) sockaddr,
                          sizeof(struct sockaddr_in));
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
-        (JNIEnv *e, jobject cl, jlong fd, jint address, jint port) {
+        (JNIEnv *e, jobject cl, jint fd, jint address, jint port) {
     struct sockaddr_in addr;
 
     addr.sin_family = AF_INET;
@@ -109,12 +109,12 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
-        (JNIEnv *e, jobject cl, jlong fd, jint ipv4Address, jint port) {
+        (JNIEnv *e, jobject cl, jint fd, jint ipv4Address, jint port) {
     return Java_io_questdb_network_Net_bindTcp(e, cl, fd, ipv4Address, port);
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_join
-        (JNIEnv *e, jclass cl, jlong fd, jint bindAddress, jint groupAddress) {
+        (JNIEnv *e, jclass cl, jint fd, jint bindAddress, jint groupAddress) {
     struct ip_mreq mreq;
     mreq.imr_interface.s_addr = htonl((uint32_t) bindAddress);
     mreq.imr_multiaddr.s_addr = htonl((uint32_t) groupAddress);
@@ -122,18 +122,18 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_join
                                                                                                     : JNI_TRUE);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_accept0
-        (JNIEnv *e, jobject cl, jlong fd) {
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_accept0
+        (JNIEnv *e, jobject cl, jint fd) {
     return accept((int) fd, NULL, NULL);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_network_Net_listen
-        (JNIEnv *e, jclass cl, jlong fd, jint backlog) {
+        (JNIEnv *e, jclass cl, jint fd, jint backlog) {
     listen((int) fd, backlog);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
-        (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
+        (JNIEnv *e, jclass cl, jint fd, jlong ptr, jint len) {
     ssize_t n;
     RESTARTABLE(send((int) fd, (const void *) ptr, (size_t) len, 0), n);
     if (n > -1) {
@@ -148,7 +148,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
-        (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
+        (JNIEnv *e, jclass cl, jint fd, jlong ptr, jint len) {
     ssize_t n;
     RESTARTABLE(recv((int) fd, (void *) ptr, (size_t) len, 0), n);
     if (n > 0) {
@@ -167,7 +167,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
-        (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
+        (JNIEnv *e, jclass cl, jint fd, jlong ptr, jint len) {
     ssize_t n;
     RESTARTABLE(recv((int) fd, (void *) ptr, (size_t) len, MSG_PEEK), n);
     if (n > 0) {
@@ -186,7 +186,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     int c;
     ssize_t res;
     RESTARTABLE(recv((int) fd, &c, 1, 0), res);
@@ -194,7 +194,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     int flags;
 
     if ((flags = fcntl((int) fd, F_GETFL, 0)) < 0) {
@@ -209,7 +209,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
-        (JNIEnv *e, jclass cl, jlong fd, jint seconds) {
+        (JNIEnv *e, jclass cl, jint fd, jint seconds) {
     struct linger sl;
     sl.l_onoff = 1;
     sl.l_linger = seconds;
@@ -217,12 +217,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
-        (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
+        (JNIEnv *e, jclass cl, jint fd, jlong sockAddr) {
     return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setSndBuf
-        (JNIEnv *e, jclass cl, jlong fd, jint size) {
+        (JNIEnv *e, jclass cl, jint fd, jint size) {
     return set_int_sockopt((int) fd, SOL_SOCKET, SO_SNDBUF, size);
 }
 
@@ -237,7 +237,7 @@ int get_int_sockopt(int fd, int level, int opt) {
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastTtl
-        (JNIEnv *e, jclass cl, jlong fd, jint ttl) {
+        (JNIEnv *e, jclass cl, jint fd, jint ttl) {
     u_char lTTL = ttl;
     int result = setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, (char *) &lTTL, sizeof(lTTL));
     if (result == 0) {
@@ -246,53 +246,52 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastTtl
     return -1;
 }
 
-
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getSndBuf
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     return get_int_sockopt((int) fd, SOL_SOCKET, SO_SNDBUF);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setRcvBuf
-        (JNIEnv *e, jclass cl, jlong fd, jint size) {
+        (JNIEnv *e, jclass cl, jint fd, jint size) {
     return set_int_sockopt((int) fd, SOL_SOCKET, SO_RCVBUF, size);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getRcvBuf
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     return get_int_sockopt((int) fd, SOL_SOCKET, SO_RCVBUF);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastInterface
-        (JNIEnv *e, jclass cl, jlong fd, jint ipv4address) {
+        (JNIEnv *e, jclass cl, jint fd, jint ipv4address) {
     struct in_addr address;
     address.s_addr = (in_addr_t) htonl((__uint32_t) ipv4address);
     return setsockopt((int) fd, IPPROTO_IP, IP_MULTICAST_IF, &address, sizeof(address));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setMulticastLoop
-        (JNIEnv *e, jclass cl, jlong fd, jboolean loop) {
+        (JNIEnv *e, jclass cl, jint fd, jboolean loop) {
     return setsockopt((int) fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReuseAddress
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     int optval = 1;
     return setsockopt((int) fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReusePort
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     int optval = 1;
     return setsockopt((int) fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setTcpNoDelay
-        (JNIEnv *e, jclass cl, jlong fd, jboolean noDelay) {
+        (JNIEnv *e, jclass cl, jint fd, jboolean noDelay) {
     return set_int_sockopt((int) fd, IPPROTO_TCP, TCP_NODELAY, noDelay);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getTcpNoDelay
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     return get_int_sockopt((int) fd, IPPROTO_TCP, TCP_NODELAY);
 }
 
@@ -302,7 +301,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEwouldblock
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerIP
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     struct sockaddr peer;
     socklen_t nameLen = sizeof(peer);
 
@@ -316,7 +315,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerIP
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     struct sockaddr peer;
     socklen_t nameLen = sizeof(peer);
 
@@ -331,7 +330,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
-        (JNIEnv *e, jclass cl, jlong fd, jlong lpAddrInfo) {
+        (JNIEnv *e, jclass cl, jint fd, jlong lpAddrInfo) {
     struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
     return connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
 }
@@ -363,7 +362,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo0
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_resolvePort
-        (JNIEnv *e, jclass cl, jlong fd) {
+        (JNIEnv *e, jclass cl, jint fd) {
     struct sockaddr_in resolved_addr;
     memset(&resolved_addr, 0, sizeof(resolved_addr));
     socklen_t resolved_addr_len = sizeof(resolved_addr);

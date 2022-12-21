@@ -24,24 +24,25 @@
 
 #include <jni.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include <stddef.h>
 
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
         (JNIEnv *e, jclass cl) {
     return epoll_create1(0);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCtl
-        (JNIEnv *e, jclass cl, jlong epfd, jint op, jlong fd, jlong event) {
+        (JNIEnv *e, jclass cl, jint epfd, jint op, jint fd, jlong event) {
     return epoll_ctl((int) epfd, op, (int) fd, (struct epoll_event *) event);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollWait
-        (JNIEnv *e, jclass cl, jlong epfd, jlong eventPtr, jint eventCount, jint timeout) {
+        (JNIEnv *e, jclass cl, jint epfd, jlong eventPtr, jint eventCount, jint timeout) {
     return epoll_wait((int) epfd, (struct epoll_event *) eventPtr, eventCount, timeout);
 }
-
 
 JNIEXPORT jshort JNICALL Java_io_questdb_network_EpollAccessor_getDataOffset
         (JNIEnv *e, jclass cl) {
@@ -91,4 +92,32 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlMod
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlDel
         (JNIEnv *e, jclass cl) {
     return EPOLL_CTL_DEL;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_eventFd
+        (JNIEnv *e, jclass cl) {
+    return eventfd(0, EFD_NONBLOCK);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_network_EpollAccessor_readEventFd
+        (JNIEnv *e, jclass cl, jint fd) {
+    uint64_t u;
+    ssize_t s;
+    s = read((int) fd, &u, sizeof(uint64_t));
+    if (s != sizeof(uint64_t)) {
+        return -1;
+    }
+    return (jlong) u;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_writeEventFd
+        (JNIEnv *e, jclass cl, jint fd) {
+    uint64_t u;
+    ssize_t s;
+    u = 1;
+    s = write((int) fd, &u, sizeof(uint64_t));
+    if (s != sizeof(uint64_t)) {
+        return -1;
+    }
+    return 0;
 }

@@ -36,7 +36,7 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-//contiguous mapped appendable readable writable
+// contiguous mapped appendable readable writable
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
@@ -98,8 +98,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 fd = -1;
             }
         }
-        if (fd != -1) {
-            ff.close(fd);
+        if (ff != null && ff.closeChecked(fd)) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
@@ -140,7 +139,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         return fd;
     }
 
@@ -171,7 +170,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag) {
         close();
         assert fd > 0;
         this.ff = ff;
@@ -182,7 +181,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
@@ -204,7 +203,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(long fd, long offset, byte truncateMode) {
+    public void switchTo(int fd, long offset, byte truncateMode) {
         close(true, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);

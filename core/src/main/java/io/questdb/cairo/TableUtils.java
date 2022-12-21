@@ -149,7 +149,7 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
+    public static void allocateDiskSpace(FilesFacade ff, int fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
@@ -258,7 +258,7 @@ public final class TableUtils {
 
         final int rootLen = path.length();
 
-        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
+        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
@@ -655,13 +655,13 @@ public final class TableUtils {
         return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
-    public static long lock(FilesFacade ff, Path path, boolean logOnError) {
-        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+    public static int lock(FilesFacade ff, Path path, boolean logOnError) {
+        final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (logOnError) {
                 LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             }
-            return -1L;
+            return -1;
         }
 
         if (ff.lock(fd) != 0) {
@@ -669,13 +669,13 @@ public final class TableUtils {
                 LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             }
             ff.close(fd);
-            return -1L;
+            return -1;
         }
 
         return fd;
     }
 
-    public static long lock(FilesFacade ff, Path path) {
+    public static int lock(FilesFacade ff, Path path) {
         return lock(ff, path, true);
     }
 
@@ -683,7 +683,7 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
+    public static long mapRO(FilesFacade ff, int fd, long size, int memoryTag) {
         return mapRO(ff, fd, size, 0, memoryTag);
     }
 
@@ -699,7 +699,7 @@ public final class TableUtils {
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-only memory address
      */
-    public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+    public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
         assert offset % ff.getPageSize() == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
@@ -716,7 +716,7 @@ public final class TableUtils {
         return address;
     }
 
-    public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
+    public static long mapRW(FilesFacade ff, int fd, long size, int memoryTag) {
         return mapRW(ff, fd, size, 0, memoryTag);
     }
 
@@ -732,7 +732,7 @@ public final class TableUtils {
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-write memory address
      */
-    public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+    public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
         assert fd != -1;
         assert offset % ff.getPageSize() == 0;
         allocateDiskSpace(ff, fd, size + offset);
@@ -747,7 +747,7 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
     }
 
-    public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
+    public static long mapRWOrClose(FilesFacade ff, int fd, long size, int memoryTag) {
         try {
             return TableUtils.mapRW(ff, fd, size, memoryTag);
         } catch (CairoException e) {
@@ -758,24 +758,26 @@ public final class TableUtils {
 
     public static long mremap(
             FilesFacade ff,
-            long fd,
+            int fd,
             long prevAddress,
             long prevSize,
             long newSize,
             int mapMode,
-            int memoryTag) {
+            int memoryTag
+    ) {
         return mremap(ff, fd, prevAddress, prevSize, newSize, 0L, mapMode, memoryTag);
     }
 
     public static long mremap(
             FilesFacade ff,
-            long fd,
+            int fd,
             long prevAddress,
             long prevSize,
             long newSize,
             long offset,
             int mapMode,
-            int memoryTag) {
+            int memoryTag
+    ) {
         final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
@@ -800,12 +802,22 @@ public final class TableUtils {
         path.put("-x-").put(txn);
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+    public static int openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
         return openRW(ff, path, LOG, opts);
     }
 
-    public static long openRO(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRO(path);
+    public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+        final int rootLen = path.length();
+        path.concat(fileName).$();
+        try {
+            return TableUtils.openRO(ff, path, log);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    public static int openRO(FilesFacade ff, LPSZ path, Log log) {
+        final int fd = ff.openRO(path);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
@@ -813,8 +825,8 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
-        final long fd = ff.openRW(path, opts);
+    public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+        final int fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
@@ -831,7 +843,7 @@ public final class TableUtils {
         }
     }
 
-    public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+    public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
         }
@@ -839,7 +851,7 @@ public final class TableUtils {
     }
 
     public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
-        final long fd = TableUtils.openRO(ff, path, LOG);
+        final int fd = TableUtils.openRO(ff, path, LOG);
         try {
             return readLongOrFail(ff, fd, offset, tempMem8b, path);
         } finally {
@@ -847,7 +859,7 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable Path path) {
+    public static long readLongOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, @Nullable Path path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
                 throw CairoException.critical(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
@@ -1162,7 +1174,7 @@ public final class TableUtils {
         return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
-    public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
+    public static void writeIntOrFail(FilesFacade ff, int fd, long offset, int value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno())
@@ -1174,7 +1186,7 @@ public final class TableUtils {
         }
     }
 
-    public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
+    public static void writeLongOrFail(FilesFacade ff, int fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.critical(ff.errno())

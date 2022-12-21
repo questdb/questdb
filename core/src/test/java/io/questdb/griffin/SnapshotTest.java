@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.wal.WalPurgeJobTest;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -64,14 +63,13 @@ public class SnapshotTest extends AbstractGriffinTest {
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
             @Override
-            protected boolean testConnection(long fd) {
+            protected boolean testConnection(int fd) {
                 return false;
             }
 
             {
-                setTimeout(-100);//trigger timeout on first check
+                setTimeout(-100); // trigger timeout on first check
             }
-
         };
         AbstractGriffinTest.setUpStatic();
     }
@@ -91,7 +89,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         rootLen = path.length();
         testFilesFacade.errorOnSync = false;
-        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(Long.MAX_VALUE);
+        circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
 
     @After
@@ -237,7 +235,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             try {
                 t.start();
                 latch2.await();
-                ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
+                circuitBreaker.setTimeout(-100);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
@@ -577,6 +575,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testSuspendResumeWalPurgeJob() throws Exception {
         assertMemoryLeak(() -> {
+            currentMicros = 0;
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
@@ -598,15 +597,13 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "4\t2022-02-24T00:00:03.000000Z\n" +
                     "5\t2022-02-24T00:00:04.000000Z\n");
 
-            WalPurgeJobTest.MicrosecondClockMock clock = new WalPurgeJobTest.MicrosecondClockMock();
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
-            FilesFacade ff = configuration.getFilesFacade();
-            WalPurgeJob job = new WalPurgeJob(engine, ff, clock);
+            final WalPurgeJob job = new WalPurgeJob(engine);
             snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
             Thread controlThread1 = new Thread(() -> {
-                clock.timestamp = interval;
+                currentMicros = interval;
                 job.drain(0);
                 Path.clearThreadLocals();
             });
@@ -621,7 +618,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             compiler.compile("snapshot complete", sqlExecutionContext);
             Thread controlThread2 = new Thread(() -> {
-                clock.timestamp = 2 * interval;
+                currentMicros = 2 * interval;
                 job.drain(0);
                 Path.clearThreadLocals();
             });

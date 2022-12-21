@@ -62,6 +62,8 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
+    KqueueFacade getKqueueFacade();
+
     int getLimit();
 
     default int getListenBacklog() {
@@ -88,6 +90,8 @@ public interface IODispatcherConfiguration {
     SelectFacade getSelectFacade();
 
     int getSndBufSize();
+
+    int getTestConnectionBufferSize();
 
     long getTimeout();
 }

@@ -95,7 +95,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         throw new UnsupportedOperationException();
     }
 
@@ -358,7 +358,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void switchTo(long fd, long offset, byte truncateMode) {
+    public void switchTo(int fd, long offset, byte truncateMode) {
     }
 
     @Override

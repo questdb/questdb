@@ -47,7 +47,7 @@ class WalWriterEvents implements Closeable {
     private AtomicIntList initialSymbolCounts;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
-    private long txn = 0;
+    private int txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
 
     WalWriterEvents(FilesFacade ff) {
@@ -177,12 +177,15 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    long appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
+    int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
         eventMem.putInt(cmdType); // byte would be enough probably
         eventMem.putStr(sqlText);
+        final Rnd rnd = sqlExecutionContext.getRandom();
+        eventMem.putLong(rnd.getSeed0());
+        eventMem.putLong(rnd.getSeed1());
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         writeIndexedVariables(bindVariableService);
         writeNamedVariables(bindVariableService);
@@ -192,7 +195,7 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
-    long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    int data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
@@ -228,7 +231,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
     }
 
-    long truncate() {
+    int truncate() {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.TRUNCATE);

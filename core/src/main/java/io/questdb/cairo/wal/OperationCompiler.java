@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
@@ -41,6 +42,7 @@ public class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
     private final SqlCompiler sqlCompiler;
     private final SqlExecutionContext sqlExecutionContext;
+    private final Rnd rnd;
 
     public OperationCompiler(
             CairoEngine engine,
@@ -48,6 +50,7 @@ public class OperationCompiler implements Closeable {
             int sharedWorkerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
+        rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine,
@@ -56,7 +59,7 @@ public class OperationCompiler implements Closeable {
         ).with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                        null,
+                        rnd,
                         -1,
                         null
                 )
@@ -68,6 +71,14 @@ public class OperationCompiler implements Closeable {
     public void close() {
         Misc.free(sqlCompiler);
         Misc.free(sqlExecutionContext);
+    }
+
+    public void resetRnd(long seed0, long seed1) {
+        rnd.reset(seed0, seed1);
+    }
+
+    public void setNowAndFixClock(long now) {
+        sqlExecutionContext.setNowAndFixClock(now);
     }
 
     public AlterOperation compileAlterSql(CharSequence alterSql) {

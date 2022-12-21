@@ -36,7 +36,7 @@ public class Vm {
     public static final byte TRUNCATE_TO_PAGE = 0;
     public static final byte TRUNCATE_TO_POINTER = 1;
 
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
+    public static void bestEffortClose(FilesFacade ff, Log log, int fd, long size, byte truncateMode) {
         try {
             if (size > -1L) {
                 bestEffortTruncate(ff, log, fd, size, truncateMode);
@@ -44,17 +44,15 @@ public class Vm {
                 log.debug().$("closed [fd=").$(fd).$(']').$();
             }
         } finally {
-            if (fd > 0) {
-                ff.close(fd);
-            }
+            ff.closeChecked(fd);
         }
     }
 
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, long size) {
+    public static void bestEffortClose(FilesFacade ff, Log log, int fd, long size) {
         bestEffortClose(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
+    public static long bestEffortTruncate(FilesFacade ff, Log log, int fd, long size, byte truncateMode) {
         long sz = (truncateMode == TRUNCATE_TO_PAGE) ? Files.ceilPageSize(size) : size;
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
@@ -67,7 +65,7 @@ public class Vm {
         return -1;
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
+    public static long bestEffortTruncate(FilesFacade ff, Log log, int fd, long size) {
         return bestEffortTruncate(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 

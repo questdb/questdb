@@ -48,8 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalUtils.SEQ_META_OFFSET_STRUCTURE_VERSION;
-import static io.questdb.cairo.wal.seq.TableTransactionLog.*;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class DatabaseSnapshotAgent implements Closeable {
 
@@ -204,12 +203,8 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
                                 memFile.smallFile(ff, dstPath, MemoryTag.MMAP_SEQUENCER_METADATA);
-                                // get maxStructureVersion from restored dbRoot/tableName/txn_seq/_meta
-                                long maxStructureVersion = memFile.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
                                 dstPath.trimTo(dstPathLen);
                                 openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
-                                // get txnMetaMemSize from dbRoot/tableName/txn_seq/_txnlog.meta.i
-                                long txnMetaMemSize = memFile.getLong(maxStructureVersion * Long.BYTES);
 
                                 if (newMaxTxn >= 0) {
                                     dstPath.trimTo(dstPathLen);
@@ -219,8 +214,6 @@ public class DatabaseSnapshotAgent implements Closeable {
                                     if (newMaxTxn < oldMaxTxn) {
                                         // update header of dbRoot/tableName/txn_seq/_txnlog with new values
                                         memFile.putLong(MAX_TXN_OFFSET, newMaxTxn);
-                                        memFile.putLong(MAX_STRUCTURE_VERSION_OFFSET, maxStructureVersion);
-                                        memFile.putLong(TXN_META_SIZE_OFFSET, txnMetaMemSize);
                                         LOG.info()
                                                 .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").utf8(dstPath)
                                                 .$(", oldMaxTxn=").$(oldMaxTxn)

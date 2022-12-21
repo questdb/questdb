@@ -47,7 +47,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
         };
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_HTTP_CONN) {
             @Override
-            public boolean checkIfTripped(long millis, long fd) {
+            public boolean checkIfTripped(long millis, int fd) {
                 return breakConnection == 0 || --breakConnection == 0;
             }
 
@@ -69,7 +69,7 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     @AfterClass
     public static void tearDownStatic() {
         AbstractGriffinTest.tearDownStatic();
-        circuitBreaker = Misc.free((NetworkSqlExecutionCircuitBreaker) circuitBreaker);
+        circuitBreaker = Misc.free(circuitBreaker);
     }
 
     @After
@@ -82,12 +82,12 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     public void testTimeoutLimitedSizeSortedLightRecordCursor() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE trips as (" +
-                "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(20)" +
-                ") timestamp(ts) partition by day;");
+                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(20)" +
+                    ") timestamp(ts) partition by day;");
 
             int breakTestLimit = 20;
             String sql = "select * from trips " +
-                " where ts between '2022-01-03' and '2022-02-01' and a > 1234567890L order by b desc limit 10";
+                    " where ts between '2022-01-03' and '2022-02-01' and a > 1234567890L order by b desc limit 10";
 
             testSql(breakTestLimit, sql);
         });
@@ -97,8 +97,8 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     public void testTimeoutSortedLightRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE trips as (" +
-                "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
-                ") timestamp(ts) partition by day;");
+                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
+                    ") timestamp(ts) partition by day;");
 
             testSql(5, "select * from trips where a > 1234567890L order by b desc");
         });
@@ -108,12 +108,12 @@ public class OrderByTimeoutTest extends AbstractGriffinTest {
     public void testTimeoutSortedRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE trips as (" +
-                "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
-                ") timestamp(ts) partition by day;");
+                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
+                    ") timestamp(ts) partition by day;");
             testSql(20, "select * from trips where a > 1234567890L " +
-                "union all " +
-                "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20) " +
-                "order by b desc");
+                    "union all " +
+                    "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20) " +
+                    "order by b desc");
         });
     }
 

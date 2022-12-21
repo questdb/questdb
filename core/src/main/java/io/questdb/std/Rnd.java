@@ -44,6 +44,14 @@ public class Rnd {
         reset();
     }
 
+    public long getSeed0() {
+        return s0;
+    }
+
+    public long getSeed1() {
+        return s1;
+    }
+
     public boolean nextBoolean() {
         return nextLong() >>> (64 - 1) != 0;
     }

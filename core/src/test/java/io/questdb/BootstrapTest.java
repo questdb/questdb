@@ -134,7 +134,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
-            long fd = Files.openRO(path);
+            int fd = Files.openRO(path);
             Assert.assertTrue(fd > -1);
             try {
                 while (true) {

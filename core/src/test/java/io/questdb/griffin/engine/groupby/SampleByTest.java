@@ -510,7 +510,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 int count = 10;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     if (count-- > 0) {
                         return super.mmap(fd, len, offset, flags, memoryTag);
                     }
@@ -1295,7 +1295,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByBufferExceeded() throws Exception {
-        sampleByIndexSearchPageSize = 16;
+        configOverrideSampleByIndexSearchPageSize(16);
 
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, last(lon) lon " +
@@ -1647,7 +1647,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexSampleByMicro() throws Exception {
-        sampleByIndexSearchPageSize = 256;
+        configOverrideSampleByIndexSearchPageSize(256);
+
         assertSampleByIndexQuery(
                 "k\tfirst\n" +
                         "2021-01-01T00:07:39.760000Z\t15318\n" +
@@ -3872,7 +3873,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 int count = 4;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     if (count-- > 0) {
                         return super.mmap(fd, len, offset, flags, memoryTag);
                     }
@@ -3921,7 +3922,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 int count = 10;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     if (count-- > 0) {
                         return super.mmap(fd, len, offset, flags, memoryTag);
                     }
