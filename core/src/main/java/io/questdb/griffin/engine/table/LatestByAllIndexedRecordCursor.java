@@ -159,7 +159,7 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
-        if (this.prefixes.size() > 2) {
+        if (prefixes.size() > 2) {
             hashColumnIndex = (int) prefixes.get(0);
             hashColumnType = (int) prefixes.get(1);
             prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;

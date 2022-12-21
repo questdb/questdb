@@ -381,7 +381,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, false, false);
             }
         });
     }
@@ -896,7 +896,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, false, false);
             }
 
             /// test key on overlap
@@ -949,7 +949,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, false, false);
             }
         });
     }
@@ -1040,7 +1040,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, false, false);
             }
         });
     }

@@ -3941,9 +3941,14 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (
+                                RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine))
+                        ) {
                             // with mmap count = 5 we should get failure in cursor
-                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            // noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
                         }
                         Assert.fail();
                     } catch (CairoException e) {

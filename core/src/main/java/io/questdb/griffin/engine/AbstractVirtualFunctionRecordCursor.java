@@ -84,7 +84,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     public void of(RecordCursor cursor) {
-        this.baseCursor = cursor;
+        baseCursor = cursor;
         recordA.of(baseCursor.getRecord());
         if (recordB != null) {
             recordB.of(baseCursor.getRecordB());

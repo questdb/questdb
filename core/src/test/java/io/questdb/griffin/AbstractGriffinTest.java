@@ -609,7 +609,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             final long rowsCount = cursor.size();
-            Assert.assertEquals(rowsCount, expected.length);
+            if (expectSize) {
+                Assert.assertEquals(rowsCount, expected.length);
+            }
 
             RecordMetadata metadata = factory.getMetadata();
 

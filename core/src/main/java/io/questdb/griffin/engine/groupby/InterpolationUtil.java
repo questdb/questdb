@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Unsafe;
 
@@ -158,7 +158,7 @@ public class InterpolationUtil {
             MapValue mapValue1,
             MapValue mapValue2,
             boolean isEndOfBoundary
-    ) throws SqlException {
+    ) {
         try {
             function.interpolateBoundary(
                     mapValue1,
@@ -166,7 +166,7 @@ public class InterpolationUtil {
                     boundaryTimestamp,
                     isEndOfBoundary);
         } catch (UnsupportedOperationException e) {
-            throw SqlException.position(0).put("interpolation is not supported for function: ").put(function);
+            throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function);
         }
     }
 
@@ -197,14 +197,16 @@ public class InterpolationUtil {
             long x,
             MapValue mapValue1,
             MapValue mapValue2
-    ) throws SqlException {
+    ) {
         try {
             function.interpolateGap(
                     mapValue,
-                    mapValue1, mapValue2,
-                    x);
+                    mapValue1,
+                    mapValue2,
+                    x
+            );
         } catch (UnsupportedOperationException e) {
-            throw SqlException.position(0).put("interpolation is not supported for function: ").put(function);
+            throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function);
         }
     }
 
