@@ -248,7 +248,7 @@ public class Table2IlpTest {
     }
 
     @Test
-    public void testCommandIvalidTimestampColumn() {
+    public void testCommandInvalidTimestampColumn() {
         Table2Ilp.Table2IlpParams params = Table2Ilp.Table2IlpParams.parse(
                 new String[]{
                         "-s", "a",
