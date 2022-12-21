@@ -298,7 +298,7 @@ public class SendAndReceiveRequestBuilder {
                     receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
                 }
                 received += n;
-                if (null != listener) {
+                if (listener != null) {
                     listener.onReceived(received);
                 }
             } else if (n < 0) {

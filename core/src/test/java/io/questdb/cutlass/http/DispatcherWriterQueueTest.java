@@ -478,8 +478,8 @@ public class DispatcherWriterQueueTest {
                             } else {
                                 new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                         "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                                        "0d\r\n" +
-                                                "{\"ddl\":\"OK\"}\n\r\n" +
+                                        "0c\r\n" +
+                                                "{\"ddl\":\"OK\"}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -577,9 +577,8 @@ public class DispatcherWriterQueueTest {
                                             .withStatementTimeout(statementTimeout)
                                             .executeWithStandardHeaders(
                                                     "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
-                                                    "19\r\n" +
-                                                            "{\"ddl\":\"OK\",\"updated\":" + updatedCount + "}\n" +
-                                                            "\r\n" +
+                                                    "18\r\n" +
+                                                            "{\"ddl\":\"OK\",\"updated\":" + updatedCount + "}\r\n" +
                                                             "00\r\n" +
                                                             "\r\n"
                                             );

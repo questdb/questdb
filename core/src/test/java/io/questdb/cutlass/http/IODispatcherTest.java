@@ -71,8 +71,8 @@ import java.util.concurrent.locks.LockSupport;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
-    public static final String JSON_DDL_RESPONSE = "0d\r\n" +
-            "{\"ddl\":\"OK\"}\n\r\n" +
+    public static final String JSON_DDL_RESPONSE = "0c\r\n" +
+            "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
@@ -463,7 +463,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testDDLinExp() throws Exception {
+    public void testDdlInExp() throws Exception {
         testJsonQuery(
                 20,
                 "GET /exp?query=create%20table%20balance%20(money%20float) HTTP/1.1\r\n" +
@@ -482,8 +482,7 @@ public class IODispatcherTest {
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "67\r\n" +
@@ -2305,9 +2304,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0d\r\n" +
-                        "{\"ddl\":\"OK\"}\n" +
-                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
@@ -4151,8 +4149,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0d\r\n" +
-                            "{\"ddl\":\"OK\"}\n\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -4403,11 +4401,18 @@ public class IODispatcherTest {
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                                "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                336,
-                                "timeout, query aborted"
-                        );
+                        // We expect header only to be sent and then a disconnect.
+                        new SendAndReceiveRequestBuilder()
+                                .withExpectDisconnect(true)
+                                .executeWithStandardRequestHeaders(
+                                        "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "Keep-Alive: timeout=5, max=10000\r\n"
+                                );
                     }
                 });
     }
@@ -4738,8 +4743,6 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final int tableRowCount = 3_000_000;
 
-            SOCountDownLatch peerDisconnectLatch = new SOCountDownLatch(1);
-
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withNetwork(nf)
                     .withBaseDir(baseDir)
@@ -4748,7 +4751,6 @@ public class IODispatcherTest {
                     .withAllowDeflateBeforeSend(false)
                     .withServerKeepAlive(true)
                     .withHttpProtocolVersion("HTTP/1.1 ")
-                    .withOnPeerDisconnect(peerDisconnectLatch::countDown)
                     .build();
             QueryCache.configure(httpConfiguration, metrics);
 
@@ -4757,7 +4759,7 @@ public class IODispatcherTest {
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
                 @Override
                 public int getSqlPageFrameMaxRows() {
-                    // this is necessary to sufficiently fragment paged filter execution
+                    // this is necessary to sufficiently fragmented paged filter execution
                     return 10_000;
                 }
             }, metrics, 2);
@@ -4791,29 +4793,6 @@ public class IODispatcherTest {
                     }
                 });
 
-                final int minClientReceivedBytesBeforeDisconnect = 180;
-                final AtomicInteger refClientFd = new AtomicInteger(-1);
-                HttpClientStateListener clientStateListener = new HttpClientStateListener() {
-                    private int nBytesReceived = 0;
-
-                    @Override
-                    public void onClosed() {
-                    }
-
-                    @Override
-                    public void onReceived(int nBytes) {
-                        LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
-                        nBytesReceived += nBytes;
-                        if (nBytesReceived >= minClientReceivedBytesBeforeDisconnect) {
-                            int fd = refClientFd.get();
-                            if (fd != -1) {
-                                refClientFd.set(-1);
-                                nf.close(fd);
-                            }
-                        }
-                    }
-                };
-
                 O3Utils.setupWorkerPool(
                         workerPool,
                         engine,
@@ -4833,13 +4812,15 @@ public class IODispatcherTest {
                     );
 
                     // send multipart request to server
-                    final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
-                            + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
-                            + "Upgrade-Insecure-Requests: 1\r\n"
-                            + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
-                            + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
-                            + "Accept-Encoding: gzip, deflate, br\r\n"
-                            + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
+                    final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
                     int fd = nf.socketTcp(true);
                     try {
@@ -4848,7 +4829,6 @@ public class IODispatcherTest {
                         try {
                             TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-                            refClientFd.set(fd);
                             nf.configureNonBlocking(fd);
 
                             long bufLen = request.length();
@@ -4859,7 +4839,7 @@ public class IODispatcherTest {
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
                                         .withExpectDisconnect(true)
-                                        .executeUntilDisconnect(request, fd, 200, ptr, clientStateListener);
+                                        .executeUntilDisconnect(request, fd, 200, ptr, null);
                             } finally {
                                 Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -4867,9 +4847,9 @@ public class IODispatcherTest {
                             nf.freeAddrInfo(sockAddrInfo);
                         }
                     } finally {
+                        nf.close(fd);
                         LOG.info().$("Closing client connection").$();
                     }
-                    peerDisconnectLatch.await();
                     // depending on how quick the CI hardware is we may end up processing different
                     // number of rows before query is interrupted
                     Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
@@ -6784,9 +6764,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0d\r\n" +
-                        "{\"ddl\":\"OK\"}\n" +
-                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
@@ -6885,8 +6864,7 @@ public class IODispatcherTest {
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                             "Transfer-Encoding: chunked\r\n" +
-                                            "Content-Type: text/csv; charset=utf-8\r\n" +
-                                            "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                            "Content-Type: application/json; charset=utf-8\r\n" +
                                             "Keep-Alive: timeout=5, max=10000\r\n" +
                                             "\r\n" +
                                             "76\r\n" +
@@ -7116,11 +7094,19 @@ public class IODispatcherTest {
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                                "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                387,
-                                "timeout, query aborted"
-                        );
+                        // We expect header only to be sent and then a disconnect.
+                        new SendAndReceiveRequestBuilder()
+                                .withExpectDisconnect(true)
+                                .executeWithStandardRequestHeaders(
+                                        "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/csv; charset=utf-8\r\n" +
+                                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                                "Keep-Alive: timeout=5, max=10000\r\n"
+                                );
                     }
                 });
     }

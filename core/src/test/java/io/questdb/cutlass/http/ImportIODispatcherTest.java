@@ -423,9 +423,8 @@ public class ImportIODispatcherTest {
                                     "\r\n");
 
                     executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
-                            "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\n" +
-                                    "\r\n" +
+                            "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 
@@ -483,9 +482,8 @@ public class ImportIODispatcherTest {
                                         "\r\n"
                         );
                         executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n" +
-                                        "\r\n" +
+                                "0c\r\n" +
+                                        "{\"ddl\":\"OK\"}\r\n" +
                                         "00\r\n" +
                                         "\r\n");
 
@@ -714,8 +712,8 @@ public class ImportIODispatcherTest {
 
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
-                            "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\n\r\n" +
+                            "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 
@@ -742,8 +740,8 @@ public class ImportIODispatcherTest {
 
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
-                            "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\n\r\n" +
+                            "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 
@@ -940,8 +938,8 @@ public class ImportIODispatcherTest {
 
                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                 "GET /query?query=CREATE+TABLE+" + tableName + ddlCols + "; HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n\r\n" +
+                                "0c\r\n" +
+                                        "{\"ddl\":\"OK\"}\r\n" +
                                         "00\r\n" +
                                         "\r\n");
 
@@ -1023,8 +1021,8 @@ public class ImportIODispatcherTest {
 
                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                 "GET /query?query=CREATE+TABLE+" + tableName + ddlCols + "; HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n\r\n" +
+                                "0c\r\n" +
+                                        "{\"ddl\":\"OK\"}\r\n" +
                                         "00\r\n" +
                                         "\r\n");
 

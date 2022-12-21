@@ -41,8 +41,8 @@ import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class HttpFlushQueryCacheTest {
 
-    private static final String JSON_DDL_RESPONSE = "0d\r\n" +
-            "{\"ddl\":\"OK\"}\n\r\n" +
+    private static final String JSON_DDL_RESPONSE = "0c\r\n" +
+            "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
     @Rule

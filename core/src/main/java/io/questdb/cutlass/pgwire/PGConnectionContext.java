@@ -2456,7 +2456,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         sqlExecutionContext.getCairoSecurityContext(),
                         path,
                         textLoader.getTableName()
-                )) {
+                )
+        ) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
