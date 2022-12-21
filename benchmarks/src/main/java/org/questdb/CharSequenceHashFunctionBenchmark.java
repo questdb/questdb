@@ -46,6 +46,7 @@ public class CharSequenceHashFunctionBenchmark {
     @Param({"16", "64", "256"})
     private int len;
     private long ptr;
+    private String str;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -61,9 +62,12 @@ public class CharSequenceHashFunctionBenchmark {
     public void setUp() {
         ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         charSequence.of(ptr, ptr + len);
+        StringBuilder sb = new StringBuilder();
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(ptr + i, (byte) 'a');
+            sb.append('a');
         }
+        str = sb.toString();
     }
 
     @TearDown(Level.Iteration)
@@ -72,12 +76,18 @@ public class CharSequenceHashFunctionBenchmark {
     }
 
     @Benchmark
-    public int testStandard() {
+    public int testStandardDirectByteCharSequence() {
         return Chars.hashCode(charSequence);
     }
 
     @Benchmark
-    public long testXXHash() {
+    public long testXXHashDirectByteCharSequence() {
         return Hash.xxHash64(charSequence);
+    }
+
+    // this hash function is not called on the hot path; it's included for reference
+    @Benchmark
+    public long testXXHashString() {
+        return Hash.xxHash64(str);
     }
 }

@@ -167,6 +167,11 @@ public class DirectByteCharSequenceIntHashMapTest {
             final String utf8Str = sink.put(dbcs).toString();
             map.put(utf8Str, 42);
             Assert.assertEquals(42, map.get(dbcs));
+            Assert.assertEquals(42, map.get(utf8Str));
+
+            Assert.assertEquals(1, map.size());
+            map.remove(dbcs);
+            Assert.assertEquals(0, map.size());
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
         }
