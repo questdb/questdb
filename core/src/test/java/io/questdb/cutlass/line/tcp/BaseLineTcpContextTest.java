@@ -32,7 +32,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -393,7 +396,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         @Override
         public int recv(int fd, long buffer, int bufferLen) {
             Assert.assertEquals(FD, fd);
-            if (null == recvBuffer) {
+            if (recvBuffer == null) {
                 return -1;
             }
 

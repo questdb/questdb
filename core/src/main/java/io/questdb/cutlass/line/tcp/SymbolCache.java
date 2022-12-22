@@ -28,24 +28,33 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Chars;
-import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-class SymbolCache implements Closeable, SymbolLookup {
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
+
+/**
+ * Important note:
+ * This cache is optimized for ASCII and UTF8 DirectByteCharSequence lookups. Lookups of UTF16
+ * strings (j.l.String) with non-ASCII chars will not work correctly, so make sure to re-encode
+ * the string in UTF8.
+ */
+class SymbolCache implements Closeable, DirectByteSymbolLookup {
     private final MicrosecondClock clock;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
-    private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
+    private final DirectByteCharSequenceIntHashMap symbolValueToKeyMap = new DirectByteCharSequenceIntHashMap(
             256,
-            0.5,
+            0.75,
             SymbolTable.VALUE_NOT_FOUND
     );
+    private final StringSink tempSink = new StringSink();
     private final long waitUsBeforeReload;
     private int columnIndex;
     private long lastSymbolReaderReloadTimestamp;
@@ -67,7 +76,7 @@ class SymbolCache implements Closeable, SymbolLookup {
     }
 
     @Override
-    public int keyOf(CharSequence value) {
+    public int keyOf(DirectByteCharSequence value) {
         final int index = symbolValueToKeyMap.keyIndex(value);
         if (index < 0) {
             return symbolValueToKeyMap.valueAt(index);
@@ -84,10 +93,11 @@ class SymbolCache implements Closeable, SymbolLookup {
             lastSymbolReaderReloadTimestamp = ticks;
         }
 
-        final int symbolKey = symbolMapReader.keyOf(value);
+        final String valueUtf16 = Chars.toString(value);
+        final int symbolKey = symbolMapReader.keyOf(valueUtf16);
 
-        if (SymbolTable.VALUE_NOT_FOUND != symbolKey) {
-            symbolValueToKeyMap.putAt(index, Chars.toString(value), symbolKey);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            symbolValueToKeyMap.putAt(index, utf8BytesToString(value, tempSink), symbolKey);
         }
 
         return symbolKey;

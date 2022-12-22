@@ -49,14 +49,14 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final ThreadLocal<StringUtf8MemoryAccessor> stringUtf8MemoryAccessor = new ThreadLocal<>(StringUtf8MemoryAccessor::new);
-
-    private final ObjList<String> list;
+    private final int initialCapacity;
     private final double loadFactor;
     private final int noEntryValue;
     private int capacity;
     private int free;
     private long[] hashCodes;
     private String[] keys;
+    private ObjList<String> list;
     private int mask;
     private int[] values;
 
@@ -74,6 +74,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         }
 
         free = capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        this.initialCapacity = capacity;
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (capacity / loadFactor));
         keys = new String[len];
@@ -91,6 +92,10 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
      */
     public static long xxHash64(String str) {
         return Hash.xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
+    }
+
+    public int capacity() {
+        return capacity;
     }
 
     @Override
@@ -213,6 +218,21 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                 }
             }
             list.remove(key);
+        }
+    }
+
+    public void reset() {
+        if (capacity == initialCapacity) {
+            clear();
+        } else {
+            free = capacity = initialCapacity;
+            int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+            keys = new String[len];
+            hashCodes = new long[len];
+            mask = len - 1;
+            list = new ObjList<>(capacity);
+            values = new int[keys.length];
+            clear();
         }
     }
 

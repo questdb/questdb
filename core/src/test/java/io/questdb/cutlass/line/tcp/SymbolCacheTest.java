@@ -41,11 +41,13 @@ import io.questdb.mp.SPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,6 +56,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class SymbolCacheTest extends AbstractGriffinTest {
+
+    private static final long DBCS_MAX_SIZE = 256;
 
     @Test
     public void testAddSymbolColumnConcurrent() throws Throwable {
@@ -101,6 +105,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
             Thread readerThread = new Thread(() -> {
                 ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
 
                 try (Path path = new Path();
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
@@ -131,10 +137,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                         }
 
                         int symCount = symbolCacheObjList.size();
-                        String value = "val" + ((newColsAdded - 1) * rowsAdded);
+                        copyUtf8StringChars("val" + ((newColsAdded - 1) * rowsAdded), mem, dbcs);
                         boolean found = false;
                         for (int sym = 0; sym < symCount; sym++) {
-                            if (symbolCacheObjList.getQuick(sym).keyOf(value) != SymbolTable.VALUE_NOT_FOUND) {
+                            if (symbolCacheObjList.getQuick(sym).keyOf(dbcs) != SymbolTable.VALUE_NOT_FOUND) {
                                 found = true;
                             }
                         }
@@ -148,6 +154,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     LOG.error().$(e).$();
                 } finally {
                     Misc.freeObjList(symbolCacheObjList);
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             });
             writerThread.start();
@@ -185,6 +192,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
@@ -216,7 +225,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
 
                     for (int i = 0; i < N; i++) {
-                        int rc = cache.keyOf("sym" + i);
+                        copyUtf8StringChars("sym" + i, mem, dbcs);
+                        int rc = cache.keyOf(dbcs);
                         Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     }
 
@@ -228,6 +238,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     // Close should shrink cache back to initial capacity.
                     Assert.assertEquals(0, cache.getCacheValueCount());
                     Assert.assertEquals(initialCapacity, cache.getCacheCapacity());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -241,6 +253,9 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             long ts = TimestampFormatUtils.parseTimestamp("2020-09-10T20:00:00.000000Z");
             final long incrementUs = 10_000;
             final String constValue = "hello";
+            long constMem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+            DirectByteCharSequence constDbcs = new DirectByteCharSequence();
+            copyUtf8StringChars(constValue, constMem, constDbcs);
             FilesFacade ff = new FilesFacadeImpl();
 
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
@@ -266,26 +281,29 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 pubSeq.then(subSeq).then(pubSeq);
 
                 new Thread(() -> {
+                    long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    DirectByteCharSequence dbcs = new DirectByteCharSequence();
                     try {
                         barrier.await();
                         for (int i = 0; i < N; i++) {
                             // All keys should not be found, but we keep looking them up because
                             // we pretend we don't know this upfront. The aim is to cause
                             // race condition between lookup and table writer
-                            final CharSequence value2 = rndCache.nextString(5);
-                            symbolCache.keyOf(constValue);
-                            symbolCache.keyOf(value2);
+                            copyUtf8StringChars(rndCache.nextString(5), mem, dbcs);
+                            symbolCache.keyOf(constDbcs);
+                            symbolCache.keyOf(dbcs);
                             final long cursor = pubSeq.nextBully();
                             final Holder h = wheel.get(cursor);
                             // publish the value2 to the table writer
                             h.value1 = constValue;
-                            h.value2 = Chars.toString(value2);
+                            h.value2 = Chars.toString(dbcs);
                             pubSeq.done(cursor);
                         }
                     } catch (Throwable e) {
                         cacheInError.set(true);
                         e.printStackTrace();
                     } finally {
+                        Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                         haltLatch.countDown();
                     }
                 }).start();
@@ -327,8 +345,75 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     haltLatch.await();
                 }
                 Assert.assertFalse(cacheInError.get());
+            } finally {
+                Unsafe.free(constMem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
             compiler.compile("drop table x", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testNonAsciiChars() throws Exception {
+        final int N = 1024;
+        final String tableName = "tb1";
+        final String symbolPrefix = "аз_съм_грут";
+        final FilesFacade ff = new FilesFacadeImpl();
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
+            ) {
+                CairoTestUtils.create(model);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                try (
+                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+
+                    cache.of(
+                            configuration,
+                            writer,
+                            symColIndex,
+                            path.of(configuration.getRoot()).concat(tableName),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    final int initialCapacity = cache.getCacheCapacity();
+                    Assert.assertTrue(N > initialCapacity);
+
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow();
+                        r.putSym(symColIndex, symbolPrefix + i);
+                        r.append();
+                    }
+                    writer.commit();
+
+                    for (int i = 0; i < N; i++) {
+                        copyUtf8StringChars(symbolPrefix + i, mem, dbcs);
+                        int rc = cache.keyOf(dbcs);
+                        Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    }
+
+                    Assert.assertEquals(N, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
         });
     }
 
@@ -349,6 +434,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
@@ -391,10 +478,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
 
-                    int rc = cache.keyOf("missing");
+                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym21");
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -405,10 +492,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.keyOf("missing");
+                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym21");
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -421,10 +508,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.keyOf("sym21");
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym22");
+                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dbcs));
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
 
@@ -443,10 +530,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     r.putSym(symColIndex2, "sym25");
                     r.append();
 
-                    rc = cache.keyOf("sym22");
+                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dbcs));
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym24");
+                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dbcs));
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(3, cache.getCacheValueCount());
                     writer.commit();
@@ -468,20 +555,22 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             -1
                     );
 
-                    rc = cache.keyOf("sym24");
+                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dbcs));
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
                     r = writer.newRow();
                     r.putSym(symColIndex2, "sym26");
                     r.append();
-                    rc = cache.keyOf("sym26");
+                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dbcs));
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
                     writer.commit();
-                    rc = cache.keyOf("sym26");
+                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dbcs));
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -503,6 +592,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
@@ -541,10 +632,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             -1
                     );
 
-                    int rc = cache.keyOf("missing");
+                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym1");
+                    rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -554,12 +645,14 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(0));
                     Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(0));
-                    rc = cache.keyOf("missing");
+                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym2");
+                    rc = cache.keyOf(copyUtf8StringChars("sym2", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -581,6 +674,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
@@ -619,12 +714,23 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             -1
                     );
 
-                    int rc = cache.keyOf("sym1");
+                    int rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
+    }
+
+    private static DirectByteCharSequence copyUtf8StringChars(String value, long mem, DirectByteCharSequence dbcs) {
+        byte[] utf8Bytes = value.getBytes(StandardCharsets.UTF_8);
+        Assert.assertTrue(utf8Bytes.length <= DBCS_MAX_SIZE);
+        for (int i = 0, n = utf8Bytes.length; i < n; i++) {
+            Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
+        }
+        return dbcs.of(mem, mem + utf8Bytes.length);
     }
 
     private void createTable(String tableName) {

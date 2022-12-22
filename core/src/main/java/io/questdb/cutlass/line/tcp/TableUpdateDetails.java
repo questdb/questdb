@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.MetadataChangeSPI;
@@ -47,7 +46,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
-    private static final SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private static final DirectByteSymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final DefaultColumnTypes defaultColumnTypes;
     private final long defaultCommitInterval;
     private final long defaultMaxUncommittedRows;
@@ -370,7 +369,7 @@ public class TableUpdateDetails implements Closeable {
             latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        private SymbolLookup addSymbolCache(int colWriterIndex) {
+        private DirectByteSymbolLookup addSymbolCache(int colWriterIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
@@ -546,7 +545,7 @@ public class TableUpdateDetails implements Closeable {
             return ANY_TABLE_VERSION;
         }
 
-        SymbolLookup getSymbolLookup(int columnIndex) {
+        DirectByteSymbolLookup getSymbolLookup(int columnIndex) {
             if (columnIndex > -1) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);
                 if (symCache != null) {
