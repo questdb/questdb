@@ -37,9 +37,7 @@ import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
@@ -102,10 +100,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void execute(
             HttpConnectionContext context,
             TextQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
+            circuitBreaker.resetTimer();
             state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
@@ -158,7 +157,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state, 200);
-                    resumeSend(context);
+                    doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
                     internalError(context.getChunkedResponseSocket(), e, state);
@@ -182,7 +181,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new TextQueryProcessorState(context));
@@ -199,9 +198,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void parkRequest(HttpConnectionContext context) {
+    public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         TextQueryProcessorState state = LV.get(context);
         if (state != null) {
+            state.pausedQuery = pausedQuery;
             state.rnd = sqlExecutionContext.getRandom();
         }
     }
@@ -209,110 +209,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        TextQueryProcessorState state = LV.get(context);
-        if (state == null || state.cursor == null) {
-            return;
-        }
-
-        // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
-        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
-
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        final int columnCount = state.metadata.getColumnCount();
-
-        OUT:
-        while (true) {
-            try {
-                SWITCH:
-                switch (state.queryState) {
-                    case JsonQueryProcessorState.QUERY_PREFIX:
-                    case JsonQueryProcessorState.QUERY_METADATA:
-                        state.columnIndex = 0;
-                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-
-                            socket.bookmark();
-                            if (state.columnIndex > 0) {
-                                socket.put(state.delimiter);
-                            }
-                            socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
-                        }
-                        socket.put(Misc.EOL);
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
-                        // fall through
-                    case JsonQueryProcessorState.QUERY_RECORD_START:
-
-                        if (state.record == null) {
-                            // check if cursor has any records
-                            state.record = state.cursor.getRecord();
-                            while (true) {
-                                if (state.cursor.hasNext()) {
-                                    state.count++;
-
-                                    if (state.countRows && state.count > state.stop) {
-                                        continue;
-                                    }
-
-                                    if (state.count > state.skip) {
-                                        break;
-                                    }
-                                } else {
-                                    state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
-                                    break SWITCH;
-                                }
-                            }
-                        }
-
-                        if (state.count > state.stop) {
-                            state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
-                            break;
-                        }
-
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD;
-                        state.columnIndex = 0;
-                        // fall through
-                    case JsonQueryProcessorState.QUERY_RECORD:
-
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-                            socket.bookmark();
-                            if (state.columnIndex > 0) {
-                                socket.put(state.delimiter);
-                            }
-                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
-                        }
-
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
-                        // fall through
-
-                    case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
-                        socket.bookmark();
-                        socket.put(Misc.EOL);
-                        state.record = null;
-                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
-                        break;
-                    case JsonQueryProcessorState.QUERY_SUFFIX:
-                        sendDone(socket, state);
-                        break OUT;
-                    default:
-                        break OUT;
-                }
-            } catch (NoSpaceLeftInResponseBufferException ignored) {
-                if (socket.resetToBookmark()) {
-                    socket.sendChunk(false);
-                } else {
-                    // what we have here is out unit of data, column value or query
-                    // is larger that response content buffer
-                    // all we can do in this scenario is to log appropriately
-                    // and disconnect socket
-                    info(state).$("Response buffer is too small, state=").$(state.queryState).$();
-                    throw PeerDisconnectedException.INSTANCE;
-                }
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        try {
+            doResumeSend(context);
+        } catch (CairoError | CairoException e) {
+            // this is something we didn't expect
+            // log the exception and disconnect
+            TextQueryProcessorState state = LV.get(context);
+            if (state != null) {
+                logInternalError(e, state);
             }
+            throw ServerDisconnectException.INSTANCE;
         }
-        // reached the end naturally?
-        readyForNextRequest(context);
     }
 
     private static boolean isExpUrl(CharSequence tok) {
@@ -357,6 +265,123 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
 
+    private void doResumeSend(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+        TextQueryProcessorState state = LV.get(context);
+        if (state == null || state.cursor == null) {
+            return;
+        }
+
+        // copy random during query resume
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
+        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+
+        if (!state.pausedQuery) {
+            context.resumeResponseSend();
+        } else {
+            state.pausedQuery = false;
+        }
+
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        final int columnCount = state.metadata.getColumnCount();
+
+        OUT:
+        while (true) {
+            try {
+                SWITCH:
+                switch (state.queryState) {
+                    case JsonQueryProcessorState.QUERY_PREFIX:
+                    case JsonQueryProcessorState.QUERY_METADATA:
+                        state.columnIndex = 0;
+                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;
+                        while (state.columnIndex < columnCount) {
+                            if (state.columnIndex > 0) {
+                                socket.put(state.delimiter);
+                            }
+                            socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
+                            state.columnIndex++;
+                            socket.bookmark();
+                        }
+                        socket.put(Misc.EOL);
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
+                        socket.bookmark();
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_RECORD_START:
+                        if (state.record == null) {
+                            // check if cursor has any records
+                            Record record = state.cursor.getRecord();
+                            while (true) {
+                                if (state.cursor.hasNext()) {
+                                    state.count++;
+
+                                    if (state.countRows && state.count > state.stop) {
+                                        continue;
+                                    }
+
+                                    if (state.count > state.skip) {
+                                        state.record = record;
+                                        break;
+                                    }
+                                } else {
+                                    state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
+                                    break SWITCH;
+                                }
+                            }
+                        }
+
+                        if (state.count > state.stop) {
+                            state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;
+                            break;
+                        }
+
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD;
+                        state.columnIndex = 0;
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_RECORD:
+                        while (state.columnIndex < columnCount) {
+                            if (state.columnIndex > 0) {
+                                socket.put(state.delimiter);
+                            }
+                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            state.columnIndex++;
+                            socket.bookmark();
+                        }
+
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
+                        socket.put(Misc.EOL);
+                        state.record = null;
+                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
+                        socket.bookmark();
+                        break;
+                    case JsonQueryProcessorState.QUERY_SUFFIX:
+                        sendDone(socket, state);
+                        break OUT;
+                    default:
+                        break OUT;
+                }
+            } catch (DataUnavailableException e) {
+                socket.resetToBookmark();
+                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+            } catch (NoSpaceLeftInResponseBufferException ignored) {
+                if (socket.resetToBookmark()) {
+                    socket.sendChunk(false);
+                } else {
+                    // what we have here is out unit of data, column value or query
+                    // is larger that response content buffer
+                    // all we can do in this scenario is to log appropriately
+                    // and disconnect socket
+                    info(state).$("Response buffer is too small, state=").$(state.queryState).$();
+                    throw PeerDisconnectedException.INSTANCE;
+                }
+            }
+        }
+        // reached the end naturally?
+        readyForNextRequest(context);
+    }
+
     private LogRecord info(TextQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -366,10 +391,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        logInternalError(e, state);
+        sendException(socket, 0, e.getMessage(), state);
+    }
+
+    private void logInternalError(Throwable e, TextQueryProcessorState state) {
         critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
         metrics.health().incrementUnhandledErrors();
-        sendException(socket, 0, e.getMessage(), state);
     }
 
     private boolean parseUrl(

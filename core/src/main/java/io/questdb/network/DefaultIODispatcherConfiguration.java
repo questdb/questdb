@@ -55,6 +55,11 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public KqueueFacade getKqueueFacade() {
+        return KqueueFacadeImpl.INSTANCE;
+    }
+
+    @Override
     public int getLimit() {
         return 64;
     }
@@ -87,6 +92,11 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public int getSndBufSize() {
         return -1; // use system default
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return 64;
     }
 
     @Override

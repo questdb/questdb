@@ -120,6 +120,7 @@ if (WIN32)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
+            src/main/c/windows/files.h
             src/main/c/windows/os.c
             src/main/c/windows/net.c
             src/main/c/windows/select.h

@@ -37,11 +37,66 @@ import org.junit.Test;
 public class LatestByTest extends AbstractGriffinTest {
 
     @Test
+    public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
+        final int iterations = 100;
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE e ( \n" +
+                    "  ts TIMESTAMP, \n" +
+                    "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            compile("CREATE TABLE p ( \n" +
+                    "  ts TIMESTAMP, \n" +
+                    "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
+                    "  lon FLOAT, \n" +
+                    "  lat FLOAT, \n" +
+                    "  g3 geohash(3c) \n" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            long timestamp = 1625853700000000L;
+            for (int i = 0; i < iterations; i++) {
+                LOG.info().$("Iteration: ").$(i).$();
+
+                executeInsert("INSERT INTO e VALUES(CAST(" + timestamp + " as TIMESTAMP), '42')");
+                executeInsert("INSERT INTO p VALUES(CAST(" + timestamp + " as TIMESTAMP), '42', 142.31, 42.31, #xpt)");
+
+                String query = "SELECT count() FROM \n" +
+                        "( \n" +
+                        "  ( \n" +
+                        "    SELECT ts ts_p, sym, lon, lat, g3 \n" +
+                        "    FROM p \n" +
+                        "    WHERE ts >= cast(" + timestamp + " AS timestamp) \n" +
+                        "      AND g3 within(#xpk, #xpm, #xps, #xpt) \n" +
+                        "    LATEST ON ts PARTITION BY sym \n" +
+                        "  ) \n" +
+                        "  WHERE lon >= 142.0 AND lon <= 143.0 \n" +
+                        "    AND lat >= 42.0 AND lat <= 43.0 \n" +
+                        ") \n" +
+                        "JOIN \n" +
+                        "( \n" +
+                        "  SELECT ts ts_e, sym \n" +
+                        "  FROM e \n" +
+                        "  WHERE ts >= cast(" + timestamp + " AS timestamp) \n" +
+                        "  LATEST ON ts PARTITION BY sym \n" +
+                        ") \n" +
+                        "ON (sym)";
+                assertQuery("count\n" +
+                                "1\n",
+                        query,
+                        null,
+                        false,
+                        true);
+
+                timestamp += 10000L;
+            }
+        });
+    }
+
+    @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -71,7 +126,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -102,7 +157,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -133,7 +188,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -166,7 +221,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -197,7 +252,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -238,7 +293,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -278,7 +333,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan any partition, searched symbol values don't exist in symbol table
                     if (Chars.contains(name, "1970-01-01") || Chars.contains(name, "1970-01-02")) {
                         return -1;
@@ -320,7 +375,7 @@ public class LatestByTest extends AbstractGriffinTest {
 
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in other partitions
                     if (Chars.contains(name, "1970-01-01")) {
@@ -356,7 +411,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -390,7 +445,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -571,7 +626,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -605,7 +660,7 @@ public class LatestByTest extends AbstractGriffinTest {
     public void testLatestWithFilterByDoesNotNeedFullScanValueNotInSymbolTable() throws Exception {
         ff = new FilesFacadeImpl() {
             @Override
-            public long openRO(LPSZ name) {
+            public int openRO(LPSZ name) {
                 // Query should not scan the first partition
                 // all the latest values are in the second, third partition
                 if (Chars.contains(name, "1970-01-01")) {
@@ -654,7 +709,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {
@@ -687,7 +742,7 @@ public class LatestByTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Chars.contains(name, "1970-01-01")) {

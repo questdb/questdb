@@ -2180,7 +2180,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (mapCount++ > 5) {
                     return -1;
                 }
@@ -2209,7 +2209,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
@@ -2547,7 +2547,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             // number of rows we are appending
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (count-- > 0) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -3412,7 +3412,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (inError.get() && pageCount++ > 14) {
                     return -1;
                 }
@@ -3512,7 +3512,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (inError.get() && pageCount++ == 15) {
                     return -1;
                 }

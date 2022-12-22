@@ -206,12 +206,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean couldObtainLock(Path path) {
-        final long lockFd = TableUtils.lock(ff, path, false);
-        if (lockFd != -1L) {
+        final int lockFd = TableUtils.lock(ff, path, false);
+        if (lockFd != -1) {
             ff.close(lockFd);
-            return true;  // Could lock/unlock.
+            return true; // Could lock/unlock.
         }
-        return false;  // Could not obtain lock.
+        return false; // Could not obtain lock.
     }
 
     private void deleteClosedSegments() {

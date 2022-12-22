@@ -46,7 +46,6 @@ import java.io.Closeable;
 
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
-
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
@@ -243,6 +242,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        context.resumeResponseSend();
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }
 
@@ -463,7 +463,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             HttpChunkedResponseSocket socket
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
-
             if (state.errorMessage != null) {
                 resumeError(state, socket);
             } else if (state.json) {

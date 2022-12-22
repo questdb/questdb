@@ -4716,7 +4716,7 @@ public class JoinTest extends AbstractGriffinTest {
             AtomicInteger counter = new AtomicInteger();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
