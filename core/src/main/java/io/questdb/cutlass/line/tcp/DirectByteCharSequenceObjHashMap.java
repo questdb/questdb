@@ -51,6 +51,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
     private final ObjList<String> list;
     private final double loadFactor;
+    private final DirectByteCharSequenceIntHashMap.StringUtf8MemoryAccessor memoryAccessor = new DirectByteCharSequenceIntHashMap.StringUtf8MemoryAccessor();
     private int capacity;
     private int free;
     private long[] hashCodes;
@@ -123,7 +124,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(String key) {
-        long hashCode = xxHash64(key);
+        long hashCode = xxHash64(memoryAccessor.of(key));
         int index = (int) (hashCode & mask);
 
         if (keys[index] == null) {
@@ -190,7 +191,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                long hashCode = xxHash64(key);
+                long hashCode = xxHash64(memoryAccessor.of(key));
                 int idealHit = (int) (hashCode & mask);
                 if (idealHit != from) {
                     int to;
@@ -267,7 +268,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             return false;
         } else {
             keys[index] = key;
-            hashCodes[index] = xxHash64(key);
+            hashCodes[index] = xxHash64(memoryAccessor.of(key));
             values[index] = value;
             if (--free == 0) {
                 rehash();

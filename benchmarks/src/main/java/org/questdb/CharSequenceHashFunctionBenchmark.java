@@ -44,10 +44,10 @@ import java.util.concurrent.TimeUnit;
 public class CharSequenceHashFunctionBenchmark {
 
     private final DirectByteCharSequence charSequence = new DirectByteCharSequence();
+    private final DirectByteCharSequenceIntHashMap.StringUtf8MemoryAccessor strMemoryAccessor = new DirectByteCharSequenceIntHashMap.StringUtf8MemoryAccessor();
     @Param({"16", "64", "256"})
     private int len;
     private long ptr;
-    private String str;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -68,7 +68,7 @@ public class CharSequenceHashFunctionBenchmark {
             Unsafe.getUnsafe().putByte(ptr + i, (byte) 'a');
             sb.append('a');
         }
-        str = sb.toString();
+        strMemoryAccessor.of(sb.toString());
     }
 
     @TearDown(Level.Iteration)
@@ -89,6 +89,6 @@ public class CharSequenceHashFunctionBenchmark {
     // this hash function is not called on the hot path; it's included for reference
     @Benchmark
     public long testXXHashString() {
-        return DirectByteCharSequenceIntHashMap.xxHash64(str);
+        return DirectByteCharSequenceIntHashMap.xxHash64(strMemoryAccessor);
     }
 }

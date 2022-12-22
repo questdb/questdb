@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -48,9 +47,9 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final ThreadLocal<StringUtf8MemoryAccessor> stringUtf8MemoryAccessor = new ThreadLocal<>(StringUtf8MemoryAccessor::new);
     private final int initialCapacity;
     private final double loadFactor;
+    private final StringUtf8MemoryAccessor memoryAccessor = new StringUtf8MemoryAccessor();
     private final int noEntryValue;
     private int capacity;
     private int free;
@@ -90,8 +89,8 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
      * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
      * are also supported, yet with higher chances of hash code collisions.
      */
-    public static long xxHash64(String str) {
-        return Hash.xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
+    public static long xxHash64(StringUtf8MemoryAccessor accessor) {
+        return Hash.xxHash64(0, accessor.length(), 0, accessor);
     }
 
     public int capacity() {
@@ -139,7 +138,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     }
 
     public int keyIndex(String key) {
-        long hashCode = xxHash64(key);
+        long hashCode = xxHash64(memoryAccessor.of(key));
         int index = (int) (hashCode & mask);
 
         if (keys[index] == null) {
@@ -202,7 +201,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                     k != null;
                     from = (from + 1) & mask, k = keys[from]
             ) {
-                long hashCode = xxHash64(k);
+                long hashCode = xxHash64(memoryAccessor.of(k));
                 int idealHit = (int) (hashCode & mask);
                 if (idealHit != from) {
                     int to;
@@ -288,7 +287,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     private void putAt0(int index, String key, int value) {
         keys[index] = key;
-        hashCodes[index] = xxHash64(key);
+        hashCodes[index] = xxHash64(memoryAccessor.of(key));
         values[index] = value;
         if (--free == 0) {
             rehash();
