@@ -85,6 +85,14 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         clear();
     }
 
+    /**
+     * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
+     * are also supported, yet with higher chances of hash code collisions.
+     */
+    public static long xxHash64(String str) {
+        return Hash.xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
+    }
+
     @Override
     public final void clear() {
         Arrays.fill(keys, null);
@@ -287,14 +295,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                 values[index] = oldValues[i];
             }
         }
-    }
-
-    /**
-     * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
-     * are also supported, yet with higher chances of hash code collisions.
-     */
-    static long xxHash64(String str) {
-        return Hash.xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
     }
 
     /**
