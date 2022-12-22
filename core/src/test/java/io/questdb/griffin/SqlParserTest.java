@@ -2382,6 +2382,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testEmptyColumnAliasDisallowed() throws Exception {
         assertSyntaxError("select x as '' from long_sequence(1)", 15, "column alias");
         assertSyntaxError("select 'x' '' from long_sequence(1)", 14, "column alias");
+        assertSyntaxError("select x as \"\" from long_sequence(1)", 15, "column alias");
     }
 
     @Test
@@ -2407,6 +2408,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("select * from long_sequence(1) as \"\"", 34, "table alias");
         assertSyntaxError("select ''.* from long_sequence(1) as ''", 37, "table alias");
         assertSyntaxError("select \"\".* from long_sequence(1) as \"\"", 37, "table alias");
+        assertSyntaxError("select ''.\"*\" from long_sequence(1) as ''", 39, "table alias");
     }
 
     @Test
@@ -5818,6 +5820,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose x from (select [x] from long_sequence(1) foo) foo",
                 "select 'foo'.* from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.\"*\" from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.'*' from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo.*\" from long_sequence(1) as \"foo\""
+        );
+
+        // the alias itself contains double quotes. should this be allowed at all?
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) \\\"foo\\\") \\\"foo\\\"",
+                "select \\\"foo\\\".* from long_sequence(1) as \\\"foo\\\""
         );
     }
 
