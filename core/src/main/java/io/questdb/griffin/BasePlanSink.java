@@ -34,13 +34,17 @@ import org.jetbrains.annotations.TestOnly;
 public abstract class BasePlanSink implements PlanSink {
 
     protected final ObjStack<RecordCursorFactory> factoryStack;
-    protected final EscapingStringSink sink;
+    protected final HtmlEscapingStringSink htmlSink;
+    protected final EscapingStringSink textSink;
     protected int depth;
     protected SqlExecutionContext executionContext;
+    protected EscapingStringSink sink;
     protected boolean useBaseMetadata;
 
     public BasePlanSink() {
-        this.sink = new EscapingStringSink();
+        this.htmlSink = new HtmlEscapingStringSink();
+        this.textSink = new EscapingStringSink();
+        this.sink = textSink;
         this.depth = 0;
         this.factoryStack = new ObjStack<>();
     }
@@ -117,7 +121,7 @@ public abstract class BasePlanSink implements PlanSink {
         @Override
         public CharSink put(CharSequence cs) {
             for (int i = 0, n = cs.length(); i < n; i++) {
-                escapeSpace(cs.charAt(i));
+                escape(cs.charAt(i));
             }
             return this;
         }
@@ -125,21 +129,21 @@ public abstract class BasePlanSink implements PlanSink {
         @Override
         public CharSink put(CharSequence cs, int lo, int hi) {
             for (int i = lo; i < hi; i++) {
-                escapeSpace(cs.charAt(i));
+                escape(cs.charAt(i));
             }
             return this;
         }
 
         @Override
         public CharSink put(char c) {
-            escapeSpace(c);
+            escape(c);
             return this;
         }
 
         @Override
         public CharSink put(char[] chars, int start, int len) {
             for (int i = start; i < start + len; i++) {
-                escapeSpace(chars[i]);
+                escape(chars[i]);
             }
             return this;
         }
@@ -149,7 +153,7 @@ public abstract class BasePlanSink implements PlanSink {
             return this;
         }
 
-        private void escapeSpace(char c) {
+        protected void escape(char c) {
             if (c < 32) {
                 switch (c) {
                     case '\b':
@@ -178,4 +182,17 @@ public abstract class BasePlanSink implements PlanSink {
             }
         }
     }
+
+    static class HtmlEscapingStringSink extends EscapingStringSink {
+        protected void escape(char c) {
+            if (c == '<') {
+                super.put("&lt;");
+            } else if (c == '>') {
+                super.put("&gt;");
+            } else {
+                super.escape(c);
+            }
+        }
+    }
+
 }

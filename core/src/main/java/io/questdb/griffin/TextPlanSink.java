@@ -128,9 +128,11 @@ public class TextPlanSink extends BasePlanSink {
         if (executionContext.getBindVariableService() == null) {
             this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
             this.attrIndent = "&nbsp;&nbsp;";
+            this.sink = htmlSink;
         } else {
             this.childIndent = "    ";
             this.attrIndent = "  ";
+            this.sink = textSink;
         }
 
         if (factory != null) {
