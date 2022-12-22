@@ -22,8 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.line.tcp;
 
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;

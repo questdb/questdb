@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.line.tcp;
 
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.util.Arrays;
@@ -43,8 +45,11 @@ import java.util.Arrays;
  * the string in UTF8.
  */
 public class DirectByteCharSequenceIntHashMap implements Mutable {
+
     public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final ThreadLocal<StringUtf8MemoryAccessor> stringUtf8MemoryAccessor = new ThreadLocal<>(StringUtf8MemoryAccessor::new);
+
     private final ObjList<String> list;
     private final double loadFactor;
     private final int noEntryValue;
@@ -121,7 +126,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     }
 
     public int keyIndex(String key) {
-        long hashCode = Hash.xxHash64(key);
+        long hashCode = xxHash64(key);
         int index = (int) (hashCode & mask);
 
         if (keys[index] == null) {
@@ -184,7 +189,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                     k != null;
                     from = (from + 1) & mask, k = keys[from]
             ) {
-                long hashCode = Hash.xxHash64(k);
+                long hashCode = xxHash64(k);
                 int idealHit = (int) (hashCode & mask);
                 if (idealHit != from) {
                     int to;
@@ -255,7 +260,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     private void putAt0(int index, String key, int value) {
         keys[index] = key;
-        hashCodes[index] = Hash.xxHash64(key);
+        hashCodes[index] = xxHash64(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -281,6 +286,70 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                 hashCodes[index] = oldHashCodes[i];
                 values[index] = oldValues[i];
             }
+        }
+    }
+
+    /**
+     * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
+     * are also supported, yet with higher chances of hash code collisions.
+     */
+    static long xxHash64(String str) {
+        return Hash.xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
+    }
+
+    /**
+     * This memory accessor interprets string as a sequence of UTF8 bytes.
+     * It means that each string's char is trimmed to a byte when calculating
+     * the hash code.
+     */
+    public static class StringUtf8MemoryAccessor implements Hash.MemoryAccessor {
+
+        private String str;
+
+        @Override
+        public byte getByte(long offset) {
+            return (byte) str.charAt((int) offset);
+        }
+
+        @Override
+        public int getInt(long offset) {
+            final int index = (int) offset;
+            final int n = byteAsUnsignedInt(index)
+                    | (byteAsUnsignedInt(index + 1) << 8)
+                    | (byteAsUnsignedInt(index + 2) << 16)
+                    | (byteAsUnsignedInt(index + 3) << 24);
+            return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
+        }
+
+        @Override
+        public long getLong(long offset) {
+            final int index = (int) offset;
+            final long n = byteAsUnsignedLong(index)
+                    | (byteAsUnsignedLong(index + 1) << 8)
+                    | (byteAsUnsignedLong(index + 2) << 16)
+                    | (byteAsUnsignedLong(index + 3) << 24)
+                    | (byteAsUnsignedLong(index + 4) << 32)
+                    | (byteAsUnsignedLong(index + 5) << 40)
+                    | (byteAsUnsignedLong(index + 6) << 48)
+                    | (byteAsUnsignedLong(index + 7) << 56);
+            return Unsafe.isLittleEndian() ? n : Long.reverseBytes(n);
+        }
+
+        public int length() {
+            return str.length();
+        }
+
+        public StringUtf8MemoryAccessor of(String str) {
+            this.str = str;
+            return this;
+        }
+
+        private int byteAsUnsignedInt(int index) {
+            return ((byte) str.charAt(index)) & 0xff;
+        }
+
+        private long byteAsUnsignedLong(int index) {
+            return (long) ((byte) str.charAt(index)) & 0xff;
         }
     }
 }

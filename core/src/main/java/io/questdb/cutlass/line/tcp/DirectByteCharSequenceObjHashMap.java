@@ -22,11 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.line.tcp;
 
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.util.Arrays;
+
+import static io.questdb.cutlass.line.tcp.DirectByteCharSequenceIntHashMap.xxHash64;
 
 /**
  * A copy implementation of CharSequenceObjHashMap. It is there to work with concrete classes
@@ -42,8 +45,10 @@ import java.util.Arrays;
  * strings (j.l.String) with non-ASCII chars will not work correctly, so make sure to re-encode
  * the string in UTF8.
  */
-public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
+class DirectByteCharSequenceObjHashMap<V> implements Mutable {
+
     private static final int MIN_INITIAL_CAPACITY = 16;
+
     private final ObjList<String> list;
     private final double loadFactor;
     private int capacity;
@@ -118,7 +123,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(String key) {
-        long hashCode = Hash.xxHash64(key);
+        long hashCode = xxHash64(key);
         int index = (int) (hashCode & mask);
 
         if (keys[index] == null) {
@@ -185,7 +190,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                long hashCode = Hash.xxHash64(key);
+                long hashCode = xxHash64(key);
                 int idealHit = (int) (hashCode & mask);
                 if (idealHit != from) {
                     int to;
@@ -262,7 +267,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             return false;
         } else {
             keys[index] = key;
-            hashCodes[index] = Hash.xxHash64(key);
+            hashCodes[index] = xxHash64(key);
             values[index] = value;
             if (--free == 0) {
                 rehash();

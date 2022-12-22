@@ -24,8 +24,8 @@
 
 package org.questdb;
 
+import io.questdb.cutlass.line.tcp.DirectByteCharSequenceIntHashMap;
 import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.DirectByteCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;

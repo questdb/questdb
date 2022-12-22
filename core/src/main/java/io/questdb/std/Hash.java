@@ -34,7 +34,7 @@ public final class Hash {
     private static final long XXH_PRIME64_3 = 1609587929392839161L;  /* 0b0001011001010110011001111011000110011110001101110111100111111001 */
     private static final long XXH_PRIME64_4 = -8796714831421723037L; /* 0b1000010111101011110010100111011111000010101100101010111001100011 */
     private static final long XXH_PRIME64_5 = 2870177450012600261L;  /* 0b0010011111010100111010110010111100010110010101100110011111000101 */
-    private static final ThreadLocal<StringUtf8MemoryAccessor> stringUtf8MemoryAccessor = new ThreadLocal<>(StringUtf8MemoryAccessor::new);
+
     private static final MemoryAccessor unsafeAccessor = new MemoryAccessor() {
         @Override
         public byte getByte(long offset) {
@@ -99,14 +99,6 @@ public final class Hash {
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
-    }
-
-    /**
-     * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
-     * are also supported, yet with higher chances of hash code collisions.
-     */
-    public static long xxHash64(String str) {
-        return xxHash64(0, str.length(), 0, stringUtf8MemoryAccessor.get().of(str));
     }
 
     /**
@@ -223,57 +215,5 @@ public final class Hash {
         int getInt(long offset);
 
         long getLong(long offset);
-    }
-
-    /**
-     * This memory accessor interprets string as a sequence of UTF8 bytes.
-     * It means that each string's char is trimmed to a byte when calculating
-     * the hash code.
-     */
-    private static class StringUtf8MemoryAccessor implements MemoryAccessor {
-
-        private String str;
-
-        @Override
-        public byte getByte(long offset) {
-            return (byte) str.charAt((int) offset);
-        }
-
-        @Override
-        public int getInt(long offset) {
-            final int index = (int) offset;
-            final int n = byteAsUnsignedInt(index)
-                    | (byteAsUnsignedInt(index + 1) << 8)
-                    | (byteAsUnsignedInt(index + 2) << 16)
-                    | (byteAsUnsignedInt(index + 3) << 24);
-            return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
-        }
-
-        @Override
-        public long getLong(long offset) {
-            final int index = (int) offset;
-            final long n = byteAsUnsignedLong(index)
-                    | (byteAsUnsignedLong(index + 1) << 8)
-                    | (byteAsUnsignedLong(index + 2) << 16)
-                    | (byteAsUnsignedLong(index + 3) << 24)
-                    | (byteAsUnsignedLong(index + 4) << 32)
-                    | (byteAsUnsignedLong(index + 5) << 40)
-                    | (byteAsUnsignedLong(index + 6) << 48)
-                    | (byteAsUnsignedLong(index + 7) << 56);
-            return Unsafe.isLittleEndian() ? n : Long.reverseBytes(n);
-        }
-
-        public StringUtf8MemoryAccessor of(String str) {
-            this.str = str;
-            return this;
-        }
-
-        private int byteAsUnsignedInt(int index) {
-            return ((byte) str.charAt(index)) & 0xff;
-        }
-
-        private long byteAsUnsignedLong(int index) {
-            return (long) ((byte) str.charAt(index)) & 0xff;
-        }
     }
 }
