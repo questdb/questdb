@@ -83,7 +83,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
             cursor.of(executionContext, slaveCursor);
             return cursor;
         } catch (Throwable e) {
-            Misc.free(slaveCursor);
             Misc.free(cursor);
             throw e;
         }
@@ -206,6 +205,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
         public void toTop() {
             masterCursor.toTop();
             useSlaveCursor = false;
+            filter.toTop();
         }
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -219,20 +219,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractRecordCurs
         }
 
         void of(SqlExecutionContext executionContext, RecordCursor slaveCursor) throws SqlException {
-            try {
-                buildMapOfSlaveRecords(slaveCursor, executionContext.getCircuitBreaker());
-                this.masterCursor = masterFactory.getCursor(executionContext);
-
-                this.slaveCursor = slaveCursor;
-                this.masterRecord = masterCursor.getRecord();
-                Record slaveRecord = slaveChain.getRecord();
-                this.slaveChain.setSymbolTableResolver(slaveCursor);
-                record.of(masterRecord, slaveRecord);
-                useSlaveCursor = false;
-            } catch (Throwable e) {
-                this.masterCursor = Misc.free(masterCursor);
-                throw e;
-            }
+            this.slaveCursor = slaveCursor;
+            buildMapOfSlaveRecords(slaveCursor, executionContext.getCircuitBreaker());
+            this.masterCursor = masterFactory.getCursor(executionContext);
+            this.masterRecord = masterCursor.getRecord();
+            Record slaveRecord = slaveChain.getRecord();
+            this.slaveChain.setSymbolTableResolver(slaveCursor);
+            record.of(masterRecord, slaveRecord);
+            useSlaveCursor = false;
         }
     }
 }

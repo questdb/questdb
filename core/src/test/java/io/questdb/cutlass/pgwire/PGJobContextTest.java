@@ -2175,37 +2175,37 @@ if __name__ == "__main__":
 
     @Test
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, true)) {
-                    connection.setAutoCommit(false);
+        final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj";
 
-                    PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
-                            "select x," +
-                            " timestamp_sequence(0, 1000) ts" +
-                            " from long_sequence(100000)) timestamp (ts)");
-                    tbl.execute();
+        testFetchDisconnnectReleasesReader(query);
+    }
 
-                    PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
-                    connection.setNetworkTimeout(Runnable::run, 1);
-                    int testSize = 100000;
-                    stmt.setFetchSize(testSize);
-                    assertEquals(testSize, stmt.getFetchSize());
+    @Test
+    public void testFetchDisconnectReleasesReaderHashJoin() throws Exception {
+        final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from crj join xx on x = p0 ";
 
-                    try {
-                        stmt.executeQuery();
-                        Assert.fail();
-                    } catch (PSQLException ex) {
-                        // expected
-                        Assert.assertNotNull(ex);
-                    }
-                }
-            }
-        });
+        testFetchDisconnnectReleasesReader(query);
+    }
+
+    @Test
+    public void testFetchDisconnectReleasesReaderLeftHashJoin() throws Exception {//slave - cross join
+        final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join (select * from xx x1 cross join xx x2) on x = p0 and x <= 1";
+
+        testFetchDisconnnectReleasesReader(query);
+    }
+
+    @Test
+    public void testFetchDisconnectReleasesReaderLeftHashJoinLight() throws Exception {
+        final String query = "with crj as (select first(x) as p0 from xx)  select x / p0 from crj left join xx on x = p0 and x <= 1";
+
+        testFetchDisconnnectReleasesReader(query);
+    }
+
+    @Test
+    public void testFetchDisconnectReleasesReaderLeftNLJoin() throws Exception {
+        final String query = "with crj as (select first(x) as p0 from xx) select x / p0 from xx left join crj on x <= p0";
+
+        testFetchDisconnnectReleasesReader(query);
     }
 
     @Test
@@ -7024,10 +7024,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -7060,6 +7056,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
@@ -8214,6 +8214,40 @@ create table tab as (
                                     rs
                             );
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    private void testFetchDisconnnectReleasesReader(String query) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                    connection.setAutoCommit(false);
+
+                    PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
+                            "select x," +
+                            " timestamp_sequence(0, 1000) ts" +
+                            " from long_sequence(100000)) timestamp (ts)");
+                    tbl.execute();
+
+                    PreparedStatement stmt = connection.prepareStatement(query);
+                    connection.setNetworkTimeout(Runnable::run, 1);
+                    int testSize = 100000;
+                    stmt.setFetchSize(testSize);
+                    assertEquals(testSize, stmt.getFetchSize());
+
+                    try {
+                        stmt.executeQuery();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        // expected
+                        Assert.assertNotNull(ex);
                     }
                 }
             }

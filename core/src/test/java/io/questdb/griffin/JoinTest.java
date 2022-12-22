@@ -3372,6 +3372,37 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLeftHashJoinOnFunctionCondition16() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (1,'f'), (1, 'g'), (1, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\td\n" +
+                            "2\tb\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition17() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
+            compile("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
+            compile("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc",
+                    "i\ts1\tts1\tj\ts2\tts2\n" +
+                            "2\tb\t1970-01-01T00:00:00.000002Z\tNaN\t\t\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
     public void testLeftHashJoinOnFunctionCondition2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int)");
