@@ -173,42 +173,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testApplyJobFailsToApplyStructureChange() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                AlterOperation dodgyAlterOp = new AlterOperation() {
-                    @Override
-                    public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean isStructural() {
-                        return true;
-                    }
-
-                    @Override
-                    public void serializeBody(MemoryA sink) {
-                    }
-                };
-
-                twa.apply(dodgyAlterOp, true);
-            }
-
-            drainWalQueue();
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef', null)");
-
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
-        });
-    }
-
-    @Test
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

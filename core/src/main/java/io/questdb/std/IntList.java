@@ -132,9 +132,6 @@ public class IntList implements Mutable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
-        if (index >= pos) {
-            System.out.println("ok");
-        }
         assert index < pos;
         return buffer[index];
     }
