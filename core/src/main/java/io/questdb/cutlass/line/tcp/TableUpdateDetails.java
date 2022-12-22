@@ -37,6 +37,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -161,6 +162,10 @@ public class TableUpdateDetails implements Closeable {
 
     public long getLastMeasurementMillis() {
         return lastMeasurementMillis;
+    }
+
+    public MillisecondClock getMillisecondClock() {
+        return millisecondClock;
     }
 
     public int getNetworkIOOwnerCount() {
@@ -460,6 +465,10 @@ public class TableUpdateDetails implements Closeable {
                     geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
+        void addColumnType(int colIndex, int colType) {
+            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) colIndex));
+        }
+
         void clear() {
             columnIndexByNameUtf8.clear();
             columnTypeByNameUtf8.clear();
@@ -481,14 +490,15 @@ public class TableUpdateDetails implements Closeable {
             this.latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
+        void clearColumnTypes() {
+            columnTypes.clear();
+        }
+
         String getColName() {
             assert colName != null;
             return colName;
         }
 
-        // returns the column index for column name passed in colNameUtf8,
-        // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
-        // or DUPLICATED_COLUMN if the column has already been processed on the current event
         int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
             int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
             if (colWriterIndex < 0) {
@@ -499,6 +509,44 @@ public class TableUpdateDetails implements Closeable {
                     // column has not been sent to the writer by name on this line before
                     // we can try to resolve column index using table reader
                     colWriterIndex = getColumnWriterIndex(colNameUtf16);
+                    if (colWriterIndex > -1) {
+                        // keys of this map will be checked against DirectByteCharSequence when get() is called
+                        // DirectByteCharSequence.equals() compares chars created from each byte, basically it
+                        // assumes that each char is encoded on a single byte (ASCII)
+                        // utf8BytesToString() is used here instead of a simple toString() call to make sure
+                        // column names with non-ASCII chars are handled properly
+                        columnIndexByNameUtf8.put(utf8BytesToString(colNameUtf8, tempSink), colWriterIndex);
+                    } else {
+                        // cannot not resolve column index even from the reader
+                        // column will be passed to the writer by name
+                        colName = colNameUtf16.toString();
+                        addedColsUtf16.addAt(index, colName);
+                        return COLUMN_NOT_FOUND;
+                    }
+                } else {
+                    // column has been passed by name earlier on this event, duplicate should be skipped
+                    return DUPLICATED_COLUMN;
+                }
+            }
+
+            if (processedCols.extendAndReplace(colWriterIndex, true)) {
+                // column has been passed by index earlier on this event, duplicate should be skipped
+                return DUPLICATED_COLUMN;
+            }
+            return colWriterIndex;
+        }
+
+        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+            int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
+            if (colWriterIndex < 0) {
+                // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
+                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
+                final int index = addedColsUtf16.keyIndex(colNameUtf16);
+                if (index > -1) {
+                    // column has not been sent to the writer by name on this line before
+                    // we can try to resolve column index using table reader
+                    int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
+                    colWriterIndex = colIndex < 0 ? colIndex : metadata.getWriterIndex(colIndex);
                     if (colWriterIndex > -1) {
                         // keys of this map will be checked against DirectByteCharSequence when get() is called
                         // DirectByteCharSequence.equals() compares chars created from each byte, basically it
