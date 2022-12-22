@@ -194,6 +194,15 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
+    // o3PartitionUpdateSink (offset, description): 
+    // 0, partitionTimestamp
+    // 1, timestampMin
+    // 2, timestampMax
+    // 3, srcOooPartitionLo
+    // 4, srcOooPartitionHi
+    // 5, partitionMutates ? 1 : 0
+    // 6, srcOooMax
+    // 7, srcDataMax
     private DirectLongList o3PartitionUpdateSink;
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
@@ -3789,7 +3798,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             long srcDataMax,
             boolean partitionMutates
     ) {
-        this.txWriter.minTimestamp = Math.min(timestampMin, this.txWriter.minTimestamp);
+        txWriter.minTimestamp = Math.min(timestampMin, txWriter.minTimestamp);
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
         final int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
@@ -4289,7 +4298,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 }
             }
             populateDenseIndexerList();
-            LOG.info().$("switched partition [path='").$(path).$('\'').I$();
+            LOG.info().$("switched partition [path='").utf8(path).$('\'').I$();
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -4499,17 +4508,17 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         srcNameTxn = txWriter.getTxn() - 1;
                     }
 
-                    // We're appending onto the last partition.
+                    // We're appending onto the last (active) partition.
                     final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
 
-                    // check partition read-only state
-                    final boolean partitionIsReadOnly = txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp);
-
                     // Number of rows to insert from the O3 segment into this partition.
-                    final long srcOooBatchRowSize = partitionIsReadOnly ? 0L : srcOooHi - srcOooLo + 1;
+                    final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
                     // Final partition size after current insertions.
                     final long partitionSize = srcDataMax + srcOooBatchRowSize;
+
+                    // check partition read-only state
+                    final boolean partitionIsReadOnly = txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp);
 
                     pCount++;
 
@@ -4537,22 +4546,31 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             .$(", memUsed=").$(Unsafe.getMemUsed())
                             .I$();
 
-                    if (partitionTimestamp < lastPartitionTimestamp) {
-                        // increment fixedRowCount by number of rows old partition incremented
-                        this.txWriter.fixedRowCount += srcOooBatchRowSize;
-                    } else if (partitionTimestamp == lastPartitionTimestamp) {
-                        // this is existing "last" partition, we can set the size directly
-                        prevTransientRowCount = partitionSize;
+                    if (!partitionIsReadOnly) {
+                        if (partitionTimestamp < lastPartitionTimestamp) {
+                            // increment fixedRowCount by number of rows old partition incremented
+                            this.txWriter.fixedRowCount += srcOooBatchRowSize;
+                        } else if (partitionTimestamp == lastPartitionTimestamp) {
+                            // this is existing "last" partition, we can set the size directly
+                            prevTransientRowCount = partitionSize;
+                        } else {
+                            // this is potentially a new last partition
+                            this.txWriter.fixedRowCount += prevTransientRowCount;
+                            prevTransientRowCount = partitionSize;
+                        }
                     } else {
-                        // this is potentially a new last partition
-                        this.txWriter.fixedRowCount += prevTransientRowCount;
-                        prevTransientRowCount = partitionSize;
-                    }
-                    
-                    // move over read only partitions
-                    if (partitionIsReadOnly) {
+                        if (partitionTimestamp == lastPartitionTimestamp) {
+                            // this is existing "last" partition, we can set the size directly
+                            prevTransientRowCount = srcDataMax;
+                        } else if (partitionTimestamp > lastPartitionTimestamp) {
+                            // this is potentially a new last partition
+                            this.txWriter.fixedRowCount += prevTransientRowCount;
+                            prevTransientRowCount = srcDataMax;
+                        }
+
+                        // move over read-only partitions
                         o3IgnoredPartitionTimestamps.add(partitionTimestamp);
-                        ignoredRowCount += srcOooHi - srcOooLo + 1;
+                        ignoredRowCount += srcOooBatchRowSize;
                         continue;
                     }
 
@@ -5904,7 +5922,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         for (int partitionOffset = 0, n = (int) o3ColumnTopSink.size(); partitionOffset < n; partitionOffset += increment) {
             long partitionTimestamp = o3ColumnTopSink.get(partitionOffset);
-            if (partitionTimestamp > -1) {
+            if (partitionTimestamp != -1L) {
                 for (int column = 0; column < columnCount; column++) {
                     long colTop = o3ColumnTopSink.get(partitionOffset + column + 1);
                     if (colTop > -1L) {

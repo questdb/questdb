@@ -900,7 +900,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         : srcDataMax + srcOooBatchRowSize
         );
 
-        LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
+        LOG.debug().$("partition [ts=").$ts(oooTimestampLo).I$();
 
         final long timestampMergeIndexAddr;
         final long timestampMergeIndexSize;
