@@ -959,7 +959,7 @@ public class ImportIODispatcherTest {
                                                 .execute(requestTemplate, "HTTP/1.1 200 OK");
                                     }
 
-                                    new SendAndReceiveRequestBuilder().withExpectDisconnect(false).executeMany(httpClient -> {
+                                    new SendAndReceiveRequestBuilder().executeMany(httpClient -> {
                                         for (int row = 0; row < importRowCount; row++) {
                                             final String request = "SELECT+Col1+FROM+" + tableName + "+WHERE+Col1%3D%27SYM-" + row + "%27; ";
 

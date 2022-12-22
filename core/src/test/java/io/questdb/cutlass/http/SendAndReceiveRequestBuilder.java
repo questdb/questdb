@@ -47,20 +47,19 @@ public class SendAndReceiveRequestBuilder {
             "Accept-Encoding: gzip, deflate, br\r\n" +
             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
             "\r\n";
-    public final static String ResponseHeaders =
-            "HTTP/1.1 200 OK\r\n" +
-                    "Server: questDB/1.0\r\n" +
-                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                    "Transfer-Encoding: chunked\r\n" +
-                    "Content-Type: application/json; charset=utf-8\r\n" +
-                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                    "\r\n";
+    public final static String ResponseHeaders = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Keep-Alive: timeout=5, max=10000\r\n" +
+            "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
     private final int maxWaitTimeoutMs = 120000;
     private int clientLingerSeconds = -1;
     private int compareLength = -1;
-    private boolean expectDisconnect;
+    private boolean expectReceiveDisconnect;
     private boolean expectSendDisconnect;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
@@ -77,7 +76,7 @@ public class SendAndReceiveRequestBuilder {
                 Assert.assertEquals(0, nf.configureLinger(fd, clientLingerSeconds));
             }
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-            if (!expectDisconnect) {
+            if (!expectReceiveDisconnect) {
                 nf.configureNonBlocking(fd);
             }
 
@@ -103,7 +102,7 @@ public class SendAndReceiveRequestBuilder {
                 Assert.assertTrue(fd > -1);
                 TestUtils.assertConnect(nf, fd, sockAddrInfo);
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-                if (!expectDisconnect) {
+                if (!expectReceiveDisconnect) {
                     nf.configureNonBlocking(fd);
                 }
 
@@ -151,7 +150,7 @@ public class SendAndReceiveRequestBuilder {
         boolean disconnected = false;
         boolean timeoutExpired = false;
         IntList receivedByteList = new IntList(expectedToReceive);
-        while (received < expectedToReceive) {
+        while (received < expectedToReceive || expectReceiveDisconnect) {
             int n = nf.recv(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
@@ -200,9 +199,13 @@ public class SendAndReceiveRequestBuilder {
             }
         }
 
-        if (disconnected && !expectDisconnect && !expectSendDisconnect) {
+        if (disconnected && !expectReceiveDisconnect && !expectSendDisconnect) {
             LOG.error().$("disconnected?").$();
             Assert.fail();
+        }
+
+        if (expectReceiveDisconnect) {
+            Assert.assertTrue("server disconnect was expected", disconnected);
         }
 
         if (timeoutExpired) {
@@ -218,7 +221,7 @@ public class SendAndReceiveRequestBuilder {
             Assert.assertTrue(fd > -1);
             TestUtils.assertConnect(nf, fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-            if (!expectDisconnect) {
+            if (!expectReceiveDisconnect) {
                 nf.configureNonBlocking(fd);
             }
 
@@ -245,7 +248,7 @@ public class SendAndReceiveRequestBuilder {
     }
 
     public void executeUntilDisconnect(String request, int fd, final int len, long ptr, HttpClientStateListener listener) {
-        withExpectDisconnect(true);
+        withExpectReceiveDisconnect(true);
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
@@ -329,8 +332,8 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
-        this.expectDisconnect = expectDisconnect;
+    public SendAndReceiveRequestBuilder withExpectReceiveDisconnect(boolean expectDisconnect) {
+        this.expectReceiveDisconnect = expectDisconnect;
         return this;
     }
 

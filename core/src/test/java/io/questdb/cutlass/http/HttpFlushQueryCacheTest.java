@@ -107,8 +107,6 @@ public class HttpFlushQueryCacheTest {
     private static void sendAndReceive(String request, CharSequence response) throws InterruptedException {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                .withExpectDisconnect(false)
-                .withRequestCount(1)
                 .execute(request, response);
     }
 

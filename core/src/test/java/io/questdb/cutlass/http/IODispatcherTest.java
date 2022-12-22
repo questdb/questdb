@@ -463,7 +463,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testDdlInExp() throws Exception {
+    public void testDDLInExp() throws Exception {
         testJsonQuery(
                 20,
                 "GET /exp?query=create%20table%20balance%20(money%20float) HTTP/1.1\r\n" +
@@ -943,10 +943,10 @@ public class IODispatcherTest {
             String response,
             String request,
             NetworkFacade nf,
-            boolean expectDisconnect,
+            boolean expectReceiveDisconnect,
             int requestCount
     ) throws Exception {
-        testImport(response, request, nf, null, expectDisconnect, requestCount);
+        testImport(response, request, nf, null, expectReceiveDisconnect, requestCount);
     }
 
     public void testImport(
@@ -954,10 +954,9 @@ public class IODispatcherTest {
             String request,
             NetworkFacade nf,
             CairoConfiguration configuration,
-            boolean expectDisconnect,
+            boolean expectReceiveDisconnect,
             int requestCount
     ) throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(2)
@@ -977,7 +976,7 @@ public class IODispatcherTest {
                                 requestCount,
                                 0,
                                 false,
-                                expectDisconnect
+                                expectReceiveDisconnect
                         ));
     }
 
@@ -1075,7 +1074,7 @@ public class IODispatcherTest {
                         "Accept-Language: en-GB,en;q=0.9,es-AR;q=0.8,es;q=0.7\r\n" +
                         "\r\n",
                 NetworkFacadeImpl.INSTANCE,
-                true,
+                false,
                 1
         );
     }
@@ -1358,7 +1357,7 @@ public class IODispatcherTest {
                                         1,
                                         0,
                                         false,
-                                        true
+                                        false
                                 );
 
                                 StringSink sink = new StringSink();
@@ -1578,7 +1577,7 @@ public class IODispatcherTest {
                                         1,
                                         0,
                                         false,
-                                        true
+                                        false
                                 );
 
                                 StringSink sink = new StringSink();
@@ -1668,7 +1667,7 @@ public class IODispatcherTest {
                                         1,
                                         0,
                                         false,
-                                        true
+                                        false
                                 );
 
                                 StringSink sink = new StringSink();
@@ -4403,7 +4402,7 @@ public class IODispatcherTest {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         // We expect header only to be sent and then a disconnect.
                         new SendAndReceiveRequestBuilder()
-                                .withExpectDisconnect(true)
+                                .withExpectReceiveDisconnect(true)
                                 .executeWithStandardRequestHeaders(
                                         "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                         "HTTP/1.1 200 OK\r\n" +
@@ -4838,7 +4837,7 @@ public class IODispatcherTest {
                                         .withNetworkFacade(nf)
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
-                                        .withExpectDisconnect(true)
+                                        .withExpectReceiveDisconnect(true)
                                         .executeUntilDisconnect(request, fd, 200, ptr, null);
                             } finally {
                                 Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
@@ -4973,8 +4972,8 @@ public class IODispatcherTest {
                         "b0\r\n" +
                         "{\"query\":\"select 0 рекордно from long_sequence(10)\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"INT\"}],\"dataset\":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]],\"count\":10}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1);
+                        "\r\n",
+                1);
     }
 
     @Test
@@ -5328,7 +5327,7 @@ public class IODispatcherTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
-                true,
+                false,
                 1
         );
     }
@@ -6317,7 +6316,6 @@ public class IODispatcherTest {
 
     @Test
     public void testSendTimeout() throws Exception {
-
         LOG.info().$("started testSendHttpGet").$();
 
         final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
@@ -6671,11 +6669,12 @@ public class IODispatcherTest {
                                     "\r\n" +
                                     "9b\r\n" +
                                     "{\"query\":\"copy test from 'test-numeric-headers.csv' with header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"count\":1}\r\n" +
-                                    "00\r\n\r\n",
+                                    "00\r\n" +
+                                    "\r\n",
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     // Cancel should always succeed since we don't have text import jobs running here.
@@ -6705,7 +6704,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
@@ -6736,7 +6735,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
                 });
     }
@@ -6843,7 +6842,7 @@ public class IODispatcherTest {
                                     1,
                                     0,
                                     false,
-                                    true
+                                    false
                             );
 
                             sendAndReceive(
@@ -6874,7 +6873,7 @@ public class IODispatcherTest {
                                     1,
                                     0,
                                     false,
-                                    true
+                                    false
                             );
                         }
                 );
@@ -6986,7 +6985,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     final String showColumnsQuery = "show columns from balances";
@@ -7017,7 +7016,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     final String dropTableDdl = "drop table balances";
@@ -7046,7 +7045,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     // We should get a meaningful error.
@@ -7077,7 +7076,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
                 });
     }
@@ -7096,7 +7095,7 @@ public class IODispatcherTest {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         // We expect header only to be sent and then a disconnect.
                         new SendAndReceiveRequestBuilder()
-                                .withExpectDisconnect(true)
+                                .withExpectReceiveDisconnect(true)
                                 .executeWithStandardRequestHeaders(
                                         "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                         "HTTP/1.1 200 OK\r\n" +
@@ -7361,7 +7360,8 @@ public class IODispatcherTest {
                 180_000_000,
                 1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -7373,7 +7373,8 @@ public class IODispatcherTest {
                 -1,
                 -1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     private static void assertDownloadResponse(
@@ -7446,11 +7447,11 @@ public class IODispatcherTest {
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print,
-            boolean expectDisconnect
+            boolean expectReceiveDisconnect
     ) throws InterruptedException {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(nf)
-                .withExpectDisconnect(expectDisconnect)
+                .withExpectReceiveDisconnect(expectReceiveDisconnect)
                 .withPrintOnly(print)
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)

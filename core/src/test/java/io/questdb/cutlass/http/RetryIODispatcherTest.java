@@ -415,7 +415,6 @@ public class RetryIODispatcherTest {
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
                 ).run((engine) -> new SendAndReceiveRequestBuilder()
-                        .withExpectDisconnect(true)
                         .execute(ValidImportRequest,
                                 "HTTP/1.1 200 OK\r\n" +
                                         "Server: questDB/1.0\r\n" +
@@ -426,7 +425,8 @@ public class RetryIODispatcherTest {
                                         "58\r\n" +
                                         "cannot parse import because of receive buffer is not big enough to parse table structure\r\n" +
                                         "00\r\n" +
-                                        "\r\n"));
+                                        "\r\n")
+                );
     }
 
     @Test
