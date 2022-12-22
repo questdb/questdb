@@ -3390,6 +3390,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition17() throws Exception {
         assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string, ts1 timestamp) timestamp(ts1)");
             compile("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
             compile("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
             compile("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
