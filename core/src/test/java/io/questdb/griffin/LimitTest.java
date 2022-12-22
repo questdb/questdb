@@ -225,6 +225,17 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
+            executeInsert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
+            assertQueryAndCache("ts\tid\n" +
+                            "1970-01-01T00:00:00.000004Z\tabc\n",
+                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true);
+        });
+    }
+
+    @Test
     public void testLimitMinusOneJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         testLimitMinusOne();
