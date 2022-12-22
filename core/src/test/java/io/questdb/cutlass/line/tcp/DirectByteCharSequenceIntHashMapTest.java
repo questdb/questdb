@@ -152,30 +152,40 @@ public class DirectByteCharSequenceIntHashMapTest {
 
     @Test
     public void testHashMapUtf8() {
-        final int memSize = 64;
+        final int N = 256;
+        final int memSize = 2 * N;
         long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
         final DirectByteCharSequence dbcs = new DirectByteCharSequence();
         DirectByteCharSequenceIntHashMap map = new DirectByteCharSequenceIntHashMap();
         try {
-            final String utf16Str = "таблица-табличка";
-            byte[] utf8Bytes = utf16Str.getBytes(StandardCharsets.UTF_8);
-            for (int i = 0; i < utf8Bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
+            final String utf16Str = "ъ";
+            final byte[] utf8Bytes = utf16Str.getBytes(StandardCharsets.UTF_8);
+            assert utf8Bytes.length == 2;
+            for (int i = 0; i < N; i++) {
+                for (int j = 0; j < 2; j++) {
+                    Unsafe.getUnsafe().putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
+                }
             }
 
-            dbcs.of(mem, mem + utf8Bytes.length);
-
-            Assert.assertEquals(-1, map.get(dbcs));
-
             final StringSink sink = new StringSink();
-            final String utf8Str = sink.put(dbcs).toString();
-            map.put(utf8Str, 42);
-            Assert.assertEquals(42, map.get(dbcs));
-            Assert.assertEquals(42, map.get(utf8Str));
+            for (int i = 0; i < N; i++) {
+                dbcs.of(mem, mem + (long) 2 * i);
+                Assert.assertEquals(-1, map.get(dbcs));
 
-            Assert.assertEquals(1, map.size());
-            map.remove(dbcs);
-            Assert.assertEquals(0, map.size());
+                sink.clear();
+                final String utf8Str = sink.put(dbcs).toString();
+                map.put(utf8Str, i);
+                Assert.assertEquals(i, map.get(dbcs));
+                Assert.assertEquals(i, map.get(utf8Str));
+            }
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertEquals(N - i, map.size());
+
+                dbcs.of(mem, mem + (long) 2 * i);
+                map.remove(dbcs);
+                Assert.assertEquals(N - i - 1, map.size());
+            }
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
         }
