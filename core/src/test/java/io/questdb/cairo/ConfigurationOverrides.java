@@ -128,6 +128,8 @@ public interface ConfigurationOverrides {
 
     Boolean isParallelFilterEnabled();
 
+    int getMaxFileNameLength();
+   
     void reset();
 
     void setAttachableDirSuffix(String attachableDirSuffix);
@@ -225,4 +227,6 @@ public interface ConfigurationOverrides {
     void setWriterCommandQueueCapacity(int writerCommandQueueCapacity);
 
     void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize);
+
+    void setMaxFileNameLength(int maxFileNameLength);
 }
