@@ -223,14 +223,15 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     @Test
     public void testInsertDateTableExists() throws Exception {
         assertType(ColumnType.DATE,
-                // no literal representation for date, only longs can be inserted
+                // no literal representation for date, only longs and timestamps can be inserted
                 "value\ttimestamp\n" +
                         "2021-09-06T13:12:01.000Z\t1970-01-01T00:00:01.000000Z\n" +
                         "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:07.000000Z\n" +
                         "\t1970-01-01T00:00:08.000000Z\n" +
                         "\t1970-01-01T00:00:09.000000Z\n" +
                         "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:10.000000Z\n" +
-                        "292278994-08-17T07:12:55.807Z\t1970-01-01T00:00:11.000000Z\n",
+                        "292278994-08-17T07:12:55.807Z\t1970-01-01T00:00:11.000000Z\n" +
+                        "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
                         "1630933921000i", // valid
                         "1630933921000", // discarded bad type double
@@ -246,7 +247,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
                         "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
-                        "0t", // discarded bad type timestamp
+                        "0t", // valid
                 },
                 false);
     }

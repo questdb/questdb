@@ -51,7 +51,7 @@ public class TxSerializer {
     private static final FilesFacade ff = new FilesFacadeImpl();
 
     /*
-     * Read _txn file and prints to std output JSON translation.
+     * Reads _txn file and prints to std output JSON translation.
      * Reads json file and saves it to binary _txn format.
      *
      *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
@@ -230,7 +230,7 @@ public class TxSerializer {
     }
 
     private static void printUsage() {
-        System.out.printf("usage: %s -s <json_path> <txn_path> | -d <json_path>", TxSerializer.class.getName());
+        System.out.println("usage: " + TxSerializer.class.getName() + " -s <json_path> <txn_path> | -d <txn_path>");
     }
 
     private void serializeFile(String jsonFile, String target) throws IOException {
