@@ -787,13 +787,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
                 if (partitionSize > -1L) {
                     LOG.info()
-                            .$("open partition ").utf8(path.$())
+                            .$("open partition ").utf8(path)
                             .$(" [rowCount=").$(partitionSize)
                             .$(", partitionNameTxn=").$(partitionNameTxn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", partitionIndex=").$(partitionIndex)
                             .$(", partitionCount=").$(partitionCount)
-                            .$(']').$();
+                            .I$();
 
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
@@ -804,7 +804,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 return partitionSize;
             }
-            LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
+            LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path).I$();
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
                 CairoException exception = CairoException.critical(0).put("Partition '");

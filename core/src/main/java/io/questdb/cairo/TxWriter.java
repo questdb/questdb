@@ -144,9 +144,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
             putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+            putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
 
-            // Store symbol counts. Unfortunately we cannot skip it in here
+            // Store symbol counts and partition table. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
+            saveAttachedPartitionsToTx(symbolCountProviders.size());
 
             Unsafe.getUnsafe().storeFence();
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);

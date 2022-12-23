@@ -53,15 +53,20 @@ import static io.questdb.test.tools.TestUtils.assertSql;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBootstrapTest {
+    private static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
+            "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
+            "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
+            "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
+            "2022-12-11T00:03:52.552638Z\t2022-12-11T23:59:58.999977Z\t278\n";
     private static final String firstPartitionName = "2022-12-08";
-    private static final long firstPartitionTs;
+    private static final long firstPartitionTs; // nanos
     private static final String futurePartitionName = "2022-12-12";
-    private static final long futurePartitionTs;
+    private static final long futurePartitionTs; // nanos
     private static final String lastPartitionName = "2022-12-11";
-    private static final long lastPartitionTs;
-    private static final long lineTsStepNanos = TimeUnit.MILLISECONDS.toNanos(1L); // min resolution of Timestamps.toString(long)
+    private static final long lastPartitionTs; // nanos
+    private static final long lineTsStep = TimeUnit.MILLISECONDS.toNanos(1L); // min resolution of Timestamps.toString(long)
     private static final String secondPartitionName = "2022-12-09";
-    private static final long secondPartitionTs;
+    private static final long secondPartitionTs; // nanos
     @Rule
     public TestName testName = new TestName();
 
@@ -72,7 +77,7 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
             createDummyConfiguration(
                     "cairo.max.uncommitted.rows=500",
                     "cairo.commit.lag=2000",
-                    "cairo.o3.max.lag=2000" // millis
+                    "cairo.o3.max.lag=2000"
             );
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -85,12 +90,11 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
         assertServerMainWithLine(
                 tableName,
                 () -> {
-                    long[] timestampNano = {lastPartitionTs * 1000L};
+                    long[] timestampNano = {lastPartitionTs};
                     try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
-                        // send data hitting a read-only partition
-                        for (int tick = 0; tick < 1000; tick++) {
+                        for (int tick = 0; tick < 5000; tick++) {
                             int tickerId = 0;
-                            timestampNano[tickerId] += lineTsStepNanos;
+                            timestampNano[tickerId] += lineTsStep;
                             sender.metric(tableName)
                                     .tag("s", "lobster")
                                     .field("l", 88)
@@ -100,12 +104,8 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                         sender.flush();
                     }
                 },
-                "min\tmax\tcount\n" +
-                        "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
-                        "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" +
-                        "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
-                        "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n",  // <-- read only, remains intact
-                false, false, false, true
+                TABLE_START_CONTENT,  // <-- read only, remains intact
+                false, false, true, true
         );
     }
 
@@ -115,11 +115,11 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
         assertServerMainWithLine(
                 tableName,
                 () -> {
-                    long[] timestampNano = {lastPartitionTs * 1000L, futurePartitionTs * 1000L};
+                    long[] timestampNano = {firstPartitionTs, lastPartitionTs, futurePartitionTs};
                     try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
-                        for (int tick = 0; tick < 4; tick++) {
+                        for (int tick = 0; tick < 5000; tick++) {
                             int tickerId = tick % timestampNano.length;
-                            timestampNano[tickerId] += lineTsStepNanos;
+                            timestampNano[tickerId] += lineTsStep;
                             sender.metric(tableName)
                                     .tag("s", "lobster")
                                     .field("l", 88)
@@ -130,12 +130,12 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                     }
                 },
                 "min\tmax\tcount\n" +
-                        "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
-                        "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" +
-                        "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
-                        "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n" + // <-- read only, remains intact
-                        "2022-12-12T00:09:03.622845Z\t2022-12-12T23:59:58.999977Z\t1\n", // TODO amend the dates
-                false, false, false, true
+                        "2022-12-08T00:00:00.001000Z\t2022-12-08T23:56:06.447339Z\t1944\n" + // +1667
+                        "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
+                        "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
+                        "2022-12-11T00:03:52.552638Z\t2022-12-11T23:59:58.999977Z\t278\n" + // ignored 1667
+                        "2022-12-12T00:00:00.001000Z\t2022-12-12T00:00:01.666000Z\t1666\n",    // new
+                false, false, false, true, false
         );
     }
 
@@ -145,11 +145,11 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
         assertServerMainWithLine(
                 tableName,
                 () -> {
-                    long[] timestampNano = {secondPartitionTs * 1000L, lastPartitionTs * 1000L}; // last is read-only
+                    long[] timestampNano = {firstPartitionTs, secondPartitionTs, lastPartitionTs};
                     try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         for (int tick = 0; tick < 4; tick++) {
                             int tickerId = tick % timestampNano.length;
-                            timestampNano[tickerId] += lineTsStepNanos;
+                            timestampNano[tickerId] += lineTsStep;
                             sender.metric(tableName)
                                     .tag("s", "lobster")
                                     .field("l", 88)
@@ -160,10 +160,10 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                     }
                 },
                 "min\tmax\tcount\n" +
-                        "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
-                        "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t280\n" + // update dates
-                        "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
-                        "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n",
+                        "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
+                        "2022-12-09T00:00:00.001000Z\t2022-12-09T23:57:23.964885Z\t279\n" + // +1
+                        "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
+                        "2022-12-11T00:03:52.552638Z\t2022-12-11T23:59:58.999977Z\t278\n",
                 true, false, true, true
         );
     }
@@ -174,11 +174,11 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
         assertServerMainWithLine(
                 tableName,
                 () -> {
-                    long[] timestampNano = {secondPartitionTs * 1000L, lastPartitionTs * 1000L};
+                    long[] timestampNano = {secondPartitionTs, lastPartitionTs};
                     try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
-                        for (int tick = 0; tick < 5000; tick++) {
+                        for (int tick = 0; tick < 4; tick++) {
                             int tickerId = tick % timestampNano.length;
-                            timestampNano[tickerId] += lineTsStepNanos;
+                            timestampNano[tickerId] += lineTsStep;
                             sender.metric(tableName)
                                     .tag("s", "lobster")
                                     .field("l", 88)
@@ -188,12 +188,7 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                         sender.flush();
                     }
                 },
-                // no change
-                "min\tmax\tcount\n" +
-                        "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
-                        "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" +
-                        "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
-                        "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n",
+                TABLE_START_CONTENT,
                 true, true, true, true
         );
     }
@@ -232,38 +227,28 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                     createTable(cairoConfig, mem, path, tableModel, 1);
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                 }
-                assertSql(
-                        compiler,
-                        context,
-                        "SELECT min(ts), max(ts), count() FROM " + tableName + " sample by 1d",
-                        Misc.getThreadLocalBuilder(),
-                        "min\tmax\tcount\n" +
-                                "2022-12-08T00:05:11.070207Z\t2022-12-09T00:01:17.517546Z\t278\n" +
-                                "2022-12-09T00:06:28.587753Z\t2022-12-10T00:02:35.035092Z\t278\n" +
-                                "2022-12-10T00:07:46.105299Z\t2022-12-11T00:03:52.552638Z\t278\n" +
-                                "2022-12-11T00:09:03.622845Z\t2022-12-11T23:59:58.999977Z\t277\n");
 
                 // set partition read-only state
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-state")) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
-                    Assert.assertEquals(partitionIsReadOnly.length, partitionCount);
+                    Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
                     for (int i = 0; i < partitionCount; i++) {
                         txWriter.setPartitionReadOnly(i, partitionIsReadOnly[i]);
                     }
                     txWriter.bumpTruncateVersion();
                     txWriter.commit(CommitMode.NOSYNC, writer.getDenseSymbolMapWriters()); // default commit mode
                 }
+
                 // check read only state
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                    TxReader txFile = reader.getTxFile();
-                    for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
-                        Assert.assertEquals(txFile.isPartitionReadOnly(i), partitionIsReadOnly[i]);
-                        Assert.assertEquals(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestamp(i)), partitionIsReadOnly[i]);
-                    }
-                }
+                checkPartitionReadOnlyState(engine, tableName, partitionIsReadOnly);
+
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        Misc.getThreadLocalBuilder(),
+                        TABLE_START_CONTENT);
 
                 // so that we know when the table writer is returned to the pool
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
@@ -281,18 +266,40 @@ public class AlterTableAttachPartitionFromSoftLinkLineTest extends AbstractBoots
                 // wait for the table writer to be returned to the pool
                 tableWriterReturnedToPool.await();
 
+                // check read only state, no changes
+                checkPartitionReadOnlyState(engine, tableName, partitionIsReadOnly);
+
                 // check expected results
-                assertSql(compiler, context, "SELECT min(ts), max(ts), count() FROM " + tableName + " sample by 1d", Misc.getThreadLocalBuilder(), finallyExpected);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        Misc.getThreadLocalBuilder(),
+                        finallyExpected);
             }
         });
     }
 
+    private static void checkPartitionReadOnlyState(CairoEngine engine, String tableName, boolean... partitionIsReadOnly) {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            TxReader txFile = reader.getTxFile();
+            int partitionCount = txFile.getPartitionCount();
+            Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
+            for (int i = 0; i < partitionCount; i++) {
+                Assert.assertEquals(txFile.isPartitionReadOnly(i), partitionIsReadOnly[i]);
+                Assert.assertEquals(txFile.isPartitionReadOnlyByPartitionTimestamp(txFile.getPartitionTimestamp(i)), partitionIsReadOnly[i]);
+            }
+        }
+    }
+
     static {
         try {
-            secondPartitionTs = TimestampFormatUtils.parseTimestamp(secondPartitionName + "T00:00:00.000Z");
-            lastPartitionTs = TimestampFormatUtils.parseTimestamp(lastPartitionName + "T00:00:00.000Z");
-            futurePartitionTs = TimestampFormatUtils.parseTimestamp(futurePartitionName + "T00:00:00.000Z");
-            firstPartitionTs = TimestampFormatUtils.parseTimestamp(firstPartitionName + "T00:00:00.000Z");
+            firstPartitionTs = TimestampFormatUtils.parseTimestamp(firstPartitionName + "T00:00:00.000Z") * 1000L;
+            secondPartitionTs = TimestampFormatUtils.parseTimestamp(secondPartitionName + "T00:00:00.000Z") * 1000L;
+            lastPartitionTs = TimestampFormatUtils.parseTimestamp(lastPartitionName + "T00:00:00.000Z") * 1000L;
+            futurePartitionTs = TimestampFormatUtils.parseTimestamp(futurePartitionName + "T00:00:00.000Z") * 1000L;
         } catch (NumericException impossible) {
             throw new RuntimeException(impossible);
         }

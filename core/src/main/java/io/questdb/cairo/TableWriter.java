@@ -125,7 +125,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final int o3ColumnMemorySize;
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
-    private final LongList o3IgnoredPartitionTimestamps = new LongList();
     private final long[] o3LastTimestampSpreads = new long[WINDOW_SIZE];
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
@@ -4444,8 +4443,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         o3DoneLatch.reset();
         o3PartitionUpdRemaining.set(0L);
-        o3IgnoredPartitionTimestamps.clear();
-        long ignoredRowCount = 0L;
         boolean success = true;
         int latchCount = 0;
         long srcOoo = rowLo;
@@ -4456,7 +4453,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // manner, assuming the partition marked "last" is the last and then for a new partition
             // we move prevTransientRowCount into the "fixedRowCount" sum and set new value on the
             // transientRowCount
-            long prevTransientRowCount = transientRowCount;
+            long commitTransientRowCount = transientRowCount;
 
             resizeColumnTopSink(o3TimestampMin, o3TimestampMax);
             resizePartitionUpdateSink(o3TimestampMin, o3TimestampMax);
@@ -4552,25 +4549,26 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             this.txWriter.fixedRowCount += srcOooBatchRowSize;
                         } else if (partitionTimestamp == lastPartitionTimestamp) {
                             // this is existing "last" partition, we can set the size directly
-                            prevTransientRowCount = partitionSize;
+                            commitTransientRowCount = partitionSize;
                         } else {
                             // this is potentially a new last partition
-                            this.txWriter.fixedRowCount += prevTransientRowCount;
-                            prevTransientRowCount = partitionSize;
+                            this.txWriter.fixedRowCount += commitTransientRowCount;
+                            commitTransientRowCount = partitionSize;
                         }
                     } else {
                         if (partitionTimestamp == lastPartitionTimestamp) {
-                            // this is existing "last" partition, we can set the size directly
-                            prevTransientRowCount = srcDataMax;
+                            commitTransientRowCount = srcDataMax;
                         } else if (partitionTimestamp > lastPartitionTimestamp) {
-                            // this is potentially a new last partition
-                            this.txWriter.fixedRowCount += prevTransientRowCount;
-                            prevTransientRowCount = srcDataMax;
+                            // this is a new last partition
+                            this.txWriter.fixedRowCount += commitTransientRowCount - srcOooBatchRowSize;
+                            commitTransientRowCount = srcDataMax;
                         }
-
                         // move over read-only partitions
-                        o3IgnoredPartitionTimestamps.add(partitionTimestamp);
-                        ignoredRowCount += srcOooBatchRowSize;
+                        LOG.critical()
+                                .$("o3 ignoring write on read-only partition [table=").utf8(tableName)
+                                .$(", timestamp=").$ts(partitionTimestamp)
+                                .$(", numRows=").$(srcOooBatchRowSize)
+                                .$();
                         continue;
                     }
 
@@ -4710,7 +4708,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
-            this.txWriter.transientRowCount = prevTransientRowCount;
+            this.txWriter.transientRowCount = commitTransientRowCount;
             this.partitionTimestampHi = Math.max(this.partitionTimestampHi, o3TimestampMax);
             this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
         } catch (Throwable th) {
@@ -4730,20 +4728,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
                 throw CairoException.critical(0).put("bulk update failed and will be rolled back");
-            }
-
-            if (ignoredRowCount > 0L) {
-                // warn the user
-                LogRecord logRecord = LOG.critical()
-                        .$("o3 ignoring write on read-only partitions [totalRows=").$(ignoredRowCount)
-                        .$(", partitionTimestamps=");
-                for (int i = 0, n = o3IgnoredPartitionTimestamps.size(); i < n; i++) {
-                    logRecord.$ts(o3IgnoredPartitionTimestamps.getQuick(i));
-                    if (i < n - 1) {
-                        logRecord.$(", ");
-                    }
-                }
-                logRecord.I$();
             }
         }
 
