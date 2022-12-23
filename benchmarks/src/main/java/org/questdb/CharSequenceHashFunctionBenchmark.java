@@ -72,25 +72,12 @@ public class CharSequenceHashFunctionBenchmark {
     }
 
     @Benchmark
-    public int testStandardDirectByteCharSequenceAutoVectorized() {
+    public long testHashMemDirectByteCharSequence() {
+        return Hash.hashMem32(charSequence);
+    }
+
+    @Benchmark
+    public int testStandardDirectByteCharSequence() {
         return Chars.hashCode(charSequence);
-    }
-
-    @Benchmark
-    public int testStandardDirectByteCharSequenceVanilla() {
-        return hashCodeVanilla(charSequence);
-    }
-
-    @Benchmark
-    public long testXXHashDirectByteCharSequence() {
-        return Hash.hashMem(charSequence.getLo(), charSequence.length());
-    }
-
-    private static int hashCodeVanilla(DirectByteCharSequence value) {
-        int h = 0;
-        for (int p = 0, len = value.length(); p < len; p++) {
-            h = 31 * h + value.charAt(p);
-        }
-        return h;
     }
 }

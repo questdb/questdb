@@ -24,31 +24,13 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.str.DirectByteCharSequence;
+
 public final class Hash {
 
+    private static final int M2 = 0x7a646e4d;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
-    private static final long XXH_PRIME64_1 = -7046029288634856825L; /* 0b1001111000110111011110011011000110000101111010111100101010000111 */
-    private static final long XXH_PRIME64_2 = -4417276706812531889L; /* 0b1100001010110010101011100011110100100111110101001110101101001111 */
-    private static final long XXH_PRIME64_3 = 1609587929392839161L;  /* 0b0001011001010110011001111011000110011110001101110111100111111001 */
-    private static final long XXH_PRIME64_4 = -8796714831421723037L; /* 0b1000010111101011110010100111011111000010101100101010111001100011 */
-    private static final long XXH_PRIME64_5 = 2870177450012600261L;  /* 0b0010011111010100111010110010111100010110010101100110011111000101 */
-
-    private static final MemoryAccessor unsafeAccessor = new MemoryAccessor() {
-        @Override
-        public byte getByte(long offset) {
-            return Unsafe.getUnsafe().getByte(offset);
-        }
-
-        @Override
-        public int getInt(long offset) {
-            return Unsafe.getUnsafe().getInt(offset);
-        }
-
-        @Override
-        public long getLong(long offset) {
-            return Unsafe.getUnsafe().getLong(offset);
-        }
-    };
 
     private Hash() {
     }
@@ -65,14 +47,91 @@ public final class Hash {
     }
 
     /**
-     * Calculates positive integer hash of memory pointer using 64-bit variant of xxHash hash algorithm.
+     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 char sequence
+     * instead of direct unsafe access.
+     */
+    public static int hashMem32(DirectByteCharSequence charSequence) {
+        return hashMem32(charSequence.getLo(), charSequence.length());
+    }
+
+    /**
+     * 32-bit variant of {@link #hashMem64(long, long)}.
+     */
+    public static int hashMem32(long p, long len) {
+        long h = 0;
+        int i = 0;
+        for (; i + 3 < len; i += 4) {
+            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+        }
+        for (; i < len; i++) {
+            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+        }
+        h *= M2;
+        return (int) h ^ (int) (h >>> 25);
+    }
+
+    /**
+     * Same as {@link #hashMem32(long, long)}, but with a UTF8 re-encoded string
+     * instead of direct unsafe access.
+     * <p>
+     * Important note:
+     * The string is interpreted as a sequence of UTF8 bytes. It means that each
+     * string's char is trimmed to a byte when calculating the hash code.
+     */
+    public static int hashMem32(String utf8String) {
+        final int len = utf8String.length();
+        long h = 0;
+        int i = 0;
+        for (; i + 3 < len; i += 4) {
+            h = h * M2 + intFromUtf8String(utf8String, i);
+        }
+        for (; i < len; i++) {
+            h = h * M2 + byteFromUtf8String(utf8String, i);
+        }
+        h *= M2;
+        return (int) h ^ (int) (h >>> 25);
+    }
+
+    /**
+     * Calculates positive integer hash of memory pointer using a polynomial
+     * hash function.
+     * <p>
+     * The function is a modified version of the function from
+     * <a href="https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html">this article</a>
+     * by Peter Lawrey.
      *
      * @param p   memory pointer
      * @param len memory length in bytes
      * @return hash code
      */
-    public static long hashMem(long p, long len) {
-        return xxHash64(p, len, 0, unsafeAccessor);
+    public static long hashMem64(long p, long len) {
+        long h = 0;
+        int i = 0;
+        for (; i + 3 < len; i += 4) {
+            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+        }
+        for (; i < len; i++) {
+            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+        }
+        h *= M2;
+        return h ^ (h >>> 25);
+    }
+
+    /**
+     * Same as {@link #hashMem64(long, long)}, but with MemoryR instead of direct
+     * unsafe access.
+     */
+    public static long hashMem64(long p, long len, MemoryR memory) {
+        long h = 0;
+        int i = 0;
+        for (; i + 3 < len; i += 4) {
+            h = h * M2 + memory.getInt(p + i);
+        }
+        for (; i < len; i++) {
+            h = h * M2 + memory.getByte(p + i);
+        }
+        h *= M2;
+        return h ^ (h >>> 25);
     }
 
     /**
@@ -99,115 +158,19 @@ public final class Hash {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
     }
 
-    /**
-     * Calculates positive integer hash of memory pointer using 64-bit variant of xxHash hash algorithm.
-     *
-     * @param p    memory pointer
-     * @param len  memory length in bytes
-     * @param seed seed value
-     * @return hash code
-     */
-    public static long xxHash64(long p, long len, long seed, MemoryAccessor accessor) {
-        long h64;
-        final long end = p + len;
-
-        if (len >= 32) {
-            final long lim = end - 32;
-            long v1 = seed + XXH_PRIME64_1 + XXH_PRIME64_2;
-            long v2 = seed + XXH_PRIME64_2;
-            long v3 = seed;
-            long v4 = seed - XXH_PRIME64_1;
-            do {
-                v1 += accessor.getLong(p) * XXH_PRIME64_2;
-                v1 = Long.rotateLeft(v1, 31);
-                v1 *= XXH_PRIME64_1;
-                p += 8;
-
-                v2 += accessor.getLong(p) * XXH_PRIME64_2;
-                v2 = Long.rotateLeft(v2, 31);
-                v2 *= XXH_PRIME64_1;
-                p += 8;
-
-                v3 += accessor.getLong(p) * XXH_PRIME64_2;
-                v3 = Long.rotateLeft(v3, 31);
-                v3 *= XXH_PRIME64_1;
-                p += 8;
-
-                v4 += accessor.getLong(p) * XXH_PRIME64_2;
-                v4 = Long.rotateLeft(v4, 31);
-                v4 *= XXH_PRIME64_1;
-                p += 8;
-            } while (p <= lim);
-
-            h64 = Long.rotateLeft(v1, 1) + Long.rotateLeft(v2, 7)
-                    + Long.rotateLeft(v3, 12) + Long.rotateLeft(v4, 18);
-
-            v1 *= XXH_PRIME64_2;
-            v1 = Long.rotateLeft(v1, 31);
-            v1 *= XXH_PRIME64_1;
-            h64 ^= v1;
-            h64 = h64 * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-            v2 *= XXH_PRIME64_2;
-            v2 = Long.rotateLeft(v2, 31);
-            v2 *= XXH_PRIME64_1;
-            h64 ^= v2;
-            h64 = h64 * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-            v3 *= XXH_PRIME64_2;
-            v3 = Long.rotateLeft(v3, 31);
-            v3 *= XXH_PRIME64_1;
-            h64 ^= v3;
-            h64 = h64 * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-            v4 *= XXH_PRIME64_2;
-            v4 = Long.rotateLeft(v4, 31);
-            v4 *= XXH_PRIME64_1;
-            h64 ^= v4;
-            h64 = h64 * XXH_PRIME64_1 + XXH_PRIME64_4;
-        } else {
-            h64 = seed + XXH_PRIME64_5;
-        }
-
-        h64 += len;
-
-        while (p <= end - 8) {
-            long k1 = accessor.getLong(p);
-            k1 *= XXH_PRIME64_2;
-            k1 = Long.rotateLeft(k1, 31);
-            k1 *= XXH_PRIME64_1;
-            h64 ^= k1;
-            h64 = Long.rotateLeft(h64, 27) * XXH_PRIME64_1 + XXH_PRIME64_4;
-            p += 8;
-        }
-
-        if (p <= end - 4) {
-            h64 ^= (accessor.getInt(p) & 0xFFFFFFFFL) * XXH_PRIME64_1;
-            h64 = Long.rotateLeft(h64, 23) * XXH_PRIME64_2 + XXH_PRIME64_3;
-            p += 4;
-        }
-
-        while (p < end) {
-            h64 ^= (accessor.getByte(p) & 0xFF) * XXH_PRIME64_5;
-            h64 = Long.rotateLeft(h64, 11) * XXH_PRIME64_1;
-            ++p;
-        }
-
-        // Mix all bits to finalize the hash.
-        h64 ^= h64 >>> 33;
-        h64 *= XXH_PRIME64_2;
-        h64 ^= h64 >>> 29;
-        h64 *= XXH_PRIME64_3;
-        h64 ^= h64 >>> 32;
-
-        return h64;
+    private static int byteAsUnsignedInt(String utf8String, int index) {
+        return ((byte) utf8String.charAt(index)) & 0xff;
     }
 
-    public interface MemoryAccessor {
-        byte getByte(long offset);
+    private static byte byteFromUtf8String(String utf8String, int index) {
+        return (byte) utf8String.charAt(index);
+    }
 
-        int getInt(long offset);
-
-        long getLong(long offset);
+    private static int intFromUtf8String(String utf8String, int index) {
+        final int n = byteAsUnsignedInt(utf8String, index)
+                | (byteAsUnsignedInt(utf8String, index + 1) << 8)
+                | (byteAsUnsignedInt(utf8String, index + 2) << 16)
+                | (byteAsUnsignedInt(utf8String, index + 3) << 24);
+        return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
     }
 }

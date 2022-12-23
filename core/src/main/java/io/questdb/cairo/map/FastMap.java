@@ -35,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class FastMap implements Map, Reopenable {
 
-    private static final HashFunction DEFAULT_HASH = Hash::hashMem;
+    private static final HashFunction DEFAULT_HASH = Hash::hashMem64;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final FastMapCursor cursor;
     private final HashFunction hashFunction;
@@ -399,7 +399,7 @@ public class FastMap implements Map, Reopenable {
         newOffsets.setPos(capacity);
         newOffsets.zero(0);
 
-        for (long i = 0, k = this.offsets.size(); i < k; i++) {
+        for (int i = 0, k = (int) offsets.size(); i < k; i++) {
             long offset = getOffset(i);
             if (offset == -1) {
                 continue;

@@ -51,6 +51,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     private final double loadFactor;
     private int capacity;
     private int free;
+    private int[] hashCodes;
     private String[] keys;
     private int mask;
     private V[] values;
@@ -73,6 +74,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (capacity / loadFactor));
         keys = new String[len];
+        hashCodes = new int[len];
         mask = len - 1;
         list = new ObjList<>(capacity);
         values = (V[]) new Object[keys.length];
@@ -82,6 +84,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     @Override
     public void clear() {
         Arrays.fill(keys, null);
+        Arrays.fill(hashCodes, 0);
         free = capacity;
         list.clear();
     }
@@ -103,14 +106,14 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(DirectByteCharSequence key) {
-        int hashCode = Chars.hashCode(key);
+        int hashCode = Hash.hashMem32(key);
         int index = Hash.spread(hashCode) & mask;
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
@@ -118,14 +121,14 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     }
 
     public int keyIndex(String key) {
-        int hashCode = Chars.hashCode(key);
+        int hashCode = Hash.hashMem32(key);
         int index = Hash.spread(hashCode) & mask;
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
@@ -185,7 +188,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int hashCode = Chars.hashCode(key);
+                int hashCode = Hash.hashMem32(key);
                 int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;
@@ -221,11 +224,13 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
     private void erase(int index) {
         keys[index] = null;
+        hashCodes[index] = 0;
         values[index] = null;
     }
 
     private void move(int from, int to) {
         keys[to] = keys[from];
+        hashCodes[to] = hashCodes[from];
         values[to] = values[from];
         erase(from);
     }
@@ -236,7 +241,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             if (keys[index] == null) {
                 return index;
             }
-            if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
@@ -248,7 +253,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             if (keys[index] == null) {
                 return index;
             }
-            if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
@@ -260,6 +265,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             return false;
         } else {
             keys[index] = key;
+            hashCodes[index] = Hash.hashMem32(key);
             values[index] = value;
             if (--free == 0) {
                 rehash();
@@ -277,7 +283,9 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
         V[] oldValues = values;
         String[] oldKeys = keys;
+        int[] oldHashCodes = hashCodes;
         keys = new String[len];
+        hashCodes = new int[len];
         values = (V[]) new Object[len];
         Arrays.fill(keys, null);
         mask = len - 1;
@@ -288,6 +296,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;
+                hashCodes[index] = oldHashCodes[i];
                 values[index] = oldValues[i];
             }
         }

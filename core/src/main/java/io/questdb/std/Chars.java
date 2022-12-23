@@ -34,8 +34,6 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
     static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
-    private static final int HASH_CODE_COEFFICIENTS_SIZE = 64;
-    private static final int[] hashCodeCoefficients = new int[HASH_CODE_COEFFICIENTS_SIZE];
 
     private Chars() {
     }
@@ -358,17 +356,10 @@ public final class Chars {
 
     public static int hashCode(@NotNull DirectByteCharSequence value) {
         int len = value.length();
-        if (len <= HASH_CODE_COEFFICIENTS_SIZE) {
-            // Fast, auto-vectorization friendly path.
-            long p = value.getLo();
-            int h = 0;
-            int shift = HASH_CODE_COEFFICIENTS_SIZE - len;
-            for (int i = shift; i < hashCodeCoefficients.length; i++) {
-                h += hashCodeCoefficients[i] * (Unsafe.getUnsafe().getByte(p + i - shift) & 0xffff);
-            }
-            return h;
+        if (len == 0) {
+            return 0;
         }
-        // Slow path.
+
         int h = 0;
         for (int p = 0; p < len; p++) {
             h = 31 * h + value.charAt(p);
@@ -1050,12 +1041,5 @@ public final class Chars {
 
     private static int utf8error() {
         return -1;
-    }
-
-    static {
-        hashCodeCoefficients[HASH_CODE_COEFFICIENTS_SIZE - 1] = 1;
-        for (int i = HASH_CODE_COEFFICIENTS_SIZE - 2; i >= 0; i--) {
-            hashCodeCoefficients[i] = 31 * hashCodeCoefficients[i + 1];
-        }
     }
 }
