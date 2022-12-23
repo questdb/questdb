@@ -75,12 +75,14 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
+        RecordCursor masterCursor = null;
         try {
-            cursor.of(executionContext, slaveCursor);
+            masterCursor = masterFactory.getCursor(executionContext);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
-            Misc.free(cursor);
+            Misc.free(masterCursor);
             throw e;
         }
     }
@@ -95,32 +97,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
-    static void buildMap(
-            RecordCursor slaveCursor,
-            Record record,
-            Map joinKeyMap,
-            RecordSink slaveKeySink,
-            RecordChain slaveChain,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        // TODO(puzpuzpuz): this is non-suspendable
-        joinKeyMap.clear();
-        slaveChain.clear();
-        while (slaveCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            MapKey key = joinKeyMap.withKey();
-            key.put(record, slaveKeySink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                long offset = slaveChain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-            } else {
-                value.putLong(1, slaveChain.put(record, value.getLong(1)));
-            }
-        }
-    }
-
     @Override
     protected void _close() {
         ((JoinRecordMetadata) getMetadata()).close();
@@ -133,16 +109,18 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         private final Map joinKeyMap;
         private final OuterJoinRecord record;
         private final RecordChain slaveChain;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
         private boolean useSlaveCursor;
 
         public HashOuterJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain, Record nullRecord) {
             super(columnSplit);
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
+            record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
-            this.isOpen = true;
+            isOpen = true;
         }
 
         @Override
@@ -162,6 +140,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
+            // TODO(puzpuzpuz): test suspendability
+            if (!isMapBuilt) {
+                buildMapOfSlaveRecords();
+                isMapBuilt = true;
+            }
+
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
             }
@@ -195,34 +179,46 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         public void toTop() {
             masterCursor.toTop();
             useSlaveCursor = false;
+            if (!isMapBuilt) {
+                slaveCursor.toTop();
+                joinKeyMap.clear();
+                slaveChain.clear();
+            }
         }
 
-        private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            // TODO(puzpuzpuz): this is non-suspendable
-            if (!this.isOpen) {
-                this.isOpen = true;
-                this.joinKeyMap.reopen();
-                this.slaveChain.reopen();
+        private void buildMapOfSlaveRecords() {
+            final Record record = slaveCursor.getRecord();
+            while (slaveCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
+                MapKey key = joinKeyMap.withKey();
+                key.put(record, slaveKeySink);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    long offset = slaveChain.put(record, -1);
+                    value.putLong(0, offset);
+                    value.putLong(1, offset);
+                } else {
+                    value.putLong(1, slaveChain.put(record, value.getLong(1)));
+                }
             }
-            HashOuterJoinRecordCursorFactory factory = HashOuterJoinRecordCursorFactory.this;
-            buildMap(slaveCursor, slaveCursor.getRecord(), this.joinKeyMap, factory.slaveKeySink, this.slaveChain, circuitBreaker);
         }
 
-        void of(SqlExecutionContext executionContext, RecordCursor slaveCursor) throws SqlException {
-            try {
-                buildMapOfSlaveRecords(slaveCursor, executionContext.getCircuitBreaker());
-                this.masterCursor = masterFactory.getCursor(executionContext);
-
-                this.slaveCursor = slaveCursor;
-                this.masterRecord = masterCursor.getRecord();
-                Record slaveRecord = slaveChain.getRecord();
-                this.slaveChain.setSymbolTableResolver(slaveCursor);
-                record.of(masterRecord, slaveRecord);
-                useSlaveCursor = false;
-            } catch (Throwable e) {
-                this.masterCursor = Misc.free(masterCursor);
-                throw e;
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reopen();
+                slaveChain.reopen();
             }
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            this.circuitBreaker = circuitBreaker;
+            masterRecord = masterCursor.getRecord();
+            Record slaveRecord = slaveChain.getRecord();
+            record.of(masterRecord, slaveRecord);
+            slaveChain.setSymbolTableResolver(slaveCursor);
+            useSlaveCursor = false;
+            isMapBuilt = false;
         }
     }
 }
