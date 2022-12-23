@@ -1325,7 +1325,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 long o3Lo = rowLo;
                 long o3Hi = rowHi;
 
-                if (!ordered || o3TimestampOffset > 0) {
+                if (!ordered || o3LagRowCount > 0) {
                     final long timestampMemorySize = (rowHi - rowLo) << 4;
                     o3TimestampMem.jumpTo(o3TimestampOffset + timestampMemorySize);
                     o3TimestampMemCpy.jumpTo(o3TimestampOffset + timestampMemorySize);
@@ -1343,18 +1343,21 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
                     // Row indexes start from 0, not rowLo
-                    o3Hi = rowHi - rowLo;
+                    o3Hi = rowHi - rowLo + o3LagRowCount;
                     o3Lo = 0L;
+                    o3Columns = o3MemColumns;
                 } else {
                     timestampAddr = walTimestampColumn.addressOf(0);
                 }
 
+                // TODO: remap only rows which are coming from disk, not from LAG
                 o3Columns = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi, walPath);
 
                 if (commitToTimestamp < o3TimestampMin && o3LagRowCount == 0) {
                     // Don't commit anything, move everything to memory instead.
-                    // TODO: fix this too
-                    throw new UnsupportedOperationException();
+                    o3LagRowCount = rowHi - rowLo;
+                    o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, 0);
+                    return;
                 } else {
                     if (commitToTimestamp < o3TimestampMax) {
                         final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
@@ -1367,9 +1370,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         o3LagRowCount = o3RowCount - lagThresholdRow - 1;
                         o3Hi = lagThresholdRow + 1;
                         o3TimestampMax = getTimestampIndexValue(timestampAddr, lagThresholdRow);
+                    } else {
+                        o3LagRowCount = 0;
                     }
 
                     processO3Block(o3LagRowCount, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
+                    if (o3LagRowCount == 0) {
+                        o3TimestampMem.jumpTo(0);
+                    }
                 }
             } finally {
                 finishO3Append(o3LagRowCount);
@@ -3611,9 +3619,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         final int shl = ColumnType.pow2SizeOf(columnType);
         destMem.jumpTo(rowCount << shl);
-        long src1 = lagMem.addressOf(0);
-        long src2 = mappedMem.addressOf(mappedRowLo << shl);
-        final long dest = destMem.addressOf(0); //33735
+        long src1 = mappedMem.addressOf(mappedRowLo << shl);
+        long src2 = lagMem.addressOf(0);
+        final long dest = destMem.addressOf(0); //16664
 
         switch (shl) {
             case 0:
@@ -3702,44 +3710,63 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
 
-        final MemoryCR src1Data = o3MemColumns.getQuick(primaryIndex);
-        final MemoryCR src1Index = o3MemColumns.getQuick(secondaryIndex);
-        final MemoryCR src2Data = o3Columns.getQuick(primaryIndex);
-        final MemoryCR src2Index = o3Columns.getQuick(secondaryIndex);
+        final MemoryCR src1Data = o3Columns.getQuick(primaryIndex);
+        final MemoryCR src1Index = o3Columns.getQuick(secondaryIndex);
+        final MemoryCR src2Data = o3MemColumns.getQuick(primaryIndex);
+        final MemoryCR src2Index = o3MemColumns.getQuick(secondaryIndex);
 
         final MemoryCARW destData = o3MemColumns2.getQuick(primaryIndex);
         final MemoryCARW destIndex = o3MemColumns2.getQuick(secondaryIndex);
 
         // ensure we have enough memory allocated
-        final long src1DataSize = src1Index.getLong(lagRows << 3);
-        final long src2DataHi = src2Index.getLong(mappedRowHi << 3);
-        final long src2DataLo = src2Index.getLong(mappedRowLo << 3);
-        final long src2DataSize = src2DataHi - src2DataLo;
+        final long src1DataHi = src1Index.getLong(mappedRowHi << 3);
+        final long src1DataLo = src1Index.getLong(mappedRowLo << 3);
+        final long src1DataSize = src1DataHi - src1DataLo;
+        assert src1Data.size() >= src1DataSize;
+        final long src2DataSize = lagRows > 0 ? src2Index.getLong(lagRows << 3) : 0;
+        assert src2Data.size() >= src2DataSize;
 
         destData.jumpTo(src1DataSize + src2DataSize);
         destIndex.jumpTo((rowCount + 1) >> 3);
+        destIndex.putLong(rowCount << 3, src1DataSize + src2DataSize);
 
         // exclude the trailing offset from shuffling
         final long destDataAddr = destData.addressOf(0);
-        final long destIndxAddr = destIndex.addressOf(Long.BYTES);
+        final long destIndxAddr = destIndex.addressOf(0);
 
         final long src1DataAddr = src1Data.addressOf(0);
-        final long src1IndxAddr = src1Index.addressOf(0);
-        final long src2DataAddr = src2Data.addressOf(src2DataLo);
-        final long src2IndxAddr = src2Index.addressOf(mappedRowLo << 3);
+        final long src1IndxAddr = src1Index.addressOf(mappedRowLo << 3);
+        final long src2DataAddr = src2Data.addressOf(0);
+        final long src2IndxAddr = src2Index.addressOf(0);
 
-        // add max offset so that we do not have conditionals inside loop
-        Vect.oooMergeCopyStrColumn(
-                mergedTimestampAddress,
-                rowCount,
-                src1IndxAddr,
-                src1DataAddr,
-                src2IndxAddr,
-                src2DataAddr,
-                destIndxAddr,
-                destDataAddr,
-                0L
-        );
+        if (type == ColumnType.STRING) {
+            // add max offset so that we do not have conditionals inside loop
+            Vect.oooMergeCopyStrColumn(
+                    mergedTimestampAddress,
+                    rowCount,
+                    src1IndxAddr,
+                    src1DataAddr,
+                    src2IndxAddr,
+                    src2DataAddr,
+                    destIndxAddr,
+                    destDataAddr,
+                    0L
+            );
+        } else if (type == ColumnType.BINARY) {
+            Vect.oooMergeCopyBinColumn(
+                    mergedTimestampAddress,
+                    rowCount,
+                    src1IndxAddr,
+                    src1DataAddr,
+                    src2IndxAddr,
+                    src2DataAddr,
+                    destIndxAddr,
+                    destDataAddr,
+                    0L
+            );
+        } else {
+            throw new UnsupportedOperationException("unsupported column type:" + ColumnType.nameOf(type));
+        }
     }
 
     private void o3MoveLag0(
@@ -3763,12 +3790,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 size = o3LagRowCount << shl;
             } else {
                 // Var size column
-                sourceOffset = o3SrcIndexMem.getLong(o3RowCount * 8);
-                size = o3SrcIndexMem.getLong(o3LagRowCount * 8);
+                sourceOffset = o3SrcIndexMem.getLong(o3RowCount << 3);
+                size = o3SrcIndexMem.getLong((o3RowCount + o3LagRowCount) << 3) - sourceOffset;
 
                 // adjust append position of the index column to
                 // maintain n+1 number of entries
-                o3DstIndexMem.jumpTo(o3LagRowCount * 8 + 8);
+                o3DstIndexMem.jumpTo(o3LagRowCount << 8);
 
                 // move count + 1 rows, to make sure index column remains n+1
                 // the data is copied back to start of the buffer, no need to set size first
@@ -3782,6 +3809,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             }
 
             o3DstDataMem.jumpTo(size);
+            assert o3SrcDataMem.size() >= size;
             Vect.memmove(o3DstDataMem.addressOf(0), o3SrcDataMem.addressOf(sourceOffset), size);
             // the data is copied back to start of the buffer, no need to set size first
         } else {
