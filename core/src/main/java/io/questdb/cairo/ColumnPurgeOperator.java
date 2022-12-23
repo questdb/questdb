@@ -244,12 +244,10 @@ public class ColumnPurgeOperator implements Closeable {
                     // we would have mutated the path by checking state of the table
                     // we will have to re-setup that
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
-
-
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
                     setupScoreboard = false;
                 }
-                
+
                 if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL
                     // or it was open by openScoreboardAndTxn
