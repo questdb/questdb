@@ -113,6 +113,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3UnderActivePartitionUDP() throws Exception {
+        Assume.assumeTrue(Os.type != Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
         int numEvents = 100;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
