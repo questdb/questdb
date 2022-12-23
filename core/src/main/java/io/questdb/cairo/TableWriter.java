@@ -1105,7 +1105,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     public long getO3RowCount() {
-        return hasO3() ? getO3RowCount0() : 0;
+        return hasO3() ? getO3RowCount0() : 0L;
     }
 
     @Override
