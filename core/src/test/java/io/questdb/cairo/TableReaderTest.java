@@ -4050,7 +4050,12 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }).start();
 
-            Assert.assertTrue(stopLatch.await(125, TimeUnit.SECONDS));
+            long start = System.currentTimeMillis();
+            boolean result = stopLatch.await(5, TimeUnit.MINUTES);
+            System.out.printf("took: %d%n", System.currentTimeMillis() - start);
+            if (!result) {
+                Assert.fail("too long, threading issue");
+            }
             Assert.assertEquals(0, errors.get());
 
             // check that we had multiple partitions created during the test
