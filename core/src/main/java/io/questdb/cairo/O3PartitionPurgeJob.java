@@ -257,8 +257,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             try {
                 do {
                     long fileName = ff.findName(p);
-                    boolean isSoftLink = Files.findTypeIsSoftLink(p);
-                    if (Files.isDir(fileName, ff.findType(p), fileNameSink) || isSoftLink) {
+                    int type = ff.findType(p);
+                    boolean isSoftLink = type == Files.DT_LNK;
+                    if (Files.isDir(fileName, type, fileNameSink) || isSoftLink) {
                         // extract txn, partition ts from name
                         if (isSoftLink) {
                             fileNameSink.clear();

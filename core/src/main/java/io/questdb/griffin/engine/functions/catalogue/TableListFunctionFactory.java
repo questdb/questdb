@@ -147,9 +147,18 @@ public class TableListFunctionFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    int type = ff.findType(findPtr);
+                    if (Files.isDir(ff.findName(findPtr), type, sink)) {
                         if (record.open(sink)) {
                             return true;
+                        }
+                    } else if (type == Files.DT_LNK) {
+                        sink.clear();
+                        Chars.utf8DecodeZ(ff.findName(findPtr), sink);
+                        if (Files.notDots(sink)) {
+                            if (record.open(sink)) {
+                                return true;
+                            }
                         }
                     }
                 }

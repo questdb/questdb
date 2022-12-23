@@ -36,6 +36,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -51,6 +52,7 @@ import static io.questdb.test.tools.TestUtils.assertSql;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
+    private static final String TABLES = "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n";
     private static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
             "2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\n" +
             "2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\n" +
@@ -97,17 +99,10 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             // create table with some data
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    CairoEngine engine = qdb.getCairoEngine();
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            null,
-                            null,
-                            -1,
-                            null)
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
                 try (
                         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
@@ -121,19 +116,20 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     createTable(cairoConfig, mem, path, tableModel, 1);
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
                 }
+                StringSink sink = Misc.getThreadLocalBuilder();
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        sink,
                         TABLE_START_CONTENT);
+                assertSql(compiler, context, "tables()", sink, TABLES);
             }
 
-            String foreignFolderName = "banana";
-
+            // copy the table to a foreign location, remove it, then symlink it
             try (
                     Path tablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(tableName).$();
-                    Path foreignPath = new Path().of(root).concat(foreignFolderName).concat(tableName).slash$()
+                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash$()
             ) {
                 if (!Files.exists(foreignPath)) {
                     Assert.assertEquals(0, Files.mkdirs(foreignPath, 509));
@@ -149,27 +145,21 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 Assert.assertTrue(Files.exists(tablePath));
             }
 
-
             // check content of table after sym-linking it
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    CairoEngine engine = qdb.getCairoEngine();
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            null,
-                            null,
-                            -1,
-                            null)
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-
+                StringSink sink = Misc.getThreadLocalBuilder();
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        sink,
                         TABLE_START_CONTENT);
+                assertSql(compiler, context, "tables()", sink, TABLES);
             }
         });
     }
@@ -193,6 +183,15 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static SqlExecutionContext executionContext(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllCairoSecurityContext.INSTANCE,
+                null,
+                null,
+                -1,
+                null);
     }
 
     static {
