@@ -103,7 +103,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
-        runFuzz(TestUtils.generateRandom(LOG));
+        runFuzz(new Rnd(4760479353125L, 1671639317422L));
     }
 
     @Test

@@ -175,6 +175,8 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
+    public static native void radixSortABLongIndexAscInA(long pDataA, long countA, long pDataB, long countB, long pDataCpy);
+
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 

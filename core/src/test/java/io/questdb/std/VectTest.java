@@ -33,7 +33,7 @@ import org.junit.Test;
 
 public class VectTest {
 
-    private static final Rnd rnd = new Rnd();
+    private Rnd rnd = new Rnd();
 
     @Before
     public void setUp() {
@@ -421,6 +421,23 @@ public class VectTest {
     }
 
     @Test
+    public void testSortAB1M() {
+        rnd = TestUtils.generateRandom(null);
+        int split = rnd.nextInt(1_000_000);
+        testSortAB(1_000_000 - split, split);
+    }
+
+    @Test
+    public void testSortAEmptyA() {
+        testSortAB(0, 1_000);
+    }
+
+    @Test
+    public void testSortAEmptyB() {
+        testSortAB(1_000, 0);
+    }
+
+    @Test
     public void testSortFour() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             for (int i = 0; i < 100; i++) {
@@ -451,6 +468,23 @@ public class VectTest {
         }
     }
 
+    private void assertIndexAsc(int count, long indexAddr, long initialAddrA, long initialAddrB) {
+        long v = Unsafe.getUnsafe().getLong(indexAddr);
+        for (int i = 1; i < count; i++) {
+            long ts = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES);
+            long idx = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES + Long.BYTES);
+            Assert.assertTrue(ts >= v);
+            if (idx < 0) {
+                idx = (idx << 1) >> 1;
+                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrB + idx * 2L * Long.BYTES));
+            } else {
+                Assert.assertEquals(ts, Unsafe.getUnsafe().getLong(initialAddrA + idx * 2L * Long.BYTES));
+            }
+
+            v = ts;
+        }
+    }
+
     private long seedAndSort(int count) {
         final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         seedMem(count, indexAddr);
@@ -477,6 +511,34 @@ public class VectTest {
             Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
+
+    private void testSortAB(int aCount, int bCount) {
+        final int sizeA = aCount * 2 * Long.BYTES;
+        final int sizeB = bCount * 2 * Long.BYTES;
+
+        final int resultSize = sizeA + sizeB;
+        final long aAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
+        final long bAddr = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
+        final long cpyAddr = Unsafe.malloc(resultSize, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            seedMem(aCount, aAddr);
+            seedMem(bCount, bAddr);
+
+            final long aAddrCopy = Unsafe.malloc(sizeA, MemoryTag.NATIVE_DEFAULT);
+            final long bAddrCopy = Unsafe.malloc(sizeB, MemoryTag.NATIVE_DEFAULT);
+            Vect.memcpy(aAddrCopy, aAddr, sizeA);
+            Vect.memcpy(bAddrCopy, bAddr, sizeB);
+
+            Vect.radixSortABLongIndexAscInA(aAddr, aCount, bAddr, bCount, cpyAddr);
+            assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy);
+        } finally {
+            Unsafe.free(aAddr, resultSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(bAddr, sizeB, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(cpyAddr, resultSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
 
     static {
         Os.init();
