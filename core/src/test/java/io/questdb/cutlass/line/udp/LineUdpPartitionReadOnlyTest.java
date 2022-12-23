@@ -114,7 +114,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     @Test
     public void testActivePartitionReadOnlyAndO3UnderActivePartitionUDP() throws Exception {
         final String tableName = testName.getMethodName();
-        int numEvents = 4;
+        int numEvents = 100;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineUDP(
                 tableName,
@@ -136,12 +136,8 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     }
                 },
                 sendComplete,
-                1,
-                "min\tmax\tcount\n" +
-                        "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
-                        "2022-12-09T00:00:00.001000Z\t2022-12-09T23:57:23.964885Z\t279\n" + // +1
-                        "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
-                        "2022-12-11T00:03:52.552638Z\t2022-12-11T23:59:58.999977Z\t278\n",
+                9,
+                null,
                 true, false, true, true
         );
     }
