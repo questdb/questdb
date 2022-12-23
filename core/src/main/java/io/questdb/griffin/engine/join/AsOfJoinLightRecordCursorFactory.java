@@ -114,8 +114,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private final int masterTimestampIndex;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
+        private boolean isMasterHasNextPending;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
+        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -128,11 +130,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 int slaveTimestampIndex
         ) {
             super(columnSplit);
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
+            record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
-            this.isOpen = true;
+            isOpen = true;
         }
 
         @Override
@@ -151,14 +153,17 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): this is non-suspendable
-            if (masterCursor.hasNext()) {
+            // TODO(puzpuzpuz): test suspendability
+            if (isMasterHasNextPending) {
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            }
+            if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
                 MapValue value;
                 long slaveTimestamp = this.slaveTimestamp;
                 if (slaveTimestamp <= masterTimestamp) {
-
                     if (lastSlaveRowID != Numbers.LONG_NaN) {
                         slaveCursor.recordAt(slaveRecord, lastSlaveRowID);
                         key = joinKeyMap.withKey();
@@ -194,6 +199,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                     record.hasSlave(false);
                 }
 
+                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -211,6 +217,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
+            isMasterHasNextPending = true;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
@@ -222,9 +229,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             lastSlaveRowID = Long.MIN_VALUE;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecordB();
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
+            isMasterHasNextPending = true;
         }
     }
 }

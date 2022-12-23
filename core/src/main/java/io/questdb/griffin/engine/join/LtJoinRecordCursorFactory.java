@@ -118,7 +118,9 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
         private boolean danglingSlaveRecord = false;
+        private boolean isMasterHasNextPending;
         private boolean isOpen;
+        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
@@ -156,8 +158,12 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): this is non-suspendable
-            if (masterCursor.hasNext()) {
+            // TODO(puzpuzpuz): test suspendability
+            if (isMasterHasNextPending) {
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            }
+            if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
                 MapValue value;
@@ -196,6 +202,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                     record.hasSlave(false);
                 }
 
+                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -213,6 +220,7 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             danglingSlaveRecord = false;
             masterCursor.toTop();
             slaveCursor.toTop();
+            isMasterHasNextPending = true;
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
@@ -224,11 +232,12 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             danglingSlaveRecord = false;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecord();
             MapRecord mapRecord = joinKeyMap.getRecord();
             mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
             record.of(masterRecord, mapRecord);
+            isMasterHasNextPending = true;
         }
     }
 }

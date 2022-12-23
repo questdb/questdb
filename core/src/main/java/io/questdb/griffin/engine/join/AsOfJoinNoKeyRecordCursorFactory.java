@@ -155,24 +155,19 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
 
         private void nextSlave(long masterTimestamp) {
             while (true) {
-                if (slaveCursor.hasNext()) {
+                boolean slaveHasNext = slaveCursor.hasNext();
+                if (latestSlaveRowID != Long.MIN_VALUE) {
+                    record.hasSlave(true);
+                    slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
+                }
+                if (slaveHasNext) {
                     slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+                    latestSlaveRowID = slaveRecA.getRowId();
                     if (slaveTimestamp > masterTimestamp) {
-                        if (latestSlaveRowID != Long.MIN_VALUE) {
-                            record.hasSlave(true);
-                            slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
-                        }
-                        latestSlaveRowID = slaveRecA.getRowId();
                         break;
-                    } else {
-                        latestSlaveRowID = slaveRecA.getRowId();
                     }
                 } else {
-                    if (latestSlaveRowID != Long.MIN_VALUE) {
-                        record.hasSlave(true);
-                        slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
-                    }
-                    this.slaveTimestamp = Long.MAX_VALUE;
+                    slaveTimestamp = Long.MAX_VALUE;
                     break;
                 }
             }
