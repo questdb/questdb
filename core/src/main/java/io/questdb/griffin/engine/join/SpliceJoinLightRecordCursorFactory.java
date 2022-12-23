@@ -44,7 +44,7 @@ import io.questdb.std.Transient;
 /**
  * Splice join compares time series that do not always align on timestamp. Consider
  * the following: we have two engines, X and Y, that produce FX prices. We need to verify
- * that prices are the same or similar. When engine X produces price A we need to tell
+ * that prices are the same or similar. When engine X produces price A, we need to tell
  * what was the last price produced by Y at the time of A and vice versa, when engine Y
  * produced price B what was the last price produced by X at the time of B.
  * <p>
@@ -53,8 +53,7 @@ import io.questdb.std.Transient;
  * The join result will match rows where value of currency pair is the same.
  */
 public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
-
-    private static final long NULL_ROWID = -1L;
+    private static final long NULL_ROWID = -1;
     private static final int VAL_MASTER_NEXT = 1;
     private static final int VAL_MASTER_PREV = 0;
     private static final int VAL_SLAVE_NEXT = 3;
@@ -87,7 +86,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 joinColumnTypes,
                 valueTypes
         );
-        this.cursor = new SpliceJoinLightRecordCursor(
+        cursor = new SpliceJoinLightRecordCursor(
                 joinKeyMap,
                 columnSplit,
                 masterFactory.getMetadata().getTimestampIndex(),
@@ -137,20 +136,22 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         private final Record nullSlaveRecord;
         private final JoinRecord record;
         private final int slaveTimestampIndex;
-        private boolean dualRecord = false;
+        private boolean dualRecord;
         private boolean fetchMaster = true;
         private boolean fetchSlave = true;
-        private boolean hasMaster = true;
-        private boolean hasSlave = true;
+        private boolean hasMaster;
+        private boolean hasMasterPending = true;
+        private boolean hasSlave;
+        private boolean hasSlavePending = true;
         private boolean isOpen;
-        private long masterKeyAddress = -1L;
+        private long masterKeyAddress = -1;
         private Record masterRecord;
         private Record masterRecord2;
-        private long masterTimestamp = -1L;
-        private long slaveKeyAddress = -1L;
+        private long masterTimestamp = -1;
+        private long slaveKeyAddress = -1;
         private Record slaveRecord;
         private Record slaveRecord2;
-        private long slaveTimestamp = -1L;
+        private long slaveTimestamp = -1;
 
         public SpliceJoinLightRecordCursor(
                 Map joinKeyMap,
@@ -161,13 +162,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 Record nullSlaveRecord
         ) {
             super(columnSplit);
-            this.record = new JoinRecord(columnSplit);
+            record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
             this.nullSlaveRecord = nullSlaveRecord;
-            this.isOpen = true;
+            isOpen = true;
         }
 
         @Override
@@ -186,50 +187,64 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): this is non-suspendable
+            // TODO(puzpuzpuz): test suspendability
             if (dualRecord) {
                 slaveRecordLeads();
                 dualRecord = false;
             }
 
-            if (fetchMaster && hasMaster && masterCursor.hasNext()) {
-                final MapKey key = joinKeyMap.withKey();
-                key.put(masterRecord, masterKeySink);
-                final MapValue value = key.createValue();
-                masterKeyAddress = value.getAddress();
-                if (value.isNew()) {
-                    value.putLong(VAL_MASTER_PREV, NULL_ROWID);
-                    value.putLong(VAL_SLAVE_PREV, NULL_ROWID);
-                    value.putLong(VAL_SLAVE_NEXT, NULL_ROWID);
-                } else {
-                    // copy current to previous
-                    value.putLong(VAL_MASTER_PREV, value.getLong(VAL_MASTER_NEXT));
+            if (fetchMaster) {
+                if (hasMasterPending) {
+                    hasMaster = masterCursor.hasNext();
+                    hasMasterPending = false;
                 }
-                value.putLong(VAL_MASTER_NEXT, masterRecord.getRowId());
-                masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            } else if (fetchMaster && hasMaster) {
-                hasMaster = false;
-                masterTimestamp = Long.MAX_VALUE;
+                if (hasMaster) {
+                    final MapKey key = joinKeyMap.withKey();
+                    key.put(masterRecord, masterKeySink);
+                    final MapValue value = key.createValue();
+                    masterKeyAddress = value.getAddress();
+                    if (value.isNew()) {
+                        value.putLong(VAL_MASTER_PREV, NULL_ROWID);
+                        value.putLong(VAL_SLAVE_PREV, NULL_ROWID);
+                        value.putLong(VAL_SLAVE_NEXT, NULL_ROWID);
+                    } else {
+                        // copy current to previous
+                        value.putLong(VAL_MASTER_PREV, value.getLong(VAL_MASTER_NEXT));
+                    }
+                    value.putLong(VAL_MASTER_NEXT, masterRecord.getRowId());
+                    masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                } else {
+                    masterTimestamp = Long.MAX_VALUE;
+                }
             }
 
-            if (fetchSlave && hasSlave && slaveCursor.hasNext()) {
-                final MapKey key = joinKeyMap.withKey();
-                key.put(slaveRecord, slaveKeySink);
-                final MapValue value = key.createValue();
-                slaveKeyAddress = value.getAddress();
-                if (value.isNew()) {
-                    value.putLong(VAL_MASTER_PREV, NULL_ROWID);
-                    value.putLong(VAL_MASTER_NEXT, NULL_ROWID);
-                    value.putLong(VAL_SLAVE_PREV, NULL_ROWID);
-                } else {
-                    value.putLong(VAL_SLAVE_PREV, value.getLong(VAL_SLAVE_NEXT));
+            if (fetchSlave) {
+                if (hasSlavePending) {
+                    hasSlave = slaveCursor.hasNext();
+                    hasSlavePending = false;
                 }
-                value.putLong(VAL_SLAVE_NEXT, slaveRecord.getRowId());
-                slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
-            } else if (fetchSlave && hasSlave) {
-                hasSlave = false;
-                slaveTimestamp = Long.MAX_VALUE;
+                if (hasSlave) {
+                    final MapKey key = joinKeyMap.withKey();
+                    key.put(slaveRecord, slaveKeySink);
+                    final MapValue value = key.createValue();
+                    slaveKeyAddress = value.getAddress();
+                    if (value.isNew()) {
+                        value.putLong(VAL_MASTER_PREV, NULL_ROWID);
+                        value.putLong(VAL_MASTER_NEXT, NULL_ROWID);
+                        value.putLong(VAL_SLAVE_PREV, NULL_ROWID);
+                    } else {
+                        value.putLong(VAL_SLAVE_PREV, value.getLong(VAL_SLAVE_NEXT));
+                    }
+                    value.putLong(VAL_SLAVE_NEXT, slaveRecord.getRowId());
+                    slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                } else {
+                    slaveTimestamp = Long.MAX_VALUE;
+                }
             }
+
+            // all suspendable calls are done, so we can reset the pending flags
+            hasMasterPending = true;
+            hasSlavePending = true;
 
             if (masterTimestamp < slaveTimestamp) {
                 masterRecordLeads();
@@ -243,24 +258,21 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveTimestamp == Long.MAX_VALUE) {
                     return false;
                 }
-
                 if (masterKeyAddress == slaveKeyAddress) {
                     record.of(masterRecord, slaveRecord);
                 } else {
                     masterRecordLeads();
                     dualRecord = true;
                 }
-
                 fetchMaster = true;
                 fetchSlave = true;
             }
-
             return true;
         }
 
         @Override
         public long size() {
-            return -1L;
+            return -1;
         }
 
         @Override
@@ -288,9 +300,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             masterTimestamp = -1L;
             slaveTimestamp = -1L;
             fetchMaster = true;
+            hasMasterPending = true;
             fetchSlave = true;
-            hasMaster = true;
-            hasSlave = true;
+            hasSlavePending = true;
             // wasn't there originally
             dualRecord = false;
         }
@@ -307,18 +319,18 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            if (!this.isOpen) {
-                this.isOpen = true;
-                this.joinKeyMap.reopen();
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reopen();
             }
             // avoid resetting these
             if (this.masterCursor == null) {
                 this.masterCursor = masterCursor;
                 this.slaveCursor = slaveCursor;
-                this.masterRecord = masterCursor.getRecord();
-                this.slaveRecord = slaveCursor.getRecord();
-                this.masterRecord2 = masterCursor.getRecordB();
-                this.slaveRecord2 = slaveCursor.getRecordB();
+                masterRecord = masterCursor.getRecord();
+                slaveRecord = slaveCursor.getRecord();
+                masterRecord2 = masterCursor.getRecordB();
+                slaveRecord2 = slaveCursor.getRecordB();
             }
             resetState();
         }
