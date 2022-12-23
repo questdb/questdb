@@ -24,7 +24,6 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.tcp.DirectByteCharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Hash;
 import io.questdb.std.MemoryTag;
@@ -44,8 +43,7 @@ import java.util.concurrent.TimeUnit;
 public class CharSequenceHashFunctionBenchmark {
 
     private final DirectByteCharSequence charSequence = new DirectByteCharSequence();
-    private final DirectByteCharSequenceIntHashMap.StringUtf8MemoryAccessor strMemoryAccessor = new DirectByteCharSequenceIntHashMap.StringUtf8MemoryAccessor();
-    @Param({"16", "64", "256"})
+    @Param({"7", "15", "31", "63"})
     private int len;
     private long ptr;
 
@@ -63,12 +61,9 @@ public class CharSequenceHashFunctionBenchmark {
     public void setUp() {
         ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         charSequence.of(ptr, ptr + len);
-        StringBuilder sb = new StringBuilder();
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(ptr + i, (byte) 'a');
-            sb.append('a');
         }
-        strMemoryAccessor.of(sb.toString());
     }
 
     @TearDown(Level.Iteration)
@@ -77,18 +72,25 @@ public class CharSequenceHashFunctionBenchmark {
     }
 
     @Benchmark
-    public int testStandardDirectByteCharSequence() {
+    public int testStandardDirectByteCharSequenceAutoVectorized() {
         return Chars.hashCode(charSequence);
     }
 
     @Benchmark
-    public long testXXHashDirectByteCharSequence() {
-        return Hash.xxHash64(charSequence);
+    public int testStandardDirectByteCharSequenceVanilla() {
+        return hashCodeVanilla(charSequence);
     }
 
-    // this hash function is not called on the hot path; it's included for reference
     @Benchmark
-    public long testXXHashString() {
-        return DirectByteCharSequenceIntHashMap.xxHash64(strMemoryAccessor);
+    public long testXXHashDirectByteCharSequence() {
+        return Hash.hashMem(charSequence.getLo(), charSequence.length());
+    }
+
+    private static int hashCodeVanilla(DirectByteCharSequence value) {
+        int h = 0;
+        for (int p = 0, len = value.length(); p < len; p++) {
+            h = 31 * h + value.charAt(p);
+        }
+        return h;
     }
 }

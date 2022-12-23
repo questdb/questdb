@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.DirectByteCharSequence;
-
 public final class Hash {
 
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
@@ -203,10 +201,6 @@ public final class Hash {
         h64 ^= h64 >>> 32;
 
         return h64;
-    }
-
-    public static long xxHash64(DirectByteCharSequence charSequence) {
-        return hashMem(charSequence.getLo(), charSequence.length());
     }
 
     public interface MemoryAccessor {

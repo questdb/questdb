@@ -43,12 +43,12 @@ import java.util.concurrent.TimeUnit;
 public class DirectByteCharSequenceIntHashMapBenchmark {
 
     private final DirectByteCharSequence charSequence = new DirectByteCharSequence();
-    private final DirectByteCharSequenceIntHashMap directMap = new DirectByteCharSequenceIntHashMap();
-    private final CharSequenceIntHashMap map = new CharSequenceIntHashMap();
-    @Param({"16", "64", "256"})
+    private DirectByteCharSequenceIntHashMap directMap = new DirectByteCharSequenceIntHashMap();
+    @Param({"7", "15", "31", "63"})
     private int len;
-    @Param({"16", "64", "256"})
+    @Param({"16", "256"})
     private int n;
+    private CharSequenceIntHashMap nonDirectMap = new CharSequenceIntHashMap();
     private long ptr;
 
     public static void main(String[] args) throws RunnerException {
@@ -71,7 +71,7 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
                 Unsafe.getUnsafe().putByte(ptr + (long) i * len + j, (byte) ch);
                 sb.append(ch);
             }
-            map.put(sb.toString(), 42);
+            nonDirectMap.put(sb.toString(), 42);
             directMap.put(sb.toString(), 42);
         }
     }
@@ -79,15 +79,15 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
     @TearDown(Level.Iteration)
     public void tearDown() {
         ptr = Unsafe.free(ptr, (long) n * len, MemoryTag.NATIVE_DEFAULT);
-        directMap.clear();
-        map.clear();
+        directMap = new DirectByteCharSequenceIntHashMap();
+        nonDirectMap = new CharSequenceIntHashMap();
     }
 
     @Benchmark
     public int testDirectMap() {
         int sum = 0;
         for (int i = 0; i < n; i++) {
-            charSequence.of(ptr + (long) i * len, ptr + (long) i * len + len);
+            charSequence.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
             sum += directMap.get(charSequence);
         }
         return sum;
@@ -97,8 +97,8 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
     public long testNonDirectMap() {
         int sum = 0;
         for (int i = 0; i < n; i++) {
-            charSequence.of(ptr + (long) i * len, ptr + (long) i * len + len);
-            sum += map.get(charSequence);
+            charSequence.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
+            sum += nonDirectMap.get(charSequence);
         }
         return sum;
     }

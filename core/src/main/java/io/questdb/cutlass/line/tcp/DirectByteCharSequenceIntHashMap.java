@@ -49,11 +49,9 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final int initialCapacity;
     private final double loadFactor;
-    private final StringUtf8MemoryAccessor memoryAccessor = new StringUtf8MemoryAccessor();
     private final int noEntryValue;
     private int capacity;
     private int free;
-    private long[] hashCodes;
     private String[] keys;
     private ObjList<String> list;
     private int mask;
@@ -77,20 +75,11 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (capacity / loadFactor));
         keys = new String[len];
-        hashCodes = new long[len];
         mask = len - 1;
         this.noEntryValue = noEntryValue;
         list = new ObjList<>(capacity);
         values = new int[keys.length];
         clear();
-    }
-
-    /**
-     * Assumes that the string contains ASCII chars only. Strings with non-ASCII chars
-     * are also supported, yet with higher chances of hash code collisions.
-     */
-    public static long xxHash64(StringUtf8MemoryAccessor accessor) {
-        return Hash.xxHash64(0, accessor.length(), 0, accessor);
     }
 
     public int capacity() {
@@ -100,7 +89,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     @Override
     public final void clear() {
         Arrays.fill(keys, null);
-        Arrays.fill(hashCodes, 0);
         free = capacity;
         list.clear();
         Arrays.fill(values, noEntryValue);
@@ -123,14 +111,14 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     }
 
     public int keyIndex(DirectByteCharSequence key) {
-        long hashCode = Hash.xxHash64(key);
-        int index = (int) (hashCode & mask);
+        int hashCode = Chars.hashCode(key);
+        int index = Hash.spread(hashCode) & mask;
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+        if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
@@ -138,14 +126,14 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     }
 
     public int keyIndex(String key) {
-        long hashCode = xxHash64(memoryAccessor.of(key));
-        int index = (int) (hashCode & mask);
+        int hashCode = Chars.hashCode(key);
+        int index = Hash.spread(hashCode) & mask;
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+        if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
@@ -201,8 +189,8 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                     k != null;
                     from = (from + 1) & mask, k = keys[from]
             ) {
-                long hashCode = xxHash64(memoryAccessor.of(k));
-                int idealHit = (int) (hashCode & mask);
+                int hashCode = Chars.hashCode(k);
+                int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
@@ -227,7 +215,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             free = capacity = initialCapacity;
             int len = Numbers.ceilPow2((int) (capacity / loadFactor));
             keys = new String[len];
-            hashCodes = new long[len];
             mask = len - 1;
             list = new ObjList<>(capacity);
             values = new int[keys.length];
@@ -250,13 +237,11 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     private void erase(int index) {
         keys[index] = null;
-        hashCodes[index] = 0;
         values[index] = noEntryValue;
     }
 
     private void move(int from, int to) {
         keys[to] = keys[from];
-        hashCodes[to] = hashCodes[from];
         values[to] = values[from];
         erase(from);
     }
@@ -267,7 +252,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             if (keys[index] == null) {
                 return index;
             }
-            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+            if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
@@ -279,7 +264,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             if (keys[index] == null) {
                 return index;
             }
-            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
+            if (hashCode == Chars.hashCode(keys[index]) && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
@@ -287,7 +272,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     private void putAt0(int index, String key, int value) {
         keys[index] = key;
-        hashCodes[index] = xxHash64(memoryAccessor.of(key));
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -297,78 +281,19 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     private void rehash() {
         int[] oldValues = values;
         String[] oldKeys = keys;
-        long[] oldHashCodes = hashCodes;
         int size = capacity - free;
         capacity = capacity * 2;
         free = capacity - size;
         mask = Numbers.ceilPow2((int) (capacity / loadFactor)) - 1;
         keys = new String[mask + 1];
-        hashCodes = new long[mask + 1];
         values = new int[mask + 1];
         for (int i = oldKeys.length - 1; i > -1; i--) {
             String key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;
-                hashCodes[index] = oldHashCodes[i];
                 values[index] = oldValues[i];
             }
-        }
-    }
-
-    /**
-     * This memory accessor interprets string as a sequence of UTF8 bytes.
-     * It means that each string's char is trimmed to a byte when calculating
-     * the hash code.
-     */
-    public static class StringUtf8MemoryAccessor implements Hash.MemoryAccessor {
-
-        private String str;
-
-        @Override
-        public byte getByte(long offset) {
-            return (byte) str.charAt((int) offset);
-        }
-
-        @Override
-        public int getInt(long offset) {
-            final int index = (int) offset;
-            final int n = byteAsUnsignedInt(index)
-                    | (byteAsUnsignedInt(index + 1) << 8)
-                    | (byteAsUnsignedInt(index + 2) << 16)
-                    | (byteAsUnsignedInt(index + 3) << 24);
-            return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
-        }
-
-        @Override
-        public long getLong(long offset) {
-            final int index = (int) offset;
-            final long n = byteAsUnsignedLong(index)
-                    | (byteAsUnsignedLong(index + 1) << 8)
-                    | (byteAsUnsignedLong(index + 2) << 16)
-                    | (byteAsUnsignedLong(index + 3) << 24)
-                    | (byteAsUnsignedLong(index + 4) << 32)
-                    | (byteAsUnsignedLong(index + 5) << 40)
-                    | (byteAsUnsignedLong(index + 6) << 48)
-                    | (byteAsUnsignedLong(index + 7) << 56);
-            return Unsafe.isLittleEndian() ? n : Long.reverseBytes(n);
-        }
-
-        public int length() {
-            return str.length();
-        }
-
-        public StringUtf8MemoryAccessor of(String str) {
-            this.str = str;
-            return this;
-        }
-
-        private int byteAsUnsignedInt(int index) {
-            return ((byte) str.charAt(index)) & 0xff;
-        }
-
-        private long byteAsUnsignedLong(int index) {
-            return (long) ((byte) str.charAt(index)) & 0xff;
         }
     }
 }

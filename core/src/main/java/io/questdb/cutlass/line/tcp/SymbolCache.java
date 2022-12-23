@@ -48,7 +48,7 @@ class SymbolCache implements Closeable, DirectByteSymbolLookup {
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final DirectByteCharSequenceIntHashMap symbolValueToKeyMap = new DirectByteCharSequenceIntHashMap(
             256,
-            0.75,
+            0.5,
             SymbolTable.VALUE_NOT_FOUND
     );
     private final StringSink tempSink = new StringSink();
