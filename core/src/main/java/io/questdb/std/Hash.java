@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public final class Hash {
@@ -38,20 +39,20 @@ public final class Hash {
     /**
      * Restricts hashCode() of the underlying char sequence to be no greater than max.
      *
-     * @param s   char sequence
+     * @param seq char sequence
      * @param max max value of hashCode()
      * @return power of 2 integer
      */
-    public static int boundedHash(CharSequence s, int max) {
-        return s == null ? -1 : (Chars.hashCode(s) & 0xFFFFFFF) & max;
+    public static int boundedHash(CharSequence seq, int max) {
+        return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
     /**
      * Same as {@link #hashMem32(long, long)}, but with direct UTF8 char sequence
      * instead of direct unsafe access.
      */
-    public static int hashMem32(DirectByteCharSequence charSequence) {
-        return hashMem32(charSequence.getLo(), charSequence.length());
+    public static int hashMem32(DirectByteCharSequence seq) {
+        return hashMem32(seq.getLo(), seq.length());
     }
 
     /**
@@ -71,22 +72,18 @@ public final class Hash {
     }
 
     /**
-     * Same as {@link #hashMem32(long, long)}, but with a UTF8 re-encoded string
+     * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
      * instead of direct unsafe access.
-     * <p>
-     * Important note:
-     * The string is interpreted as a sequence of UTF8 bytes. It means that each
-     * string's char is trimmed to a byte when calculating the hash code.
      */
-    public static int hashMem32(String utf8String) {
-        final int len = utf8String.length();
+    public static int hashMem32(ByteCharSequence seq) {
+        final int len = seq.length();
         long h = 0;
         int i = 0;
         for (; i + 3 < len; i += 4) {
-            h = h * M2 + intFromUtf8String(utf8String, i);
+            h = h * M2 + seq.intAt(i);
         }
         for (; i < len; i++) {
-            h = h * M2 + byteFromUtf8String(utf8String, i);
+            h = h * M2 + seq.byteAt(i);
         }
         h *= M2;
         return (int) h ^ (int) (h >>> 25);
@@ -121,14 +118,14 @@ public final class Hash {
      * Same as {@link #hashMem64(long, long)}, but with MemoryR instead of direct
      * unsafe access.
      */
-    public static long hashMem64(long p, long len, MemoryR memory) {
+    public static long hashMem64(long p, long len, MemoryR mem) {
         long h = 0;
         int i = 0;
         for (; i + 3 < len; i += 4) {
-            h = h * M2 + memory.getInt(p + i);
+            h = h * M2 + mem.getInt(p + i);
         }
         for (; i < len; i++) {
-            h = h * M2 + memory.getByte(p + i);
+            h = h * M2 + mem.getByte(p + i);
         }
         h *= M2;
         return h ^ (h >>> 25);
@@ -156,21 +153,5 @@ public final class Hash {
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & SPREAD_HASH_BITS;
-    }
-
-    private static int byteAsUnsignedInt(String utf8String, int index) {
-        return ((byte) utf8String.charAt(index)) & 0xff;
-    }
-
-    private static byte byteFromUtf8String(String utf8String, int index) {
-        return (byte) utf8String.charAt(index);
-    }
-
-    private static int intFromUtf8String(String utf8String, int index) {
-        final int n = byteAsUnsignedInt(utf8String, index)
-                | (byteAsUnsignedInt(utf8String, index + 1) << 8)
-                | (byteAsUnsignedInt(utf8String, index + 2) << 16)
-                | (byteAsUnsignedInt(utf8String, index + 3) << 24);
-        return Unsafe.isLittleEndian() ? n : Integer.reverseBytes(n);
     }
 }

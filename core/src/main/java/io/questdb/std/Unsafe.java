@@ -32,7 +32,6 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -59,7 +58,6 @@ public final class Unsafe {
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
-    private static final boolean littleEndian = ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN);
 
     private Unsafe() {
     }
@@ -98,6 +96,11 @@ public final class Unsafe {
     public static void arrayPutOrdered(int[] array, int index, int value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
+    }
+
+    public static int byteArrayGetInt(byte[] array, int index) {
+        assert index > -1 && index < array.length - 3;
+        return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + ((long) index << BYTE_SCALE));
     }
 
     public static long calloc(long size, int memoryTag) {
@@ -178,10 +181,6 @@ public final class Unsafe {
 
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
-    }
-
-    public static boolean isLittleEndian() {
-        return littleEndian;
     }
 
     //#if jdk.version!=8

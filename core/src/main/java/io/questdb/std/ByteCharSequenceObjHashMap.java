@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.std;
 
-import io.questdb.std.*;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.util.Arrays;
@@ -38,34 +38,31 @@ import java.util.Arrays;
  * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
  * no longer present in the async profiler.
  * <p>
- * Important note:
- * This map is optimized for ASCII and UTF8 DirectByteCharSequence lookups. Lookups of UTF16
- * strings (j.l.String) with non-ASCII chars will not work correctly, so make sure to re-encode
- * the string in UTF8.
+ * This map is optimized for ASCII and UTF8 DirectByteCharSequence lookups.
  */
-class DirectByteCharSequenceObjHashMap<V> implements Mutable {
+public class ByteCharSequenceObjHashMap<V> implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
 
-    private final ObjList<String> list;
+    private final ObjList<ByteCharSequence> list;
     private final double loadFactor;
     private int capacity;
     private int free;
     private int[] hashCodes;
-    private String[] keys;
+    private ByteCharSequence[] keys;
     private int mask;
     private V[] values;
 
-    public DirectByteCharSequenceObjHashMap() {
+    public ByteCharSequenceObjHashMap() {
         this(8);
     }
 
-    public DirectByteCharSequenceObjHashMap(int initialCapacity) {
+    public ByteCharSequenceObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 
     @SuppressWarnings("unchecked")
-    private DirectByteCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
+    private ByteCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -73,7 +70,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         free = capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (capacity / loadFactor));
-        keys = new String[len];
+        keys = new ByteCharSequence[len];
         hashCodes = new int[len];
         mask = len - 1;
         list = new ObjList<>(capacity);
@@ -101,7 +98,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return valueAt(keyIndex(key));
     }
 
-    public V get(String key) {
+    public V get(ByteCharSequence key) {
         return valueAt(keyIndex(key));
     }
 
@@ -120,7 +117,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(String key) {
+    public int keyIndex(ByteCharSequence key) {
         int hashCode = Hash.hashMem32(key);
         int index = Hash.spread(hashCode) & mask;
 
@@ -135,15 +132,15 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public ObjList<String> keys() {
+    public ObjList<ByteCharSequence> keys() {
         return list;
     }
 
-    public boolean put(String key, V value) {
+    public boolean put(ByteCharSequence key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, String key, V value) {
+    public boolean putAt(int index, ByteCharSequence key, V value) {
         assert value != null;
         if (putAt0(index, key, value)) {
             list.add(key);
@@ -152,7 +149,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return false;
     }
 
-    public int remove(String key) {
+    public int remove(ByteCharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);
@@ -163,7 +160,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
     public void removeAt(int index) {
         if (index < 0) {
-            String key = keys[-index - 1];
+            ByteCharSequence key = keys[-index - 1];
             removeAt0(index);
             list.remove(key);
         }
@@ -184,7 +181,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    String key = keys[from];
+                    ByteCharSequence key = keys[from];
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
@@ -247,7 +244,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         } while (true);
     }
 
-    private int probe(String key, long hashCode, int index) {
+    private int probe(ByteCharSequence key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
@@ -259,7 +256,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         } while (true);
     }
 
-    private boolean putAt0(int index, String key, V value) {
+    private boolean putAt0(int index, ByteCharSequence key, V value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
@@ -282,9 +279,9 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         V[] oldValues = values;
-        String[] oldKeys = keys;
+        ByteCharSequence[] oldKeys = keys;
         int[] oldHashCodes = hashCodes;
-        keys = new String[len];
+        keys = new ByteCharSequence[len];
         hashCodes = new int[len];
         values = (V[]) new Object[len];
         Arrays.fill(keys, null);
@@ -292,7 +289,7 @@ class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            String key = oldKeys[i];
+            ByteCharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;

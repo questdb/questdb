@@ -30,6 +30,9 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * UTF8-encoded off-heap char sequence.
+ */
 public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
     public static final Factory FACTORY = new Factory();
     private long hi;

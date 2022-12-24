@@ -32,12 +32,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,11 +50,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     protected final NetworkIOJob NO_NETWORK_IO_JOB = new NetworkIOJob() {
-        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
+        private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
-        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 

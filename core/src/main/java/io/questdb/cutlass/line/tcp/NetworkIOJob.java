@@ -26,12 +26,14 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.mp.Job;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
 interface NetworkIOJob extends Job, Closeable {
-    void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+
+    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
     void close();
 

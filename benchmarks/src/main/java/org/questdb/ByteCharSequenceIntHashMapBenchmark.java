@@ -24,10 +24,11 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.tcp.DirectByteCharSequenceIntHashMap;
+import io.questdb.std.ByteCharSequenceIntHashMap;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -40,10 +41,10 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class DirectByteCharSequenceIntHashMapBenchmark {
+public class ByteCharSequenceIntHashMapBenchmark {
 
-    private final DirectByteCharSequence charSequence = new DirectByteCharSequence();
-    private DirectByteCharSequenceIntHashMap directMap = new DirectByteCharSequenceIntHashMap();
+    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private ByteCharSequenceIntHashMap directMap = new ByteCharSequenceIntHashMap();
     @Param({"7", "15", "31", "63"})
     private int len;
     @Param({"16", "256"})
@@ -53,7 +54,7 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(DirectByteCharSequenceIntHashMapBenchmark.class.getSimpleName())
+                .include(ByteCharSequenceIntHashMapBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -64,6 +65,7 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
     @Setup(Level.Iteration)
     public void setUp() {
         ptr = Unsafe.malloc((long) n * len, MemoryTag.NATIVE_DEFAULT);
+        dbcs.of(ptr, ptr + len);
         for (int i = 0; i < n; i++) {
             StringBuilder sb = new StringBuilder();
             for (int j = 0; j < len; j++) {
@@ -72,14 +74,14 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
                 sb.append(ch);
             }
             nonDirectMap.put(sb.toString(), 42);
-            directMap.put(sb.toString(), 42);
+            directMap.put(ByteCharSequence.newInstance(dbcs), 42);
         }
     }
 
     @TearDown(Level.Iteration)
     public void tearDown() {
         ptr = Unsafe.free(ptr, (long) n * len, MemoryTag.NATIVE_DEFAULT);
-        directMap = new DirectByteCharSequenceIntHashMap();
+        directMap = new ByteCharSequenceIntHashMap();
         nonDirectMap = new CharSequenceIntHashMap();
     }
 
@@ -87,8 +89,8 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
     public int testDirectMap() {
         int sum = 0;
         for (int i = 0; i < n; i++) {
-            charSequence.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
-            sum += directMap.get(charSequence);
+            dbcs.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
+            sum += directMap.get(dbcs);
         }
         return sum;
     }
@@ -97,8 +99,8 @@ public class DirectByteCharSequenceIntHashMapBenchmark {
     public long testNonDirectMap() {
         int sum = 0;
         for (int i = 0; i < n; i++) {
-            charSequence.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
-            sum += nonDirectMap.get(charSequence);
+            dbcs.of(ptr + (long) i * len, ptr + (long) (i + 1) * len);
+            sum += nonDirectMap.get(dbcs);
         }
         return sum;
     }

@@ -29,8 +29,10 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.ByteCharSequenceIntHashMap;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -46,7 +48,7 @@ import java.io.Closeable;
 class SymbolCache implements Closeable, DirectByteSymbolLookup {
     private final MicrosecondClock clock;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
-    private final DirectByteCharSequenceIntHashMap symbolValueToKeyMap = new DirectByteCharSequenceIntHashMap(
+    private final ByteCharSequenceIntHashMap symbolValueToKeyMap = new ByteCharSequenceIntHashMap(
             256,
             0.5,
             SymbolTable.VALUE_NOT_FOUND
@@ -94,7 +96,7 @@ class SymbolCache implements Closeable, DirectByteSymbolLookup {
         final int symbolKey = symbolMapReader.keyOf(tempSink);
 
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            symbolValueToKeyMap.putAt(index, LineTcpUtils.utf8BytesToString(value, tempSink), symbolKey);
+            symbolValueToKeyMap.putAt(index, ByteCharSequence.newInstance(value), symbolKey);
         }
 
         return symbolKey;

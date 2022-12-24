@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -41,7 +42,6 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
@@ -326,10 +326,10 @@ public class TableUpdateDetails implements Closeable {
         private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
-        private final DirectByteCharSequenceIntHashMap columnIndexByNameUtf8 = new DirectByteCharSequenceIntHashMap();
+        private final ByteCharSequenceIntHashMap columnIndexByNameUtf8 = new ByteCharSequenceIntHashMap();
         // maps column names to their types
         // will be populated for dynamically added columns only
-        private final DirectByteCharSequenceIntHashMap columnTypeByNameUtf8 = new DirectByteCharSequenceIntHashMap();
+        private final ByteCharSequenceIntHashMap columnTypeByNameUtf8 = new ByteCharSequenceIntHashMap();
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
         private final IntList columnTypes = new IntList();
@@ -341,7 +341,8 @@ public class TableUpdateDetails implements Closeable {
         private final StringSink tempSink = new StringSink();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         private boolean clean = true;
-        private String colName;
+        private String colNameUtf16;
+        private ByteCharSequence colNameUtf8;
         private int columnCount;
         private TableRecordMetadata latestKnownMetadata;
         private String symbolNameTemp;
@@ -476,9 +477,14 @@ public class TableUpdateDetails implements Closeable {
             this.latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        String getColName() {
-            assert colName != null;
-            return colName;
+        String getColNameUtf16() {
+            assert colNameUtf16 != null;
+            return colNameUtf16;
+        }
+
+        ByteCharSequence getColNameUtf8() {
+            assert colNameUtf8 != null;
+            return colNameUtf8;
         }
 
         // returns the column index for column name passed in colNameUtf8,
@@ -494,18 +500,20 @@ public class TableUpdateDetails implements Closeable {
                     // column has not been sent to the writer by name on this line before
                     // we can try to resolve column index using table reader
                     colWriterIndex = getColumnWriterIndex(colNameUtf16);
+                    ByteCharSequence onHeapColNameUtf8 = ByteCharSequence.newInstance(colNameUtf8);
                     if (colWriterIndex > -1) {
                         // keys of this map will be checked against DirectByteCharSequence when get() is called
                         // DirectByteCharSequence.equals() compares chars created from each byte, basically it
                         // assumes that each char is encoded on a single byte (ASCII)
                         // utf8BytesToString() is used here instead of a simple toString() call to make sure
                         // column names with non-ASCII chars are handled properly
-                        columnIndexByNameUtf8.put(utf8BytesToString(colNameUtf8, tempSink), colWriterIndex);
+                        columnIndexByNameUtf8.put(onHeapColNameUtf8, colWriterIndex);
                     } else {
                         // cannot not resolve column index even from the reader
                         // column will be passed to the writer by name
-                        colName = colNameUtf16.toString();
-                        addedColsUtf16.addAt(index, colName);
+                        this.colNameUtf16 = colNameUtf16.toString();
+                        this.colNameUtf8 = onHeapColNameUtf8;
+                        addedColsUtf16.addAt(index, this.colNameUtf16);
                         return COLUMN_NOT_FOUND;
                     }
                 } else {
@@ -525,7 +533,7 @@ public class TableUpdateDetails implements Closeable {
             return columnTypes.getQuick(colIndex);
         }
 
-        int getColumnType(String colName, byte entityType) {
+        int getColumnType(ByteCharSequence colName, byte entityType) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
                 colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
