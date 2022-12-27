@@ -31,6 +31,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
+import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,19 +77,19 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 sendComplete,
                 0,
                 TABLE_START_CONTENT,  // <-- read only, remains intact
-                false, false, true, true
+                false, false, false, true
         );
     }
 
     @Test
     public void testActivePartitionReadOnlyAndO3OverActivePartitionUDP() throws Exception {
         final String tableName = testName.getMethodName();
-        int numEvents = 100;
+        int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineUDP(
                 tableName,
                 () -> {
-                    long[] timestampNano = {firstPartitionTs, lastPartitionTs, futurePartitionTs};
+                    long[] timestampNano = {firstPartitionTs, secondPartitionTs, thirdPartitionTs, lastPartitionTs, futurePartitionTs};
                     try (LineUdpSender sender = new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), ILP_PORT, 200, 1)) {
                         for (int tick = 0; tick < numEvents; tick++) {
                             int tickerId = tick % timestampNano.length;
@@ -105,7 +106,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     }
                 },
                 sendComplete,
-                3333,
+                5000,
                 null,
                 false, false, false, true, false
         );
@@ -113,14 +114,13 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3UnderActivePartitionUDP() throws Exception {
-        Assume.assumeTrue(Os.type != Os.LINUX_AMD64 && Os.type != Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
-        int numEvents = 100;
+        int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineUDP(
                 tableName,
                 () -> {
-                    long[] timestampNano = {firstPartitionTs, secondPartitionTs, lastPartitionTs};
+                    long[] timestampNano = {firstPartitionTs, secondPartitionTs, thirdPartitionTs, lastPartitionTs};
                     try (LineUdpSender sender = new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), ILP_PORT, 200, 1)) {
                         for (int tick = 0; tick < numEvents; tick++) {
                             int tickerId = tick % timestampNano.length;
@@ -137,9 +137,40 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     }
                 },
                 sendComplete,
-                9,
+                1666,
                 null,
                 true, false, true, true
+        );
+    }
+
+    @Test
+    public void testTableIsReadOnlyUDP() throws Exception {
+        final String tableName = testName.getMethodName();
+        int numEvents = 5000;
+        SOCountDownLatch sendComplete = new SOCountDownLatch(1);
+        assertServerMainWithLineUDP(
+                tableName,
+                () -> {
+                    long[] timestampNano = {firstPartitionTs, secondPartitionTs, thirdPartitionTs, lastPartitionTs};
+                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                        for (int tick = 0; tick < numEvents; tick++) {
+                            int tickerId = tick % timestampNano.length;
+                            timestampNano[tickerId] += lineTsStep;
+                            sender.metric(tableName)
+                                    .tag("s", "lobster")
+                                    .field("l", 88)
+                                    .field("i", 2124)
+                                    .at(timestampNano[tickerId]);
+                        }
+                        sender.flush();
+                    } finally {
+                        sendComplete.countDown();
+                    }
+                },
+                sendComplete,
+                0,
+                TABLE_START_CONTENT,
+                true, true, true, true
         );
     }
 
@@ -204,13 +235,9 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
 
-
                 // run the test
                 test.run();
                 sendComplete.await();
-
-                // check read only state, no changes
-                checkPartitionReadOnlyState(engine, tableName, partitionIsReadOnly);
 
                 // check expected results
                 if (expectedNewEvents > 0) {
@@ -224,23 +251,22 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Os.sleep(1L);
                     }
 
-                    int idleCount = 0;
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                         int partitionCount = reader.getPartitionCount();
                         Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
                         for (int i = 0; i < partitionCount; i++) {
                             long newPartitionSize = reader.getTxFile().getPartitionSize(i);
                             if (!reader.getTxFile().isPartitionReadOnly(i)) {
-                                boolean partitionGrew = partitionSizes[i] < newPartitionSize;
-                                if (!partitionGrew) {
-                                    Assert.assertTrue(idleCount++ < 2);
-                                }
+                                Assert.assertTrue(partitionSizes[i] < newPartitionSize);
                             } else {
                                 Assert.assertEquals(partitionSizes[i], newPartitionSize);
                             }
                         }
                     }
                 }
+
+                // check read only state, no changes
+                checkPartitionReadOnlyState(engine, tableName, partitionIsReadOnly);
 
                 if (finallyExpected != null) {
                     assertSql(

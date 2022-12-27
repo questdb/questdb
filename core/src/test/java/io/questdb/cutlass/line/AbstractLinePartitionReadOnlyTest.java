@@ -54,6 +54,9 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
     protected static final String secondPartitionName = "2022-12-09";
     protected static final long secondPartitionTs; // nanos
 
+    protected static final String thirdPartitionName = "2022-12-10";
+    protected static final long thirdPartitionTs; // nanos
+
     @Rule
     public TestName testName = new TestName();
 
@@ -89,6 +92,7 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
         try {
             firstPartitionTs = TimestampFormatUtils.parseTimestamp(firstPartitionName + "T00:00:00.000Z") * 1000L;
             secondPartitionTs = TimestampFormatUtils.parseTimestamp(secondPartitionName + "T00:00:00.000Z") * 1000L;
+            thirdPartitionTs = TimestampFormatUtils.parseTimestamp(thirdPartitionName + "T00:00:00.000Z") * 1000L;
             lastPartitionTs = TimestampFormatUtils.parseTimestamp(lastPartitionName + "T00:00:00.000Z") * 1000L;
             futurePartitionTs = TimestampFormatUtils.parseTimestamp(futurePartitionName + "T00:00:00.000Z") * 1000L;
         } catch (NumericException impossible) {
