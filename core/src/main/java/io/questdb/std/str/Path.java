@@ -115,9 +115,9 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     @Override
     public void close() {
-        if (headPtr != NULL) {
+        if (headPtr != 0L) {
             Unsafe.free(headPtr, capacity + 1, MemoryTag.NATIVE_PATH);
-            headPtr = tailPtr = NULL;
+            headPtr = tailPtr = 0L;
         }
     }
 
@@ -179,7 +179,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         // another Path is already UTF8 encoded and cannot be treated as CharSequence.
         // Copy binary array representation instead of trying to UTF8 encode it
         int len = other.length();
-        if (headPtr == NULL) {
+        if (headPtr == 0L) {
             headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
             capacity = len;
         } else if (capacity < len) {
@@ -322,7 +322,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     @NotNull
     public String toString() {
-        if (headPtr != NULL) {
+        if (headPtr != 0L) {
             final CharSink b = Misc.getThreadLocalBuilder();
             toSink(b);
             return b.toString();
@@ -336,7 +336,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     private void checkClosed() {
-        if (headPtr == NULL) {
+        if (headPtr == 0L) {
             headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
         }
     }
