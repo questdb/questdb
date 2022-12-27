@@ -4437,16 +4437,15 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "where l1*i2 != 0",
                 "SelectedRecord\n" +
                         "    Filter filter: l1*i2!=0\n" +
-                        "        Limit lo: 100\n" +
+                        "        SelectedRecord\n" +
                         "            SelectedRecord\n" +
-                        "                SelectedRecord\n" +
-                        "                    Async Filter\n" +
-                        "                      limit: 100\n" +
-                        "                      filter: l::short<i\n" +
-                        "                      workers: 1\n" +
-                        "                        DataFrame\n" +
-                        "                            Row forward scan\n" +
-                        "                            Frame forward scan on: a\n");
+                        "                Async Filter\n" +
+                        "                  limit: 100\n" +
+                        "                  filter: l::short<i\n" +
+                        "                  workers: 1\n" +
+                        "                    DataFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: a\n");
     }
 
     @Test
