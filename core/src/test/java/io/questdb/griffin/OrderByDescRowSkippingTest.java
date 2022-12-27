@@ -44,12 +44,12 @@ import org.junit.Test;
  */
 public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
 
-    static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
+    private static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
             "9\t2022-01-12T06:13:20.000000Z\n" +
             "8\t2022-01-11T02:26:40.000000Z\n" +
             "7\t2022-01-09T22:40:00.000000Z\n" +
             "6\t2022-01-08T18:53:20.000000Z\n";
-    static final String EXPECTED = "rectype\tcreaton\n" + DATA;
+    private static final String EXPECTED = "rectype\tcreaton\n" + DATA;
 
     // partitioned table with designated timestamp and two partitions, 5 rows per partition
     @Test
@@ -213,7 +213,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n", "select l from tab order by ts desc limit -12,-8");
     }
 
-    //empty table with designated timestamp
+    // empty table with designated timestamp
     @Test
     public void testEmptyTableSelect_allReturnsNoRows() throws Exception {
         createEmptyTable();
@@ -672,15 +672,17 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
     }
 
-    //tests "partitionIndex == partitionCount - 1" conditional in FullBwdDataFrameCursor.skipTo()
+    // tests "partitionIndex == partitionCount - 1" conditional in FullBwdDataFrameCursor.skipTo()
     @Test
     public void testSkipBeyondEndOfNonemptyTableReturnsNoRows() throws Exception {
         preparePartitionPerRowTableWithLongNames();
 
-        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-             RecordCursorFactory factory = prepareFactory(reader);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            cursor.skipTo(11);
+        try (
+                TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                RecordCursorFactory factory = prepareFactory(reader);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.skipTo(11));
             Assert.assertFalse(cursor.hasNext());
         }
     }
@@ -699,10 +701,12 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 row.putLong(0, 1L);
                 row.append();
 
-                try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-                     RecordCursorFactory factory = prepareFactory(reader);
-                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    cursor.skipTo(1);
+                try (
+                        TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                        RecordCursorFactory factory = prepareFactory(reader);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.skipTo(1));
                     Assert.assertFalse(cursor.hasNext());
                 }
 
@@ -711,15 +715,17 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         });
     }
 
-    //tests "partitionCount < 1" conditional in FullBwdDataFrameCursor.skipTo()
+    // tests "partitionCount < 1" conditional in FullBwdDataFrameCursor.skipTo()
     @Test
-    public void testSskipOverEemptyTableWithNoPartitionsReturnsNoRows() throws Exception {
+    public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
         runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
 
-        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-             RecordCursorFactory factory = prepareFactory(reader);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            cursor.skipTo(1);
+        try (
+                TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                RecordCursorFactory factory = prepareFactory(reader);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertFalse(cursor.skipTo(1));
             Assert.assertFalse(cursor.hasNext());
         }
     }
@@ -770,7 +776,9 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
         columnSizes.add(3);
 
-        return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
+        return new DataFrameRecordCursorFactory(
+                engine.getConfiguration(),
+                metadata,
                 new FullBwdDataFrameCursorFactory("trips", metadata.getTableId(), reader.getVersion()),
                 new BwdDataFrameRowCursorFactory(),
                 false,
@@ -782,7 +790,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         );
     }
 
-    //creates test table in descending and then ascending order 10,9,..,1, 1,2,..,10
+    // creates test table in descending and then ascending order 10,9,..,1, 1,2,..,10
     private void prepareNoDesignatedTsTableWithDuplicates() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);",
                 "insert into tab " +

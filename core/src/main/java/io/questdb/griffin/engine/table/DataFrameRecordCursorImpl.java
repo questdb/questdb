@@ -95,10 +95,9 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void skipTo(long rowCount) {
+    public boolean skipTo(long rowCount) {
         if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
-            super.skipTo(rowCount);
-            return;
+            return false;
         }
 
         DataFrame dataFrame = dataFrameCursor.skipTo(rowCount);
@@ -106,7 +105,9 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); // move to partition, rowlo doesn't matter
             next = nextRow;
+            return true;
         }
+        return false;
     }
 
     @Override

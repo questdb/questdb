@@ -73,7 +73,8 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
      * Positions data frame at the given row number.
      *
      * @param rowCount absolute row number in table. Rows are numbered 0...row_count-1
-     * @return data frame and position (lo) of given rowCount (according to cursor order) .
+     * @return data frame and position (lo) of given rowCount (according to cursor order).
+     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
      */
     default @Nullable DataFrame skipTo(long rowCount) {
         throw new UnsupportedOperationException();

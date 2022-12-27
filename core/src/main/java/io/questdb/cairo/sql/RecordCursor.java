@@ -33,6 +33,7 @@ import java.io.Closeable;
  * close() method must be called after other calls are complete.
  */
 public interface RecordCursor extends Closeable, SymbolTableSource {
+
     /**
      * RecordCursor must be closed after other method calls are finished.
      */
@@ -87,7 +88,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Positions record at given rowid. The rowid must have been previously obtained from Record instance.
+     * Positions record at given row id. The row id must have been previously obtained from Record instance.
      *
      * @param record  to position
      * @param atRowId rowid of the desired record
@@ -103,18 +104,18 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     long size();
 
     /**
-     * Skips to record given row count to skip. Rows are counted top of table.
+     * Tries to position the record at the given row count to skip in an efficient way.
+     * Rows are counted top of table.
      * <p>
-     * Some implementations that support random access (e.g. tables ordered by designated timestamp)
-     * have special/faster implementations.
+     * Supported by some record cursors that support random access (e.g. tables ordered by
+     * designated timestamp).
      *
      * @param rowCount row count to skip down the cursor
+     * @return true if a fast skip is supported by the cursor and was executed, false otherwise
+     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
      */
-    default void skipTo(long rowCount) {
-        toTop();
-        // TODO(puzpuzpuz): this is non-suspendable
-        //noinspection StatementWithEmptyBody
-        while (rowCount-- > 0 && hasNext()) ;
+    default boolean skipTo(long rowCount) {
+        return false;
     }
 
     /**

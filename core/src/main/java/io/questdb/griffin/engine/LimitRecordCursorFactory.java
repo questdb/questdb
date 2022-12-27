@@ -78,6 +78,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class LimitRecordCursor implements RecordCursor {
         private final Function hiFunction;
         private final Function loFunction;
+        private boolean areRowsCounted;
         private RecordCursor base;
         private long hi;
         private boolean isLimitCounted;
@@ -85,6 +86,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long lo;
         private long rowCount;
         private long size;
+        private long skipToRows;
 
         public LimitRecordCursor(Function loFunction, Function hiFunction) {
             this.loFunction = loFunction;
@@ -152,22 +154,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return size > -1 ? size : -1;
         }
 
-        public void skipTo(long rowCount) {
-            base.skipTo(Math.max(0, rowCount));
-        }
-
         @Override
         public void toTop() {
             base.toTop();
-            rowCount = 0;
+            rowCount = -1;
             size = -1;
+            skipToRows = -1;
             lo = loFunction.getLong(null);
             hi = hiFunction != null ? hiFunction.getLong(null) : -1;
             isLimitCounted = false;
+            areRowsCounted = false;
         }
 
         private void countLimit() {
-            // TODO(puzpuzpuz): this is non-suspendable (skipTo calls without previous countRows)
             if (lo < 0 && hiFunction == null) {
                 // last N rows
                 countRows();
@@ -177,7 +176,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 // if we have 12 records we need to skip 12-5 = 7
                 // if we have 4 records = return all of them
                 if (rowCount > -lo) {
-                    skipTo(rowCount + lo);
+                    skipRows(rowCount + lo);
                 }
                 // set limit to return remaining rows
                 limit = Math.min(rowCount, -lo);
@@ -208,7 +207,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                                 // we would first ignore last 4 and return first 3
                                 limit = rowCount + hi;
                             } else {
-                                skipTo(rowCount + lo);
+                                skipRows(rowCount + lo);
                                 limit = Math.min(rowCount, -lo + hi);
                             }
                             size = limit;
@@ -235,21 +234,41 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
 
                     if (lo > 0 && limit > 0) {
-                        skipTo(lo);
+                        skipRows(lo);
                     }
                 }
             }
         }
 
         private void countRows() {
-            rowCount = base.size();
-            if (rowCount > -1L) {
-                return;
+            if (rowCount == -1) {
+                rowCount = base.size();
+                if (rowCount > -1) {
+                    areRowsCounted = true;
+                    return;
+                }
+                rowCount = 0;
             }
 
-            rowCount = 0L;
-            while (base.hasNext()) {
-                rowCount++;
+            if (!areRowsCounted) {
+                while (base.hasNext()) {
+                    rowCount++;
+                }
+                areRowsCounted = true;
+            }
+        }
+
+        private void skipRows(long rowCount) {
+            if (skipToRows == -1) {
+                skipToRows = Math.max(0, rowCount);
+            }
+            if (skipToRows > 0) {
+                if (base.skipTo(rowCount)) {
+                    skipToRows = 0;
+                }
+                while (skipToRows > 0 && base.hasNext()) {
+                    skipToRows--;
+                }
             }
         }
     }

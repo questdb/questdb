@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.std.Misc;
 
 public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -54,24 +53,17 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // TODO(puzpuzpuz): this is non-suspendable
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            if (masterCursor.hasNext()) {
-                cursor.of(masterCursor, slaveCursor);
-                return cursor;
-            }
-            slaveCursor = Misc.free(slaveCursor);
-            Misc.free(masterCursor);
+            cursor.of(masterCursor, slaveCursor);
+            return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
             throw ex;
         }
-
-        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override
@@ -93,6 +85,8 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
+        private boolean isMasterHasNextPending;
+        private boolean masterHasNext;
 
         public CrossJoinRecordCursor(int columnSplit) {
             super(columnSplit);
@@ -106,17 +100,24 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (slaveCursor.hasNext()) {
-                return true;
-            }
+            // TODO(puzpuzpuz): test suspendability
+            while (true) {
+                if (isMasterHasNextPending) {
+                    masterHasNext = masterCursor.hasNext();
+                    isMasterHasNextPending = false;
+                }
 
-            // TODO(puzpuzpuz): this is non-suspendable
-            if (masterCursor.hasNext()) {
+                if (!masterHasNext) {
+                    return false;
+                }
+
+                if (slaveCursor.hasNext()) {
+                    return true;
+                }
+
                 slaveCursor.toTop();
-                return slaveCursor.hasNext();
+                isMasterHasNextPending = true;
             }
-
-            return false;
         }
 
         @Override
@@ -133,15 +134,15 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             masterCursor.toTop();
-            // TODO(puzpuzpuz): this is non-suspendable
-            masterCursor.hasNext();
             slaveCursor.toTop();
+            isMasterHasNextPending = true;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            isMasterHasNextPending = true;
         }
     }
 }

@@ -40,7 +40,7 @@ import org.junit.Test;
 /**
  * This class tests row skipping (in ascending order) optimizations for tables:
  * - with and without designated timestamps,
- * - non-partitioned and partitioned .
+ * - non-partitioned and partitioned.
  */
 public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
@@ -583,15 +583,17 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n", "select l from tab order by ts limit -11,-15");
     }
 
-    //tests "partitionIndex == partitionCount - 1" conditional in FullFwdDataFrameCursor.skipTo()
+    // tests "partitionIndex == partitionCount - 1" conditional in FullFwdDataFrameCursor.skipTo()
     @Test
     public void testSkipBeyondEndOfNonEmptyTableReturnsNoRows() throws Exception {
         preparePartitionPerRowTableWithLongNames();
 
-        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-             RecordCursorFactory factory = prepareFactory(reader);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            cursor.skipTo(11);
+        try (
+                TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                RecordCursorFactory factory = prepareFactory(reader);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.skipTo(11));
             Assert.assertFalse(cursor.hasNext());
         }
     }
@@ -610,10 +612,12 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
                 row.putLong(0, 1L);
                 row.append();
 
-                try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-                     RecordCursorFactory factory = prepareFactory(reader);
-                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    cursor.skipTo(1);
+                try (
+                        TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                        RecordCursorFactory factory = prepareFactory(reader);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.skipTo(1));
                     Assert.assertFalse(cursor.hasNext());
                 }
 
@@ -622,15 +626,17 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         });
     }
 
-    //tests "partitionCount < 1" conditional in FullFwdDataFrameCursor.skipTo()
+    // tests "partitionCount < 1" conditional in FullFwdDataFrameCursor.skipTo()
     @Test
     public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
         runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
 
-        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
-             RecordCursorFactory factory = prepareFactory(reader);
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            cursor.skipTo(1);
+        try (
+                TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                RecordCursorFactory factory = prepareFactory(reader);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertFalse(cursor.skipTo(1));
             Assert.assertFalse(cursor.hasNext());
         }
     }
@@ -681,7 +687,9 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
         columnSizes.add(3);
 
-        return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
+        return new DataFrameRecordCursorFactory(
+                engine.getConfiguration(),
+                metadata,
                 new FullFwdDataFrameCursorFactory("trips", metadata.getTableId(), reader.getVersion()),
                 new DataFrameRowCursorFactory(),
                 false,
