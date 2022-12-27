@@ -146,7 +146,7 @@ public class TxSerializer {
             if (tx.ATTACHED_PARTITIONS_COUNT != 0) {
                 for (TxFileStruct.AttachedPartition part : tx.ATTACHED_PARTITIONS) {
                     rwTxMem.putLong(part.TS);
-                    long maskedSize = ((part.MASK << 44) & TxReader.PARTITION_MASK_MASK) | (part.SIZE & TxReader.PARTITION_SIZE_MASK);
+                    long maskedSize = ((part.MASK << 44) & TxReader.PARTITION_FLAGS_MASK) | (part.SIZE & TxReader.PARTITION_SIZE_MASK);
                     rwTxMem.putLong(maskedSize);
                     rwTxMem.putLong(part.NAME_TX);
                     rwTxMem.putLong(part.DATA_TX);
@@ -211,7 +211,7 @@ public class TxSerializer {
                     offset += Long.BYTES;
                     if (offset + 7 < roTxMem.size()) {
                         long maskedSize = roTxMem.getLong(offset);
-                        partition.MASK = (maskedSize & TxReader.PARTITION_MASK_MASK) >>> 44;
+                        partition.MASK = (maskedSize & TxReader.PARTITION_FLAGS_MASK) >>> 44;
                         partition.SIZE = maskedSize & TxReader.PARTITION_SIZE_MASK;
                         offset += Long.BYTES;
                     }

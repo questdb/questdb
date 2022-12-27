@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
-    public static final long PARTITION_MASK_MASK = 0x7FFFF00000000000L;
+    public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
@@ -432,7 +432,7 @@ public class TxReader implements Closeable, Mutable {
                     }
                 }
                 int offset = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET;
-                long mask = attachedPartitions.getQuick(offset) & PARTITION_MASK_MASK;
+                long mask = attachedPartitions.getQuick(offset) & PARTITION_FLAGS_MASK;
                 attachedPartitions.setQuick(offset, mask | (transientRowCount & PARTITION_SIZE_MASK)); // preserve mask
                 attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {

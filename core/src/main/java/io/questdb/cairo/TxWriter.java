@@ -560,7 +560,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         int offset = index + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
-            attachedPartitions.setQuick(offset, (maskedSize & PARTITION_MASK_MASK) | (partitionSize & PARTITION_SIZE_MASK));
+            attachedPartitions.setQuick(offset, (maskedSize & PARTITION_FLAGS_MASK) | (partitionSize & PARTITION_SIZE_MASK));
             recordStructureVersion++;
         }
     }
