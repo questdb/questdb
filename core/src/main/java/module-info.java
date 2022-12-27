@@ -192,6 +192,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory,
+//                    # 'trigonometric'
+            io.questdb.griffin.engine.functions.math.SinDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CosDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.TanDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.PIDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.ToRadiansDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.FromRadiansDoubleFunctionFactory,
 //                    # '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
