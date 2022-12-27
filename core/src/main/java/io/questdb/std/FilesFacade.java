@@ -40,7 +40,7 @@ public interface FilesFacade {
     default boolean closeChecked(int fd) {
         return Files.closeChecked(fd) == 0;
     }
-    
+
     int copy(LPSZ from, LPSZ to);
 
     long copyData(int srcFd, int destFd, long offsetSrc, long length);
@@ -141,9 +141,9 @@ public interface FilesFacade {
 
     int unlink(LPSZ softLink);
 
-    int unlinkRemove(Path path, Log LOG);
+    int unlinkOrRemove(Path path, Log LOG);
 
-    int unlinkRemove(Path path, int checkedType, Log LOG);
+    int unlinkOrRemove(Path path, int checkedType, Log LOG);
 
     void walk(Path src, FindVisitor func);
 

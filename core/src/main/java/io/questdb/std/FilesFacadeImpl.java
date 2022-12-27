@@ -338,13 +338,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int unlinkRemove(Path path, Log LOG) {
+    public int unlinkOrRemove(Path path, Log LOG) {
         int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
-        return unlinkRemove(path, checkedType, LOG);
+        return unlinkOrRemove(path, checkedType, LOG);
     }
 
     @Override
-    public int unlinkRemove(Path path, int checkedType, Log LOG) {
+    public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
         if (checkedType == Files.DT_LNK) {
             // in windows ^ ^ will return DT_DIR, but that is ok as the behaviour
             // is to delete the link, not the contents of the target. in *nix

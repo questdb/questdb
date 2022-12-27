@@ -3871,7 +3871,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
                     if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
-                        int errno = ff.unlinkRemove(other, LOG);
+                        int errno = ff.unlinkOrRemove(other, LOG);
                         if (!(errno == 0 || errno == -1)) {
                             LOG.info()
                                     .$("could not purge partition version, async purge will be scheduled [path=")
@@ -5198,7 +5198,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
                     !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
                     !Chars.startsWith(fileNameSink, SEQ_DIR)) {
-                ff.unlinkRemove(path, checkedType, LOG);
+                ff.unlinkOrRemove(path, checkedType, LOG);
             }
         } finally {
             path.trimTo(rootLen);
@@ -5229,7 +5229,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
                     return;
                 }
-                ff.unlinkRemove(path, checkedType, LOG);
+                ff.unlinkOrRemove(path, checkedType, LOG);
             } catch (NumericException ignore) {
                 // not a date?
                 // ignore exception and leave the directory
