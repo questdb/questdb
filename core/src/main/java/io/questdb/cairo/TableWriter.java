@@ -5099,6 +5099,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
             removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
             path.trimTo(rootLen);
+        } else {
+            LOG.critical()
+                    .$("o3 ignoring removal of column in read-only partition [table=").utf8(tableName)
+                    .$(", columnName=").utf8(columnName)
+                    .$(", timestamp=").$ts(partitionTimestamp)
+                    .$();
         }
     }
 
