@@ -48,19 +48,19 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angleY = args.getQuick(0); // radians
-        Function angleX = args.getQuick(1); // radians
-        if (angleY.isConstant() && angleX.isConstant()) {
-            return new DoubleConstant(Math.atan2(angleY.getDouble(null), angleX.getDouble(null)));
+        Function coordY = args.getQuick(0); // radians
+        Function coordX = args.getQuick(1); // radians
+        if (coordY.isConstant() && coordX.isConstant()) {
+            return new DoubleConstant(Math.atan2(coordY.getDouble(null), coordX.getDouble(null)));
         }
-        if (angleY.isConstant()) {
-            return new Atan2Function(new DoubleConstant(angleY.getDouble(null)), angleX);
+        if (coordY.isConstant()) {
+            return new Atan2Function(new DoubleConstant(coordY.getDouble(null)), coordX);
         }
-        if (angleX.isConstant()) {
-            return new Atan2Function(angleY, new DoubleConstant(angleX.getDouble(null)));
+        if (coordX.isConstant()) {
+            return new Atan2Function(coordY, new DoubleConstant(coordX.getDouble(null)));
         }
 
-        return new Atan2Function(angleY, angleX);
+        return new Atan2Function(coordY, coordX);
     }
 
     private static class Atan2Function extends DoubleFunction implements ScalarFunction {

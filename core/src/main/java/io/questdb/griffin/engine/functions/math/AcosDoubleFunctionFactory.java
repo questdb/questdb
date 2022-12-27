@@ -49,9 +49,9 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.acos(angle.getDouble(null)));
+        Function x = args.getQuick(0);
+        if (x.isConstant()) {
+            return new DoubleConstant(StrictMath.acos(x.getDouble(null)));
         }
         return new AcosFunction(args.getQuick(0));
     }

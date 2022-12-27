@@ -49,9 +49,9 @@ public class AtanDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.atan(angle.getDouble(null)));
+        Function x = args.getQuick(0);
+        if (x.isConstant()) {
+            return new DoubleConstant(StrictMath.atan(x.getDouble(null)));
         }
         return new AtanFunction(args.getQuick(0));
     }
