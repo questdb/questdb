@@ -742,6 +742,29 @@ public class FilesTest {
     }
 
     @Test
+    public void testTypeOfDirAndSoftLinkAreTheSame() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            File folder = temporaryFolder.newFolder("folder");
+            try (
+                    Path path = new Path().of(folder.getAbsolutePath()).$();
+                    Path link = new Path().of(folder.getParentFile().toString()).concat("link").$()
+            ) {
+                Assert.assertTrue(Files.exists(path));
+                int pathType = Files.findType(Files.findFirst(path));
+                Assert.assertEquals(Files.DT_DIR, pathType);
+
+                Assert.assertEquals(0, Files.softLink(path, link));
+                Assert.assertTrue(Files.exists(link));
+                int linkType = Files.findType(Files.findFirst(link));
+                Assert.assertEquals(Files.DT_DIR, linkType);
+
+                Assert.assertEquals(pathType, linkType);
+            }
+        });
+    }
+
+    @Test
     public void testUnlink() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {

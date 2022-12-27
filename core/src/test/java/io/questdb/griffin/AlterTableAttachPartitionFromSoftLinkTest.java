@@ -91,7 +91,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDetachPartitionAttachedFromSoftLink() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "SNOW", () -> {
@@ -166,7 +166,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropPartition() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "IGLOO", () -> {
@@ -197,7 +197,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropPartitionWhileThereIsAReader() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "FINLAND", () -> {
@@ -236,6 +236,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropPartitionWhileThereIsAReaderWindows() throws Exception {
+        Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, () -> {
@@ -270,6 +271,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropPartitionWindows() throws Exception {
+        Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, () -> {
@@ -592,7 +594,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testPurgePartitions() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             String tableName = testName.getMethodName();
             String[] partitionName = {
@@ -698,7 +700,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testRemoveColumn() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "REFRIGERATOR", () -> {
@@ -758,6 +760,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testRemoveColumnWindows() throws Exception {
+        Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, () -> {
@@ -817,7 +820,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testTruncateTable() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "FRIO_DEL_15", () -> {
@@ -848,6 +851,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testTruncateTableWindows() throws Exception {
+        Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, () -> {
@@ -867,7 +871,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testUpdate() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "LEGEND", () -> {
@@ -906,6 +910,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testUpdateWindows() throws Exception {
+        Assume.assumeTrue(Os.isWindows()); // for consistency with the test's name
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, () -> {
