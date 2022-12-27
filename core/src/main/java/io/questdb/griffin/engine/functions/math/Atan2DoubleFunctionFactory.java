@@ -25,22 +25,20 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class SinDoubleFunctionFactory implements FunctionFactory {
+public class Atan2DoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sin(D)";
+        return "atan2(DD)"; // y, x
     }
 
     @Override
@@ -50,28 +48,34 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.sin(angle.getDouble(null)));
+        Function angleY = args.getQuick(0); // radians
+        Function angleX = args.getQuick(1); // radians
+        if (angleY.isConstant() && angleX.isConstant()) {
+            return new DoubleConstant(Math.atan2(angleY.getDouble(null), angleX.getDouble(null)));
         }
-        return new SinFunction(args.getQuick(0));
+        if (angleY.isConstant()) {
+            return new Atan2Function(new DoubleConstant(angleY.getDouble(null)), angleX);
+        }
+        if (angleX.isConstant()) {
+            return new Atan2Function(angleY, new DoubleConstant(angleX.getDouble(null)));
+        }
+
+        return new Atan2Function(angleY, angleX);
     }
 
-    private static class SinFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+    private static class Atan2Function extends DoubleFunction implements ScalarFunction {
+        final Function xFunction;
+        final Function yFunction;
 
-        public SinFunction(Function function) {
-            this.function = function;
+        public Atan2Function(Function yFunction, Function xFunction) {
+            this.yFunction = yFunction;
+            this.xFunction = xFunction;
         }
 
-        @Override
-        public Function getArg() {
-            return function;
-        }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.sin(function.getDouble(rec));
+            return Math.atan2(yFunction.getDouble(rec), xFunction.getDouble(rec));
         }
     }
 }

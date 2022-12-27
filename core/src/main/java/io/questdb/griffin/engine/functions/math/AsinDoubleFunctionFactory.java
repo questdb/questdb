@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -37,10 +36,10 @@ import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class SinDoubleFunctionFactory implements FunctionFactory {
+public class AsinDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sin(D)";
+        return "asin(D)";
     }
 
     @Override
@@ -52,15 +51,15 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
     ) {
         Function angle = args.getQuick(0); // radians
         if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.sin(angle.getDouble(null)));
+            return new DoubleConstant(StrictMath.asin(angle.getDouble(null)));
         }
-        return new SinFunction(args.getQuick(0));
+        return new AsinFunction(args.getQuick(0));
     }
 
-    private static class SinFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
+    private static class AsinFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
         final Function function;
 
-        public SinFunction(Function function) {
+        public AsinFunction(Function function) {
             this.function = function;
         }
 
@@ -71,7 +70,7 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.sin(function.getDouble(rec));
+            return StrictMath.asin(function.getDouble(rec));
         }
     }
 }

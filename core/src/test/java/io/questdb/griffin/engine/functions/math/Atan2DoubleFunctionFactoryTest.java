@@ -29,38 +29,37 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class ToRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class Atan2DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0.000000000000001);
+        call(Double.NaN, Double.NaN).andAssert(Double.NaN, 0.000000000000001);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(-45).andAssert(-Math.PI / 4, 0.000000000000001);
-        call(-90).andAssert(-Math.PI / 2, 0.000000000000001);
-        call(-180).andAssert(-Math.PI, 0.000000000000001);
-        call(-360).andAssert(-0.0, 0.000000000000001);
+        call(-5.0, -5.0).andAssert(-Math.PI * 3 / 4, 0.000000000000001);
+        call(-10.0, -10.0).andAssert(-Math.PI * 3 / 4, 0.000000000000001);
+        call(-0.0000000000000001, -10.0).andAssert(-Math.PI, 0.000000000000001);
+        call(-10.0, -0.0000000000000001).andAssert(-Math.PI / 2, 0.000000000000001);
     }
 
     @Test
     public void testPositive() throws SqlException {
-        call(45).andAssert(Math.PI / 4, 0.000000000000001);
-        call(90).andAssert(Math.PI / 2, 0.000000000000001);
-        call(180).andAssert(Math.PI, 0.000000000000001);
-        call(360).andAssert(0.0, 0.000000000000001);
+        call(5.0, 5.0).andAssert(Math.PI / 4, 0.000000000000001);
+        call(10.0, 10.0).andAssert(Math.PI / 4, 0.000000000000001);
+        call(0.0, 10.0).andAssert(0.0, 0.000000000000001);
+        call(10.0, 0.0).andAssert(Math.PI / 2, 0.000000000000001);
     }
 
     @Test
     public void testZero() throws SqlException {
-        call(0).andAssert(0.0, 0.000000000000001);
-        call(0.0).andAssert(0.0, 0.000000000000001);
-        call(-0).andAssert(0.0, 0.000000000000001);
+        call(-0.0000000000000001, -0.0000000000000001).andAssert(-Math.PI * 3 / 4, 0.000000000000001);
+        call(0.0, 0.0).andAssert(0.0, 0.000000000000001);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToRadiansDoubleFunctionFactory();
+        return new Atan2DoubleFunctionFactory();
     }
 }
