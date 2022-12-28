@@ -2493,7 +2493,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final long cursorRowCount = currentCursor.size();
-        this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
+        if (maxRows > 0) {
+            this.maxRows = cursorRowCount > 0 ? Long.min(maxRows, cursorRowCount) : maxRows;
+        } else {
+            this.maxRows = Long.MAX_VALUE;
+        }
         this.resumeProcessor = cursorResumeProcessor;
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, commandCompleteResumeProcessor);
