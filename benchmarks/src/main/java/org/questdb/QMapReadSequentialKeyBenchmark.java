@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class QMapReadSequentialKeyBenchmark {
 
-    private static final int N = 300_000;
+    private static final int N = 1_000;
     private static final double loadFactor = 0.5;
     private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
     private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
