@@ -41,7 +41,7 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(-Math.PI).andAssert(Double.NaN, 0.000000000000001);
         call(-Math.PI / 2).andAssert(-0.0, 0.000000000000001);
         call(-Math.PI * 3 / 4).andAssert(1.0, 0.000000000000001);
-        call(-0.0000000000000001).andAssert(Double.NEGATIVE_INFINITY, 0.000000000000001);
+
     }
 
     @Test
@@ -49,12 +49,13 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(Math.PI).andAssert(Double.NaN, 0.000000000000001);
         call(Math.PI / 2).andAssert(-0.0, 0.000000000000001);
         call(Math.PI * 3 / 4).andAssert(-1.0, 0.000000000000001);
-        call(0.0000000000000001).andAssert(Double.POSITIVE_INFINITY, 0.000000000000001);
     }
 
     @Test
     public void testZero() throws SqlException {
         call(0.0).andAssert(Double.NaN, 0.000000000000001);
+        call(-0.0000000000000001).andAssert(Double.NEGATIVE_INFINITY, 0.000000000000001);
+        call(0.0000000000000001).andAssert(Double.POSITIVE_INFINITY, 0.000000000000001);
     }
 
     @Override
