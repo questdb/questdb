@@ -129,8 +129,8 @@ io.questdb.griffin.engine.functions.math.AcosDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.AtanDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.Atan2DoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.PIDoubleFunctionFactory
-io.questdb.griffin.engine.functions.math.ToRadiansDoubleFunctionFactory
-io.questdb.griffin.engine.functions.math.FromRadiansDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.RadiansDoubleFunctionFactory
+io.questdb.griffin.engine.functions.math.DegreesDoubleFunctionFactory
 
 # 'log'
 io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory

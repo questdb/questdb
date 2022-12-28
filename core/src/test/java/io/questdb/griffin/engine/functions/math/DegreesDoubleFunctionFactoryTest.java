@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class FromRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class DegreesDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
@@ -61,6 +61,6 @@ public class FromRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactor
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new FromRadiansDoubleFunctionFactory();
+        return new DegreesDoubleFunctionFactory();
     }
 }

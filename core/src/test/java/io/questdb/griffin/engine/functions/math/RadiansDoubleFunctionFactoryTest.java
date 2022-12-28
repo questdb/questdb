@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class ToRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
@@ -41,7 +41,7 @@ public class ToRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
         call(-45).andAssert(-Math.PI / 4, 0.000000000000001);
         call(-90).andAssert(-Math.PI / 2, 0.000000000000001);
         call(-180).andAssert(-Math.PI, 0.000000000000001);
-        call(-360).andAssert(-0.0, 0.000000000000001);
+        call(-360).andAssert(-2 * Math.PI, 0.000000000000001);
     }
 
     @Test
@@ -49,7 +49,7 @@ public class ToRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
         call(45).andAssert(Math.PI / 4, 0.000000000000001);
         call(90).andAssert(Math.PI / 2, 0.000000000000001);
         call(180).andAssert(Math.PI, 0.000000000000001);
-        call(360).andAssert(0.0, 0.000000000000001);
+        call(360).andAssert(2* Math.PI, 0.000000000000001);
     }
 
     @Test
@@ -61,6 +61,6 @@ public class ToRadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToRadiansDoubleFunctionFactory();
+        return new RadiansDoubleFunctionFactory();
     }
 }

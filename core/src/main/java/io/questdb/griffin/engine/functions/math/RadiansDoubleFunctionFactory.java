@@ -35,13 +35,11 @@ import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class ToRadiansDoubleFunctionFactory implements FunctionFactory {
-
-    private static final double TO_RAD = Math.PI / 180.0;
+public class RadiansDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "toRadians(D)";
+        return "radians(D)";
     }
 
     @Override
@@ -53,19 +51,15 @@ public class ToRadiansDoubleFunctionFactory implements FunctionFactory {
     ) {
         Function angleDecimal = args.getQuick(0);
         if (angleDecimal.isConstant()) {
-            return new DoubleConstant(toRadians(angleDecimal.getDouble(null)));
+            return new DoubleConstant(Math.toRadians(angleDecimal.getDouble(null)));
         }
-        return new ToRadians(args.getQuick(0));
+        return new Radians(args.getQuick(0));
     }
 
-    private static double toRadians(double angle) {
-        return angle != angle ? Double.NaN : (angle % 360) * TO_RAD;
-    }
-
-    private static class ToRadians extends DoubleFunction implements UnaryFunction {
+    private static class Radians extends DoubleFunction implements UnaryFunction {
         final Function function;
 
-        public ToRadians(Function function) {
+        public Radians(Function function) {
             this.function = function;
         }
 
@@ -76,7 +70,7 @@ public class ToRadiansDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return toRadians(function.getDouble(rec));
+            return Math.toRadians(function.getDouble(rec));
         }
     }
 }
