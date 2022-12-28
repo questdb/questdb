@@ -57,11 +57,14 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static double cot(double angle) {
+        if (Double.isNaN(angle)) {
+            return Double.NaN;
+        }
         double tan = StrictMath.tan(angle);
         if (Math.abs(tan) >= 0.000000000000001) {
             return 1 / tan;
         }
-        return Double.NaN;
+        return tan > 0 ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
     }
 
     private static class CotFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
