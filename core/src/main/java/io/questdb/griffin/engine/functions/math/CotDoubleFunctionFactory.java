@@ -49,9 +49,9 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(cot(angle.getDouble(null)));
+        Function angleRad = args.getQuick(0);
+        if (angleRad.isConstant()) {
+            return new DoubleConstant(cot(angleRad.getDouble(null)));
         }
         return new CotFunction(args.getQuick(0));
     }
@@ -62,26 +62,26 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
         }
         double tan = StrictMath.tan(angle);
         if (Math.abs(tan) >= 0.000000000000001) {
-            return 1 / tan;
+            return 1.0 / tan;
         }
-        return tan > 0 ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
+        return tan > 0.0 ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
     }
 
     private static class CotFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function angleRad;
 
-        public CotFunction(Function function) {
-            this.function = function;
+        public CotFunction(Function angleRad) {
+            this.angleRad = angleRad;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return angleRad;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return cot(function.getDouble(rec));
+            return cot(angleRad.getDouble(rec));
         }
     }
 }

@@ -57,20 +57,20 @@ public class AsinDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class AsinFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function x;
 
-        public AsinFunction(Function function) {
-            this.function = function;
+        public AsinFunction(Function x) {
+            this.x = x;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return x;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.asin(function.getDouble(rec));
+            return StrictMath.asin(x.getDouble(rec));
         }
     }
 }

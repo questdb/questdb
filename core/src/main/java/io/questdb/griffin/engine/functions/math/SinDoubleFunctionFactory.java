@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -50,28 +49,28 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.sin(angle.getDouble(null)));
+        Function angleRad = args.getQuick(0);
+        if (angleRad.isConstant()) {
+            return new DoubleConstant(StrictMath.sin(angleRad.getDouble(null)));
         }
         return new SinFunction(args.getQuick(0));
     }
 
     private static class SinFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function angleRad;
 
-        public SinFunction(Function function) {
-            this.function = function;
+        public SinFunction(Function angleRad) {
+            this.angleRad = angleRad;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return angleRad;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.sin(function.getDouble(rec));
+            return StrictMath.sin(angleRad.getDouble(rec));
         }
     }
 }

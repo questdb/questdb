@@ -33,29 +33,29 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0.000000000000001);
+        call(Double.NaN).andAssert(Double.NaN, DELTA);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(-Math.PI).andAssert(Double.NaN, 0.000000000000001);
-        call(-Math.PI / 2).andAssert(-0.0, 0.000000000000001);
-        call(-Math.PI * 3 / 4).andAssert(1.0, 0.000000000000001);
+        call(-Math.PI).andAssert(Double.POSITIVE_INFINITY, DELTA);
+        call(-Math.PI / 2).andAssert(-0.0, DELTA);
+        call(-Math.PI * 3 / 4).andAssert(1.0, DELTA);
 
     }
 
     @Test
     public void testPositive() throws SqlException {
-        call(Math.PI).andAssert(Double.NaN, 0.000000000000001);
-        call(Math.PI / 2).andAssert(-0.0, 0.000000000000001);
-        call(Math.PI * 3 / 4).andAssert(-1.0, 0.000000000000001);
+        call(Math.PI).andAssert(Double.NEGATIVE_INFINITY, DELTA);
+        call(Math.PI / 2).andAssert(-0.0, DELTA);
+        call(Math.PI * 3 / 4).andAssert(-1.0, DELTA);
     }
 
     @Test
     public void testZero() throws SqlException {
-        call(0.0).andAssert(Double.NaN, 0.000000000000001);
-        call(-0.0000000000000001).andAssert(Double.NEGATIVE_INFINITY, 0.000000000000001);
-        call(0.0000000000000001).andAssert(Double.POSITIVE_INFINITY, 0.000000000000001);
+        call(0.0).andAssert(Double.NEGATIVE_INFINITY, DELTA);
+        call(-0.0000000000000001).andAssert(Double.NEGATIVE_INFINITY, DELTA);
+        call(0.0000000000000001).andAssert(Double.POSITIVE_INFINITY, DELTA);
     }
 
     @Override

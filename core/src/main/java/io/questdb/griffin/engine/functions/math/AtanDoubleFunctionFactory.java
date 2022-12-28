@@ -57,20 +57,20 @@ public class AtanDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class AtanFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function x;
 
-        public AtanFunction(Function function) {
-            this.function = function;
+        public AtanFunction(Function x) {
+            this.x = x;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return x;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.atan(function.getDouble(rec));
+            return StrictMath.atan(x.getDouble(rec));
         }
     }
 }

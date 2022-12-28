@@ -127,13 +127,8 @@ public class TrigonometryTest extends AbstractGriffinTest {
                     "with ANGLE as (select toRadians(x) x from long_sequence(90, 255, 255))" +
                             "    select sqrt(power(sin(x), 2) + power(cos(x), 2)) one, sin(x)/cos(x) = tan(x) identity, sin(x), cos(x), tan(x) from ANGLE",
                     null,
-                    null,
-                    null,
                     true,
-                    true,
-                    true,
-                    false,
-                    null);
+                    true);
         });
     }
 
@@ -239,13 +234,8 @@ public class TrigonometryTest extends AbstractGriffinTest {
                             "true\t1.0\t6.123233995736766E-17\t1.633123935319537E16\n",
                     "select x * 180.0/PI = fromRadians(x) angleDec, sin(x), cos(x), tan(x) from angle",
                     null,
-                    null,
-                    null,
                     true,
-                    true,
-                    true,
-                    false,
-                    null);
+                    true);
         });
     }
 }

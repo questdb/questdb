@@ -33,29 +33,29 @@ public class Atan2DoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
 
     @Test
     public void testNaN() throws SqlException {
-        call(Double.NaN, Double.NaN).andAssert(Double.NaN, 0.000000000000001);
+        call(Double.NaN, Double.NaN).andAssert(Double.NaN, DELTA);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(-5.0, -5.0).andAssert(-Math.PI * 3 / 4, 0.000000000000001);
-        call(-10.0, -10.0).andAssert(-Math.PI * 3 / 4, 0.000000000000001);
-        call(-0.0000000000000001, -10.0).andAssert(-Math.PI, 0.000000000000001);
-        call(-10.0, -0.0000000000000001).andAssert(-Math.PI / 2, 0.000000000000001);
+        call(-5.0, -5.0).andAssert(-Math.PI * 3 / 4, DELTA);
+        call(-10.0, -10.0).andAssert(-Math.PI * 3 / 4, DELTA);
+        call(-0.0000000000000001, -10.0).andAssert(-Math.PI, DELTA);
+        call(-10.0, -0.0000000000000001).andAssert(-Math.PI / 2, DELTA);
     }
 
     @Test
     public void testPositive() throws SqlException {
-        call(5.0, 5.0).andAssert(Math.PI / 4, 0.000000000000001);
-        call(10.0, 10.0).andAssert(Math.PI / 4, 0.000000000000001);
-        call(0.0, 10.0).andAssert(0.0, 0.000000000000001);
-        call(10.0, 0.0).andAssert(Math.PI / 2, 0.000000000000001);
+        call(5.0, 5.0).andAssert(Math.PI / 4, DELTA);
+        call(10.0, 10.0).andAssert(Math.PI / 4, DELTA);
+        call(0.0, 10.0).andAssert(0.0, DELTA);
+        call(10.0, 0.0).andAssert(Math.PI / 2, DELTA);
     }
 
     @Test
     public void testZero() throws SqlException {
-        call(-0.0000000000000001, -0.0000000000000001).andAssert(-Math.PI * 3 / 4, 0.000000000000001);
-        call(0.0, 0.0).andAssert(0.0, 0.000000000000001);
+        call(-0.0000000000000001, -0.0000000000000001).andAssert(-Math.PI * 3 / 4, DELTA);
+        call(0.0, 0.0).andAssert(0.0, DELTA);
     }
 
     @Override

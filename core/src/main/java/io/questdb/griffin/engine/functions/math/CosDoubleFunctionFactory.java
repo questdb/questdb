@@ -49,28 +49,28 @@ public class CosDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.cos(angle.getDouble(null)));
+        Function angleRad = args.getQuick(0);
+        if (angleRad.isConstant()) {
+            return new DoubleConstant(StrictMath.cos(angleRad.getDouble(null)));
         }
         return new CosFunction(args.getQuick(0));
     }
 
     private static class CosFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function angleRad;
 
-        public CosFunction(Function function) {
-            this.function = function;
+        public CosFunction(Function angleRad) {
+            this.angleRad = angleRad;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return angleRad;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.cos(function.getDouble(rec));
+            return StrictMath.cos(angleRad.getDouble(rec));
         }
     }
 }

@@ -33,22 +33,22 @@ public class TanDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0.000000000000001);
+        call(Double.NaN).andAssert(Double.NaN, DELTA);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(-Math.PI).andAssert(-0.0, 0.000000000000001);
+        call(-Math.PI).andAssert(-0.0, DELTA);
     }
 
     @Test
     public void testPositive() throws SqlException {
-        call(Math.PI).andAssert(-0.0, 0.000000000000001);
+        call(Math.PI).andAssert(-0.0, DELTA);
     }
 
     @Test
     public void testZero() throws SqlException {
-        call(0.0).andAssert(0.0, 0.000000000000001);
+        call(0.0).andAssert(0.0, DELTA);
     }
 
     @Override

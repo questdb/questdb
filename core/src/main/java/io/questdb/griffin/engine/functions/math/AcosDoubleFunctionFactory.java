@@ -57,20 +57,20 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class AcosFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function x;
 
-        public AcosFunction(Function function) {
-            this.function = function;
+        public AcosFunction(Function x) {
+            this.x = x;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return x;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.acos(function.getDouble(rec));
+            return StrictMath.acos(x.getDouble(rec));
         }
     }
 }

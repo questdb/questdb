@@ -49,28 +49,28 @@ public class TanDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angle = args.getQuick(0); // radians
-        if (angle.isConstant()) {
-            return new DoubleConstant(StrictMath.tan(angle.getDouble(null)));
+        Function angleRad = args.getQuick(0);
+        if (angleRad.isConstant()) {
+            return new DoubleConstant(StrictMath.tan(angleRad.getDouble(null)));
         }
         return new TanFunction(args.getQuick(0));
     }
 
     private static class TanFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
-        final Function function;
+        final Function angleRad;
 
-        public TanFunction(Function function) {
-            this.function = function;
+        public TanFunction(Function angleRad) {
+            this.angleRad = angleRad;
         }
 
         @Override
         public Function getArg() {
-            return function;
+            return angleRad;
         }
 
         @Override
         public double getDouble(Record rec) {
-            return StrictMath.tan(function.getDouble(rec));
+            return StrictMath.tan(angleRad.getDouble(rec));
         }
     }
 }
