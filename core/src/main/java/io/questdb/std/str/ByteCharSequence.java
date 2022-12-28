@@ -67,6 +67,10 @@ public class ByteCharSequence extends AbstractCharSequence implements ByteSequen
         return bytes.length;
     }
 
+    public long longAt(int index) {
+        return Unsafe.byteArrayGetLong(bytes, index);
+    }
+
     @NotNull
     @Override
     public String toString() {

@@ -30,7 +30,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 public final class Hash {
 
-    private static final int M2 = 0x7a646e4d;
+    private static final long M2 = 0x7a646e4d;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
 
     private Hash() {
@@ -61,6 +61,9 @@ public final class Hash {
     public static int hashMem32(long p, long len) {
         long h = 0;
         int i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+        }
         for (; i + 3 < len; i += 4) {
             h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
         }
@@ -68,7 +71,7 @@ public final class Hash {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M2;
-        return (int) h ^ (int) (h >>> 25);
+        return (int) h ^ (int) (h >>> 32);
     }
 
     /**
@@ -79,6 +82,9 @@ public final class Hash {
         final int len = seq.length();
         long h = 0;
         int i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + seq.longAt(i);
+        }
         for (; i + 3 < len; i += 4) {
             h = h * M2 + seq.intAt(i);
         }
@@ -86,7 +92,7 @@ public final class Hash {
             h = h * M2 + seq.byteAt(i);
         }
         h *= M2;
-        return (int) h ^ (int) (h >>> 25);
+        return (int) h ^ (int) (h >>> 32);
     }
 
     /**
@@ -104,6 +110,9 @@ public final class Hash {
     public static long hashMem64(long p, long len) {
         long h = 0;
         int i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+        }
         for (; i + 3 < len; i += 4) {
             h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
         }
@@ -111,7 +120,7 @@ public final class Hash {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M2;
-        return h ^ (h >>> 25);
+        return h ^ (h >>> 32);
     }
 
     /**
@@ -121,6 +130,9 @@ public final class Hash {
     public static long hashMem64(long p, long len, MemoryR mem) {
         long h = 0;
         int i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + mem.getLong(p + i);
+        }
         for (; i + 3 < len; i += 4) {
             h = h * M2 + mem.getInt(p + i);
         }
@@ -128,7 +140,7 @@ public final class Hash {
             h = h * M2 + mem.getByte(p + i);
         }
         h *= M2;
-        return h ^ (h >>> 25);
+        return h ^ (h >>> 32);
     }
 
     /**
