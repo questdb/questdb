@@ -61,7 +61,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 offsetFuncPos
         );
         this.simpleMapValue = simpleMapValue;
-        this.record.of(simpleMapValue);
+        record.of(simpleMapValue);
         this.peeker = peeker;
     }
 
@@ -86,8 +86,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
             setActiveB(expectedLocalEpoch);
-            this.sampleLocalEpoch = expectedLocalEpoch;
-            this.nextSampleLocalEpoch = expectedLocalEpoch;
+            sampleLocalEpoch = expectedLocalEpoch;
+            nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
         if (setActiveA(expectedLocalEpoch)) {
@@ -101,8 +101,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         if (gapFill) {
             gapFill = false;
             record.setActiveA();
-            this.sampleLocalEpoch = expectedLocalEpoch;
-            this.nextSampleLocalEpoch = expectedLocalEpoch;
+            sampleLocalEpoch = expectedLocalEpoch;
+            nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
         return false;

@@ -31,7 +31,6 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testKafkaMetadataQuery() throws Exception {
-
         String query = "\n" +
                 "SELECT\n" +
                 "    result.TABLE_CAT,        \n" +
@@ -72,7 +71,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 false,
                 false,
-                true
+                false
         );
     }
 

@@ -76,11 +76,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryMR> columns;
     private int partitionCount;
+    private long rowCount;
+    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion = -1;
     private long txPartitionVersion = -1;
     private long txTruncateVersion = -1;
-    private long rowCount;
-    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
 
@@ -350,6 +350,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
     }
 
+    /**
+     * Opens given partition for reading.
+     *
+     * @param partitionIndex partition index
+     * @return partition size in rows
+     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
+     */
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {

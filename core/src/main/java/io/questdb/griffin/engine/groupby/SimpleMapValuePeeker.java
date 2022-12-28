@@ -39,7 +39,6 @@ public class SimpleMapValuePeeker {
     }
 
     Record peek() {
-        // TODO(puzpuzpuz): this is non-suspendable ???
         final long localEpochTemp = cursor.localEpoch;
         nextHasNext = cursor.notKeyedLoop(nextRecord);
         nextLocalEpoch = cursor.localEpoch;

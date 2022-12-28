@@ -192,7 +192,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 }
 
                 if (lo < hi) {
-
                     size += (hi - lo);
 
                     // we do have whole partition of fragment?
