@@ -117,7 +117,6 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (isMasterHasNextPending) {
                 masterHasNext = masterCursor.hasNext();
                 isMasterHasNextPending = false;

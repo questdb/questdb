@@ -119,7 +119,6 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (isMasterHasNextPending) {
                 masterHasNext = masterCursor.hasNext();
                 isMasterHasNextPending = false;

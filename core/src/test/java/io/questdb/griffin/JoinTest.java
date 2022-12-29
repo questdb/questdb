@@ -3892,13 +3892,13 @@ public class JoinTest extends AbstractGriffinTest {
             executeInsert("insert into bids values(103, 5);");
 
             String query =
-                    "SELECT \n" +
+                    "select \n" +
                             "    b.timebid timebid,\n" +
                             "    a.timeask timeask, \n" +
                             "    b.b b, \n" +
                             "    a.a a\n" +
-                            "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
-                            "    SPLICE JOIN\n" +
+                            "from (select b.bid b, b.ts timebid from bids b) b \n" +
+                            "    splice join\n" +
                             "(select a.ask a, a.ts timeask from asks a) a\n" +
                             "    ON (b.timebid != a.timeask);";
 
@@ -4090,7 +4090,6 @@ public class JoinTest extends AbstractGriffinTest {
                     "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
                     "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
                     "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
-
 
             compiler.compile(
                     "create table x as (select" +

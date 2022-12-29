@@ -150,20 +150,41 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // SampleByInterpolateRecordCursorFactory
         addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
 
-        // HashJoinLightRecordCursorFactory
-        addTestCase("select * from x join y on (sym)");
-
-        // HashOuterJoinLightRecordCursorFactory
-        addTestCase("select * from x left join y on (sym)");
-
         // HashJoinRecordCursorFactory
         addTestCase("select * from x join (x union all y) on (sym)");
 
         // HashOuterJoinRecordCursorFactory
         addTestCase("select * from x left join (x union all y) on (sym)");
 
+        // HashJoinLightRecordCursorFactory
+        addTestCase("select * from x join y on (sym)");
+
+        // HashOuterJoinLightRecordCursorFactory
+        addTestCase("select * from x left join y on (sym)");
+
         // CrossJoinRecordCursorFactory
         addTestCase("select * from x cross join y");
+
+        // AsOfJoinNoKeyRecordCursorFactory
+        addTestCase("select * from x asof join y");
+
+        // AsOfJoinRecordCursorFactory
+        addTestCase("with yy as (select ts, max(l) l from y sample by 1h) select * from x asof join (yy timestamp(ts)) on (l)");
+
+        // AsOfJoinLightRecordCursorFactory
+        addTestCase("select * from x asof join y on (sym)");
+
+        // LtJoinNoKeyRecordCursorFactory
+        addTestCase("select * from x lt join y");
+
+        // LtJoinRecordCursorFactory
+        addTestCase("with yy as (select ts, max(l) l from y sample by 1h) select * from x lt join (yy timestamp(ts)) on (l)");
+
+        // LtJoinLightRecordCursorFactory
+        addTestCase("select * from x lt join y on (l)");
+
+        // SpliceJoinLightRecordCursorFactory
+        addTestCase("select * from x splice join y");
     }
 
     @Test
