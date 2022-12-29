@@ -62,7 +62,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
         this.hasDescendingOrder = hasDescendingOrder;
-        this.record = new PageAddressCacheRecord();
+        record = new PageAddressCacheRecord();
     }
 
     @Override
@@ -114,7 +114,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         // Check for the first hasNext call.
-        if (frameIndex == -1 && frameLimit > -1) {
+        if (frameIndex == -1) {
             fetchNextFrame();
         }
 
@@ -177,9 +177,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
-        if (frameLimit > -1) {
-            frameIndex = -1;
-        }
+        frameIndex = -1;
         allFramesActive = true;
     }
 
@@ -202,9 +200,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void fetchNextFrame() {
+        if (frameLimit == -1) {
+            frameSequence.initFrameCount();
+            frameLimit = frameSequence.getFrameCount() - 1;
+        }
+
         try {
             do {
-                this.cursor = frameSequence.next();
+                cursor = frameSequence.next();
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()
@@ -215,23 +218,25 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
-                    this.allFramesActive &= frameSequence.isActive();
-                    this.rows = task.getRows();
-                    this.frameRowCount = rows.size();
-                    this.frameIndex = task.getFrameIndex();
-                    this.frameRowIndex = 0;
-                    if (this.frameRowCount > 0 && frameSequence.isActive()) {
+                    allFramesActive &= frameSequence.isActive();
+                    rows = task.getRows();
+                    frameRowCount = rows.size();
+                    frameIndex = task.getFrameIndex();
+                    frameRowIndex = 0;
+                    if (frameRowCount > 0 && frameSequence.isActive()) {
                         record.setFrameIndex(task.getFrameIndex());
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
-                        this.frameRowCount = 0;
+                        frameRowCount = 0;
                         collectCursor(false);
                     }
+                } else if (cursor == -2) {
+                    break; // No frames to filter
                 } else {
                     Os.pause();
                 }
-            } while (this.frameIndex < frameLimit);
+            } while (frameIndex < frameLimit);
         } catch (Throwable e) {
             LOG.critical().$("unexpected error [ex=").$(e).I$();
             throw CairoException.nonCritical().put(exceptionMessage).setInterruption(true);
@@ -243,13 +248,13 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
-        this.isOpen = true;
+        isOpen = true;
         this.frameSequence = frameSequence;
-        this.frameIndex = -1;
-        this.frameLimit = frameSequence.getFrameCount() - 1;
-        this.ogRowsRemaining = rowsRemaining;
+        frameIndex = -1;
+        frameLimit = -1;
+        ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
-        this.allFramesActive = true;
+        allFramesActive = true;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());

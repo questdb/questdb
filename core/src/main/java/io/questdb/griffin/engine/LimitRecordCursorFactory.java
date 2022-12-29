@@ -115,7 +115,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isLimitCounted) {
                 countLimit();
                 isLimitCounted = true;

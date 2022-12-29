@@ -39,6 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.Closeable;
@@ -62,6 +63,50 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
     private static final StringSink sinkB = new StringSink();
     private static final ObjList<TestCase> testCases = new ObjList<>();
 
+    @BeforeClass
+    public static void setUpStatic() {
+        BasePGTest.setUpStatic();
+
+        addTestCase("select * from x");
+
+        // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
+        addTestCase("select * from x limit 1");
+        addTestCase("select * from x limit 1,3");
+        addTestCase("select * from x order by ts desc limit 1,3");
+        addTestCase("select * from x limit 1,-1");
+        addTestCase("select * from x limit 0,-1");
+        addTestCase("select * from x limit -1");
+        addTestCase("select * from x limit -4000");
+        addTestCase("select * from x limit -3,-1");
+        addTestCase("select * from x limit -3,-4", true);
+        addTestCase("select * from (x union all y) limit 1");
+        addTestCase("select * from (x union all y) limit 1,3");
+        addTestCase("select * from (x union all y) limit 1,-1");
+        addTestCase("select * from (x union all y) limit -1");
+        addTestCase("select * from (x union all y) limit -3,-1");
+        addTestCase("select * from (x union all (y where isym = 'a')) limit 1");
+        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,3");
+        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,-1");
+        addTestCase("select * from (x union all (y where isym = 'a')) limit -1");
+        addTestCase("select * from (x union all (y where isym = 'a')) limit -3,-1");
+        addTestCase("select * from (x union all (y where isym = 'a')) limit -4000,-1");
+
+        // CachedAnalyticRecordCursorFactory
+        addTestCase("select i, row_number() over (partition by sym order by ts) from x");
+
+        // InSymbolCursorFunctionFactory
+        // TODO: initialize suspendable filter function in async offload eagerly
+        // addTestCase("select * from x where sym in (select sym from y)");
+        // addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
+
+        // AsyncFilteredRecordCursor
+        addTestCase("select * from x where i = 42");
+        addTestCase("select * from x where i = 42 limit 3");
+
+        // AsyncFilteredNegativeLimitRecordCursor
+        addTestCase("select * from x where i = 42 limit -3");
+    }
+
     @Test
     public void testQuerySuspendability() throws Exception {
         assertMemoryLeak(() -> {
@@ -77,8 +122,8 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                                     "    cast(x as int) i, " +
                                     "    rnd_double(2) d, " +
                                     "    rnd_long() l, " +
-                                    "    rnd_str(5,16,2) s, " +
-                                    "    rnd_symbol(4,4,4,2) sym, " +
+                                    "    rnd_str('a','b','c') s, " +
+                                    "    rnd_symbol('a','b','c') sym, " +
                                     "    rnd_symbol('a','b','c') isym, " +
                                     "    timestamp_sequence(0, 100000000) ts " +
                                     "   from long_sequence(3000)" +
@@ -178,33 +223,5 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
             this.query = query;
             this.allowEmptyResultSet = allowEmptyResultSet;
         }
-    }
-
-    static {
-        addTestCase("select * from x");
-
-        // LimitRecordCursorFactory
-        addTestCase("select * from x limit 1");
-        addTestCase("select * from x limit 1,3");
-        addTestCase("select * from x limit 1,-1");
-        addTestCase("select * from x limit 0,-1");
-        addTestCase("select * from x limit -1");
-        addTestCase("select * from x limit -4000");
-        addTestCase("select * from x limit -3,-1");
-        addTestCase("select * from x limit -3,-4", true);
-        addTestCase("select * from (x union all y) limit 1");
-        addTestCase("select * from (x union all y) limit 1,3");
-        addTestCase("select * from (x union all y) limit 1,-1");
-        addTestCase("select * from (x union all y) limit -1");
-        addTestCase("select * from (x union all y) limit -3,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,3");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit 1,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -3,-1");
-        addTestCase("select * from (x union all (y where isym = 'a')) limit -4000,-1");
-
-        // TODO: fix all async offload variations
-        //queries.add("select * from x where i = 42");
     }
 }

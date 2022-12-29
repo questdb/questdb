@@ -113,7 +113,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         // check for the first hasNext call
-        if (frameIndex == -1 && frameLimit > -1) {
+        if (frameIndex == -1) {
             fetchAllFrames();
         }
         if (rowIndex < rows.getCapacity()) {
@@ -148,8 +148,13 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     private void fetchAllFrames() {
+        if (frameLimit == -1) {
+            frameSequence.initFrameCount();
+            frameLimit = frameSequence.getFrameCount() - 1;
+        }
+
         do {
-            long cursor = frameSequence.next();
+            final long cursor = frameSequence.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = frameSequence.getTask(cursor);
                 LOG.debug()
@@ -176,6 +181,8 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                 }
 
                 frameSequence.collect(cursor, false);
+            } else if (cursor == -2) {
+                break; // No frames to filter.
             } else {
                 Os.pause();
             }
@@ -184,12 +191,12 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {
         this.frameSequence = frameSequence;
-        this.frameIndex = -1;
-        this.frameLimit = frameSequence.getFrameCount() - 1;
+        frameIndex = -1;
+        frameLimit = -1;
         this.rowLimit = rowLimit;
-        this.rows = negativeLimitRows;
-        this.rowIndex = negativeLimitRows.getCapacity();
-        this.rowCount = 0;
+        rows = negativeLimitRows;
+        rowIndex = negativeLimitRows.getCapacity();
+        rowCount = 0;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());

@@ -63,7 +63,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
-        this.columnCount = columnIndexes.size();
+        columnCount = columnIndexes.size();
         this.workerCount = workerCount;
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
@@ -91,19 +91,17 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next() {
-        if (this.reenterDataFrame) {
+        if (reenterDataFrame) {
             return computeFrame(reenterPartitionLo, reenterPartitionHi);
         }
         DataFrame dataFrame = dataFrameCursor.next();
         if (dataFrame != null) {
-            this.reenterPartitionIndex = dataFrame.getPartitionIndex();
+            reenterPartitionIndex = dataFrame.getPartitionIndex();
             final long lo = dataFrame.getRowLo();
             final long hi = dataFrame.getRowHi();
-            this.currentPageFrameRowLimit = Math.min(
+            currentPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
-                    Math.max(
-                            pageFrameMinRows, (hi - lo) / workerCount
-                    )
+                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
             );
             return computeFrame(lo, hi);
         }
@@ -111,7 +109,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     public FwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
-        this.reader = dataFrameCursor.getTableReader();
+        reader = dataFrameCursor.getTableReader();
         this.dataFrameCursor = dataFrameCursor;
         toTop();
         return this;
@@ -124,7 +122,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void toTop() {
-        this.dataFrameCursor.toTop();
+        dataFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
         columnPageAddress.setAll(columnCount * 2, 0);
@@ -192,11 +190,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         // it is possible that all columns in data frame are empty, but it doesn't mean
         // the data frame size is 0; sometimes we may want to imply nulls
         if (adjustedHi < partitionHi) {
-            this.reenterPartitionLo = adjustedHi;
-            this.reenterPartitionHi = partitionHi;
-            this.reenterDataFrame = true;
+            reenterPartitionLo = adjustedHi;
+            reenterPartitionHi = partitionHi;
+            reenterDataFrame = true;
         } else {
-            this.reenterDataFrame = false;
+            reenterDataFrame = false;
         }
 
         frame.partitionLo = partitionLo;

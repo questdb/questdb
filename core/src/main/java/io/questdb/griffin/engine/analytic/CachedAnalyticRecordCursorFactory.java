@@ -183,7 +183,6 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isRecordChainBuilt) {
                 buildRecordChain();
             }

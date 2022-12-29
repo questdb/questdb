@@ -65,7 +65,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     @Override
     public boolean reload() {
         boolean moreData = reader.reload();
-        this.partitionHi = reader.getPartitionCount();
+        partitionHi = reader.getPartitionCount();
         toTop();
         return moreData;
     }

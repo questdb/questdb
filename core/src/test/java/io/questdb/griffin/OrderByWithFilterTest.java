@@ -431,7 +431,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
         assertQuery(expected,
                 "select ts, temp from \n" +
                         "( \n" +
-                        "  Select temp, ts, \n" +
+                        "  select temp, ts, \n" +
                         "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
                         "  from weather \n" +
                         ") inq \n" +

@@ -64,7 +64,6 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
         long partitionRows = 0;
         while (skipToPartitionIndex < partitionCount) {
-            // TODO(puzpuzpuz): test suspendability
             partitionRows = getTableReader().openPartition(skipToPartitionIndex);
             if (partitionRows < 0) {
                 skipToPartitionIndex++;

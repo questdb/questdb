@@ -1658,13 +1658,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
         prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (errno == CairoException.NON_CRITICAL) {
-            LOG.error()
+        if (ex.isCritical()) {
+            LOG.critical()
                     .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
         } else {
-            LOG.critical()
+            LOG.error()
                     .$("error [msg=`").$(message).$('`')
                     .$(", errno=`").$(errno)
                     .I$();
