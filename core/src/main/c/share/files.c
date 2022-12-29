@@ -199,6 +199,16 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
     return JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir
+        (JNIEnv *e, jclass cl, jlong pchar) {
+
+    struct stat st;
+    if (stat((const char *) pchar, &st) == 0) {
+        return S_ISDIR(st.st_mode);
+    }
+    return JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
         (JNIEnv *e, jclass cl, jlong pcharSrc, jlong pcharSoftLink) {
     return symlink((const char *) pcharSrc, (const char *) pcharSoftLink);

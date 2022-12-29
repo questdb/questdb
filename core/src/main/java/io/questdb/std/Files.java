@@ -100,21 +100,6 @@ public final class Files {
         return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
     }
 
-    public static int checkIsDirOrSoftLinkNoDots(Path path, long pUtf8NameZ, long type, StringSink nameSink) {
-        if (notDots(pUtf8NameZ)) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            path.concat(pUtf8NameZ).$();
-            if (type == DT_DIR) {
-                return DT_DIR;
-            }
-            if (type == DT_LNK) {
-                return DT_LNK;
-            }
-        }
-        return DT_UNKNOWN;
-    }
-
     public static int close(int fd) {
         assert auditClose(fd);
         int res = close0(fd);
@@ -239,6 +224,21 @@ public final class Files {
 
     public static boolean isDir(long pUtf8NameZ, long type) {
         return type == DT_DIR && notDots(pUtf8NameZ);
+    }
+
+    public static int isDirOrSoftLinkDirNoDots(Path path, long pUtf8NameZ, long type, StringSink nameSink) {
+        if (notDots(pUtf8NameZ)) {
+            nameSink.clear();
+            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            path.concat(pUtf8NameZ).$();
+            if (type == DT_DIR) {
+                return DT_DIR;
+            }
+            if (type == DT_LNK && isDir(path.address())) {
+                return DT_LNK;
+            }
+        }
+        return DT_UNKNOWN;
     }
 
     public static boolean isDots(CharSequence name) {
@@ -372,11 +372,11 @@ public final class Files {
 
     public native static byte readNonNegativeByte(int fd, long offset);
 
-    public native static short readNonNegativeShort(int fd, long offset);
-
     public native static int readNonNegativeInt(int fd, long offset);
 
     public native static long readNonNegativeLong(int fd, long offset);
+
+    public native static short readNonNegativeShort(int fd, long offset);
 
     public static boolean remove(LPSZ lpsz) {
         return remove(lpsz.address());
@@ -477,6 +477,8 @@ public final class Files {
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
+
+    private native static boolean isDir(long pUtf8PathZ);
 
     private native static long length0(long lpszName);
 
