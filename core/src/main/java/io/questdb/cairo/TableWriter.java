@@ -5198,7 +5198,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removePartitionDirectories0(long pUtf8NameZ, int type) {
-        int checkedType = Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
                 !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
@@ -5211,7 +5211,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
-        int checkedType = Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
                 !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&

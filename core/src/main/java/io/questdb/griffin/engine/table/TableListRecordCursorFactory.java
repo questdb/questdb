@@ -101,7 +101,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
                         return false;
                     }
                 }
-                if (Files.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
                     path.trimTo(plimit).$();
                     return true;
                 }

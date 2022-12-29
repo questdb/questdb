@@ -233,7 +233,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         private boolean next0() {
             do {
                 final long pUtf8NameZ = ff.findName(findFileStruct);
-                if (Files.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct), sink)) {
+                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct), sink)) {
                     try {
                         if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                             // open metadata file and read id

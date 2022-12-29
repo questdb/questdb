@@ -94,7 +94,7 @@ public class TableSequencerAPI implements QuietCloseable {
             final StringSink nameSink = new StringSink();
             int rootLen = path.length();
             ff.iterateDir(path, (name, type) -> {
-                if (Files.isDirOrSoftLinkDirNoDots(path, rootLen, name, type, nameSink)) {
+                if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, name, type, nameSink)) {
                     try {
                         if (ff.exists(path.concat(SEQ_DIR).$())) { // is WAL table
                             path.trimTo(rootLen);

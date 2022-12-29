@@ -125,7 +125,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        if (Files.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
+                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 int fd = ff.openRO(path);
                                 if (fd > -1) {

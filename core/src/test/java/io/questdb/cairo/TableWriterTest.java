@@ -3845,7 +3845,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                        if (Files.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                        if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
                             int nlen = path.length();
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
@@ -3935,7 +3935,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     path.trimTo(plen);
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                        if (Files.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                        if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
                             int nlen = path.length();
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));

@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
@@ -83,6 +84,10 @@ public interface FilesFacade {
 
     boolean isCrossDeviceCopyError(int errno);
 
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
+
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
+
     boolean isRestrictedFileSystem();
 
     boolean isSoftLink(LPSZ softLink);
@@ -138,6 +143,8 @@ public interface FilesFacade {
     boolean touch(LPSZ path);
 
     boolean truncate(int fd, long size);
+
+    int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
 
     int unlink(LPSZ softLink);
 

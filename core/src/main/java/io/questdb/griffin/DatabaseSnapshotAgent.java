@@ -120,7 +120,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             srcPath.trimTo(snapshotRootLen).$();
             final int snapshotDbLen = srcPath.length();
             ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
-                if (Files.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
+                if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
                     int srcPathLen = srcPath.length();
                     int dstPathLen = dstPath.length();

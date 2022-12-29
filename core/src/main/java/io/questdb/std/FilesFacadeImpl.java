@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
 
@@ -171,6 +173,16 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return Os.isPosix() && errno == 18;
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type);
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
     @Override
@@ -330,6 +342,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean truncate(int fd, long size) {
         return Files.truncate(fd, size);
+    }
+
+    @Override
+    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        return Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
     @Override

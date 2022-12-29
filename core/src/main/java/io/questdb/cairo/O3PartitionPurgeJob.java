@@ -257,7 +257,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (p > 0) {
             try {
                 do {
-                    if (Files.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(p), ff.findType(p), fileNameSink)) {
+                    if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(p), ff.findType(p), fileNameSink)) {
                         parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
                         path.trimTo(plimit).$();
                     }

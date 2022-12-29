@@ -148,7 +148,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    if (Files.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
                         path.trimTo(plimit).$();
                         if (record.open(sink)) {
                             return true;

@@ -146,7 +146,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         }
                     }
 
-                    if (Files.isDirOrSoftLinkDirNoDots(rootPath, rootLen, ff.findName(findPtr), ff.findType(findPtr), tableNameSink)) {
+                    if (ff.isDirOrSoftLinkDirNoDots(rootPath, rootLen, ff.findName(findPtr), ff.findType(findPtr), tableNameSink)) {
                         if (ff.exists(rootPath.concat(SEQ_DIR).$())) { // is a WAL table
                             rootPath.trimTo(rootLen).$();
                             if (record.switchTo(tableNameSink)) {
