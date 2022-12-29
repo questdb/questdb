@@ -317,7 +317,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                     checkSameStr,
                     expectSize,
                     sizeCanBeVariable,
-                    null);
+                    null
+            );
         });
     }
 

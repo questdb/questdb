@@ -171,12 +171,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 // last N rows
                 countRows();
 
-                base.toTop();
+
                 // lo is negative, -5 for example
-                // if we have 12 records we need to skip 12-5 = 7
-                // if we have 4 records = return all of them
+                // if we have 12 records, we need to skip 12-5 = 7
+                // if we have 4 records, return all of them
                 if (rowCount > -lo) {
                     skipRows(rowCount + lo);
+                } else {
+                    base.toTop();
                 }
                 // set limit to return remaining rows
                 limit = Math.min(rowCount, -lo);
@@ -184,7 +186,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
                 long baseRowCount = base.size();
-                if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
+                if (baseRowCount > -1) { // we don't want to cause a pass-through whole data set
                     limit = Math.min(baseRowCount, lo);
                 } else {
                     limit = lo;
@@ -200,9 +202,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         countRows();
                         // when count < -hi we have empty cursor
                         if (rowCount >= -hi) {
-                            base.toTop();
-
                             if (rowCount < -lo) {
+                                base.toTop();
                                 // if we asked for -9,-4 but there are 7 records in cursor
                                 // we would first ignore last 4 and return first 3
                                 limit = rowCount + hi;
@@ -222,7 +223,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         countRows();
                         limit = Math.max(rowCount - lo + hi, 0);
                         size = limit;
-                        base.toTop();
+
+                        if (lo > 0 && limit > 0) {
+                            skipRows(lo);
+                        } else {
+                            base.toTop();
+                        }
                     } else {
                         long baseRowCount = base.size();
                         if (baseRowCount > -1L) { // we don't want to cause a pass-through whole data set
@@ -231,10 +237,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                             limit = Math.max(0, hi - lo); // doesn't handle hi exceeding number of rows
                         }
                         size = limit;
-                    }
 
-                    if (lo > 0 && limit > 0) {
-                        skipRows(lo);
+                        if (lo > 0 && limit > 0) {
+                            skipRows(lo);
+                        }
                     }
                 }
             }
@@ -261,6 +267,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private void skipRows(long rowCount) {
             if (skipToRows == -1) {
                 skipToRows = Math.max(0, rowCount);
+                base.toTop();
             }
             if (skipToRows > 0) {
                 if (base.skipTo(rowCount)) {

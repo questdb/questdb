@@ -584,6 +584,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.walWriterPool.setPoolListener(poolListener);
     }
 
+    @TestOnly
+    public void setReaderListener(ReaderPool.ReaderListener readerListener) {
+        readerPool.setTableReaderListener(readerListener);
+    }
+
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,

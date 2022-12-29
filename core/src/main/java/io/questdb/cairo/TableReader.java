@@ -52,6 +52,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
     private static final int PARTITIONS_SLOT_SIZE = 4;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    protected final String tableName;
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
@@ -66,7 +67,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final String tableName;
     private final MemoryMR todoMem = Vm.getMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
