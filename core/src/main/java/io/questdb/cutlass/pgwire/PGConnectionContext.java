@@ -2498,7 +2498,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         } else {
             this.maxRows = Long.MAX_VALUE;
         }
-        this.resumeProcessor = cursorResumeProcessor;
+        resumeProcessor = cursorResumeProcessor;
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, commandCompleteResumeProcessor);
     }

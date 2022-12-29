@@ -141,7 +141,6 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (state == INIT_FIRST_TIMESTAMP) {
                 // first iteration to get initial timestamp value
                 if (baseCursor.hasNext()) {
@@ -183,8 +182,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
             if (!isOpen) {
-                this.isOpen = true;
-                this.dataMap.reopen();
+                isOpen = true;
+                dataMap.reopen();
             }
             this.baseCursor = baseCursor;
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();

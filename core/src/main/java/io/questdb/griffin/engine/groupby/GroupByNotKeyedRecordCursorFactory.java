@@ -136,7 +136,6 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (initState != INIT_DONE) {
                 final Record baseRecord = baseCursor.getRecord();
                 if (initState != INIT_FIRST_RECORD_DONE) {

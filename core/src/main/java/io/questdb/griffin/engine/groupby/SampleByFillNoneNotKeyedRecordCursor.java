@@ -60,7 +60,6 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         initTimestamps();
         return baseRecord != null && notKeyedLoop(simpleMapValue);
     }

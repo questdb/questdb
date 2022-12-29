@@ -149,7 +149,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isDataMapBuilt) {
                 final Record baseRecord = managedCursor.getRecord();
                 while (managedCursor.hasNext()) {

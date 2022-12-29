@@ -263,7 +263,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isRostiBuilt) {
                 buildRosti();
                 isRostiBuilt = true;

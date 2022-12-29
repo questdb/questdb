@@ -93,7 +93,6 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         initMap();
         initTimestamps();
 

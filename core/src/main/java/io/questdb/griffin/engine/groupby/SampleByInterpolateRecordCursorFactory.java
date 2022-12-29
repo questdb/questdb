@@ -231,7 +231,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isMapBuilt) {
                 buildMap();
                 isMapBuilt = true;

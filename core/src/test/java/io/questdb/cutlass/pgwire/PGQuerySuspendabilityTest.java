@@ -68,6 +68,14 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         BasePGTest.setUpStatic();
 
         addTestCase("select * from x");
+        addTestCase("select * from x order by ts desc");
+
+        // AsyncFilteredRecordCursor
+        addTestCase("select * from x where i = 42");
+        addTestCase("select * from x where i = 42 limit 3");
+
+        // AsyncFilteredNegativeLimitRecordCursor
+        addTestCase("select * from x where i = 42 limit -3");
 
         // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
         addTestCase("select * from x limit 1");
@@ -99,12 +107,45 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // addTestCase("select * from x where sym in (select sym from y)");
         // addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
 
-        // AsyncFilteredRecordCursor
-        addTestCase("select * from x where i = 42");
-        addTestCase("select * from x where i = 42 limit 3");
+        // CountRecordCursorFactory
+        addTestCase("select count() from x where isym = 'c'");
 
-        // AsyncFilteredNegativeLimitRecordCursor
-        addTestCase("select * from x where i = 42 limit -3");
+        // DistinctTimeSeriesRecordCursorFactory
+        addTestCase("select distinct * from x");
+
+        // GroupByNotKeyedVectorRecordCursor
+        addTestCase("select max(i), min(i) from x");
+
+        // vect/GroupByRecordCursorFactory
+        addTestCase("select sym, max(i), min(i) from x");
+
+        // GroupByNotKeyedRecordCursorFactory
+        addTestCase("select max(i), min(i) from (x union all y)");
+
+        // GroupByRecordCursorFactory
+        addTestCase("select sym, max(i), min(i) from (x union all y)");
+
+        // SampleByFillNoneNotKeyedRecordCursor
+        addTestCase("select max(i), min(i) from x sample by 1d");
+
+        // SampleByFillNoneRecordCursor
+        addTestCase("select sym, max(i), min(i) from x sample by 1d");
+
+        // SampleByFillPrevNotKeyedRecordCursor
+        addTestCase("select max(i), min(i) from x sample by 1d fill(prev)");
+
+        // SampleByFillPrevRecordCursor
+        addTestCase("select sym, max(i), min(i) from x sample by 1d fill(prev)");
+
+        // SampleByFillValueNotKeyedRecordCursor
+        addTestCase("select max(i), min(i) from x sample by 1d fill(42,42)");
+
+        // SampleByFillValueRecordCursor
+        addTestCase("select sym, max(i), min(i) from x sample by 1d fill(null)");
+        addTestCase("select sym, max(i), min(i) from x sample by 1d fill(42,42)");
+
+        // SampleByInterpolateRecordCursorFactory
+        addTestCase("select max(i), min(i) from x sample by 1d fill(linear)");
     }
 
     @Test

@@ -2962,9 +2962,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
-        // fail fast if we cannot create timestamp sampler
-
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
@@ -3000,11 +2997,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final QueryModel nested = model.getNestedModel();
             assert nested != null;
             // check if underlying model has reference to hour(column) function
-            if (nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                    && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
-                    && isHourKeyword(columnExpr.token)
-                    && columnExpr.paramCount == 1
-                    && columnExpr.rhs.type == LITERAL
+            if (
+                    nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+                            && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
+                            && isHourKeyword(columnExpr.token)
+                            && columnExpr.paramCount == 1
+                            && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
                 QueryModel.backupWhereClause(expressionNodePool, model);
@@ -3063,11 +3061,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         meta.add(
                                 indexInThis,
                                 new TableColumnMetadata(
-                                        Chars.toString(columns.getQuick(indexInThis).getName())
-                                        , type
-                                        , false
-                                        , 0
-                                        , metadata.isSymbolTableStatic(indexInBase),
+                                        Chars.toString(columns.getQuick(indexInThis).getName()),
+                                        type,
+                                        false,
+                                        0,
+                                        metadata.isSymbolTableStatic(indexInBase),
                                         null
                                 )
                         );
@@ -3215,7 +3213,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByFunctions,
                     recordFunctions
             );
-
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;

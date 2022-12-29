@@ -41,9 +41,6 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     private boolean areCursorsPrepared;
     private BooleanSupplier next;
     private RowCursor rowCursor;
-    private final BooleanSupplier nextFrame = this::nextFrame;
-    private final BooleanSupplier nextRow = this::nextRow;
-
     public DataFrameRecordCursorImpl(
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
@@ -55,11 +52,10 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;
-    }
+    }    private final BooleanSupplier nextFrame = this::nextFrame;
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!areCursorsPrepared) {
             rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
             areCursorsPrepared = true;
@@ -69,7 +65,7 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         } catch (NoMoreFramesException ignore) {
             return false;
         }
-    }
+    }    private final BooleanSupplier nextRow = this::nextRow;
 
     @Override
     public boolean isUsingIndex() {
@@ -139,4 +135,8 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         }
         return nextFrame();
     }
+
+
+
+
 }

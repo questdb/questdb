@@ -83,7 +83,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (baseCursor != null) {
                 while (baseCursor.hasNext()) {
                     count++;

@@ -88,7 +88,6 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         initializeMap();
         initTimestamps();
 

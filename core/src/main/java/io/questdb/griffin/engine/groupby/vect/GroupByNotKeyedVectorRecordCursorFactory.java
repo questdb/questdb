@@ -157,7 +157,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!areFunctionsBuilt) {
                 buildFunctions();
                 areFunctionsBuilt = true;

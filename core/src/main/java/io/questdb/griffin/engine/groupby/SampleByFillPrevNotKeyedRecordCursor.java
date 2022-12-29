@@ -60,7 +60,6 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         initTimestamps();
 
         if (baseRecord == null) {
