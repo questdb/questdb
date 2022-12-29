@@ -52,7 +52,6 @@ import static io.questdb.test.tools.TestUtils.assertSql;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
-    private static final String TABLES = "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n";
     private static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
             "2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\n" +
             "2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\n" +
@@ -123,12 +122,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         sink,
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, TABLES);
+                assertSql(compiler, context, "tables()", sink, "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n");
             }
 
             // copy the table to a foreign location, remove it, then symlink it
             try (
                     Path tablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(tableName).$();
+                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut").$();
                     Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash$()
             ) {
                 if (!Files.exists(foreignPath)) {
@@ -143,6 +144,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 Assert.assertFalse(Files.exists(tablePath));
                 createSoftLink(foreignPathStr, tablePathStr);
                 Assert.assertTrue(Files.exists(tablePath));
+
+                if (!Files.exists(fakeTablePath)) {
+                    createSoftLink(filePath.toString(), fakeTablePath.toString());
+                }
+                Assert.assertTrue(Files.exists(fakeTablePath));
             }
 
             // check content of table after sym-linking it
@@ -159,7 +165,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         sink,
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, TABLES);
+                assertSql(compiler, context, "tables()", sink, "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n");
             }
         });
     }

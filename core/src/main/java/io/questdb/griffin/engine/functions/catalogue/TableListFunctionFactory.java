@@ -136,7 +136,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                int plimit = path.length();
+                int pathLen = path.length();
                 while (true) {
                     if (findPtr == 0) {
                         findPtr = ff.findFirst(path);
@@ -148,9 +148,8 @@ public class TableListFunctionFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                        path.trimTo(plimit).$();
-                        if (record.open(sink)) {
+                    if (ff.isDirOrSoftLinkDirNoDots(path, pathLen, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                        if (record.open(pathLen, sink)) {
                             return true;
                         }
                     }
@@ -231,16 +230,14 @@ public class TableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(CharSequence tableName) {
+                public boolean open(int pathLen, CharSequence tableName) {
 
                     if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
                         return false;
                     }
 
-                    int pathLen = path.length();
                     try {
-                        path.concat(tableName).concat(META_FILE_NAME).$();
-                        tableReaderMetadata.load(path.$());
+                        tableReaderMetadata.load(path.concat(META_FILE_NAME).$());
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = tableReaderMetadata.getTableId();
@@ -251,7 +248,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         // perhaps this folder is not a table
                         // remove it from the result set
                         LOG.info()
-                                .$("cannot query table metadata [table=").$(tableName)
+                                .$("cannot query table metadata [table=").utf8(tableName)
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
