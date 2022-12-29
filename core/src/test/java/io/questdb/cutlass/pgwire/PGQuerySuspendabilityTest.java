@@ -77,6 +77,9 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // AsyncFilteredNegativeLimitRecordCursor
         addTestCase("select * from x where i = 42 limit -3");
 
+        // FilteredRecordCursor
+        addTestCase("select * from (x union all y) where i = 42");
+
         // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
         addTestCase("select * from x limit 1");
         addTestCase("select * from x limit 1,3");
@@ -126,26 +129,41 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select sym, max(i), min(i) from (x union all y)");
 
         // SampleByFillNoneNotKeyedRecordCursor
-        addTestCase("select max(i), min(i) from x sample by 1d");
+        addTestCase("select max(i), min(i) from x sample by 1h");
 
         // SampleByFillNoneRecordCursor
-        addTestCase("select sym, max(i), min(i) from x sample by 1d");
+        addTestCase("select sym, max(i), min(i) from x sample by 1h");
 
         // SampleByFillPrevNotKeyedRecordCursor
-        addTestCase("select max(i), min(i) from x sample by 1d fill(prev)");
+        addTestCase("select max(i), min(i) from x sample by 1h fill(prev)");
 
         // SampleByFillPrevRecordCursor
-        addTestCase("select sym, max(i), min(i) from x sample by 1d fill(prev)");
+        addTestCase("select sym, max(i), min(i) from x sample by 1h fill(prev)");
 
         // SampleByFillValueNotKeyedRecordCursor
-        addTestCase("select max(i), min(i) from x sample by 1d fill(42,42)");
+        addTestCase("select max(i), min(i) from x sample by 1h fill(42,42)");
 
         // SampleByFillValueRecordCursor
-        addTestCase("select sym, max(i), min(i) from x sample by 1d fill(null)");
-        addTestCase("select sym, max(i), min(i) from x sample by 1d fill(42,42)");
+        addTestCase("select sym, max(i), min(i) from x sample by 1h fill(null)");
+        addTestCase("select sym, max(i), min(i) from x sample by 1h fill(42,42)");
 
         // SampleByInterpolateRecordCursorFactory
-        addTestCase("select max(i), min(i) from x sample by 1d fill(linear)");
+        addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
+
+        // HashJoinLightRecordCursorFactory
+        addTestCase("select * from x join y on (sym)");
+
+        // HashOuterJoinLightRecordCursorFactory
+        addTestCase("select * from x left join y on (sym)");
+
+        // HashJoinRecordCursorFactory
+        addTestCase("select * from x join (x union all y) on (sym)");
+
+        // HashOuterJoinRecordCursorFactory
+        addTestCase("select * from x left join (x union all y) on (sym)");
+
+        // CrossJoinRecordCursorFactory
+        addTestCase("select * from x cross join y");
     }
 
     @Test
@@ -167,11 +185,11 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                                     "    rnd_symbol('a','b','c') sym, " +
                                     "    rnd_symbol('a','b','c') isym, " +
                                     "    timestamp_sequence(0, 100000000) ts " +
-                                    "   from long_sequence(3000)" +
-                                    "), index(isym) timestamp(ts) partition by day"
+                                    "   from long_sequence(100)" +
+                                    "), index(isym) timestamp(ts) partition by hour"
                     );
                     stmt.execute();
-                    stmt = connection.prepareCall("create table y as (select * from x), index(isym) timestamp(ts) partition by day");
+                    stmt = connection.prepareCall("create table y as (select * from x), index(isym) timestamp(ts) partition by hour");
                     stmt.execute();
 
                     SuspendingReaderListener listener = null;

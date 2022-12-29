@@ -100,7 +100,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             while (true) {
                 if (isMasterHasNextPending) {
                     masterHasNext = masterCursor.hasNext();

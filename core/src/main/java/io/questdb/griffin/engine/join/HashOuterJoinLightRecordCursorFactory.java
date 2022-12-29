@@ -146,7 +146,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isMapBuilt) {
                 buildMapOfSlaveRecords();
                 isMapBuilt = true;
