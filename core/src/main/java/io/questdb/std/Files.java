@@ -162,8 +162,6 @@ public final class Files {
 
     public native static int findType(long findPtr);
 
-    public native static boolean findTypeIsSoftLink(long lpszName);
-
     public static long floorPageSize(long size) {
         return size - size % PAGE_SIZE;
     }

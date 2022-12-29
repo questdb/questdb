@@ -344,11 +344,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
     return ((FIND *) findPtr)->entry->d_type;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
-        (JNIEnv *e, jclass cl, jlong findPtr) {
-    return ((FIND *) findPtr)->entry->d_type == DT_LNK;
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jint fd) {
     return flock((int) fd, LOCK_EX | LOCK_NB);
