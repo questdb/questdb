@@ -3845,10 +3845,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                        if (Files.isDir(pUtf8NameZ, type)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.top").$()));
+                        if (Files.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                            int nlen = path.length();
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.top").$()));
                         }
                     });
                 }
@@ -3934,12 +3935,13 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     path.trimTo(plen);
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                        if (Files.isDir(pUtf8NameZ, type)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
-                            Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.d").$()));
+                        if (Files.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                            int nlen = path.length();
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
+                            Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.d").$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
-                                Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.i").$()));
+                                Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.i").$()));
                             }
                         }
                     });

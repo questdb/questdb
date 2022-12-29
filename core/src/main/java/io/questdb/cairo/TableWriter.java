@@ -5198,23 +5198,20 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removePartitionDirectories0(long pUtf8NameZ, int type) {
-        try {
-            int checkedType = Files.isDirOrSoftLinkDirNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
-            if (checkedType != Files.DT_UNKNOWN &&
-                    !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
-                    !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
-                    !Chars.startsWith(fileNameSink, SEQ_DIR)) {
-                ff.unlinkOrRemove(path, checkedType, LOG);
-            }
-        } finally {
-            path.trimTo(rootLen);
+        int checkedType = Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
+        if (checkedType != Files.DT_UNKNOWN &&
+                !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
+                !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
+                !Chars.startsWith(fileNameSink, SEQ_DIR)) {
+            ff.unlinkOrRemove(path, checkedType, LOG);
+            path.trimTo(rootLen).$();
         }
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
-        int checkedType = Files.isDirOrSoftLinkDirNoDots(path.trimTo(rootLen), pUtf8NameZ, type, fileNameSink);
+        int checkedType = Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, fileNameSink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) &&
                 !Chars.startsWith(fileNameSink, WAL_NAME_BASE) &&
@@ -5236,14 +5233,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     return;
                 }
                 ff.unlinkOrRemove(path, checkedType, LOG);
+                path.trimTo(rootLen).$();
             } catch (NumericException ignore) {
                 // not a date?
                 // ignore exception and leave the directory
                 path.trimTo(rootLen);
                 path.concat(pUtf8NameZ).$();
                 LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
-            } finally {
-                path.trimTo(rootLen);
             }
         }
     }

@@ -53,6 +53,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 public class DatabaseSnapshotAgent implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
+    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -61,7 +62,6 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
-    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {
@@ -120,8 +120,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             srcPath.trimTo(snapshotRootLen).$();
             final int snapshotDbLen = srcPath.length();
             ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
-                if (Files.isDir(pUtf8NameZ, type)) {
-                    srcPath.trimTo(snapshotDbLen).concat(pUtf8NameZ);
+                if (Files.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
                     int srcPathLen = srcPath.length();
                     int dstPathLen = dstPath.length();

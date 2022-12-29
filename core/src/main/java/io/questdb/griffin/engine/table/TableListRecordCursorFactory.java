@@ -89,6 +89,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            int plimit = path.length();
             while (true) {
                 if (findPtr == 0) {
                     findPtr = ff.findFirst(path);
@@ -100,7 +101,8 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
                         return false;
                     }
                 }
-                if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                if (Files.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    path.trimTo(plimit).$();
                     return true;
                 }
             }

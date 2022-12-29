@@ -128,9 +128,7 @@ public class EngineMigration {
             final int rootLen = path.length();
 
             ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                if (Files.isDir(pUtf8NameZ, type)) {
-                    path.trimTo(rootLen);
-                    path.concat(pUtf8NameZ);
+                if (Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type)) {
                     copyPath.trimTo(rootLen);
                     copyPath.concat(pUtf8NameZ);
                     final int tablePlen = path.length();

@@ -136,6 +136,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                int plimit = path.length();
                 while (true) {
                     if (findPtr == 0) {
                         findPtr = ff.findFirst(path);
@@ -147,18 +148,10 @@ public class TableListFunctionFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    int type = ff.findType(findPtr);
-                    if (Files.isDir(ff.findName(findPtr), type, sink)) {
+                    if (Files.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                        path.trimTo(plimit).$();
                         if (record.open(sink)) {
                             return true;
-                        }
-                    } else if (type == Files.DT_LNK) {
-                        sink.clear();
-                        Chars.utf8DecodeZ(ff.findName(findPtr), sink);
-                        if (Files.notDots(sink)) {
-                            if (record.open(sink)) {
-                                return true;
-                            }
                         }
                     }
                 }

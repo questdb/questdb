@@ -27,6 +27,8 @@ package io.questdb.std;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.nio.charset.Charset;
@@ -213,32 +215,12 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
-        if (type == DT_DIR) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            return notDots(nameSink);
-        }
-        return false;
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type) {
-        return type == DT_DIR && notDots(pUtf8NameZ);
-    }
-
-    public static int isDirOrSoftLinkDirNoDots(Path path, long pUtf8NameZ, long type, StringSink nameSink) {
-        if (notDots(pUtf8NameZ)) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            path.concat(pUtf8NameZ).$();
-            if (type == DT_DIR) {
-                return DT_DIR;
-            }
-            if (type == DT_LNK && isDir(path.address())) {
-                return DT_LNK;
-            }
-        }
-        return DT_UNKNOWN;
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull StringSink nameSink) {
+        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
     public static boolean isDots(CharSequence name) {
@@ -446,6 +428,34 @@ public final class Files {
     }
 
     public native static boolean truncate(int fd, long size);
+
+    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        if (!notDots(pUtf8NameZ)) {
+            return DT_UNKNOWN;
+        }
+
+        if (type == DT_DIR) {
+            if (nameSink != null) {
+                nameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            }
+            path.trimTo(rootLen).concat(pUtf8NameZ).$();
+            return DT_DIR;
+        }
+
+        if (type == DT_LNK) {
+            if (nameSink != null) {
+                nameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            }
+            path.trimTo(rootLen).concat(pUtf8NameZ).$();
+            if (isDir(path.address())) {
+                return DT_LNK;
+            }
+        }
+
+        return DT_UNKNOWN;
+    }
 
     public native static int unlink(long lpszSoftLink);
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,11 +64,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-        int position,
-        ObjList<Function> args,
-        IntList argPositions,
-        CairoConfiguration configuration,
-        SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return new CursorFunction(new WalTableListCursorFactory(configuration, sqlExecutionContext)) {
             @Override
@@ -80,9 +79,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     }
 
     private static class WalTableListCursorFactory extends AbstractRecordCursorFactory {
+        private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        private final TableListRecordCursor cursor;
         private Path rootPath;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
@@ -146,11 +145,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    boolean isDir = Files.isDir(ff.findName(findPtr), ff.findType(findPtr), tableNameSink);
-                    if (isDir) {
-                        boolean isWalTable = TableSequencerAPI.isWalTable(tableNameSink, rootPath, ff);
-                        rootPath.trimTo(rootLen);
-                        if (isWalTable) {
+
+                    if (Files.isDirOrSoftLinkDirNoDots(rootPath, rootLen, ff.findName(findPtr), ff.findType(findPtr), tableNameSink)) {
+                        if (ff.exists(rootPath.concat(SEQ_DIR).$())) { // is a WAL table
+                            rootPath.trimTo(rootLen).$();
                             if (record.switchTo(tableNameSink)) {
                                 return true;
                             }

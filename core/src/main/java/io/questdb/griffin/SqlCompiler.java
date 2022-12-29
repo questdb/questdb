@@ -2777,15 +2777,17 @@ public class SqlCompiler implements Closeable {
         };
         private transient SqlExecutionContext currentExecutionContext;
         private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
-            if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
+            if (type == Files.DT_DIR && Files.notDots(pUtf8NameZ)) { // no backup for linked folders
+                fileNameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
                 try {
                     backupTable(fileNameSink, currentExecutionContext);
                 } catch (CairoException e) {
                     LOG.error()
-                            .$("could not backup [path=").$(fileNameSink)
+                            .$("could not backup [path=").utf8(fileNameSink)
                             .$(", e=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
-                            .$(']').$();
+                            .I$();
                 }
             }
         };
@@ -2819,7 +2821,7 @@ public class SqlCompiler implements Closeable {
         }
 
         private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
-            LOG.info().$("Starting backup of ").$(tableName).$();
+            LOG.info().$("Starting backup of ").utf8(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
                     throw CairoException.nonCritical().put("Backup is disabled, no backup root directory is configured in the server configuration ['cairo.sql.backup.root' property]");
@@ -2859,20 +2861,20 @@ public class SqlCompiler implements Closeable {
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableName).$();
                     TableUtils.renameOrFail(ff, srcPath, dstPath);
-                    LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(dstPath).$(']').$();
+                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
             } catch (CairoException e) {
                 LOG.info()
-                        .$("could not backup [table=").$(tableName)
+                        .$("could not backup [table=").utf8(tableName)
                         .$(", ex=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 srcPath.of(cachedTmpBackupRoot).concat(tableName).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
-                    LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
+                    LOG.error().$("could not delete directory [path=").utf8(srcPath).$(", errno=").$(errno).I$();
                 }
                 throw e;
             }

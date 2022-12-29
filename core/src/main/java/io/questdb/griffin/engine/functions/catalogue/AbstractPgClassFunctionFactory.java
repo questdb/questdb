@@ -233,25 +233,27 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         private boolean next0() {
             do {
                 final long pUtf8NameZ = ff.findName(findFileStruct);
-                final long type = ff.findType(findFileStruct);
-                if (Files.isDir(pUtf8NameZ, type, sink)) {
-                    path.trimTo(plimit);
-                    if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
-                        // open metadata file and read id
-                        int fd = ff.openRO(path);
-                        if (fd > -1) {
-                            if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
+                if (Files.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct), sink)) {
+                    try {
+                        if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
+                            // open metadata file and read id
+                            int fd = ff.openRO(path);
+                            if (fd > -1) {
+                                if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
+                                    intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
+                                    ff.close(fd);
+                                    return true;
+                                }
+                                LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
                                 ff.close(fd);
-                                return true;
+                            } else {
+                                LOG.error().$("could not read metadata [file=").utf8(path).I$();
                             }
-                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                            ff.close(fd);
-                        } else {
-                            LOG.error().$("could not read metadata [file=").$(path).$(']').$();
+                            intValues[INDEX_OID] = -1;
+                            return true;
                         }
-                        intValues[INDEX_OID] = -1;
-                        return true;
+                    } finally {
+                        path.trimTo(plimit).$();
                     }
                 }
             } while (ff.findNext(findFileStruct) > 0);
