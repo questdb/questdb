@@ -52,7 +52,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndNoO3UDP() throws Exception {
-        Assume.assumeFalse(Os.isLinux()); // cannot debug this myself
         String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -84,7 +83,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3OverActivePartitionUDP() throws Exception {
-        Assume.assumeFalse(Os.isLinux()); // cannot debug this myself
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -116,7 +114,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3UnderActivePartitionUDP() throws Exception {
-        Assume.assumeFalse(Os.isLinux()); // cannot debug this myself 
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
