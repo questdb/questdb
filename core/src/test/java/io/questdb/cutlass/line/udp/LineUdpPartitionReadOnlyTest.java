@@ -50,8 +50,11 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
 
+    // Linux ARM is not supported at present
+
     @Test
     public void testActivePartitionReadOnlyAndNoO3UDP() throws Exception {
+        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -83,6 +86,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3OverActivePartitionUDP() throws Exception {
+        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -146,6 +150,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testTableIsReadOnlyUDP() throws Exception {
+        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
