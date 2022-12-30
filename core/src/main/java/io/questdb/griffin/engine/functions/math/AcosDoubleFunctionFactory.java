@@ -53,7 +53,7 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
         if (x.isConstant()) {
             return new DoubleConstant(StrictMath.acos(x.getDouble(null)));
         }
-        return new AcosFunction(args.getQuick(0));
+        return new AcosFunction(x);
     }
 
     private static class AcosFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {

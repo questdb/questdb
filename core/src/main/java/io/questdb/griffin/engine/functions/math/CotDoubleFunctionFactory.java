@@ -44,27 +44,24 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position, ObjList<Function> args,
+            int position,
+            ObjList<Function> args,
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
         Function angleRad = args.getQuick(0);
         if (angleRad.isConstant()) {
-            return new DoubleConstant(cot(angleRad.getDouble(null)));
+            return new DoubleConstant(cot(position, angleRad.getDouble(null)));
         }
         return new CotFunction(args.getQuick(0));
     }
 
-    private static double cot(double angle) {
-        if (Double.isNaN(angle)) {
+    private static double cot(int position, double angle) {
+        if (Double.isNaN(angle) || Double.isInfinite(angle)) {
             return Double.NaN;
         }
-        double tan = StrictMath.tan(angle);
-        if (Math.abs(tan) >= 0.000000000000001) {
-            return 1.0 / tan;
-        }
-        return tan > 0.0 ? Double.POSITIVE_INFINITY : Double.NEGATIVE_INFINITY;
+        return 1.0 / Math.tan(angle);
     }
 
     private static class CotFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
@@ -81,7 +78,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return cot(angleRad.getDouble(rec));
+            return cot(0, angleRad.getDouble(rec));
         }
     }
 }

@@ -33,30 +33,30 @@ public class RadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0.000000000000001);
+        call(Double.NaN).andAssert(Double.NaN, DELTA);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(-45).andAssert(-Math.PI / 4, 0.000000000000001);
-        call(-90).andAssert(-Math.PI / 2, 0.000000000000001);
-        call(-180).andAssert(-Math.PI, 0.000000000000001);
-        call(-360).andAssert(-2 * Math.PI, 0.000000000000001);
+        call(-45).andAssert(-Math.PI / 4, DELTA);
+        call(-90).andAssert(-Math.PI / 2, DELTA);
+        call(-180).andAssert(-Math.PI, DELTA);
+        call(-360).andAssert(-2 * Math.PI, DELTA);
     }
 
     @Test
     public void testPositive() throws SqlException {
-        call(45).andAssert(Math.PI / 4, 0.000000000000001);
-        call(90).andAssert(Math.PI / 2, 0.000000000000001);
-        call(180).andAssert(Math.PI, 0.000000000000001);
-        call(360).andAssert(2* Math.PI, 0.000000000000001);
+        call(45).andAssert(Math.PI / 4, DELTA);
+        call(90).andAssert(Math.PI / 2, DELTA);
+        call(180).andAssert(Math.PI, DELTA);
+        call(360).andAssert(2* Math.PI, DELTA);
     }
 
     @Test
     public void testZero() throws SqlException {
-        call(0).andAssert(0.0, 0.000000000000001);
-        call(0.0).andAssert(0.0, 0.000000000000001);
-        call(-0).andAssert(0.0, 0.000000000000001);
+        call(0).andAssert(0.0, DELTA);
+        call(0.0).andAssert(0.0, DELTA);
+        call(-0).andAssert(0.0, DELTA);
     }
 
     @Override

@@ -38,7 +38,7 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNegative() throws SqlException {
-        call(-Math.PI).andAssert(Double.POSITIVE_INFINITY, DELTA);
+        call(-Math.PI).andAssert(8.165619676597685E15, DELTA);
         call(-Math.PI / 2).andAssert(-0.0, DELTA);
         call(-Math.PI * 3 / 4).andAssert(1.0, DELTA);
 
@@ -46,16 +46,16 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testPositive() throws SqlException {
-        call(Math.PI).andAssert(Double.NEGATIVE_INFINITY, DELTA);
+        call(Math.PI).andAssert(-8.165619676597685E15, DELTA);
         call(Math.PI / 2).andAssert(-0.0, DELTA);
         call(Math.PI * 3 / 4).andAssert(-1.0, DELTA);
     }
 
     @Test
     public void testZero() throws SqlException {
-        call(0.0).andAssert(Double.NEGATIVE_INFINITY, DELTA);
-        call(-0.0000000000000001).andAssert(Double.NEGATIVE_INFINITY, DELTA);
-        call(0.0000000000000001).andAssert(Double.POSITIVE_INFINITY, DELTA);
+        call(0.0).andAssert(Double.POSITIVE_INFINITY, DELTA);
+        call(-0.0000000000000001).andAssert(-1.0E16, DELTA);
+        call(0.0000000000000001).andAssert(1.0E16, DELTA);
     }
 
     @Override
