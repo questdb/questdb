@@ -109,7 +109,6 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
 
     @Override
     protected void buildTreeMap() {
-        // TODO(puzpuzpuz): test suspendability
         if (possibleCombinations < 0) {
             possibleCombinations = countSymbolCombinations();
         }

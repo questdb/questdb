@@ -130,7 +130,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (baseCursor != null) {
                 buildSymbolKeys();
                 baseCursor = Misc.free(baseCursor);

@@ -118,7 +118,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
 
         // InSymbolCursorFunctionFactory
-        // TODO: initialize suspendable filter function in async offload eagerly
+        // TODO(puzpuzpuz): initialize suspendable filter function in async offload eagerly
         // addTestCase("select * from x where sym in (select sym from y)");
         // addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
 
@@ -171,11 +171,39 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // LatestByAllRecordCursor
         addTestCase("select * from x latest on ts partition by s");
 
+        // LatestByAllFilteredRecordCursor
+        addTestCase("select * from x where i != 42 latest on ts partition by s");
+
         // LatestByLightRecordCursorFactory
         addTestCase("select * from ((x union all y) order by ts) latest on ts partition by s");
 
         // LatestByRecordCursorFactory
         addTestCase("with yy as (select ts, max(s) s from y sample by 1h) select * from yy latest on ts partition by s");
+
+        // LatestByValueRecordCursor
+        addTestCase("select * from x where sym in ('a') latest on ts partition by sym");
+
+        // LatestByValueFilteredRecordCursor
+        addTestCase("select * from x where sym in ('a') and i > 42 latest on ts partition by sym");
+
+        // LatestByAllSymbolsFilteredRecordCursor
+        addTestCase("select * from x latest on ts partition by sym, isym");
+        addTestCase("select * from x where i != 42 latest on ts partition by sym, isym");
+
+        // LatestBySubQueryRecordCursorFactory, LatestByValuesRecordCursor
+        addTestCase("select * from x where sym in (select sym from y limit 3) latest on ts partition by sym");
+
+        // LatestBySubQueryRecordCursorFactory, LatestByValuesFilteredRecordCursor
+        addTestCase("select * from x where sym in (select sym from y limit 3) and i%2 != 1 latest on ts partition by sym");
+
+        // LatestByValueIndexedFilteredRecordCursor
+        addTestCase("select * from x where isym = 'c' and i != 13 latest on ts partition by isym");
+
+        // LatestByValuesIndexedFilteredRecordCursor
+        addTestCase("select * from x where isym in ('a','c') and i < 13 latest on ts partition by isym");
+
+        // LatestByValuesIndexedRecordCursor
+        addTestCase("select * from x where isym in ('b','c') latest on ts partition by isym");
 
         // HashJoinRecordCursorFactory
         addTestCase("select * from x join (x union all y) on (sym)");

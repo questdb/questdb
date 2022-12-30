@@ -55,7 +55,6 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isRecordFound) {
             findRecord();
             hasNext = found;

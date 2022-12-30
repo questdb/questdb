@@ -89,7 +89,6 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
 
     @Override
     protected void buildTreeMap() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isMapPrepared) {
             prepareMap();
             isMapPrepared = true;
