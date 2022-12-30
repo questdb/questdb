@@ -51,9 +51,9 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
             @NotNull ObjList<Function> castFunctionB
     ) {
         this.map = map;
-        this.isOpen = true;
+        isOpen = true;
         this.recordSink = recordSink;
-        this.castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
+        castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
     }
 
     @Override
@@ -83,7 +83,6 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isCursorBHashed) {
             hashCursorB();
             castRecord.setAb(true);
@@ -131,7 +130,7 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!isOpen) {
-            this.isOpen = true;
+            isOpen = true;
             map.reopen();
         }
 

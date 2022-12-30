@@ -80,6 +80,9 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // FilteredRecordCursor
         addTestCase("select * from (x union all y) where i = 42");
 
+        // FilterOnSubQueryRecordCursorFactory
+        addTestCase("select * from x where isym in (select list('a', 'b') a from long_sequence(5)) and i != 42");
+
         // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
         addTestCase("select * from x limit 1");
         addTestCase("select * from x limit 1,3");
@@ -101,6 +104,15 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select * from (x union all (y where isym = 'a')) limit -1");
         addTestCase("select * from (x union all (y where isym = 'a')) limit -3,-1");
         addTestCase("select * from (x union all (y where isym = 'a')) limit -4000,-1");
+
+        // SortedRecordCursorFactory
+        addTestCase("select * from (x union all y) order by i");
+
+        // SortedLightRecordCursorFactory
+        addTestCase("select sym, min(i) imin from x where ts in '1970-01-01' order by imin");
+
+        // LimitedSizeSortedLightRecordCursorFactory
+        addTestCase("select * from x order by i limit 3");
 
         // CachedAnalyticRecordCursorFactory
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
@@ -185,6 +197,24 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // SpliceJoinLightRecordCursorFactory
         addTestCase("select * from x splice join y");
+
+        // UnionRecordCursorFactory
+        addTestCase("x union y");
+
+        // UnionAllRecordCursorFactory
+        addTestCase("x union all y");
+
+        // ExceptRecordCursor
+        addTestCase("x except y", true);
+
+        // ExceptCastRecordCursor
+        addTestCase("(select s sym from x) except (select sym from y)", true);
+
+        // IntersectRecordCursor
+        addTestCase("x intersect y");
+
+        // IntersectCastRecordCursor
+        addTestCase("(select s sym from x) intersect (select sym from y)");
     }
 
     @Test

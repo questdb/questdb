@@ -90,7 +90,6 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isChainBuilt) {
             buildChain();
             isChainBuilt = true;

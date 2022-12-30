@@ -45,7 +45,7 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
     public ExceptRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
-        this.isOpen = true;
+        isOpen = true;
     }
 
     @Override
@@ -74,7 +74,6 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isCursorBHashed) {
             hashCursorB();
             toTop();

@@ -133,7 +133,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (baseCursor != null) {
                 buildFactories();
                 baseCursor = Misc.free(baseCursor);

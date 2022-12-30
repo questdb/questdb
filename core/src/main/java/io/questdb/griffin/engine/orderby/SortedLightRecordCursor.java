@@ -75,7 +75,6 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isChainBuilt) {
             buildChain();
             isChainBuilt = true;

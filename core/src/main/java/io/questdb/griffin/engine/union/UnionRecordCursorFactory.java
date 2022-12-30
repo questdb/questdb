@@ -49,7 +49,7 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         Map map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new UnionRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
+        cursor = new UnionRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
     }
 
     @Override

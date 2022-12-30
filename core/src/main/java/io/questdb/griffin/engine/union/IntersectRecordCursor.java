@@ -74,7 +74,6 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isCursorBHashed) {
             hashCursorB();
             toTop();

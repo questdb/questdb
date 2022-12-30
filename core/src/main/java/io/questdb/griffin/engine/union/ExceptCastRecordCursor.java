@@ -46,9 +46,9 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
 
     public ExceptCastRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.map = map;
-        this.isOpen = true;
+        isOpen = true;
         this.recordSink = recordSink;
-        this.castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
+        castRecord = new UnionCastRecord(castFunctionsA, castFunctionsB);
     }
 
     @Override
@@ -78,7 +78,6 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isCursorBHashed) {
             hashCursorB();
             castRecord.setAb(true);
