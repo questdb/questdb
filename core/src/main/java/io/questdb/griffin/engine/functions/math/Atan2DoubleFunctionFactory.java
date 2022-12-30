@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -48,18 +47,7 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function y = args.getQuick(0);
-        Function x = args.getQuick(1);
-        if (y.isConstant() && x.isConstant()) {
-            return new DoubleConstant(Math.atan2(y.getDouble(null), x.getDouble(null)));
-        }
-        if (y.isConstant()) {
-            return new Atan2Function(new DoubleConstant(y.getDouble(null)), x);
-        }
-        if (x.isConstant()) {
-            return new Atan2Function(y, new DoubleConstant(x.getDouble(null)));
-        }
-        return new Atan2Function(y, x);
+        return new Atan2Function(args.getQuick(0), args.getQuick(1));
     }
 
     private static class Atan2Function extends DoubleFunction implements ScalarFunction {

@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -49,11 +48,7 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function x = args.getQuick(0);
-        if (x.isConstant()) {
-            return new DoubleConstant(StrictMath.acos(x.getDouble(null)));
-        }
-        return new AcosFunction(x);
+        return new AcosFunction(args.getQuick(0));
     }
 
     private static class AcosFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {

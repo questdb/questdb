@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -50,18 +49,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angleRad = args.getQuick(0);
-        if (angleRad.isConstant()) {
-            return new DoubleConstant(cot(position, angleRad.getDouble(null)));
-        }
         return new CotFunction(args.getQuick(0));
-    }
-
-    private static double cot(int position, double angle) {
-        if (Double.isNaN(angle) || Double.isInfinite(angle)) {
-            return Double.NaN;
-        }
-        return 1.0 / Math.tan(angle);
     }
 
     private static class CotFunction extends DoubleFunction implements ScalarFunction, UnaryFunction {
@@ -78,7 +66,11 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return cot(0, angleRad.getDouble(rec));
+            double angle = angleRad.getDouble(rec);
+            if (Double.isNaN(angle) || Double.isInfinite(angle)) {
+                return Double.NaN;
+            }
+            return 1.0 / Math.tan(angle);
         }
     }
 }

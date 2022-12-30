@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -49,10 +48,6 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function angleRad = args.getQuick(0);
-        if (angleRad.isConstant()) {
-            return new DoubleConstant(StrictMath.sin(angleRad.getDouble(null)));
-        }
         return new SinFunction(args.getQuick(0));
     }
 

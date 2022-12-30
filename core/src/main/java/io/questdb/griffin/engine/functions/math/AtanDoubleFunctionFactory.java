@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -49,10 +48,6 @@ public class AtanDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function x = args.getQuick(0);
-        if (x.isConstant()) {
-            return new DoubleConstant(StrictMath.atan(x.getDouble(null)));
-        }
         return new AtanFunction(args.getQuick(0));
     }
 
