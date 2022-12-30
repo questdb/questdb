@@ -329,19 +329,22 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
-            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, order);
-
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
             pageAddressCache.of(base.getMetadata());
 
+            assert pageFrameCursor == null;
+            pageFrameCursor = base.getPageFrameCursor(executionContext, order);
+            this.atom = atom;
+            this.collectSubSeq = collectSubSeq;
+
+            // this method sets a lot of state of the page sequence
+            prepareForDispatch(rnd);
+
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(pageFrameCursor, executionContext);
-
-            // this method sets a lot of state of the page sequence
-            prepareForDispatch(rnd, pageFrameCursor, atom, collectSubSeq);
         } catch (Throwable e) {
             pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
             throw e;
@@ -492,22 +495,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
     }
 
-    private void prepareForDispatch(
-            Rnd rnd,
-            PageFrameCursor pageFrameCursor,
-            T atom,
-            SCSequence collectSubSeq
-    ) {
+    private void prepareForDispatch(Rnd rnd) {
         id = ID_SEQ.incrementAndGet();
         done = false;
         valid.set(true);
         reduceCounter.set(0);
         shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
         reduceQueue = messageBus.getPageFrameReduceQueue(shard);
-        assert this.pageFrameCursor == null;
-        this.pageFrameCursor = pageFrameCursor;
-        this.atom = atom;
-        this.collectSubSeq = collectSubSeq;
     }
 
     private boolean stealWork(
