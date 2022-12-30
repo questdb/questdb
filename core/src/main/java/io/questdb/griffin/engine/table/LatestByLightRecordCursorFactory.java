@@ -137,7 +137,6 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isMapBuilt) {
                 buildMap();
                 toTop();

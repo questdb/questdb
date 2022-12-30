@@ -65,7 +65,6 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     protected void buildTreeMap() {
-        // TODO(puzpuzpuz): test suspendability
         DataFrame frame;
         while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();

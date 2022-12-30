@@ -195,7 +195,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
                 final CharSequence symbol = func.get(record, 0);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-
                     final int targetIndex = targetFactories.keyIndex(symbolKey);
                     if (targetIndex > -1) {
                         final RowCursorFactory rowCursorFactory;

@@ -142,7 +142,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // TODO(puzpuzpuz): test suspendability
             if (!isMapBuilt) {
                 buildMap();
                 toTop();

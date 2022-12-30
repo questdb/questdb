@@ -81,7 +81,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select * from (x union all y) where i = 42");
 
         // FilterOnSubQueryRecordCursorFactory
-        addTestCase("select * from x where isym in (select list('a', 'b') a from long_sequence(5)) and i != 42");
+        addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
 
         // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
         addTestCase("select * from x limit 1");
@@ -161,6 +161,21 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // SampleByInterpolateRecordCursorFactory
         addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
+
+        // LatestByValueListRecordCursor
+        addTestCase("select * from x latest on ts partition by sym");
+
+        // LatestByAllIndexedRecordCursor
+        addTestCase("select * from x latest on ts partition by isym");
+
+        // LatestByAllRecordCursor
+        addTestCase("select * from x latest on ts partition by s");
+
+        // LatestByLightRecordCursorFactory
+        addTestCase("select * from ((x union all y) order by ts) latest on ts partition by s");
+
+        // LatestByRecordCursorFactory
+        addTestCase("with yy as (select ts, max(s) s from y sample by 1h) select * from yy latest on ts partition by s");
 
         // HashJoinRecordCursorFactory
         addTestCase("select * from x join (x union all y) on (sym)");

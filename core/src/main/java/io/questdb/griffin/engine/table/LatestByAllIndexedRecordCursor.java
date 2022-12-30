@@ -78,7 +78,6 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        // TODO(puzpuzpuz): test suspendability
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;
