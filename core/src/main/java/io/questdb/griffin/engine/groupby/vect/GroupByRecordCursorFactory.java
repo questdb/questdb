@@ -75,8 +75,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
         super(metadata);
-        this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
-        this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
+        entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
+        activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
         // columnTypes[0] is the type of key, for now single key is supported
         // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
@@ -84,13 +84,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // ...
         // functions[n].type == columnTypes[n+1]
 
-        this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
         this.base = base;
         // first column is INT or SYMBOL
-        this.pRosti = new long[workerCount];
+        pRosti = new long[workerCount];
         final int vafCount = vafList.size();
         this.vafList = new ObjList<>(vafCount);
-        this.raf = configuration.getRostiAllocFacade();
+        raf = configuration.getRostiAllocFacade();
         for (int i = 0; i < workerCount; i++) {
             long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
             if (ptr == 0) {
@@ -140,13 +140,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         addOffsets(columnSkewIndex, vafList, keyColumnIndexInThisCursor, vafCount, columnOffsets);
 
         this.vafList.addAll(vafList);
-        this.keyColumnIndex = keyColumnIndexInBase;
+        keyColumnIndex = keyColumnIndexInBase;
         if (symbolTableSkewIndex.size() > 0) {
             final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
             symbolSkew.addAll(symbolTableSkewIndex);
-            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
+            cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
         } else {
-            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
+            cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
         }
     }
 
@@ -231,8 +231,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long slots;
 
         public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex) {
-            this.pRostiBig = pRosti;
-            this.record = new RostiRecord();
+            pRostiBig = pRosti;
+            record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
         }

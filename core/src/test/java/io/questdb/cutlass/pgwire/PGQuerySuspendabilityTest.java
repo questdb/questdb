@@ -132,7 +132,8 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select max(i), min(i) from x");
 
         // vect/GroupByRecordCursorFactory
-        addTestCase("select sym, max(i), min(i) from x");
+        // order by is added here to guarantee a deterministic order in the result set
+        addTestCase("select sym, max(i), min(i) from x order by sym");
 
         // GroupByNotKeyedRecordCursorFactory
         addTestCase("select max(i), min(i) from (x union all y)");
