@@ -3821,7 +3821,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             indexDirection,
                             columnIndexes
                     );
-
                 } else if (
                         intrinsicModel.keyExcludedValueFuncs.size() > 0
                                 && reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()

@@ -35,7 +35,8 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final Function filter;
-    private final boolean restrictedByValues;
+    private final boolean restrictedByExcludedValues;
+    private final boolean restrictedByIncludedValues;
     private final int shrinkToCapacity;
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -51,14 +52,16 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
             int shrinkToCapacity,
-            boolean restrictedByValues
+            boolean restrictedByIncludedValues,
+            boolean restrictedByExcludedValues
     ) {
         super(columnIndexes);
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.restrictedByValues = restrictedByValues;
-        if (restrictedByValues) {
+        this.restrictedByIncludedValues = restrictedByIncludedValues;
+        this.restrictedByExcludedValues = restrictedByExcludedValues;
+        if (restrictedByIncludedValues || restrictedByExcludedValues) {
             this.includedSymbolKeys = new IntHashSet(shrinkToCapacity);
             this.excludedSymbolKeys = new IntHashSet(shrinkToCapacity);
         }
@@ -114,24 +117,24 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             filter.init(this, executionContext);
             filter.toTop();
         }
-        if (restrictedByValues) {
+        if (restrictedByIncludedValues) {
             if (includedSymbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
                 rowIds.setCapacity(includedSymbolKeys.size());
-            } else if (excludedSymbolKeys.size() > 0) {
-                // Find all, but excluded set of symbol keys
-                StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
-                int distinctSymbols = symbolTable.getSymbolCount();
-                if (symbolTable.containsNullValue()) {
-                    distinctSymbols++;
-                } else if (excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL)) {
-                    // The excluded set contains a null while the symbol table doesn't.
-                    // Increment the counter to avoid miscalculation.
-                    distinctSymbols++;
-                }
-                distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());
-                rowIds.setCapacity(distinctSymbols);
             }
+        } else if (restrictedByExcludedValues) {
+            // Find all, but excluded set of symbol keys
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            int distinctSymbols = symbolTable.getSymbolCount();
+            if (symbolTable.containsNullValue()) {
+                distinctSymbols++;
+            } else if (excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+                // The excluded set contains a null while the symbol table doesn't.
+                // Increment the counter to avoid miscalculation.
+                distinctSymbols++;
+            }
+            distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());
+            rowIds.setCapacity(distinctSymbols);
         } else {
             // Find latest by all distinct symbol values
             StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
@@ -203,7 +206,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         // Then return row by row in ascending timestamp order
         // since most of the time factory is supposed to return in ASC timestamp order.
         // It can be optimised later on to not buffer row IDs and return in desc order.
-        if (restrictedByValues) {
+        if (restrictedByIncludedValues) {
             if (includedSymbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
                 if (filter != null) {
@@ -211,14 +214,14 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 } else {
                     findRestrictedNoFilter();
                 }
-            } else if (excludedSymbolKeys.size() > 0) {
-                // Find all, but excluded set of symbol keys
-                int distinctSymbols = (int) rowIds.getCapacity();
-                if (filter != null) {
-                    findRestrictedExcludedOnlyWithFilter(distinctSymbols);
-                } else {
-                    findRestrictedExcludedOnlyNoFilter(distinctSymbols);
-                }
+            }
+        } else if (restrictedByExcludedValues) {
+            // Find all, but excluded set of symbol keys
+            int distinctSymbols = (int) rowIds.getCapacity();
+            if (filter != null) {
+                findRestrictedExcludedOnlyWithFilter(distinctSymbols);
+            } else {
+                findRestrictedExcludedOnlyNoFilter(distinctSymbols);
             }
         } else {
             // Find latest by all distinct symbol values

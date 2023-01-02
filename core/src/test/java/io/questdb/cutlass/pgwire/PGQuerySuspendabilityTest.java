@@ -86,6 +86,15 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // FilterOnExcludedValuesRecordCursorFactory
         addTestCase("select * from x where isym not in ('a','b') and i != 42");
 
+        // FilterOnValuesRecordCursorFactory
+        addTestCase("select * from x where isym in (?,?)", false, "d", "a");
+
+        // DataFrameRecordCursorFactory
+        addTestCase("select * from x where isym = ? and i != 42", false, "c");
+
+        // DeferredSingleSymbolFilterDataFrameRecordCursorFactory
+        addTestCase("select * from x where isym = ?", false, "b");
+
         // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
         addTestCase("select * from x limit 1");
         addTestCase("select * from x limit 1,3");
@@ -172,7 +181,8 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // LatestByValueListRecordCursor
         addTestCase("select * from x latest on ts partition by sym");
-        addTestCase("select * from x where isym <> 'd' and i <> 13 latest on ts partition by isym", true);
+        addTestCase("select * from x where isym <> 'd' latest on ts partition by isym");
+        addTestCase("select * from x where isym not in ('e','f') and i > 42 latest on ts partition by isym");
 
         // LatestByAllIndexedRecordCursor
         addTestCase("select * from x latest on ts partition by isym");
@@ -208,8 +218,11 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // LatestBySubQueryRecordCursorFactory, LatestByValuesFilteredRecordCursor
         addTestCase("select * from x where sym in (select sym from y limit 3) and i%2 <> 1 latest on ts partition by sym");
 
-        // LatestByValueIndexedFilteredRecordCursor
+        // LatestByValueIndexedFilteredRecordCursorFactory
         addTestCase("select * from x where isym = 'c' and i <> 13 latest on ts partition by isym");
+
+        // LatestByValueDeferredIndexedFilteredRecordCursorFactory
+        addTestCase("select * from x where isym = ? and i <> 0 latest on ts partition by isym", false, "c");
 
         // LatestByValuesIndexedFilteredRecordCursor
         addTestCase("select * from x where isym in ('a','c') and i < 13 latest on ts partition by isym");
@@ -280,7 +293,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), true, true)) {
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
                     CallableStatement stmt = connection.prepareCall(
                             "create table x as ( " +
                                     "  select " +
@@ -306,6 +319,11 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                             engine.setReaderListener(null);
                             try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
                                 sink.clear();
+                                if (tc.bindVariableValues != null) {
+                                    for (int j = 0; j < tc.bindVariableValues.length; j++) {
+                                        statement.setString(j + 1, tc.bindVariableValues[j]);
+                                    }
+                                }
                                 try (ResultSet rs = statement.executeQuery()) {
                                     long rows = printToSink(sink, rs);
                                     if (!tc.allowEmptyResultSet) {
@@ -321,6 +339,11 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                             engine.setReaderListener(listener);
                             try (PreparedStatement statement = connection.prepareStatement(tc.query)) {
                                 sinkB.clear();
+                                if (tc.bindVariableValues != null) {
+                                    for (int j = 0; j < tc.bindVariableValues.length; j++) {
+                                        statement.setString(j + 1, tc.bindVariableValues[j]);
+                                    }
+                                }
                                 try (ResultSet rs = statement.executeQuery()) {
                                     printToSink(sinkB, rs);
                                 }
@@ -342,6 +365,10 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
     private static void addTestCase(String query, boolean allowEmptyResultSet) {
         testCases.add(new TestCase(query, allowEmptyResultSet));
+    }
+
+    private static void addTestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
+        testCases.add(new TestCase(query, allowEmptyResultSet, bindVariableValues));
     }
 
     /**
@@ -382,11 +409,13 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
     private static class TestCase {
         final boolean allowEmptyResultSet;
+        final String[] bindVariableValues;
         final String query;
 
-        public TestCase(String query, boolean allowEmptyResultSet) {
+        public TestCase(String query, boolean allowEmptyResultSet, String... bindVariableValues) {
             this.query = query;
             this.allowEmptyResultSet = allowEmptyResultSet;
+            this.bindVariableValues = bindVariableValues;
         }
     }
 }
