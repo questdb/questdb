@@ -48,6 +48,12 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default void initCursor() {
+        getLeft().initCursor();
+        getRight().initCursor();
+    }
+
+    @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getRight().isConstant();
     }

@@ -201,7 +201,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private void fetchNextFrame() {
         if (frameLimit == -1) {
-            frameSequence.initFrameCount();
+            frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 

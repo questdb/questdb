@@ -149,7 +149,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     private void fetchAllFrames() {
         if (frameLimit == -1) {
-            frameSequence.initFrameCount();
+            frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 

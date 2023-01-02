@@ -52,6 +52,13 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default void initCursor() {
+        getLeft().initCursor();
+        getCenter().initCursor();
+        getRight().initCursor();
+    }
+
+    @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getCenter().isConstant() && getRight().isConstant();
     }

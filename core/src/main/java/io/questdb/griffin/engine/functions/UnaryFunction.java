@@ -43,6 +43,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default void initCursor() {
+        getArg().initCursor();
+    }
+
+    @Override
     default boolean isConstant() {
         return getArg().isConstant();
     }

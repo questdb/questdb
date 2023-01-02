@@ -94,11 +94,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // TODO(puzpuzpuz): test suspendability
-            if (cursor != null) {
-                buildValueSet();
-                cursor = Misc.free(cursor);
-            }
+            initCursor();
             return valueSet.contains(valueArg.getSymbol(rec));
         }
 
@@ -132,6 +128,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             cursor = factory.getCursor(executionContext);
+        }
+
+        @Override
+        public void initCursor() {
+            if (cursor != null) {
+                BinaryFunction.super.initCursor();
+                buildValueSet();
+                cursor = Misc.free(cursor);
+            }
         }
 
         @Override
@@ -182,11 +187,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // TODO(puzpuzpuz): test suspendability
-            if (cursor != null) {
-                buildSymbolKeys();
-                cursor = Misc.free(cursor);
-            }
+            initCursor();
             return symbolKeys.keyIndex(valueArg.getInt(rec) + 1) < 0;
         }
 
@@ -212,6 +213,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             cursor = factory.getCursor(executionContext);
+        }
+
+        @Override
+        public void initCursor() {
+            if (cursor != null) {
+                BinaryFunction.super.initCursor();
+                buildSymbolKeys();
+                cursor = Misc.free(cursor);
+            }
         }
 
         @Override

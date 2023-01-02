@@ -118,9 +118,9 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
 
         // InSymbolCursorFunctionFactory
-        // TODO(puzpuzpuz): initialize suspendable filter function in async offload eagerly
-        // addTestCase("select * from x where sym in (select sym from y)");
-        // addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
+        addTestCase("select * from x where sym in (select sym from y)");
+        addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
+        addTestCase("select * from x where sym in (select sym from y where isym in (select isym from x limit 3))");
 
         // CountRecordCursorFactory
         addTestCase("select count() from x where isym = 'c'");

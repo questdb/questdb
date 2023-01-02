@@ -65,7 +65,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * @return true if more records may be accessed, otherwise false
-     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     boolean hasNext();
 
@@ -112,7 +112,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      *
      * @param rowCount row count to skip down the cursor
      * @return true if a fast skip is supported by the cursor and was executed, false otherwise
-     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     default boolean skipTo(long rowCount) {
         return false;

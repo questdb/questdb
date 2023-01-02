@@ -52,7 +52,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
     /**
      * @return the next element in the data frame
-     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     @Nullable DataFrame next();
 
@@ -74,7 +74,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
      *
      * @param rowCount absolute row number in table. Rows are numbered 0...row_count-1
      * @return data frame and position (lo) of given rowCount (according to cursor order).
-     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     default @Nullable DataFrame skipTo(long rowCount) {
         throw new UnsupportedOperationException();

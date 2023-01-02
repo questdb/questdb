@@ -67,8 +67,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private long id;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
-    private boolean pageAddressCacheBuilt;
     private PageFrameCursor pageFrameCursor;
+    private boolean readyToDispatch;
     private PageAddressCacheRecord record;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
@@ -155,7 +155,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         frameCount = 0;
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
-        pageAddressCacheBuilt = false;
+        readyToDispatch = false;
         pageAddressCache.clear();
         pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
         // collect sequence may not be set here when
@@ -249,19 +249,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return reduceQueue.get(cursor);
     }
 
-    /**
-     * Must be called before subsequence calls to {@link #next()} to count page frames and
-     * initialize page frame cache.
-     *
-     * @throws io.questdb.cairo.DataUnavailableException when the queried data is in a cold partition
-     */
-    public void initFrameCount() {
-        if (!pageAddressCacheBuilt) {
-            buildAddressCache();
-            pageAddressCacheBuilt = true;
-        }
-    }
-
     public boolean isActive() {
         return valid.get();
     }
@@ -338,9 +325,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             pageFrameCursor = base.getPageFrameCursor(executionContext, order);
             this.atom = atom;
             this.collectSubSeq = collectSubSeq;
-
-            // this method sets a lot of state of the page sequence
-            prepareForDispatch(rnd);
+            id = ID_SEQ.incrementAndGet();
+            done = false;
+            valid.set(true);
+            reduceCounter.set(0);
+            shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
+            reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
@@ -350,6 +340,20 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             throw e;
         }
         return this;
+    }
+
+    /**
+     * Must be called before subsequence calls to {@link #next()} to count page frames and
+     * initialize page frame cache and filter functions.
+     *
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
+     */
+    public void prepareForDispatch() {
+        if (!readyToDispatch) {
+            atom.initCursor();
+            buildAddressCache();
+            readyToDispatch = true;
+        }
     }
 
     public void reset() {
@@ -484,24 +488,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (record == null) {
             final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
-            this.record = new PageAddressCacheRecord();
+            record = new PageAddressCacheRecord();
             if (sqlExecutionCircuitBreakerConfiguration != null) {
-                this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
+                circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
             } else {
-                this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }
         }
 
-        this.circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
-    }
-
-    private void prepareForDispatch(Rnd rnd) {
-        id = ID_SEQ.incrementAndGet();
-        done = false;
-        valid.set(true);
-        reduceCounter.set(0);
-        shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
-        reduceQueue = messageBus.getPageFrameReduceQueue(shard);
+        circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
     }
 
     private boolean stealWork(
