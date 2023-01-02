@@ -45,7 +45,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new DataFrameRecordCursorImpl(
+        cursor = new DataFrameRecordCursorImpl(
                 new SortedSymbolIndexRowCursorFactory(
                         columnIndex,
                         columnOrderAsc,
@@ -73,7 +73,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        this.cursor.of(dataFrameCursor, executionContext);
-        return this.cursor;
+        cursor.of(dataFrameCursor, executionContext);
+        return cursor;
     }
 }

@@ -118,6 +118,19 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             if (includedSymbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
                 rowIds.setCapacity(includedSymbolKeys.size());
+            } else if (excludedSymbolKeys.size() > 0) {
+                // Find all, but excluded set of symbol keys
+                StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+                int distinctSymbols = symbolTable.getSymbolCount();
+                if (symbolTable.containsNullValue()) {
+                    distinctSymbols++;
+                } else if (excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+                    // The excluded set contains a null while the symbol table doesn't.
+                    // Increment the counter to avoid miscalculation.
+                    distinctSymbols++;
+                }
+                distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());
+                rowIds.setCapacity(distinctSymbols);
             }
         } else {
             // Find latest by all distinct symbol values
@@ -198,6 +211,14 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 } else {
                     findRestrictedNoFilter();
                 }
+            } else if (excludedSymbolKeys.size() > 0) {
+                // Find all, but excluded set of symbol keys
+                int distinctSymbols = (int) rowIds.getCapacity();
+                if (filter != null) {
+                    findRestrictedExcludedOnlyWithFilter(distinctSymbols);
+                } else {
+                    findRestrictedExcludedOnlyNoFilter(distinctSymbols);
+                }
             }
         } else {
             // Find latest by all distinct symbol values
@@ -207,6 +228,50 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                     findAllWithFilter(distinctSymbols);
                 } else {
                     findAllNoFilter(distinctSymbols);
+                }
+            }
+        }
+    }
+
+    private void findRestrictedExcludedOnlyNoFilter(int distinctCount) {
+        assert filter == null;
+        DataFrame frame;
+        while ((frame = dataFrameCursor.next()) != null) {
+            long rowLo = frame.getRowLo();
+            long row = frame.getRowHi();
+            recordA.jumpTo(frame.getPartitionIndex(), 0);
+
+            while (row-- > rowLo) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
+                if (excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
+                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    if (++foundSize == distinctCount) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private void findRestrictedExcludedOnlyWithFilter(int distinctCount) {
+        assert filter != null;
+        DataFrame frame;
+        while ((frame = dataFrameCursor.next()) != null) {
+            long rowLo = frame.getRowLo();
+            long row = frame.getRowHi();
+            recordA.jumpTo(frame.getPartitionIndex(), 0);
+
+            while (row-- > rowLo) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
+                if (filter.getBool(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
+                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    if (++foundSize == distinctCount) {
+                        return;
+                    }
                 }
             }
         }

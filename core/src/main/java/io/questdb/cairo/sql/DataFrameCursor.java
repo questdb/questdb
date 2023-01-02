@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -62,6 +63,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
      *
      * @return true when reload data has changed, false otherwise
      */
+    @TestOnly
     boolean reload();
 
     /**

@@ -58,8 +58,15 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
         this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
         this.filter = filter;
-        this.frameSymbolIndex = columnIndexes.getQuick(columnIndex);
-        this.cursor = new LatestByValueListRecordCursor(columnIndex, filter, columnIndexes, configuration.getDefaultSymbolCapacity(), includedSymbolFuncs != null);
+        frameSymbolIndex = columnIndexes.getQuick(columnIndex);
+        cursor = new LatestByValueListRecordCursor(
+                columnIndex,
+                filter,
+                columnIndexes,
+                configuration.getDefaultSymbolCapacity(),
+                (includedSymbolFuncs != null && includedSymbolFuncs.size() > 0)
+                        || (excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0)
+        );
     }
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(

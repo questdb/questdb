@@ -60,7 +60,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
             return true;
         }
 
-        this.cursor = createDataFrameCursorFor(symbolKey);
+        cursor = createDataFrameCursorFor(symbolKey);
         return false;
     }
 

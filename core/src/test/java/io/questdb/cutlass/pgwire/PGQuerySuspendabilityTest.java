@@ -83,6 +83,9 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // FilterOnSubQueryRecordCursorFactory
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
 
+        // FilterOnExcludedValuesRecordCursorFactory
+        addTestCase("select * from x where isym not in ('a','b') and i != 42");
+
         // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
         addTestCase("select * from x limit 1");
         addTestCase("select * from x limit 1,3");
@@ -110,6 +113,10 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // SortedLightRecordCursorFactory
         addTestCase("select sym, min(i) imin from x where ts in '1970-01-01' order by imin");
+        addTestCase("select * from x where ts in '1970-01-01' order by isym, ts desc");
+
+        // SortedSymbolIndexRecordCursorFactory
+        addTestCase("select * from x where ts in '1970-01-01T00' order by isym, ts desc");
 
         // LimitedSizeSortedLightRecordCursorFactory
         addTestCase("select * from x order by i limit 3");
@@ -165,6 +172,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // LatestByValueListRecordCursor
         addTestCase("select * from x latest on ts partition by sym");
+        addTestCase("select * from x where isym <> 'd' and i <> 13 latest on ts partition by isym", true);
 
         // LatestByAllIndexedRecordCursor
         addTestCase("select * from x latest on ts partition by isym");
@@ -187,6 +195,9 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // LatestByValueFilteredRecordCursor
         addTestCase("select * from x where sym in ('a') and i > 42 latest on ts partition by sym");
 
+        // LatestByValueDeferredFilteredRecordCursorFactory
+        addTestCase("select * from x where sym in ('d') and i > 42 latest on ts partition by sym", true);
+
         // LatestByAllSymbolsFilteredRecordCursor
         addTestCase("select * from x latest on ts partition by sym, isym");
         addTestCase("select * from x where i != 42 latest on ts partition by sym, isym");
@@ -195,10 +206,10 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select * from x where sym in (select sym from y limit 3) latest on ts partition by sym");
 
         // LatestBySubQueryRecordCursorFactory, LatestByValuesFilteredRecordCursor
-        addTestCase("select * from x where sym in (select sym from y limit 3) and i%2 != 1 latest on ts partition by sym");
+        addTestCase("select * from x where sym in (select sym from y limit 3) and i%2 <> 1 latest on ts partition by sym");
 
         // LatestByValueIndexedFilteredRecordCursor
-        addTestCase("select * from x where isym = 'c' and i != 13 latest on ts partition by isym");
+        addTestCase("select * from x where isym = 'c' and i <> 13 latest on ts partition by isym");
 
         // LatestByValuesIndexedFilteredRecordCursor
         addTestCase("select * from x where isym in ('a','c') and i < 13 latest on ts partition by isym");

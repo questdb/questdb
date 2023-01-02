@@ -73,16 +73,16 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                 break;
             }
         }
-        this.dynamicExcludedKeys = dynamicValues;
-        this.keyExcludedValueFunctions.addAll(keyValues);
+        dynamicExcludedKeys = dynamicValues;
+        keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.cursorFactoriesIdx = new int[]{0};
-        this.cursorFactories = new ObjList<>(nKeyValues);
+        cursorFactoriesIdx = new int[]{0};
+        cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
         this.columnIndexes = columnIndexes;
@@ -183,11 +183,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             throw ReaderOutOfDateException.of(reader.getTableName());
         }
         Function.init(keyExcludedValueFunctions, reader, executionContext);
-        this.recalculateIncludedValues(reader);
-        this.cursor.of(dataFrameCursor, executionContext);
+        recalculateIncludedValues(reader);
+        cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
-            filter.init(this.cursor, executionContext);
+            filter.init(cursor, executionContext);
         }
-        return this.cursor;
+        return cursor;
     }
 }

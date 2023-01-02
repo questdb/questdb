@@ -40,8 +40,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
-        this.cursors = new ObjList<>();
-        this.cursor = new SequentialRowCursor();
+        cursors = new ObjList<>();
+        cursor = new SequentialRowCursor();
         this.cursorFactoriesIdx = cursorFactoriesIdx;
     }
 
@@ -96,7 +96,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         }
 
         private void init() {
-            this.cursorIndex = 0;
+            cursorIndex = 0;
             if (cursorIndex < cursorFactoriesIdx[0]) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }

@@ -48,7 +48,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
-        this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbol = symbol;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;

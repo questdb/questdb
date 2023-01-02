@@ -909,7 +909,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "97.59534636690222\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n");
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -6482,8 +6482,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
+                        " from long_sequence(20)" +
                         "),index(b) timestamp(k) partition by MONTH",
                 null,
                 "insert into x select * from (" +

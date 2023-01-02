@@ -1815,8 +1815,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int nKeyValues = intrinsicModel.keyValueFuncs.size();
             final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
-            if (indexed) {
-
+            if (indexed && nExcludedKeyValues == 0) {
                 assert nKeyValues > 0;
                 // deal with key values as a list
                 // 1. resolve each value of the list to "int"
@@ -1890,7 +1889,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            assert nKeyValues > 0;
+            assert nKeyValues > 0 || nExcludedKeyValues > 0;
 
             // we have "latest by" column values, but no index
 

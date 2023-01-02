@@ -50,7 +50,7 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     ) {
         this.columnIndex = columnIndex;
         this.symbolFunction = symbolFunction;
-        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection, columnIndexes);
+        cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection, columnIndexes);
     }
 
     @Override
@@ -85,8 +85,8 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     public void prepareCursor(TableReader tableReader) {
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.cursor.of(symbolKey);
-            this.cursor.prepare(tableReader);
+            cursor.of(symbolKey);
+            cursor.prepare(tableReader);
         }
     }
 }
