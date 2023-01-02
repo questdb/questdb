@@ -1433,7 +1433,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "sample by 3d");
     }
 
-    @Test//here
+    @Test
     public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +

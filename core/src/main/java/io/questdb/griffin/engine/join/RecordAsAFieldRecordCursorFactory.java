@@ -44,7 +44,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     public RecordAsAFieldRecordCursorFactory(RecordCursorFactory base, CharSequence columnAlias) {
         super(new GenericRecordMetadata());
         this.base = base;
-        this.cursor = new RecordAsAFieldRecordCursor(base.recordCursorSupportsRandomAccess());
+        cursor = new RecordAsAFieldRecordCursor(base.recordCursorSupportsRandomAccess());
         GenericRecordMetadata metadata = (GenericRecordMetadata) getMetadata();
         metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));
     }

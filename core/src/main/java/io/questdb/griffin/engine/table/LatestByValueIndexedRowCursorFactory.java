@@ -45,10 +45,9 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        RowCursor cursor =
-                dataFrame
-                        .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
-                        .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+        RowCursor cursor = dataFrame
+                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
+                .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
 
         if (cursor.hasNext()) {
             this.cursor.of(cursor.next());

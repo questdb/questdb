@@ -39,17 +39,16 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
-        this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
     }
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            RowCursor cursor =
-                    dataFrame
-                            .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
-                            .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+            RowCursor cursor = dataFrame
+                    .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
+                    .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
 
             if (cursor.hasNext()) {
                 this.cursor.of(cursor.next());

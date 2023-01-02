@@ -73,22 +73,22 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     ) throws SqlException {
         super(groupByMetadata);
         this.base = base;
-        this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
-        this.queryToFrameColumnMapping = new int[columns.size()];
-        this.firstLastIndexByCol = new int[columns.size()];
-        this.crossFrameRow = new LongList(columns.size());
-        this.crossFrameRow.setPos(columns.size());
+        groupBySymbolColIndex = symbolFilter.getColumnIndex();
+        queryToFrameColumnMapping = new int[columns.size()];
+        firstLastIndexByCol = new int[columns.size()];
+        crossFrameRow = new LongList(columns.size());
+        crossFrameRow.setPos(columns.size());
         this.timestampIndex = timestampIndex;
         buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
-        this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
-        this.maxSamplePeriodSize = this.pageSize * 4;
+        pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
+        maxSamplePeriodSize = pageSize * 4;
         int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
-        this.rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
-        this.rowIdOutAddress.setPos(outSize);
-        this.samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
+        rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
+        rowIdOutAddress.setPos(outSize);
+        samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
         this.symbolFilter = symbolFilter;
-        this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
+        sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
                 timestampSampler,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
@@ -535,7 +535,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case 0:
                     crossFrameRow.set(index, Unsafe.getUnsafe().getByte(pageAddress + rowId));
                     break;
-
                 default:
                     throw new CairoException().put("first(), last() cannot be used with column type ").put(ColumnType.nameOf(columnType));
             }
@@ -573,7 +572,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             toTop();
             parseParams(this, sqlExecutionContext);
-            this.initialized = false;
+            initialized = false;
         }
 
         private class SampleByFirstLastRecord implements Record {

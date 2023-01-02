@@ -144,6 +144,12 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // DistinctTimeSeriesRecordCursorFactory
         addTestCase("select distinct * from x");
 
+        // DistinctRecordCursorFactory
+        addTestCase("select distinct sym from (x union all y)");
+
+        // DistinctKeyRecordCursorFactory
+        addTestCase("select distinct sym from x order by sym");
+
         // GroupByNotKeyedVectorRecordCursor
         addTestCase("select max(i), min(i) from x");
 
@@ -178,6 +184,12 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // SampleByInterpolateRecordCursorFactory
         addTestCase("select max(i), min(i) from x sample by 1h fill(linear)");
+
+        // SampleByFillNullNotKeyedRecordCursorFactory
+        addTestCase("select sum(i) s, ts from x sample by 30m fill(null)");
+
+        // SampleByFirstLastRecordCursorFactory
+        addTestCase("select first(i) f, last(i) l, isym, ts from x where isym = 'a' sample by 2h");
 
         // LatestByValueListRecordCursor
         addTestCase("select * from x latest on ts partition by sym");
@@ -220,6 +232,12 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
 
         // LatestByValueIndexedFilteredRecordCursorFactory
         addTestCase("select * from x where isym = 'c' and i <> 13 latest on ts partition by isym");
+
+        // DataFrameRecordCursorFactory, LatestByValueIndexedRowCursorFactory
+        addTestCase("select * from x where isym = 'c' latest on ts partition by isym");
+
+        // DataFrameRecordCursorFactory, LatestByValueDeferredIndexedRowCursorFactory
+        addTestCase("select * from x where isym = ? latest on ts partition by isym", false, "a");
 
         // LatestByValueDeferredIndexedFilteredRecordCursorFactory
         addTestCase("select * from x where isym = ? and i <> 0 latest on ts partition by isym", false, "c");
