@@ -1891,9 +1891,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                int partitionsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
+                int partitionsToAdd = Os.isLinux() ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    int symbolsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
+                    int symbolsToAdd = Os.isLinux() ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                     for (int i = 0; i < symbolsToAdd; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
                     }
