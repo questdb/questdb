@@ -26,8 +26,10 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -44,18 +46,40 @@ public class CountGeoHashGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function function = args.getQuick(0);
-        int type = function.getType();
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext)
+            throws SqlException {
+        Function arg = args.getQuick(0);
+        int type = arg.getType();
+        if (arg.isConstant()) {
+            if (value(arg) == GeoHashes.NULL) {
+                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
+            }
+            return new CountLongConstGroupByFunction();
+        }
+
+
         switch (ColumnType.tagOf(type)) {
             case ColumnType.GEOBYTE:
-                return new CountGeoHashGroupByFunctionByte(function);
+                return new CountGeoHashGroupByFunctionByte(arg);
             case ColumnType.GEOSHORT:
-                return new CountGeoHashGroupByFunctionShort(function);
+                return new CountGeoHashGroupByFunctionShort(arg);
             case ColumnType.GEOINT:
-                return new CountGeoHashGroupByFunctionInt(function);
+                return new CountGeoHashGroupByFunctionInt(arg);
             default:
-                return new CountGeoHashGroupByFunctionLong(function);
+                return new CountGeoHashGroupByFunctionLong(arg);
+        }
+    }
+
+    private long value(Function arg) {
+        switch (ColumnType.tagOf(arg.getType())) {
+            case ColumnType.GEOBYTE:
+                return arg.getGeoByte(null);
+            case ColumnType.GEOSHORT:
+                return arg.getGeoShort(null);
+            case ColumnType.GEOINT:
+                return arg.getGeoInt(null);
+            default:
+                return arg.getGeoLong(null);
         }
     }
 }
