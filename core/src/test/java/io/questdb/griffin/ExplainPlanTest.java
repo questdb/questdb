@@ -485,6 +485,37 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Ignore
+    @Test
+    public void testCountOfColumnsVectorized() throws Exception {
+        assertPlan("create table x " +
+                        "(" +
+                        " k int, " +
+                        " i int, " +
+                        " l long, " +
+                        " f float, " +
+                        " d double, " +
+                        " dat date, " +
+                        " ts timestamp " +
+                        ")",
+                "select k, count(1) c1, " +
+                        "count(*) cstar, " +
+                        "count(i) ci, " +
+                        "count(l) cl, " +
+                        "count(d) cd, " +
+                        "count(dat) cdat, " +
+                        "count(ts) cts " +
+                        "from x",
+                "GroupByRecord vectorized: true\n" +
+                        "  keys: [k]\n" +
+                        "  values: [count(),count(),count(i),count(l),count(d),count(dat),count(ts)]\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: x\n"
+        );
+    }
+
+    @Ignore
     @Test//TODO: check this plan, hash join is not expected here. It's treated as  a.s1=b.s2! 
     public void testCrossJoin0() throws Exception {
         assertPlan("create table a ( i int, s1 string, s2 string)",
@@ -2690,6 +2721,192 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
+    }
+
+    @Ignore
+    @Test
+    public void testRewriteAggregateWithAddition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x int );");
+
+            assertPlan("SELECT sum(x), sum(x+10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum+COUNT*10]\n" +
+                            "    GroupByNotKeyed vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10+x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10+sum]\n" +
+                            "    GroupByNotKeyed vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithAdditionIsDisabledForNonIntegerType() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x double );");
+
+            assertPlan("SELECT sum(x), sum(x+10) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(x+10)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10+x) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(10+x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testRewriteAggregateWithMultiplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x int );");
+
+            assertPlan("SELECT sum(x), sum(x*10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum*10]\n" +
+                            "    GroupByNotKeyed vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10*x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,10*sum]\n" +
+                            "    GroupByNotKeyed vectorized: true\n" +
+                            "      values: [sum(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x double );");
+
+            assertPlan("SELECT sum(x), sum(x*10) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(x*10)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10*x) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(10*x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithMultiplicationIsDisabledForNonIntegerConstantType() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x double );");
+
+            assertPlan("SELECT sum(x), sum(x*10.0) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(x*10.0)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10.0*x) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(10.0*x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+
+    @Ignore
+    @Test
+    public void testRewriteAggregateWithSubtraction() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x int );");
+
+            assertPlan("SELECT sum(x), sum(x-10) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,sum-COUNT*10]\n" +
+                            "    GroupByNotKeyed vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10-x) FROM tab",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,COUNT*10-sum]\n" +
+                            "    GroupByNotKeyed vectorized: true\n" +
+                            "      values: [sum(x),count(x)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateWithSubtractionIsDisabledForNonIntegerType() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE tab ( x double );");
+
+            assertPlan("SELECT sum(x), sum(x-10) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(x-10)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+
+            assertPlan("SELECT sum(x), sum(10-x) FROM tab",
+                    "GroupByNotKeyed vectorized: false\n" +
+                            "  values: [sum(x),sum(10-x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testRewriteAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("  CREATE TABLE hits\n" +
+                    "(\n" +
+                    "    EventTime timestamp,\n" +
+                    "    ResolutionWidth int,\n" +
+                    "    ResolutionHeight int\n" +
+                    ") TIMESTAMP(EventTime) PARTITION BY DAY;");
+
+            assertPlan("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" +
+                    "FROM hits", "VirtualRecord\n" +
+                    "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
+                    "    GroupByNotKeyed vectorized: true\n" +
+                    "      values: [sum(resolutIONWidth),count(resolutIONWidth),count()]\n" +
+                    "        DataFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: hits\n");
+        });
+
     }
 
     @Test
