@@ -26,23 +26,24 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-
-public class LongHashSet extends AbstractLongHashSet {
+/**
+ * Unlike {@link IntHashSet} doesn't keep an additional list for faster iteration and index-based access
+ * and also has a slightly higher load factor.
+ */
+public class CompactIntHashSet extends AbstractIntHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final LongList list;
 
-    public LongHashSet() {
+    public CompactIntHashSet() {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    public LongHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4, noEntryKey);
+    public CompactIntHashSet(int initialCapacity) {
+        this(initialCapacity, 0.6, noEntryKey);
     }
 
-    public LongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
+    public CompactIntHashSet(int initialCapacity, double loadFactor, int noKeyValue) {
         super(initialCapacity, loadFactor, noKeyValue);
-        list = new LongList(free);
         clear();
     }
 
@@ -52,7 +53,7 @@ public class LongHashSet extends AbstractLongHashSet {
      * @param key immutable sequence of characters.
      * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(long key) {
+    public boolean add(int key) {
         int index = keyIndex(key);
         if (index < 0) {
             return false;
@@ -62,27 +63,14 @@ public class LongHashSet extends AbstractLongHashSet {
         return true;
     }
 
-    public final void addAll(LongHashSet that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
-        }
-    }
-
-    public void addAt(int index, long key) {
+    public void addAt(int index, int key) {
         keys[index] = key;
-        list.add(key);
         if (--free < 1) {
             rehash();
         }
     }
 
-    public final void clear() {
-        free = capacity;
-        Arrays.fill(keys, noEntryKeyValue);
-        list.clear();
-    }
-
-    public boolean contains(long key) {
+    public boolean contains(int key) {
         return keyIndex(key) < 0;
     }
 
@@ -90,29 +78,20 @@ public class LongHashSet extends AbstractLongHashSet {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        LongHashSet that = (LongHashSet) o;
+        CompactIntHashSet that = (CompactIntHashSet) o;
         if (size() != that.size()) {
             return false;
         }
-        for (int i = 0, n = list.size(); i < n; i++) {
-            long key = list.getQuick(i);
-            if (key != noEntryKeyValue && that.excludes(key)) {
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKeyValue && that.excludes(keys[i])) {
                 return false;
             }
         }
         return true;
     }
 
-    public boolean excludes(long key) {
+    public boolean excludes(int key) {
         return keyIndex(key) > -1;
-    }
-
-    public long get(int index) {
-        return list.getQuick(index);
-    }
-
-    public long getLast() {
-        return list.getLast();
     }
 
     @Override
@@ -126,32 +105,35 @@ public class LongHashSet extends AbstractLongHashSet {
         return hashCode;
     }
 
-    public void removeAt(int index) {
-        if (index < 0) {
-            long key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
+    @Override
+    public int remove(int key) {
+        int keyIndex = keyIndex(key);
+        if (keyIndex < 0) {
+            removeAt(keyIndex);
+            return -keyIndex - 1;
         }
+        return -1;
     }
 
     @Override
     public String toString() {
-        return list.toString();
+        return Arrays.toString(keys);
     }
 
     private void rehash() {
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-        this.keys = new long[len];
+        int[] oldKeys = keys;
+        keys = new int[len];
         Arrays.fill(keys, noEntryKeyValue);
         mask = len - 1;
-        int n = list.size();
-        free -= n;
-        for (int i = 0; i < n; i++) {
-            long key = list.getQuick(i);
-            int keyIndex = keyIndex(key);
-            keys[keyIndex] = key;
+        for (int i = 0, n = oldKeys.length; i < n; i++) {
+            int key = oldKeys[i];
+            if (key != noEntryKeyValue) {
+                keys[keyIndex(key)] = key;
+                free--;
+            }
         }
     }
 
