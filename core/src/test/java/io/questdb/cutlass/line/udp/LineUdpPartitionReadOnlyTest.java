@@ -39,22 +39,19 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.createTable;
-import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
-import static io.questdb.test.tools.TestUtils.assertSql;
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static io.questdb.test.tools.TestUtils.*;
 
 public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyTest {
 
-    // Linux ARM is not supported at present
-
     @Test
     public void testActivePartitionReadOnlyAndNoO3UDP() throws Exception {
-        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -86,7 +83,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3OverActivePartitionUDP() throws Exception {
-        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -118,7 +114,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testActivePartitionReadOnlyAndO3UnderActivePartitionUDP() throws Exception {
-        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
@@ -150,7 +145,6 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
     @Test
     public void testTableIsReadOnlyUDP() throws Exception {
-        Assume.assumeFalse(Os.type == Os.LINUX_ARM64);
         final String tableName = testName.getMethodName();
         int numEvents = 5000;
         SOCountDownLatch sendComplete = new SOCountDownLatch(1);
