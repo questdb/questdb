@@ -247,6 +247,24 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testImmutableBetweenEmpty() {
+        GenericLexer ts = new GenericLexer(1);
+        ts.of("foo");
+
+        CharSequence empty = ts.immutableBetween(0, 0);
+        TestUtils.assertEquals("", empty);
+    }
+
+    @Test
+    public void testImmutableEmpty() {
+        GenericLexer ts = new GenericLexer(1);
+        ts.of("");
+
+        CharSequence next = ts.next();
+        TestUtils.assertEquals("", GenericLexer.immutableOf(next));
+    }
+
+    @Test
     public void testImmutableOf() {
         Assert.assertTrue(GenericLexer.immutableOf("immutable") instanceof String);
         GenericLexer ts = new GenericLexer(64);
@@ -268,7 +286,7 @@ public class GenericLexerTest {
         Assert.assertEquals(6, ts.getTokenHi());
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ClassCastException.class)
     public void testImmutablePairOf2() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("orange");
@@ -276,13 +294,13 @@ public class GenericLexerTest {
         ts.immutablePairOf(cs, cs);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ClassCastException.class)
     public void testImmutablePairOf3() {
         GenericLexer ts = new GenericLexer(64);
         ts.immutablePairOf("", "");
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test(expected = ClassCastException.class)
     public void testImmutablePairOf4() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("geohash 31b");
@@ -552,5 +570,18 @@ public class GenericLexerTest {
     @Test
     public void testUnquote() {
         Assert.assertEquals(GenericLexer.unquote("QuestDB"), GenericLexer.unquote("'QuestDB'"));
+    }
+
+    @Test
+    public void testUnquoteEmpty() {
+        GenericLexer lex = new GenericLexer(64);
+
+        String str = "''";
+        lex.of(str);
+        CharSequence charSequence = lex.immutableBetween(0, str.length());
+        TestUtils.assertEquals(str, charSequence);
+
+        CharSequence unquoted = GenericLexer.unquote(charSequence);
+        TestUtils.assertEquals("", unquoted);
     }
 }

@@ -22,20 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.ObjList;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface GroupByFunctionsUpdater {
+public class ExpressionNodeTest {
 
-    void setFunctions(ObjList<GroupByFunction> groupByFunctions);
+    @Test
+    public void testEmptyLiteral() {
+        ExpressionNode node = ExpressionNode.FACTORY.newInstance();
+        node.of(ExpressionNode.LITERAL, "", 0, 0);
+        Assert.assertEquals(ExpressionNode.LITERAL, node.type);
+    }
 
-    void updateEmpty(MapValue value);
-
-    void updateExisting(MapValue value, Record record);
-
-    void updateNew(MapValue value, Record record);
 }
