@@ -258,6 +258,30 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDateColumnAcceptsTimestamp() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        partitionByDefault = PartitionBy.NONE;
+        String tableName = "date_column_accepts_timestamp";
+
+        runInContext((receiver) -> {
+            // Pre-create a partitioned table, so we can wait until it's created.
+            try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                m.timestamp("ts").col("dt", ColumnType.DATE).noWal();
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
+            final String lineData = tableName + " dt=631150000000000t 631150000000000000\n" +
+                    tableName + " dt=631160000000000t 631160000000000000\n";
+            sendLinger(receiver, lineData, tableName);
+
+            String expected = "ts\tdt\n" +
+                    "1989-12-31T23:26:40.000000Z\t1989-12-31T23:26:40.000Z\n" +
+                    "1990-01-01T02:13:20.000000Z\t1990-01-01T02:13:20.000Z\n";
+            assertTable(expected, tableName);
+        });
+    }
+
+    @Test
     public void testFieldValuesHasEqualsChar() throws Exception {
         maxMeasurementSize = 250;
         String lineData =
