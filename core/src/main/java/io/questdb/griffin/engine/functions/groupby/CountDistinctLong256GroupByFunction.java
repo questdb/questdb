@@ -32,18 +32,15 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
-public class CountStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+public class CountDistinctLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<CharSequenceHashSet> sets = new ObjList<>();
-    private int setIndex = 0;
+    private final ObjList<Long256HashSet> sets = new ObjList<>();
+    private int setIndex;
     private int valueIndex;
 
-    public CountStringGroupByFunction(Function arg) {
+    public CountDistinctLong256GroupByFunction(Function arg) {
         this.arg = arg;
     }
 
@@ -55,17 +52,17 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final CharSequenceHashSet set;
+        final Long256HashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CharSequenceHashSet());
+            sets.extendAndSet(setIndex, set = new Long256HashSet());
         } else {
             set = sets.getQuick(setIndex);
         }
 
         set.clear();
-        final CharSequence val = arg.getStr(record);
-        if (val != null) {
-            set.add(Chars.toString(val));
+        Long256 val = arg.getLong256A(record);
+        if (isNotNull(val)) {
+            set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
             mapValue.putLong(valueIndex, 1L);
         } else {
             mapValue.putLong(valueIndex, 0L);
@@ -75,14 +72,14 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final CharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final CharSequence val = arg.getStr(record);
-        if (val != null) {
-            final int index = set.keyIndex(val);
+        final Long256HashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final Long256 val = arg.getLong256A(record);
+        if (isNotNull(val)) {
+            final int index = set.keyIndex(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
             if (index < 0) {
                 return;
             }
-            set.addAt(index, Chars.toString(val));
+            set.addAt(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -96,6 +93,11 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
     }
+
+//    @Override
+//    public String getSymbol() {
+//        return "count";
+//    }
 
     @Override
     public boolean isConstant() {
@@ -133,5 +135,13 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     public void toTop() {
         UnaryFunction.super.toTop();
         setIndex = 0;
+    }
+
+    private static boolean isNotNull(Long256 value) {
+        return value != null &&
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
+                value.getLong1() != Numbers.LONG_NaN ||
+                value.getLong2() != Numbers.LONG_NaN ||
+                value.getLong3() != Numbers.LONG_NaN);
     }
 }

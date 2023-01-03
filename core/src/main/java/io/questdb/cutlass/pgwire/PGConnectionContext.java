@@ -1131,7 +1131,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             }
 
             // not cached - compile to see what it is
-            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
             processCompiledQuery(cc);
         } else {
             isEmptyQuery = true;
@@ -1366,7 +1366,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
-                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                 processCompiledQuery(cc);
             } catch (Throwable e) {
                 if (transactionState == IN_TRANSACTION) {

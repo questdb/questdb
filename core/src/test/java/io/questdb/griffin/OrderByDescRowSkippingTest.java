@@ -507,7 +507,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitionPerRowSelectFirstNwithDifferentCaseInOrderBy() throws Exception {//here
+    public void testPartitionPerRowSelectFirstNwithDifferentCaseInOrderBy() throws Exception {
         preparePartitionPerRowTableWithLongNames();
 
         assertQuery("record_type\n10\n9\n8\n7\n6\n", "select record_type from trips order by created_ON desc limit 5");

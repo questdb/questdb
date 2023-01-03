@@ -22,37 +22,31 @@
  *
  ******************************************************************************/
 
-#ifndef VECT_VANILLA_H
-#define VECT_VANILLA_H
+package io.questdb.griffin.engine.functions.conditional;
 
-int64_t countDouble_Vanilla(double *d, int64_t count);
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.std.ObjList;
 
-double sumDouble_Vanilla(double *d, int64_t count);
+public class GeoLongCaseFunction extends GeoLongFunction implements MultiArgFunction {
+    private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
-double sumDoubleKahan_Vanilla(double *d, int64_t count);
+    public GeoLongCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args) {
+        super(type);
+        this.picker = picker;
+        this.args = args;
+    }
 
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
+    @Override
+    public ObjList<Function> getArgs() {
+        return args;
+    }
 
-double minDouble_Vanilla(double *d, int64_t count);
-
-double maxDouble_Vanilla(double *d, int64_t count);
-
-int64_t countInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t minInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t countLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t minLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
-
-bool hasNull_Vanilla(int32_t *pi, int64_t count);
-
-#endif //VECT_VANILLA_H
+    @Override
+    public long getGeoLong(Record rec) {
+        return picker.pick(rec).getGeoLong(rec);
+    }
+}

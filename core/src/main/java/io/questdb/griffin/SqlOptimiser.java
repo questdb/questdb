@@ -741,7 +741,7 @@ class SqlOptimiser {
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
-            QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0));
+            QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0), true, m.getColumnType(i));
             model.addField(column);
         }
 
@@ -1608,6 +1608,27 @@ class SqlOptimiser {
         }
 
         return true;
+    }
+
+    private boolean isIntegerColumn(ExpressionNode n, QueryModel model) {
+        if (n.type != LITERAL) {
+            return false;
+        }
+        QueryColumn qc = model.getAliasToColumnMap().get(n.token);
+        return qc != null && ColumnType.isIntegerType(qc.getColumnType());
+    }
+
+    private boolean isIntegerConstant(ExpressionNode n) {
+        if (n.type != CONSTANT) {
+            return false;
+        }
+
+        try {
+            Numbers.parseLong(n.token);
+            return true;
+        } catch (NumericException ne) {
+            return false;
+        }
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -2519,6 +2540,40 @@ class SqlOptimiser {
         }
     }
 
+    private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
+        if (!isIntegerColumn(column, model)) {
+            return agg;
+        }
+
+        agg.rhs = column;
+
+        ExpressionNode count = expressionNodePool.next();
+        count.paramCount = 1;
+        count.token = "COUNT";
+        count.type = FUNCTION;
+        count.rhs = column;
+        count.position = agg.position;
+
+        ExpressionNode mul = expressionNodePool.next();
+        mul.token = "*";
+        mul.type = OPERATION;
+        mul.position = agg.position;
+        mul.paramCount = 2;
+        mul.precedence = 3;
+        mul.lhs = count;
+        mul.rhs = constant;
+
+        if (op.lhs == column) {//maintain order for subtraction
+            op.lhs = agg;
+            op.rhs = mul;
+        } else {
+            op.lhs = mul;
+            op.rhs = agg;
+        }
+
+        return op;
+    }
+
     /**
      * Identify joined tables without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these tables joined"
@@ -2680,6 +2735,43 @@ class SqlOptimiser {
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
         }
+    }
+
+    //Rewrite:
+    // sum(x*10) into sum(x) * 10, etc.
+    // sum(x+10) into sum(x) + count(x)*10
+    // sum(x-10) into sum(x) - count(x)*10
+    private ExpressionNode rewriteAggregate(ExpressionNode agg, QueryModel model) {
+        if (agg == null) {
+            return null;
+        }
+
+        ExpressionNode op = agg.rhs;
+
+        if (agg.type == FUNCTION &&
+                functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
+                Chars.equalsIgnoreCase("sum", agg.token) &&
+                op.type == OPERATION) {
+            if (Chars.equals(op.token, '*')) { //sum(x*10) == sum(x)*10
+                if (isIntegerConstant(op.rhs) && isIntegerColumn(op.lhs, model)) {
+                    agg.rhs = op.lhs;
+                    op.lhs = agg;
+                    return op;
+                } else if (isIntegerConstant(op.lhs) && isIntegerColumn(op.rhs, model)) {
+                    agg.rhs = op.rhs;
+                    op.rhs = agg;
+                    return op;
+                }
+            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) {//sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10 
+                if (isIntegerConstant(op.rhs)) {
+                    return pushOperationOutsideAgg(agg, op, op.lhs, op.rhs, model);
+                } else if (isIntegerConstant(op.lhs)) {
+                    return pushOperationOutsideAgg(agg, op, op.rhs, op.lhs, model);
+                }
+            }
+        }
+
+        return agg;
     }
 
     /**
@@ -3043,11 +3135,31 @@ class SqlOptimiser {
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
-                        continue;
+
+                        if (groupByModel.getSampleByFill().size() > 0) {//file breaks if column is de-duplicated
+                            continue;
+                        }
+
+                        ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel);
+                        if (repl == qc.getAst()) {//no rewrite
+                            if (!useOuterModel) {//so try to push duplicate aggregates to nested model    
+                                for (int j = i + 1; j < k; j++) {
+                                    if (ExpressionNode.compareNodesExact(qc.getAst(), columns.get(j).getAst())) {
+                                        useOuterModel = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
+                        useOuterModel = true;
+                        qc.of(qc.getAlias(), repl);
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         continue;
                     }
                 }
+
                 if (checkForAggregates(qc.getAst())) {
                     useGroupByModel = true;
                     useOuterModel = true;
@@ -3118,6 +3230,16 @@ class SqlOptimiser {
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                        QueryColumn matchingCol = groupByModel.findBottomUpColumnByAst(qc.getAst());
+                        if (useOuterModel && matchingCol != null) {
+                            QueryColumn ref = nextColumn(qc.getAlias(), matchingCol.getAlias());
+                            ref = ensureAliasUniqueness(outerVirtualModel, ref);
+                            outerVirtualModel.addBottomUpColumn(ref);
+                            distinctModel.addBottomUpColumn(ref);
+                            emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
+                            continue;
+                        }
+
                         qc = ensureAliasUniqueness(groupByModel, qc);
                         groupByModel.addBottomUpColumn(qc);
                         // group-by column references might be needed when we have

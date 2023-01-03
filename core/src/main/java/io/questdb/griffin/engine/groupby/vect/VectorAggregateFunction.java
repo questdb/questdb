@@ -30,8 +30,14 @@ import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
 
+    //not-keyed aggregation that doesn't use rosti
+    //used either for truly non-keyed aggregation or when key is null in page frame due to column tops  
     void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
 
+    //keyed aggregation that uses rosti 
+    //if valueAddress == 0 it means that value page frame is 'empty' (due to column tops) - contains null values only 
+    //so only keys should be processed 
+    //returns true if processing went fine and false if it failed on memory allocation
     boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
 
     int getColumnIndex();
@@ -39,15 +45,17 @@ public interface VectorAggregateFunction extends Function, Mutable {
     // value offset in map
     int getValueOffset();
 
+    //set initial/default slot values (e.g. 0 for count())  
     void initRosti(long pRosti);
 
+    //merge pRostiB into pRostiA
     //returns true if merge was fine and false if it failed on memory allocation 
     boolean merge(long pRostiA, long pRostiB);
 
     void pushValueTypes(ArrayColumnTypes types);
 
-    // sets null as result of aggregation of all nulls
-    // this typically checks non-null count and replaces 0 with null if all values were null
+    //used for keyed aggregates only
+    //merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti      
     //returns true if wrapUp was fine and false if it failed on memory allocation
     boolean wrapUp(long pRosti);
 }

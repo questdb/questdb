@@ -24,119 +24,33 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.SymbolTable;
+import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
+public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
 
-public class CountSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final ObjList<IntList> lists = new ObjList<>();
-    private int setIndex;
-    private int valueIndex;
-
-    public CountSymbolGroupByFunction(Function arg) {
-        this.arg = arg;
-    }
-
-    @Override
-    public void clear() {
-        lists.clear();
-        setIndex = 0;
+    public CountSymbolGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final IntList list;
-        if (lists.size() <= setIndex) {
-            lists.extendAndSet(setIndex, list = new IntList());
+        int value = arg.getInt(record);
+        if (value != SymbolTable.VALUE_IS_NULL) {
+            mapValue.putLong(valueIndex, 1);
         } else {
-            list = lists.getQuick(setIndex);
-        }
-        list.clear(0);
-        mapValue.putInt(valueIndex + 1, setIndex);
-        setIndex++;
-
-        int val = arg.getInt(record);
-        if (val != VALUE_IS_NULL) {
-            list.extendAndSet(val, 1);
-            mapValue.putLong(valueIndex, 1L);
-        } else {
-            mapValue.putLong(valueIndex, 0L);
+            mapValue.putLong(valueIndex, 0);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final IntList set = lists.getQuick(mapValue.getInt(valueIndex + 1));
-        final int val = arg.getInt(record);
-        if (val != VALUE_IS_NULL) {
-            if (val < set.size()) {
-                if (set.getQuick(val) == 1) {
-                    return;
-                }
-                set.setQuick(val, 1);
-            } else {
-                set.extendAndSet(val, 1);
-            }
+        int value = arg.getInt(record);
+        if (value != SymbolTable.VALUE_IS_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-        setIndex = 0;
     }
 }

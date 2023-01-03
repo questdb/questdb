@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1062,6 +1063,16 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         testAggregations(aggregateFunctions, aggregateColTypes);
     }
 
+    @Test
+    public void testNonRostiWithManyAggregateFunctions1() throws Exception {
+        executeWithPool(1, 32, KeyedAggregationTest::runGroupByWithAgg);
+    }
+
+    @Test
+    public void testNonRostiWithManyAggregateFunctions2() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByWithAgg);
+    }
+
     //test rosti failing to alloc in parallel aggregate computation
     @Test
     public void testOOMInRostiAggCalcResetsAllocatedNativeMemoryToMinSizes() throws Exception {
@@ -1295,6 +1306,21 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRostiWithColTopsAndIdleWorkers() throws Exception {
+        executeWithPool(4, 16, KeyedAggregationTest::runCountTestWithColTops);
+    }
+
+    @Test
+    public void testRostiWithColTopsAndManyWorkers() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
+    public void testRostiWithColTopsAndNoWorkers() throws Exception {
+        executeWithPool(0, 0, KeyedAggregationTest::runGroupByTest);
+    }
+
+    @Test
     public void testRostiWithIdleWorkers() throws Exception {
         executeWithPool(4, 16, KeyedAggregationTest::runGroupByTest);
     }
@@ -1305,8 +1331,28 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRostiWithManyAggregateFunctions() throws Exception {
-        executeWithPool(4, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+    public void testRostiWithKeyColTopsAndIdleWorkers() throws Exception {
+        executeWithPool(4, 16, KeyedAggregationTest::runCountTestWithKeyColTops);
+    }
+
+    @Test
+    public void testRostiWithKeyColTopsAndManyWorkers() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runCountTestWithKeyColTops);
+    }
+
+    @Test
+    public void testRostiWithKeyColTopsAndNoWorkers() throws Exception {
+        executeWithPool(0, 0, KeyedAggregationTest::runCountTestWithKeyColTops);
+    }
+
+    @Test
+    public void testRostiWithManyAggregateFunctions1() throws Exception {
+        executeWithPool(1, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+    }
+
+    @Test
+    public void testRostiWithManyAggregateFunctions2() throws Exception {
+        executeWithPool(2, 32, KeyedAggregationTest::runGroupByIntWithAgg);
     }
 
     @Test
@@ -1357,8 +1403,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 String value = String.valueOf((ts - 1) * 0.5);
                 String expected = "s\n" +
                         (ts > 0 ? value : "NaN") + "\n";
-                assertSql(
-                        "select sum(val) s from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)",
+                assertSql("select sum(val) s from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)",
                         expected
                 );
             }
@@ -1401,13 +1446,126 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         });
     }
 
+    private static CompiledQuery compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, executionContext);
+        try (OperationFuture future = cc.execute(null)) {
+            future.await();
+        }
+        return cc;
+    }
+
     private static String getColumnName(int type) {
         String typeStr = ColumnType.nameOf(type);
         return "c" + typeStr.replace("(", "").replace(")", "");
     }
 
+    private static void runCountTestWithColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+        compile(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        compile(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        compile(compiler, "alter table x add column k int", sqlExecutionContext);
+        compile(compiler, "insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ", sqlExecutionContext);
+        compile(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        compile(compiler, "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
+                " ((2+3*3600L*1000000)::timestamp,2, 8,8, 8.0, cast(8 as date), 8::timestamp)," +
+                " ((1+4*3600L*1000000)::timestamp,3, null,null, null, null, null)," +
+                " ((2+4*3600L*1000000)::timestamp,4, 10,10, 10.0, cast(10 as date), 10::timestamp) ", sqlExecutionContext);
+
+        snapshotMemoryUsage();
+        CompiledQuery query = compiler.compile("select k, " +
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts " +
+                "from x order by k", sqlExecutionContext);
+        try {
+            assertCursor("k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts\n" +
+                    "NaN\t3\t3\t0\t0\t0\t0\t0\n" +
+                    "0\t1\t1\t0\t0\t0\t0\t0\n" +
+                    "1\t1\t1\t0\t0\t0\t0\t0\n" +
+                    "2\t1\t1\t1\t1\t1\t1\t1\n" +
+                    "3\t2\t2\t0\t0\t0\t0\t0\n" +
+                    "4\t2\t2\t1\t1\t1\t1\t1\n" +
+                    "5\t1\t1\t0\t0\t0\t0\t0\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+
+        snapshotMemoryUsage();
+        query = compiler.compile("select hour(tstmp), " +
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl " +
+                "from x " +
+                "order by 1", sqlExecutionContext);
+        try {
+            assertCursor("hour\tc1\tcstar\tci\tcl\n" +
+                    "0\t2\t2\t0\t0\n" +
+                    "1\t2\t2\t0\t0\n" +
+                    "2\t2\t2\t0\t0\n" +
+                    "3\t3\t3\t1\t1\n" +
+                    "4\t2\t2\t1\t1\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
+    private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
+        compile(compiler, "create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour", sqlExecutionContext);
+        compile(compiler, "insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ", sqlExecutionContext);
+        compile(compiler, "alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        compile(compiler, "insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
+        compile(compiler, "alter table x add column k int", sqlExecutionContext);
+        compile(compiler, "insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
+
+        snapshotMemoryUsage();
+        CompiledQuery query = compiler.compile("select k, " +
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl " +
+                "from x order by k", sqlExecutionContext);
+        try {
+            assertCursor("k\tc1\tcstar\tci\tcl\n" +
+                    "NaN\t5\t5\t1\t1\n" +
+                    "6\t1\t1\t0\t0\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+
+        snapshotMemoryUsage();
+        query = compiler.compile("select hour(tstmp), " +
+                "count(1) c1, " +
+                "count(*) cstar, " +
+                "count(i) ci, " +
+                "count(l) cl, " +
+                "count(d) cd, " +
+                "count(dat) cdat, " +
+                "count(ts) cts " +
+                "from x " +
+                "order by 1", sqlExecutionContext);
+        try {
+            assertCursor("hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts\n" +
+                    "0\t2\t2\t0\t0\t0\t0\t0\n" +
+                    "1\t2\t2\t0\t0\t0\t0\t0\n" +
+                    "2\t2\t2\t1\t1\t1\t1\t1\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
     private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile("create table tab as ( select cast(x as int) i, x as l, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
+        compiler.compile("create table tab as " +
+                "( select cast(x as int) i, " +
+                "x as l, " +
+                "cast(x as date) dat, " +
+                "cast(x as timestamp) ts, " +
+                "cast(x as double) d, " +
+                "rnd_long256() l256  " +
+                "from long_sequence(1000));", sqlExecutionContext);
 
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select count(*) cnt from " +
@@ -1416,7 +1574,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "min(dat), avg(dat), max(dat), sum(dat), " +
                 "min(ts), avg(ts), max(ts), sum(ts), " +
                 "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
-                "sum(l256) from tab group by i )", sqlExecutionContext);
+                "sum(l256), count(i), count(l) from tab group by i )", sqlExecutionContext);
 
         try {
             assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
@@ -1432,6 +1590,32 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
         try {
             assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
+    private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("create table tab as " +
+                "( select cast(x as int) i, " +
+                "x as l, " +
+                "cast(x as date) dat, " +
+                "cast(x as timestamp) ts, " +
+                "cast(x as double) d, " +
+                "rnd_long256() l256  " +
+                "from long_sequence(1000));", sqlExecutionContext);
+
+        snapshotMemoryUsage();
+        CompiledQuery query = compiler.compile("select count(*) cnt from " +
+                "(select count(*), min(i), avg(i), max(i), sum(i), " +
+                "min(l), avg(l), max(l), sum(l), " +
+                "min(dat), avg(dat), max(dat), sum(dat), " +
+                "min(ts), avg(ts), max(ts), sum(ts), " +
+                "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
+                "sum(l256), count(i), count(l) from tab )", sqlExecutionContext);
+
+        try {
+            assertCursor("cnt\n1\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }

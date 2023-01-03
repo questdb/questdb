@@ -29,16 +29,19 @@
 
 #if INSTRSET >= 10
 
+#define COUNT_DOUBLE F_AVX512(countDouble)
 #define SUM_DOUBLE F_AVX512(sumDouble)
 #define SUM_DOUBLE_KAHAN F_AVX512(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX512(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX512(minDouble)
 #define MAX_DOUBLE F_AVX512(maxDouble)
 
+#define COUNT_INT F_AVX512(countInt)
 #define SUM_INT F_AVX512(sumInt)
 #define MIN_INT F_AVX512(minInt)
 #define MAX_INT F_AVX512(maxInt)
 
+#define COUNT_LONG F_AVX512(countLong)
 #define SUM_LONG F_AVX512(sumLong)
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
@@ -47,16 +50,19 @@
 
 #elif INSTRSET >= 8
 
+#define COUNT_DOUBLE F_AVX2(countDouble)
 #define SUM_DOUBLE F_AVX2(sumDouble)
 #define SUM_DOUBLE_KAHAN F_AVX2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_AVX2(minDouble)
 #define MAX_DOUBLE F_AVX2(maxDouble)
 
+#define COUNT_INT F_AVX2(countInt)
 #define SUM_INT F_AVX2(sumInt)
 #define MIN_INT F_AVX2(minInt)
 #define MAX_INT F_AVX2(maxInt)
 
+#define COUNT_LONG F_AVX2(countLong)
 #define SUM_LONG F_AVX2(sumLong)
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
@@ -65,16 +71,19 @@
 
 #elif INSTRSET >= 5
 
+#define COUNT_DOUBLE F_SSE41(countDouble)
 #define SUM_DOUBLE F_SSE41(sumDouble)
 #define SUM_DOUBLE_KAHAN F_SSE41(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE41(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE41(minDouble)
 #define MAX_DOUBLE F_SSE41(maxDouble)
 
+#define COUNT_INT F_SSE41(countInt)
 #define SUM_INT F_SSE41(sumInt)
 #define MIN_INT F_SSE41(minInt)
 #define MAX_INT F_SSE41(maxInt)
 
+#define COUNT_LONG F_SSE41(countLong)
 #define SUM_LONG F_SSE41(sumLong)
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
@@ -83,16 +92,19 @@
 
 #elif INSTRSET >= 2
 
+#define COUNT_DOUBLE F_SSE2(countDouble)
 #define SUM_DOUBLE F_SSE2(sumDouble)
 #define SUM_DOUBLE_KAHAN F_SSE2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE2(sumDoubleNeumaier)
 #define MIN_DOUBLE F_SSE2(minDouble)
 #define MAX_DOUBLE F_SSE2(maxDouble)
 
+#define COUNT_INT F_SSE2(countInt)
 #define SUM_INT F_SSE2(sumInt)
 #define MIN_INT F_SSE2(minInt)
 #define MAX_INT F_SSE2(maxInt)
 
+#define COUNT_LONG F_SSE2(countLong)
 #define SUM_LONG F_SSE2(sumLong)
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
@@ -130,6 +142,29 @@ bool HAS_NULL(int32_t *pi, int64_t count) {
 
 
 #ifdef SUM_LONG
+
+int64_t COUNT_LONG(int64_t *pl, int64_t count) {
+    const int step = 8;
+    Vec8q vec;
+    Vec8qb bVec;
+    int64_t result = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
+        vec.load(pl + i);
+        bVec = vec != L_MIN;
+        result += horizontal_count(bVec);
+    }
+
+    for (; i < count; i++) {
+        int64_t x = *(pl + i);
+        if (x != L_MIN) {
+            result++;
+        }
+    }
+
+    return result;
+}
 
 int64_t SUM_LONG(int64_t *pl, int64_t count) {
     Vec8q vec;
@@ -223,6 +258,34 @@ int64_t MAX_LONG(int64_t *pl, int64_t count) {
 
 #ifdef SUM_INT
 
+int64_t COUNT_INT(int32_t *pi, int64_t count) {
+    const int32_t step = 16;
+    const auto remainder = (int32_t) (count - (count / step) * step);
+    const auto *lim = pi + count;
+    const auto *vec_lim = lim - remainder;
+
+    Vec16i vec;
+    Vec16ib bVec;
+    int64_t result = 0;
+    for (; pi < vec_lim; pi += step) {
+        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
+        vec.load(pi);
+        bVec = vec != I_MIN;
+        result += horizontal_count(bVec);
+    }
+
+    if (pi < lim) {
+        for (; pi < lim; pi++) {
+            int32_t v = *pi;
+            if (PREDICT_TRUE(v != I_MIN)) {
+                ++result;
+            }
+        }
+    }
+
+    return result;
+}
+
 int64_t SUM_INT(int32_t *pi, int64_t count) {
     const int32_t step = 16;
     const auto remainder = (int32_t) (count - (count / step) * step);
@@ -313,6 +376,31 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
 
 #ifdef SUM_DOUBLE
 
+int64_t COUNT_DOUBLE(double *d, int64_t count) {
+    Vec8d vec;
+    const int step = 8;
+    Vec8db bVec;
+    Vec8q nancount = 0;
+    int i;
+    for (i = 0; i < count - 7; i += step) {
+        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
+        vec.load(d + i);
+        bVec = is_nan(vec);
+        nancount = if_add(bVec, nancount, 1);
+    }
+
+    _mm_prefetch(d, _MM_HINT_T0);
+    int64_t n = horizontal_add(nancount);
+    for (; i < count; i++) {
+        double x = *(d + i);
+        if (PREDICT_FALSE(std::isnan(x))) {
+            n++;
+        }
+    }
+
+    return count - n;
+}
+
 double SUM_DOUBLE(double *d, int64_t count) {
     Vec8d vec;
     const int step = 8;
@@ -333,7 +421,7 @@ double SUM_DOUBLE(double *d, int64_t count) {
     int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (PREDICT_TRUE(std::isfinite(x))) {
+        if (PREDICT_TRUE(!std::isnan(x))) { 
             sum += x;
         } else {
             n++;
@@ -504,17 +592,20 @@ double MAX_DOUBLE(double *d, int64_t count) {
 #if INSTRSET < 5
 
 // Dispatchers
+DOUBLE_LONG_DISPATCHER(countDouble)
 DOUBLE_DISPATCHER(sumDouble)
 DOUBLE_DISPATCHER(sumDoubleKahan)
 DOUBLE_DISPATCHER(sumDoubleNeumaier)
 DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)
 
+INT_LONG_DISPATCHER(countInt)
 INT_LONG_DISPATCHER(sumInt)
 INT_BOOL_DISPATCHER(hasNull)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)
 
+LONG_LONG_DISPATCHER(countLong)
 LONG_LONG_DISPATCHER(sumLong)
 LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)

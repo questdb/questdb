@@ -22,37 +22,35 @@
  *
  ******************************************************************************/
 
-#ifndef VECT_VANILLA_H
-#define VECT_VANILLA_H
+package io.questdb.griffin.engine.functions.groupby;
 
-int64_t countDouble_Vanilla(double *d, int64_t count);
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
 
-double sumDouble_Vanilla(double *d, int64_t count);
+public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
 
-double sumDoubleKahan_Vanilla(double *d, int64_t count);
+    public CountDoubleGroupByFunction(@NotNull Function arg) {
+        super(arg);
+    }
 
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count);
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final double value = arg.getDouble(record);
+        if (Numbers.isFinite(value)) {
+            mapValue.putLong(valueIndex, 1);
+        } else {
+            mapValue.putLong(valueIndex, 0);
+        }
+    }
 
-double minDouble_Vanilla(double *d, int64_t count);
-
-double maxDouble_Vanilla(double *d, int64_t count);
-
-int64_t countInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t minInt_Vanilla(int32_t *pi, int64_t count);
-
-int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
-
-int64_t countLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t minLong_Vanilla(int64_t *pl, int64_t count);
-
-int64_t maxLong_Vanilla(int64_t *pl, int64_t count);
-
-bool hasNull_Vanilla(int32_t *pi, int64_t count);
-
-#endif //VECT_VANILLA_H
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final double value = arg.getDouble(record);
+        if (Numbers.isFinite(value)) {
+            mapValue.addLong(valueIndex, 1);
+        }
+    }
+}

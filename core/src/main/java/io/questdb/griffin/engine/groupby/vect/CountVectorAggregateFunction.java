@@ -31,7 +31,6 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -95,14 +94,14 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
         types.add(ColumnType.LONG);
     }
 
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("CountVectorAgg(").put(valueOffset).put(')');
-    }
+//    @Override
+//    public void toPlan(PlanSink sink) {
+//        sink.val("count()");
+//    }
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return true;
+        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum(), count.sum());
     }
 
     @FunctionalInterface

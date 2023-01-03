@@ -24,34 +24,60 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Numbers;
 
-public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
-
-    public CountLong256GroupByFunction(@NotNull Function arg) {
-        super(arg);
-    }
+public class CountLongConstGroupByFunction extends LongFunction implements GroupByFunction {
+    private int valueIndex;
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final Long256 value = arg.getLong256A(record);
-        if (!value.equals(Long256Impl.NULL_LONG256)) {
-            mapValue.putLong(valueIndex, 1);
-        } else {
-            mapValue.putLong(valueIndex, 0);
-        }
+        mapValue.putLong(valueIndex, 1L);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final Long256 value = arg.getLong256A(record);
-        if (!value.equals(Long256Impl.NULL_LONG256)) {
-            mapValue.addLong(valueIndex, 1);
-        }
+        mapValue.addLong(valueIndex, 1);
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+    }
+
+    @Override
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+    }
+
+    public void toPlan(PlanSink sink) {
+        sink.val("count(*)");
     }
 }
