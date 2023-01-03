@@ -639,6 +639,7 @@ public class SqlUtil {
         for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
             SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
         }
+        SqlUtil.disallowedAliases.add("");
 
         final DateFormatCompiler milliCompiler = new DateFormatCompiler();
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
