@@ -83,6 +83,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final String tableName;
+    private final ObjList<DirectByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final int walId;
     private final String walName;
     private int columnCount;
@@ -441,20 +442,6 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    public TableWriter.Row newRowSansTimestamp() {
-        checkDistressed();
-        try {
-            if (rollSegmentOnNextRow) {
-                rollSegment();
-                rollSegmentOnNextRow = false;
-            }
-            return row;
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        }
-    }
-
     @Override
     public void rollback() {
         try {
@@ -562,7 +549,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
-        try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableName,  metadata.getStructureVersion())) {
+        try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableName, metadata.getStructureVersion())) {
             long nextStructVer = getStructureVersion();
             while (log.hasNext() && nextStructVer < structureVersionHi) {
                 TableMetadataChange chg = log.next();
@@ -703,6 +690,7 @@ public class WalWriter implements TableWriterAPI {
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new DirectByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
     private void configureSymbolMapWriter(
@@ -791,6 +779,7 @@ public class WalWriter implements TableWriterAPI {
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new DirectByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
     }
@@ -808,6 +797,7 @@ public class WalWriter implements TableWriterAPI {
                     // here since we already filled it with -1 and false initially
                     symbolMapReaders.extendAndSet(i, null);
                     symbolMaps.extendAndSet(i, null);
+                    utf8SymbolMaps.extendAndSet(i, null);
                 } else {
                     if (txReader == null) {
                         txReader = new TxReader(ff);
@@ -1026,8 +1016,8 @@ public class WalWriter implements TableWriterAPI {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.set(i, reader.getSymbolCount());
                         symbolMapNullFlags.set(i, reader.containsNullValue());
-                        CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
-                        symbolMap.clear();
+                        symbolMaps.getQuick(i).clear();
+                        utf8SymbolMaps.getQuick(i).clear();
                     }
                 } else {
                     rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
@@ -1059,6 +1049,7 @@ public class WalWriter implements TableWriterAPI {
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         symbolMaps.setQuick(index, null);
+        utf8SymbolMaps.setQuick(index, null);
         initialSymbolCounts.set(index, -1);
         symbolMapNullFlags.set(index, false);
         cleanupSymbolMapFiles(path, rootLen, metadata.getColumnName(index));
@@ -1101,6 +1092,12 @@ public class WalWriter implements TableWriterAPI {
             if (symbolMap != null) {
                 symbolMap.clear();
             }
+
+            final DirectByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
+            if (dbcsSymbolMap != null) {
+                dbcsSymbolMap.clear();
+            }
+
             final SymbolMapReader reader = symbolMapReaders.getQuick(i);
             if (reader != null) {
                 initialSymbolCounts.set(i, reader.getSymbolCount());
@@ -1693,24 +1690,7 @@ public class WalWriter implements TableWriterAPI {
         public void putSym(int columnIndex, CharSequence value) {
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
-                int key = symbolMapReader.keyOf(value);
-                if (key == SymbolTable.VALUE_NOT_FOUND) {
-                    if (value != null) {
-                        // Add it to in-memory symbol map
-                        final int initialSymCount = initialSymbolCounts.get(columnIndex);
-                        CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
-                        key = symbolMap.get(value);
-                        if (key == SymbolTable.VALUE_NOT_FOUND) {
-                            key = initialSymCount + symbolMap.size();
-                            symbolMap.put(value, key);
-                        }
-                    } else {
-                        key = SymbolTable.VALUE_IS_NULL;
-                        symbolMapNullFlags.set(columnIndex, true);
-                    }
-                }
-                getPrimaryColumn(columnIndex).putInt(key);
-                setRowValueNotNull(columnIndex);
+                putSym0(columnIndex, value, symbolMapReader);
             } else {
                 throw new UnsupportedOperationException();
             }
@@ -1723,11 +1703,22 @@ public class WalWriter implements TableWriterAPI {
         }
 
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            // via temp string the utf8 decoder will be writing directly to our buffer
-            tempSink.clear();
             // this method will write column name to the buffer if it has to be utf8 decoded
             // otherwise it will write nothing.
-            putSym(columnIndex, utf8ToUtf16(value, tempSink, hasNonAsciiChars));
+            final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
+            if (symbolMapReader != null) {
+                DirectByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
+                int index = utf8Map.keyIndex(value);
+                if (index < 0) {
+                    getPrimaryColumn(columnIndex).putInt(utf8Map.valueAt(index));
+                    setRowValueNotNull(columnIndex);
+                } else {
+                    // slow path, symbol is not in utf8 cache
+                    putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader, utf8Map, index);
+                }
+            } else {
+                throw new UnsupportedOperationException();
+            }
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
@@ -1736,6 +1727,42 @@ public class WalWriter implements TableWriterAPI {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return columns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+
+        private void putSym0(int columnIndex, CharSequence value, SymbolMapReader symbolMapReader) {
+            int key = symbolMapReader.keyOf(value);
+            if (key == SymbolTable.VALUE_NOT_FOUND) {
+                key = putSymNew(columnIndex, value);
+            }
+            getPrimaryColumn(columnIndex).putInt(key);
+            setRowValueNotNull(columnIndex);
+        }
+
+        private int putSymNew(int columnIndex, CharSequence value) {
+            int key;
+            if (value != null) {
+                // Add it to in-memory symbol map
+                final int initialSymCount = initialSymbolCounts.get(columnIndex);
+                CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
+                key = symbolMap.get(value);
+                if (key == SymbolTable.VALUE_NOT_FOUND) {
+                    key = initialSymCount + symbolMap.size();
+                    symbolMap.put(value, key);
+                }
+            } else {
+                key = SymbolTable.VALUE_IS_NULL;
+                symbolMapNullFlags.set(columnIndex, true);
+            }
+            return key;
+        }
+
+        private void putSymUtf8Slow(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolMapReader symbolMapReader, DirectByteCharSequenceIntHashMap utf8Map, int index) {
+            putSym0(columnIndex, utf8ToUtf16(value, tempSink, hasNonAsciiChars), symbolMapReader);
+            CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+            int symbolMapKeyIndex = utf16Map.keyIndex(value);
+            if (symbolMapKeyIndex < 0) {
+                utf8Map.putAt(index, Chars.toString(utf16Map.keyAt(symbolMapKeyIndex)), utf16Map.valueAt(symbolMapKeyIndex));
+            }
         }
     }
 }

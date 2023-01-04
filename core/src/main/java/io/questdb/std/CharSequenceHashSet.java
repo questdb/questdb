@@ -129,11 +129,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return getListIndexAt(keyIndex(cs));
     }
 
-    public CharSequence keyAt(int index) {
-        int index1 = -index - 1;
-        return keys[index1];
-    }
-
     public int remove(CharSequence key) {
         if (key == null) {
             return removeNull();

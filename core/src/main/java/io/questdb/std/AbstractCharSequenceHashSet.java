@@ -65,6 +65,10 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         return keyIndex(key, lo, hi) > -1;
     }
 
+    public CharSequence keyAt(int index) {
+        return keys[-index - 1];
+    }
+
     public int keyIndex(CharSequence key) {
         int index = Hash.spread(Chars.hashCode(key)) & mask;
 
