@@ -32,11 +32,14 @@ public final class Vect {
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
+    // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
+    // Note: high is inclusive!
     public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
 
     public static long boundedBinarySearch64Bit(long pData, long value, long low, long high, int scanDirection) {
+        // Note: high is inclusive!
         long index = binarySearch64Bit(pData, value, low, high, scanDirection);
         if (index < 0) {
             return (-index - 1) - 1;
@@ -45,6 +48,7 @@ public final class Vect {
     }
 
     public static long boundedBinarySearchIndexT(long pData, long value, long low, long high, int scanDirection) {
+        // Note: high is inclusive!
         long index = binarySearchIndexT(pData, value, low, high, scanDirection);
         if (index < 0) {
             return (-index - 1) - 1;

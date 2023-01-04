@@ -66,7 +66,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         buffer[pos++] = value;
     }
 
-    public void addAll(ObjList<T> that) {
+    public void addAll(ReadOnlyObjList<? extends T> that) {
         int n = that.size();
         ensureCapacity(pos + n);
         for (int i = 0; i < n; i++) {

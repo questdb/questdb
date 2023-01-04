@@ -124,7 +124,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                     if (rnd.nextDouble() > notSet) {
                         boolean isNull = rnd.nextDouble() < nullSet;
 
-                        switch (type) {
+                        switch (ColumnType.tagOf(type)) {
                             case ColumnType.CHAR:
                                 row.putChar(index, rnd.nextChar());
                                 break;

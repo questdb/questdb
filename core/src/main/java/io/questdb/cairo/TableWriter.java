@@ -124,6 +124,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final int o3ColumnMemorySize;
+    private final ObjList<MemoryCR> o3ColumnOverrides;
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final long[] o3LastTimestampSpreads = new long[WINDOW_SIZE];
@@ -264,6 +265,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             this.txWriter = new TxWriter(ff).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
+            this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
             switch (todo) {
@@ -1319,13 +1321,22 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             long o3LagRowCount = o3TimestampOffset >> 4;
 
             try {
-                o3Columns = walMappedColumns;
-                MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
                 long timestampAddr;
                 long o3Lo = rowLo;
                 long o3Hi = rowHi;
+                final boolean copiedToMemory;
+                final boolean needsOrdering = !ordered || o3LagRowCount > 0;
+                final long symbolRowLo = needsOrdering ? o3LagRowCount : rowLo;
+                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, symbolRowLo);
+                MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
 
-                if (!ordered || o3LagRowCount > 0) {
+                if (needsOrdering) {
+                    LOG.info().$("sorting WAL [table=").$(tableToken)
+                            .$(", ordered=").$(ordered)
+                            .$(", o3LagRowCount=").$(o3LagRowCount)
+                            .$(", rowLo=").$(rowLo)
+                            .$(", rowHi=").$(rowHi).I$();
+
                     final long timestampMemorySize = (rowHi - rowLo) << 4;
                     o3TimestampMem.jumpTo(o3TimestampOffset + timestampMemorySize);
                     o3TimestampMemCpy.jumpTo(o3TimestampOffset + timestampMemorySize);
@@ -1345,36 +1356,60 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     // Row indexes start from 0, not rowLo
                     o3Hi = rowHi - rowLo + o3LagRowCount;
                     o3Lo = 0L;
+                    o3LagRowCount = 0L;
                     o3Columns = o3MemColumns;
+                    copiedToMemory = true;
+                    o3TimestampMin = getTimestampIndexValue(timestampAddr, o3Lo);
+                    o3TimestampMax = getTimestampIndexValue(timestampAddr, o3Hi - 1);
                 } else {
                     timestampAddr = walTimestampColumn.addressOf(0);
+                    copiedToMemory = false;
                 }
 
-                // TODO: remap only rows which are coming from disk, not from LAG
-                o3Columns = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi, walPath);
-
-                if (commitToTimestamp < o3TimestampMin && o3LagRowCount == 0) {
+                if (commitToTimestamp < o3TimestampMin) {
                     // Don't commit anything, move everything to memory instead.
-                    o3LagRowCount = rowHi - rowLo;
-                    o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, 0);
+                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
+                    o3LagRowCount = o3Hi - o3Lo;
+                    if (!copiedToMemory) {
+                        o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, o3Lo);
+                    }
+                    // otherwise the rows are already copied to LAG
                     return;
                 } else {
                     if (commitToTimestamp < o3TimestampMax) {
-                        final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
-                                timestampAddr,
-                                commitToTimestamp - 1,
-                                0,
-                                o3RowCount - 1,
-                                BinarySearch.SCAN_DOWN
-                        );
-                        o3LagRowCount = o3RowCount - lagThresholdRow - 1;
-                        o3Hi = lagThresholdRow + 1;
-                        o3TimestampMax = getTimestampIndexValue(timestampAddr, lagThresholdRow);
+                        final long lagThresholdRow = 1 +
+                                Vect.boundedBinarySearchIndexT(
+                                        timestampAddr,
+                                        commitToTimestamp,
+                                        o3Lo,
+                                        o3Hi - 1,
+                                        BinarySearch.SCAN_DOWN
+                                );
+                        assert lagThresholdRow > 0 && lagThresholdRow < o3Hi;
+                        o3LagRowCount = o3Hi - o3Lo - lagThresholdRow;
+                        o3Hi = lagThresholdRow;
+                        o3TimestampMax = getTimestampIndexValue(timestampAddr, o3Hi - 1);
+                        assert o3TimestampMax >= o3TimestampMin && o3TimestampMax <= commitToTimestamp;
+
+                        LOG.debug().$("committing WAL with LAG [table=").$(tableToken)
+                                .$(", o3LagRowCount=").$(o3LagRowCount)
+                                .$(", rowLo=").$(o3Lo)
+                                .$(", rowHi=").$(o3Hi).I$();
                     } else {
                         o3LagRowCount = 0;
                     }
 
-                    processO3Block(o3LagRowCount, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
+                    o3RowCount = o3Hi - o3Lo + o3LagRowCount;
+                    processO3Block(
+                            o3LagRowCount,
+                            timestampIndex,
+                            timestampAddr,
+                            o3Hi,
+                            o3TimestampMin,
+                            o3TimestampMax,
+                            copiedToMemory,
+                            o3Lo
+                    );
                     if (o3LagRowCount == 0) {
                         o3TimestampMem.jumpTo(0);
                     }
@@ -1410,8 +1445,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         txWriter.beginPartitionSizeUpdate();
-        LOG.info().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi)
-                .$(", tsMin=").$ts(o3TimestampMin).$(" , txMax=").$ts(o3TimestampMax)
+        LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo).$(", roHi=").$(rowHi)
+                .$(", tsMin=").$ts(o3TimestampMin).$(", tsMax=").$ts(o3TimestampMax)
                 .$(", commitToTimestamp=").$ts(commitToTimestamp)
                 .I$();
         if (rowAction == ROW_ACTION_OPEN_PARTITION && txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
@@ -3211,6 +3246,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     walMappedColumns.add(null);
                 }
             }
+            o3Columns = walMappedColumns;
         } catch (Throwable th) {
             closeWalColumns();
             throw th;
@@ -3612,16 +3648,45 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private void o3MergeFixColumnLag(int columnIndex, int columnType, long mergeIndex, long mappedRowLo, long mappedRowHi, long lagRows) {
         final long rowCount = lagRows + mappedRowHi - mappedRowLo;
-        final int columnOffset = getPrimaryColumnIndex(columnIndex);
-        final MemoryCARW lagMem = o3MemColumns.getQuick(columnOffset);
-        final MemoryCR mappedMem = o3Columns.getQuick(columnOffset);
-        final MemoryCARW destMem = o3MemColumns2.getQuick(columnOffset);
+        final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
+        final MemoryCARW lagMem = o3MemColumns.getQuick(primaryColumnIndex);
+        final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
+        if (mappedMem == lagMem) {
+            if (ColumnType.isSymbol(columnType)) {
+                mappedRowLo = lagRows;
+            } else {
+                throw CairoException.critical(0).put("not implemented");
+            }
+        }
+        final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
 
         final int shl = ColumnType.pow2SizeOf(columnType);
         destMem.jumpTo(rowCount << shl);
         long src1 = mappedMem.addressOf(mappedRowLo << shl);
         long src2 = lagMem.addressOf(0);
-        final long dest = destMem.addressOf(0); //16664
+        final long dest = destMem.addressOf(0);
+        if (src2 == 0 && lagRows != 0) {
+            throw CairoException.critical(0)
+                    .put("cannot sort WAL data, lag rows are missing [table").put(tableToken.getTableName())
+                    .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                    .put(", type=").put(ColumnType.nameOf(columnType))
+                    .put(", lagRows=").put(lagRows)
+                    .put(']');
+        }
+        if (src1 == 0) {
+            throw CairoException.critical(0)
+                    .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
+                    .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                    .put(", type=").put(ColumnType.nameOf(columnType))
+                    .put(']');
+        }
+        if (dest == 0) {
+            throw CairoException.critical(0)
+                    .put("cannot sort WAL data, destination buffer is empty [table").put(tableToken.getTableName())
+                    .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                    .put(", type=").put(ColumnType.nameOf(columnType))
+                    .put(']');
+        }
 
         switch (shl) {
             case 0:
@@ -3734,7 +3799,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final long destDataAddr = destData.addressOf(0);
         final long destIndxAddr = destIndex.addressOf(0);
 
-        final long src1DataAddr = src1Data.addressOf(0);
+        final long src1DataAddr = src1Data.addressOf(src1DataLo) - src1DataLo;
         final long src1IndxAddr = src1Index.addressOf(mappedRowLo << 3);
         final long src2DataAddr = src2Data.addressOf(0);
         final long src2IndxAddr = src2Index.addressOf(0);
@@ -3790,18 +3855,19 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 size = o3LagRowCount << shl;
             } else {
                 // Var size column
-                sourceOffset = o3SrcIndexMem.getLong(o3RowCount << 3);
+                long committedIndexOffset = o3RowCount << 3;
+                sourceOffset = o3SrcIndexMem.getLong(committedIndexOffset);
                 size = o3SrcIndexMem.getLong((o3RowCount + o3LagRowCount) << 3) - sourceOffset;
 
                 // adjust append position of the index column to
                 // maintain n+1 number of entries
-                o3DstIndexMem.jumpTo(o3LagRowCount << 8);
+                o3DstIndexMem.jumpTo((o3LagRowCount << 3) + 8);
 
                 // move count + 1 rows, to make sure index column remains n+1
                 // the data is copied back to start of the buffer, no need to set size first
                 O3Utils.shiftCopyFixedSizeColumnData(
                         sourceOffset,
-                        o3SrcIndexMem.addressOf(o3RowCount * 8),
+                        o3SrcIndexMem.addressOf(committedIndexOffset),
                         0,
                         o3LagRowCount, // No need to do +1 here, hi is inclusive
                         o3DstIndexMem.addressOf(0)
@@ -3817,10 +3883,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
             // Special case, designated timestamp column
             // Move values and set index to  0..o3LagRowCount
-            final long sourceOffset = o3RowCount * 16;
-            o3TimestampMem.jumpTo(o3LagRowCount * 16);
-            final long mergeMemAddr = o3TimestampMem.getAddress();
-            Vect.shiftTimestampIndex(o3SrcDataMem.addressOf(sourceOffset), o3LagRowCount, mergeMemAddr);
+            final long sourceOffset = o3RowCount << 4;
+            o3TimestampMem.jumpTo(o3LagRowCount << 4);
+            final long dstTimestampAddr = o3TimestampMem.getAddress();
+            Vect.shiftTimestampIndex(o3SrcDataMem.addressOf(sourceOffset), o3LagRowCount, dstTimestampAddr);
         }
     }
 
@@ -5196,10 +5262,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             SymbolMapDiffCursor symbolMapDiffCursor,
             long rowLo,
             long rowHi,
-            Path walPath
+            Path walPath,
+            long destRowLo
     ) {
-        ObjList<MemoryCR> o3ColumnOverrides = null;
-
+        o3ColumnOverrides.clear();
         if (symbolMapDiffCursor != null) {
             SymbolMapDiff symbolMapDiff;
             while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
@@ -5212,7 +5278,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 }
 
                 if (!ColumnType.isSymbol(columnType)) {
-                    // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
                     throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
                             .put(", walPath=").put(walPath)
                             .put(']');
@@ -5220,40 +5285,30 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 boolean identical = createWalSymbolMapping(symbolMapDiff, columnIndex, symbolRewriteMap);
 
                 if (!identical) {
-                    MemoryCR o3SymbolColumn = o3Columns.getQuick(getPrimaryColumnIndex(columnIndex));
-
+                    int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
+                    MemoryCR o3SymbolColumn = o3Columns.getQuick(primaryColumnIndex);
                     final MemoryCARW symbolColumnDest;
-                    if (o3SymbolColumn instanceof MemoryCARW) {
-                        // The column is already in RAM, so we rewrite it
-                        symbolColumnDest = (MemoryCARW) o3SymbolColumn;
-                    } else {
-                        // Column is read-only mapped memory, so we need to take in RAM column and remap values into it
-                        if (o3ColumnOverrides == null) {
-                            // Copy list of columns to change symbol columns to be from RAM columns and
-                            // other to be mapped memory
-                            o3ColumnOverrides = new ObjList<>(o3Columns.size());
-                            for (int c = 0; c < o3Columns.size(); c++) {
-                                o3ColumnOverrides.add(o3Columns.getQuick(c));
-                            }
-                        }
 
-                        symbolColumnDest = o3MemColumns.get(getPrimaryColumnIndex(columnIndex));
-                        symbolColumnDest.jumpTo(rowHi << 2);
-                        o3ColumnOverrides.setQuick(getPrimaryColumnIndex(columnIndex), symbolColumnDest);
+                    // Column is read-only mapped memory, so we need to take in RAM column and remap values into it
+                    if (o3ColumnOverrides.size() == 0) {
+                        o3ColumnOverrides.addAll(o3Columns);
                     }
 
+                    symbolColumnDest = o3MemColumns.get(primaryColumnIndex);
+                    long destOffset = (destRowLo - rowLo) << 2;
+                    symbolColumnDest.jumpTo(destOffset + (rowHi << 2));
+                    o3ColumnOverrides.setQuick(primaryColumnIndex, symbolColumnDest);
                     final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
                     for (long rowId = rowLo; rowId < rowHi; rowId++) {
-                        long offset = rowId << 2;
 
-                        int symKey = o3SymbolColumn.getInt(offset);
+                        final long valueOffset = rowId << 2;
+                        int symKey = o3SymbolColumn.getInt(valueOffset);
                         assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
                             if (newKey < 0) {
-                                // This symbol was not mapped in the WAL
-                                // The WAL is invalid
-                                // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
+                                // This symbol was not mapped in WAL
+                                // WAL is invalid
                                 throw CairoException.critical(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
                                         .put(", columnKey=").put(symKey)
                                         .put(", walPath=").put(walPath)
@@ -5262,14 +5317,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             }
                             symKey = newKey;
                         }
-                        symbolColumnDest.putInt(offset, symKey);
+                        symbolColumnDest.putInt(destOffset + valueOffset, symKey);
                     }
                 }
             }
         }
 
-        if (o3ColumnOverrides == null) {
-            // Columns copied in place.
+        if (o3ColumnOverrides.size() == 0) {
+            // No mappins were made.
             return o3Columns;
         }
         return o3ColumnOverrides;
@@ -5761,9 +5816,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void resizeColumnTopSink(long o3TimestampMin, long o3TimestampMax) {
-        if (o3TimestampMin > o3TimestampMax) {
-            int i = 0;
-        }
         long maxPartitionsAffected = (o3TimestampMax - o3TimestampMin) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy) + 2;
         long size = maxPartitionsAffected * (metadata.getColumnCount() + 1);
         if (o3ColumnTopSink == null) {
