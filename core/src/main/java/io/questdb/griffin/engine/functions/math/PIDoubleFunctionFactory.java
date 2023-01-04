@@ -22,20 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public interface GroupByFunctionsUpdater {
+public class PIDoubleFunctionFactory implements FunctionFactory {
 
-    void setFunctions(ObjList<GroupByFunction> groupByFunctions);
+    private static final DoubleConstant PI = new DoubleConstant(Math.PI);
 
-    void updateEmpty(MapValue value);
+    @Override
+    public String getSignature() {
+        return "pi()";
+    }
 
-    void updateExisting(MapValue value, Record record);
-
-    void updateNew(MapValue value, Record record);
+    @Override
+    public Function newInstance(
+            int position, ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return PI;
+    }
 }

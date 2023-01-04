@@ -915,9 +915,18 @@ class ExpressionParser {
                                 // leverage the fact '*' is dedicated token and it returned from cache
                                 // therefore lexer.tokenHi does not move when * follows dot without whitespace
                                 // e.g. 'a.*'
-                                GenericLexer.FloatingSequence fs = (GenericLexer.FloatingSequence) en.token;
                                 if (GenericLexer.WHITESPACE_CH.excludes(lexer.getContent().charAt(lastPos - 1))) {
-                                    fs.setHi(lastPos + 1);
+                                    if (en.token instanceof GenericLexer.FloatingSequence) {
+                                        GenericLexer.FloatingSequence fs = (GenericLexer.FloatingSequence) en.token;
+                                        fs.setHi(lastPos + 1);
+                                    } else {
+                                        // "foo".* or 'foo'.*
+                                        // foo was unquoted, and we cannot simply move hi to include the *
+                                        opStack.pop();
+                                        CharacterStoreEntry cse = characterStore.newEntry();
+                                        cse.put(en.token).put('*');
+                                        opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
+                                    }
                                 } else {
                                     // in this case we have whitespace, e.g. 'a. *'
                                     processDefaultBranch = true;
@@ -1235,7 +1244,7 @@ class ExpressionParser {
 
             while ((node = opStack.pop()) != null) {
 
-                if (node.token.charAt(0) == '(') {
+                if (node.token.length() != 0 && node.token.charAt(0) == '(') {
                     throw SqlException.$(node.position, "unbalanced (");
                 }
 

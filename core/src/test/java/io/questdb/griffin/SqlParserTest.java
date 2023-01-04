@@ -2380,6 +2380,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEmptyColumnAliasDisallowed() throws Exception {
+        assertSyntaxError("select x as '' from long_sequence(1)", 15, "column alias");
+        assertSyntaxError("select 'x' '' from long_sequence(1)", 14, "column alias");
+        assertSyntaxError("select x as \"\" from long_sequence(1)", 15, "column alias");
+    }
+
+    @Test
+    public void testEmptyCommonTableExpressionNameDisallowed() throws Exception {
+        assertSyntaxError("with \"\" as (select 'a' ) select * from \"\"", 5, "empty");
+    }
+
+    @Test
     public void testEmptyOrderBy() throws Exception {
         assertSyntaxError("select x, y from tab order by", 29, "literal expected");
     }
@@ -2387,6 +2399,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEmptySampleBy() throws Exception {
         assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
+    }
+
+    @Test
+    public void testEmptyTableAliasDisallowed() throws Exception {
+        assertSyntaxError("select x from long_sequence(1) ''", 31, "table alias");
+        assertSyntaxError("select x from long_sequence(1) as ''", 34, "table alias");
+        assertSyntaxError("select * from long_sequence(1) \"\"", 31, "table alias");
+        assertSyntaxError("select * from long_sequence(1) as \"\"", 34, "table alias");
+        assertSyntaxError("select ''.* from long_sequence(1) as ''", 37, "table alias");
+        assertSyntaxError("select \"\".* from long_sequence(1) as \"\"", 37, "table alias");
+        assertSyntaxError("select ''.\"*\" from long_sequence(1) as ''", 39, "table alias");
     }
 
     @Test
@@ -5760,6 +5783,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testQuotedTableAliasFollowedByStar() throws Exception {
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select foo.* from long_sequence(1) as foo"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as foo"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select foo.* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo\".* from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo\".* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.\"*\" from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.'*' from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo.*\" from long_sequence(1) as \"foo\""
+        );
+
+        // the alias itself contains double quotes. should this be allowed at all?
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) \\\"foo\\\") \\\"foo\\\"",
+                "select \\\"foo\\\".* from long_sequence(1) as \\\"foo\\\""
         );
     }
 

@@ -22,20 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface GroupByFunctionsUpdater {
+public class CosDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    void setFunctions(ObjList<GroupByFunction> groupByFunctions);
+    @Test
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, DELTA);
+    }
 
-    void updateEmpty(MapValue value);
+    @Test
+    public void testNegative() throws SqlException {
+        call(-Math.PI).andAssert(-1.0, DELTA);
+        call(-2 * Math.PI).andAssert(1.0, DELTA);
+    }
 
-    void updateExisting(MapValue value, Record record);
+    @Test
+    public void testPositive() throws SqlException {
+        call(Math.PI).andAssert(-1.0, DELTA);
+        call(2 * Math.PI).andAssert(1.0, DELTA);
+    }
 
-    void updateNew(MapValue value, Record record);
+    @Test
+    public void testZero() throws SqlException {
+        call(0.0).andAssert(1.0, DELTA);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new CosDoubleFunctionFactory();
+    }
 }
