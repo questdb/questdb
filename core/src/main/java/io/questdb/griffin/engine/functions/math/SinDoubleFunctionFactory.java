@@ -36,9 +36,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SinDoubleFunctionFactory implements FunctionFactory {
+    public static final String SYMBOL = "sin";
+
     @Override
     public String getSignature() {
-        return "sin(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -66,6 +68,11 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return StrictMath.sin(angleRad.getDouble(rec));
+        }
+
+        @Override
+        public String getSymbol() {
+            return SYMBOL;
         }
     }
 }

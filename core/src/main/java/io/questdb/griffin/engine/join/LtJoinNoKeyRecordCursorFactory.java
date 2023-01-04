@@ -85,7 +85,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Lt join no key");
+        sink.type("Lt join");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

@@ -37,9 +37,11 @@ import io.questdb.std.ObjList;
 
 public class DegreesDoubleFunctionFactory implements FunctionFactory {
 
+    public static final String SYMBOL = "degrees";
+
     @Override
     public String getSignature() {
-        return "degrees(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -71,6 +73,11 @@ public class DegreesDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return Math.toDegrees(function.getDouble(rec));
+        }
+
+        @Override
+        public String getSymbol() {
+            return SYMBOL;
         }
     }
 }

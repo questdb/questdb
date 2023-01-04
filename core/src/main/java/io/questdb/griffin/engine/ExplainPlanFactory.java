@@ -144,7 +144,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             //on the other hand until we run it factories may be incomplete
             if (!isBaseClosed) {
                 planSink.of(base, executionContext);
-                base.close();//close vase factory and associated cursors, otherwise it may keep holding eagerly allocated memory
+                base.close();//close base factory and associated cursors, otherwise it may keep holding eagerly allocated memory
                 isBaseClosed = true;
             }
             rowCount = planSink.getLineCount();

@@ -36,9 +36,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CosDoubleFunctionFactory implements FunctionFactory {
+    public static final String SYMBOL = "cos";
+
     @Override
     public String getSignature() {
-        return "cos(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -66,6 +68,11 @@ public class CosDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return StrictMath.cos(angleRad.getDouble(rec));
+        }
+
+        @Override
+        public String getSymbol() {
+            return SYMBOL;
         }
     }
 }

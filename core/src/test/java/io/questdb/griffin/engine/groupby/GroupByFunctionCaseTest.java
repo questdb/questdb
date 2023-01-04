@@ -72,7 +72,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
 
                     planSink.clear();
-                    planSink.put("GroupByNotKeyed vectorized: ").put(vectorized).put("\n")
+                    planSink.put("GroupBy vectorized: ").put(vectorized).put("\n")
                             .put("  values: [").put(expectedFunction).put("]\n")
                             .put("    DataFrame\n" +
                                     "        Row forward scan\n" +

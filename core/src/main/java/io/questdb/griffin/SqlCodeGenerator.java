@@ -4432,6 +4432,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         @Override
+        public void close() {
+            if (factory != null) {
+                factory.close();
+            }
+        }
+
+        @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
             if (factory != null) {
                 return factory.getCursor(executionContext);

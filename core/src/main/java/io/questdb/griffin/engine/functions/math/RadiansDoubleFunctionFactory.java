@@ -37,9 +37,11 @@ import io.questdb.std.ObjList;
 
 public class RadiansDoubleFunctionFactory implements FunctionFactory {
 
+    public static final String SYMBOL = "radians";
+
     @Override
     public String getSignature() {
-        return "radians(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -71,6 +73,11 @@ public class RadiansDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return Math.toRadians(function.getDouble(rec));
+        }
+
+        @Override
+        public String getSymbol() {
+            return SYMBOL;
         }
     }
 }

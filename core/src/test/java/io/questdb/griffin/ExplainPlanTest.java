@@ -466,7 +466,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a asof join b",
                     "SelectedRecord\n" +
-                            "    AsOf join [no key record]\n" +
+                            "    AsOf join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -700,7 +700,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExplainUpdate() throws Exception {
+    public void testExplainUpdate1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");
             assertSql("explain update a set l = 1, d=10.1;",
@@ -711,6 +711,29 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testExplainUpdate2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( l1 long, d1 double)");
+            compile("create table b ( l2 long, d2 double)");
+            assertSql("explain update a set l1 = 1, d1=d2 from b where l1=l2;",
+                    "QUERY PLAN\n" +
+                            "UPDATE table: a\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1,d1]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: l2=l1\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: b\n");
         });
     }
 
@@ -1376,7 +1399,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed1() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select min(d) from a",
-                "GroupByNotKeyed vectorized: true\n" +
+                "GroupBy vectorized: true\n" +
                         "  values: [min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1387,7 +1410,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed10() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a join a b on i )",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
                         "    SelectedRecord\n" +
                         "        Hash Join Light\n" +
@@ -1405,7 +1428,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed11() throws Exception {
         assertPlan("create table a ( gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))",
                 "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1416,7 +1439,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select min(d), max(d*d) from a",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [min(d),max(d*d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1427,7 +1450,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(d+1) from a",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [max(d+1)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1438,7 +1461,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed4() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select count(*), max(i), min(d) from a",
-                "GroupByNotKeyed vectorized: true\n" +
+                "GroupBy vectorized: true\n" +
                         "  values: [count(0),max(i),min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1449,7 +1472,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1460,7 +1483,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
                         "    Async JIT Filter\n" +
                         "      filter: i<10\n" +
@@ -1474,7 +1497,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed7() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a order by d)",
-                "GroupByNotKeyed vectorized: true\n" +
+                "GroupBy vectorized: true\n" +
                         "  values: [max(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1485,7 +1508,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed8() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a order by d limit 10)",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
                         "    Sort light lo: 10\n" +
                         "      keys: [d]\n" +
@@ -1498,7 +1521,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByNotKeyed9() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a union all select * from a)",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
                         "    Union All\n" +
                         "        DataFrame\n" +
@@ -2732,7 +2755,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(x), sum(x+10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum+COUNT*10]\n" +
-                            "    GroupByNotKeyed vectorized: true\n" +
+                            "    GroupBy vectorized: true\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2741,7 +2764,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(x), sum(10+x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10+sum]\n" +
-                            "    GroupByNotKeyed vectorized: true\n" +
+                            "    GroupBy vectorized: true\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2755,14 +2778,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("  CREATE TABLE tab ( x double );");
 
             assertPlan("SELECT sum(x), sum(x+10) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(x+10)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("SELECT sum(x), sum(10+x) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(10+x)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -2779,7 +2802,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(x), sum(x*10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum*10]\n" +
-                            "    GroupByNotKeyed vectorized: true\n" +
+                            "    GroupBy vectorized: true\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2788,7 +2811,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(x), sum(10*x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,10*sum]\n" +
-                            "    GroupByNotKeyed vectorized: true\n" +
+                            "    GroupBy vectorized: true\n" +
                             "      values: [sum(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2802,14 +2825,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("  CREATE TABLE tab ( x double );");
 
             assertPlan("SELECT sum(x), sum(x*10) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(x*10)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("SELECT sum(x), sum(10*x) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(10*x)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -2823,14 +2846,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("  CREATE TABLE tab ( x double );");
 
             assertPlan("SELECT sum(x), sum(x*10.0) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(x*10.0)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("SELECT sum(x), sum(10.0*x) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(10.0*x)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -2848,7 +2871,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(x), sum(x-10) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,sum-COUNT*10]\n" +
-                            "    GroupByNotKeyed vectorized: true\n" +
+                            "    GroupBy vectorized: true\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2857,7 +2880,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(x), sum(10-x) FROM tab",
                     "VirtualRecord\n" +
                             "  functions: [sum,COUNT*10-sum]\n" +
-                            "    GroupByNotKeyed vectorized: true\n" +
+                            "    GroupBy vectorized: true\n" +
                             "      values: [sum(x),count(x)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2871,14 +2894,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("  CREATE TABLE tab ( x double );");
 
             assertPlan("SELECT sum(x), sum(x-10) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(x-10)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n");
 
             assertPlan("SELECT sum(x), sum(10-x) FROM tab",
-                    "GroupByNotKeyed vectorized: false\n" +
+                    "GroupBy vectorized: false\n" +
                             "  values: [sum(x),sum(10-x)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -2900,7 +2923,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" +
                     "FROM hits", "VirtualRecord\n" +
                     "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
-                    "    GroupByNotKeyed vectorized: true\n" +
+                    "    GroupBy vectorized: true\n" +
                     "      values: [sum(resolutIONWidth),count(resolutIONWidth),count()]\n" +
                     "        DataFrame\n" +
                     "            Row forward scan\n" +
@@ -3124,7 +3147,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select count(*) from (select * from a lt join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Lt join no key\n" +
+                        "        Lt join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -3139,7 +3162,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select count(*) from (select * from a asof join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        AsOf join [no key record]\n" +
+                        "        AsOf join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -3189,7 +3212,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectCount3() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select count(2) from a",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [count(0)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -3272,7 +3295,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectCountDistinct1() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select count_distinct(s)  from tab",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [count(s)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -3283,7 +3306,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectCountDistinct2() throws Exception {
         assertPlan("create table tab ( s symbol index, ts timestamp);",
                 "select count_distinct(s)  from tab",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [count(s)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -3294,7 +3317,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectCountDistinct3() throws Exception {
         assertPlan("create table tab ( s string, l long );",
                 "select count_distinct(l)  from tab",
-                "GroupByNotKeyed vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [count(l)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +

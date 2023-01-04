@@ -36,9 +36,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TanDoubleFunctionFactory implements FunctionFactory {
+    public static final String SYMBOL = "tan";
+
     @Override
     public String getSignature() {
-        return "tan(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -66,6 +68,11 @@ public class TanDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return StrictMath.tan(angleRad.getDouble(rec));
+        }
+
+        @Override
+        public String getSymbol() {
+            return SYMBOL;
         }
     }
 }
