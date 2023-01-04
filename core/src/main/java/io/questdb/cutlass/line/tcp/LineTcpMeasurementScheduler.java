@@ -568,6 +568,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 r.putTimestamp(columnIndex, ent.getLongValue());
                                 break;
 
+                            case ColumnType.DATE:
+                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);
+                                break;
+
                             case ColumnType.SYMBOL:
                                 r.putSym(columnIndex, ent.getValue());
                                 break;
