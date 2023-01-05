@@ -263,12 +263,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeFalse(walEnabled);
         partitionByDefault = PartitionBy.NONE;
         String tableName = "date_column_accepts_timestamp";
-
+ 
         runInContext((receiver) -> {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 m.timestamp("ts").col("dt", ColumnType.DATE).noWal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(m);
             }
 
             final String lineData = tableName + " dt=631150000000000t 631150000000000000\n" +
