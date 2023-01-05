@@ -238,6 +238,7 @@ public class Table2IlpTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.reloadTableNames();
     }
 
     @After
