@@ -1579,7 +1579,9 @@ public final class SqlParser {
             } else {
                 alias = createColumnAlias(expr, model);
             }
-
+            if (alias.length() == 0) {
+                throw err(lexer, null, "column alias cannot be a blank string");
+            }
             col.setAlias(alias);
 
             // correlated sub-queries do not have expr.token values (they are null)
@@ -1760,6 +1762,9 @@ public final class SqlParser {
     private void parseWithClauses(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> model) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
+            if (name.token.length() == 0) {
+                throw SqlException.$(name.position, "empty common table expression name");
+            }
 
             if (model.get(name.token) != null) {
                 throw SqlException.$(name.position, "duplicate name");
@@ -1981,7 +1986,11 @@ public final class SqlParser {
             if (SqlKeywords.isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
             }
-            joinModel.setAlias(literal(lexer, tok));
+            ExpressionNode alias = literal(lexer, tok);
+            if (alias.token.length() == 0) {
+                throw SqlException.position(alias.position).put("Empty table alias");
+            }
+            joinModel.setAlias(alias);
             tok = optTok(lexer);
         }
         return tok;

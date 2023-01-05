@@ -2034,10 +2034,13 @@ if __name__ == "__main__":
 
     @Test
     public void testCursorFetch() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+        // This test doesn't use partitioned tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
-            int fetchSize = 10;
+            int fetchSize = 993;
 
             CallableStatement stmt = connection.prepareCall(
                     "create table x as (select" +
