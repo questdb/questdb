@@ -552,7 +552,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool, true);
+            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -565,7 +565,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool, true);
+            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -577,7 +577,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         assertMemoryLeak(() -> {
             WorkerPool sharedPool = new TestWorkerPool("shared", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool, true);
+            shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -585,9 +585,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testSomeWritersReleased() throws Exception {
-        // TODO(puzpuzpuz): truncate() in WalWriter seems broken when it comes to symbols; re-enable the test when it's fixed.
-        Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
@@ -1211,9 +1208,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease2() throws Exception {
-        // TODO(puzpuzpuz): truncate() in WalWriter seems broken when it comes to symbols; re-enable the test when it's fixed.
-        Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1244,7 +1238,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease3() throws Exception {
-        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
         Assume.assumeFalse(walEnabled);
 
         runInContext((receiver) -> {
@@ -1275,9 +1268,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease4() throws Exception {
-        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
         Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1306,9 +1297,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease5() throws Exception {
-        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
         Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1383,7 +1372,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         send(receiver, lineData, tableName, WAIT_NO_WAIT);
     }
 
-    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool, boolean closeIoPoolFirst) throws SqlException {
+    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {
         String tableName = "tab";
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
@@ -1407,7 +1396,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             new Thread(() -> {
                 try {
-                    (closeIoPoolFirst ? ioPool : writerPool).halt();
+                    ioPool.halt();
 
                     long start = System.currentTimeMillis();
                     while (engine.getMetrics().health().unhandledErrorsCount() == 0) {
@@ -1417,9 +1406,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
 
-                    if (writerPool != ioPool) {
-                        (closeIoPoolFirst ? writerPool : ioPool).halt();
-                    }
+                    if (writerPool != ioPool) (writerPool).halt();
 
                     receiver.close();
                 } catch (Throwable e) {
