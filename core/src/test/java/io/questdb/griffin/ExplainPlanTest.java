@@ -2921,22 +2921,22 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     ") TIMESTAMP(EventTime) PARTITION BY DAY;");
 
             assertPlan("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" +
-                    "FROM hits", "VirtualRecord\n" +
-                    "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
-                    "    GroupBy vectorized: true\n" +
-                    "      values: [sum(resolutIONWidth),count(resolutIONWidth),count()]\n" +
-                    "        DataFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: hits\n");
+                            "FROM hits",
+                    "VirtualRecord\n" +
+                            "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
+                            "    GroupBy vectorized: true\n" +
+                            "      values: [sum(resolutIONWidth),count(resolutIONWidth),count()]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: hits\n");
         });
-
     }
 
     @Test
     public void testSampleBy() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h",
-                "SampleByFillNoneNotKeyed\n" +
+                "SampleBy\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2947,7 +2947,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByFillLinear() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(linear)",
-                "SampleByInterpolate\n" +
+                "SampleBy\n" +
+                        "  fill: linear\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2958,7 +2959,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByFillNull() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(null)",
-                "SampleByFillNullNotKeyed\n" +
+                "SampleBy\n" +
+                        "  fill: null\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2969,7 +2971,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByFillPrevKeyed() throws Exception {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, first(i) from a sample by 1h fill(prev)",
-                "SampleByFillPrev\n" +
+                "SampleBy\n" +
+                        "  fill: prev\n" +
                         "  keys: [s]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -2981,7 +2984,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(prev)",
-                "SampleByFillPrevNotKeyed\n" +
+                "SampleByFillPrev\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -2992,7 +2995,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByFillValueKeyed() throws Exception {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, first(i) from a sample by 1h fill(1)",
-                "SampleByFillValue\n" +
+                "SampleBy\n" +
+                        "  fill: value\n" +
                         "  keys: [s]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -3004,7 +3008,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select first(i) from a sample by 1h fill(1)",
-                "SampleByFillValueNotKeyed\n" +
+                "SampleBy\n" +
+                        "  fill: value\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -3033,7 +3038,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByKeyed0() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, i, first(i) from a sample by 1h",
-                "SampleByFillNone\n" +
+                "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -3045,7 +3050,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByKeyed1() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, i, first(i) from a sample by 1h",
-                "SampleByFillNone\n" +
+                "SampleBy\n" +
                         "  keys: [l,i]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -3057,7 +3062,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByKeyed2() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i) from a sample by 1h fill(null)",
-                "SampleByFillNull\n" +
+                "SampleBy\n" +
+                        "  fill: null\n" +
                         "  keys: [l]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -3069,7 +3075,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByKeyed3() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i) from a sample by 1d fill(linear)",
-                "SampleByInterpolate\n" +
+                "SampleBy\n" +
+                        "  fill: linear\n" +
                         "  keys: [l]\n" +
                         "  values: [first(i)]\n" +
                         "    DataFrame\n" +
@@ -3081,7 +3088,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByKeyed4() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i), last(i) from a sample by 1d fill(1,2)",
-                "SampleByFillValue\n" +
+                "SampleBy\n" +
+                        "  fill: value\n" +
                         "  keys: [l]\n" +
                         "  values: [first(i),last(i)]\n" +
                         "    DataFrame\n" +
@@ -3093,7 +3101,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSampleByKeyed5() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts);",
                 "select l, first(i), last(i) from a sample by 1d fill(prev,prev)",
-                "SampleByFillValue\n" +
+                "SampleBy\n" +
+                        "  fill: value\n" +
                         "  keys: [l]\n" +
                         "  values: [first(i),last(i)]\n" +
                         "    DataFrame\n" +

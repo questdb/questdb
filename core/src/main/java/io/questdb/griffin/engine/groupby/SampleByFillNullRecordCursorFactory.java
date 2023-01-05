@@ -100,7 +100,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleByFillNull");
+        sink.type("SampleBy");
+        sink.attr("fill").val("null");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);

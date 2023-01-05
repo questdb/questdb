@@ -386,7 +386,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleByInterpolate");
+        sink.type("SampleBy");
+        sink.attr("fill").val("linear");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
         sink.child(base);

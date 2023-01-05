@@ -94,8 +94,8 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleByFillValueNotKeyed");
-        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.type("SampleBy");
+        sink.attr("fill").val("value");
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }
