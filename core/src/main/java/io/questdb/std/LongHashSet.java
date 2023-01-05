@@ -62,12 +62,6 @@ public class LongHashSet extends AbstractLongHashSet {
         return true;
     }
 
-    public final void addAll(LongHashSet that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
-        }
-    }
-
     public void addAt(int index, long key) {
         keys[index] = key;
         list.add(key);

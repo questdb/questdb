@@ -32,7 +32,7 @@ public class CompactLongHashSetTest {
     @Test
     public void testBasicOperations() {
         Rnd rnd = new Rnd();
-        LongHashSet set = new LongHashSet();
+        CompactLongHashSet set = new CompactLongHashSet();
         final int N = 1000;
 
         for (int i = 0; i < N; i++) {
@@ -50,12 +50,6 @@ public class CompactLongHashSetTest {
         rnd.reset();
 
         for (int i = 0; i < N; i++) {
-            Assert.assertEquals(rnd.nextPositiveLong(), set.get(i));
-        }
-
-        rnd.reset();
-
-        for (int i = 0; i < N; i++) {
             Assert.assertTrue(set.contains(rnd.nextPositiveLong()));
         }
     }
@@ -64,8 +58,8 @@ public class CompactLongHashSetTest {
     public void testEqualsAndHashCode() {
         final int items = 100;
 
-        final LongHashSet setA = new LongHashSet();
-        final LongHashSet setB = new LongHashSet();
+        final CompactLongHashSet setA = new CompactLongHashSet();
+        final CompactLongHashSet setB = new CompactLongHashSet();
 
         Assert.assertEquals(setA, setB);
         Assert.assertEquals(setA.hashCode(), setB.hashCode());
@@ -94,7 +88,7 @@ public class CompactLongHashSetTest {
     @Test
     public void testRemove() {
         Rnd rnd = new Rnd();
-        LongHashSet set = new LongHashSet();
+        CompactLongHashSet set = new CompactLongHashSet();
         final int N = 1000;
         for (int i = 0; i < N; i++) {
             Assert.assertTrue(set.add(rnd.nextPositiveLong()));

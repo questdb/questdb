@@ -51,14 +51,16 @@ public class CompactLongHashSet extends AbstractLongHashSet {
      * Adds key to hash set preserving key uniqueness.
      *
      * @param key immutable sequence of characters.
+     * @return false if key is already in the set and true otherwise.
      */
-    public void add(long key) {
+    public boolean add(long key) {
         int index = keyIndex(key);
         if (index < 0) {
-            return;
+            return false;
         }
 
         addAt(index, key);
+        return true;
     }
 
     public void addAt(int index, long key) {
@@ -72,8 +74,35 @@ public class CompactLongHashSet extends AbstractLongHashSet {
         return keyIndex(key) < 0;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        CompactLongHashSet that = (CompactLongHashSet) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKeyValue && that.excludes(keys[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean excludes(long key) {
         return keyIndex(key) > -1;
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKeyValue) {
+                hashCode += keys[i];
+            }
+        }
+        return hashCode;
     }
 
     @Override
