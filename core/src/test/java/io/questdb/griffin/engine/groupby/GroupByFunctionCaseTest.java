@@ -215,7 +215,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                             "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
                     "VirtualRecord\n" +
                             "  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
-                            "    SampleByFillNone\n" +
+                            "    SampleBy\n" +
                             "      keys: [candle_st,venue]\n" +
                             "      values: [count(1),sum(qty*price),sum(qty)]\n" +
                             "        SelectedRecord\n" +
