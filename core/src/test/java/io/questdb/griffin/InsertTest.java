@@ -548,6 +548,50 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAutoIncrementUniqueId_NotFirstColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)", sqlExecutionContext);
+
+            executeInsert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            assertSql("currencies", "ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
+                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "ccy\tid\tts\n" +
+                    "USD\t1\t2019-03-10T00:00:00.000000Z\n" +
+                    "EUR\t2\t2019-03-10T01:00:00.000000Z\n" +
+                    "GBP\t3\t2019-03-10T02:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testAutoIncrementUniqueId_FirstColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table currencies(id long, ccy symbol, ts timestamp) timestamp(ts)", sqlExecutionContext);
+
+            executeInsert("insert into currencies values (1, 'USD', '2019-03-10T00:00:00.000000Z')");
+            assertSql("currencies", "id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select max(id) + 1, 'EUR', '2019-03-10T01:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
+                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n");
+
+            compiler.compile("insert into currencies select max(id) + 1, 'GBP', '2019-03-10T02:00:00.000000Z' from currencies", sqlExecutionContext);
+            assertSql("currencies", "id\tccy\tts\n" +
+                    "1\tUSD\t2019-03-10T00:00:00.000000Z\n" +
+                    "2\tEUR\t2019-03-10T01:00:00.000000Z\n" +
+                    "3\tGBP\t2019-03-10T02:00:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testInsertMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table trades (ts timestamp, sym symbol) timestamp(ts);", sqlExecutionContext);

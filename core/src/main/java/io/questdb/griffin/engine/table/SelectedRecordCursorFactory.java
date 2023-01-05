@@ -45,6 +45,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean followedLimitAdvice() {
+        return base.followedLimitAdvice();
+    }
+
+    @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
     }
@@ -57,6 +62,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public boolean hasDescendingOrder() {
         return base.hasDescendingOrder();
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return base.implementsLimit();
     }
 
     @Override
