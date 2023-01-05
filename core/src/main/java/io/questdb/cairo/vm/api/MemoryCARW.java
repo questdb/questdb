@@ -28,7 +28,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
 
 //contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
@@ -39,8 +38,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     default long getAddress() {
         return getPageAddress(0);
     }
-
-    FloatingDirectCharSink getFloatingSink();
 
     default long putBin(BinarySequence value) {
         if (value != null) {
@@ -248,20 +245,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
-        if (value != null) {
-            final int len = value.length();
-            long addr = getAddress();
-            final long storageLen = Vm.getStorageLength(len);
-            checkAndExtend(addr + storageLen);
-
-            FloatingDirectCharSink sink = getFloatingSink();
-            sink.of(addr + 4, addr + storageLen);
-            Chars.utf8ToUtf16(value, sink, true);
-            updateAppendAddress(sink.getLo());
-            return getAppendOffset();
-        }
-        return putStr(value);
+        throw new UnsupportedOperationException();
     }
-
-    void updateAppendAddress(long appendAddress);
 }
