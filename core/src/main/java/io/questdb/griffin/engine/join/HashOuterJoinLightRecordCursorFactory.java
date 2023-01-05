@@ -108,7 +108,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Hash outer join light");
+        sink.type("Hash Outer Join Light");
         sink.optAttr("condition", joinContext);
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);

@@ -108,7 +108,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Hash outer join");
+        sink.type("Hash Outer Join");
         sink.optAttr("condition", joinContext);
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);

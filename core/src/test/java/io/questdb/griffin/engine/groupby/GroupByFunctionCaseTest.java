@@ -124,7 +124,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
 
                     planSink.clear();
-                    planSink.put("GroupByRecord vectorized: ").put(vectorized).put("\n")
+                    planSink.put("GroupBy vectorized: ").put(vectorized).put("\n")
                             .put("  keys: [key]\n")
                             .put("  values: [").put(expectedFunction).put("]\n")
                             .put(vectorized ? "  workers: 1\n" : "")

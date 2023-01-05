@@ -112,7 +112,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Lt join light");
+        sink.type("Lt Join Light");
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);

@@ -92,7 +92,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Cross join");
+        sink.type("Cross Join");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

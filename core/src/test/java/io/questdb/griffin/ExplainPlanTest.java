@@ -74,7 +74,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
                         "    SelectedRecord\n" +
                         "        Filter filter: a.ts>=dateadd('m',-1,b2.ts)\n" +
-                        "            Cross join\n" +
+                        "            Cross Join\n" +
                         "                Filter filter: b.age=10\n" +
                         "                    Nested Loop Left Join\n" +
                         "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
@@ -129,7 +129,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "  functions: [name,age,address,ts,dateadd('m',-1,ts1),dateadd('m',1,ts1)]\n" +
                         "    SelectedRecord\n" +
                         "        Filter filter: a.ts>=dateadd('m',-1,b2.ts)\n" +
-                        "            Cross join\n" +
+                        "            Cross Join\n" +
                         "                Filter filter: a.age=b.age\n" +
                         "                    Nested Loop Left Join\n" +
                         "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
@@ -311,7 +311,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i/10=b.i\n" +
-                            "        AsOf join light\n" +
+                            "        AsOf Join Light\n" +
                             "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -330,7 +330,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a asof join b on ts",
                     "SelectedRecord\n" +
-                            "    AsOf join light\n" +
+                            "    AsOf Join Light\n" +
                             "      condition: b.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -349,7 +349,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a asof join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    AsOf join light\n" +
+                            "    AsOf Join Light\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -369,7 +369,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    AsOf join light\n" +
+                            "    AsOf Join Light\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -394,9 +394,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "asof join b on ts " +
                             "asof join a c on ts",
                     "SelectedRecord\n" +
-                            "    AsOf join light\n" +
+                            "    AsOf Join Light\n" +
                             "      condition: c.ts=a.ts\n" +
-                            "        AsOf join light\n" +
+                            "        AsOf Join Light\n" +
                             "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -423,7 +423,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "where a.i = b.i",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
-                            "        AsOf join [no key record]\n" +
+                            "        AsOf Join [no key record]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -444,7 +444,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                                 "from a " +
                                 "asof join b on a.i = b.i",
                         "SelectedRecord\n" +
-                                "    AsOf join\n" +
+                                "    AsOf Join\n" +
                                 "      condition: b.i=a.i\n" +
                                 "        DataFrame\n" +
                                 "            Row forward scan\n" +
@@ -466,7 +466,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a asof join b",
                     "SelectedRecord\n" +
-                            "    AsOf join\n" +
+                            "    AsOf Join\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -505,7 +505,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "count(dat) cdat, " +
                         "count(ts) cts " +
                         "from x",
-                "GroupByRecord vectorized: true\n" +
+                "GroupBy vectorized: true\n" +
                         "  keys: [k]\n" +
                         "  values: [count(),count(),count(i),count(l),count(d),count(dat),count(ts)]\n" +
                         "  workers: 1\n" +
@@ -536,7 +536,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int)",
                 "select * from a cross join a b",
                 "SelectedRecord\n" +
-                        "    Cross join\n" +
+                        "    Cross Join\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
@@ -550,8 +550,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int)",
                 "select * from a cross join a b cross join a c",
                 "SelectedRecord\n" +
-                        "    Cross join\n" +
-                        "        Cross join\n" +
+                        "    Cross Join\n" +
+                        "        Cross Join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -786,7 +786,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "            \"filter\": \"0<a.l+b.l\",\n" +
                 "            \"Plans\": [\n" +
                 "            {\n" +
-                "                \"Node Type\": \"Hash join\",\n" +
+                "                \"Node Type\": \"Hash Join\",\n" +
                 "                \"condition\": \"b.l=a.l\",\n" +
                 "                \"Plans\": [\n" +
                 "                {\n" +
@@ -845,7 +845,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "[\n" +
                         "  {\n" +
                         "    \"Plan\": {\n" +
-                        "        \"Node Type\": \"GroupByRecord\",\n" +
+                        "        \"Node Type\": \"GroupBy\",\n" +
                         "        \"vectorized\":  false,\n" +
                         "        \"keys\": \"[d]\",\n" +
                         "        \"values\": \"[max(i)]\",\n" +
@@ -897,7 +897,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
                         "            \"Plans\": [\n" +
                         "            {\n" +
-                        "                \"Node Type\": \"Cross join\",\n" +
+                        "                \"Node Type\": \"Cross Join\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
                         "                    \"Node Type\": \"DataFrame\",\n" +
@@ -937,7 +937,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "select * from a join (select l from a where l > 10 limit 4) b on l where a.l+b.l > 0 ",
                     "SelectedRecord\n" +
                             "    Filter filter: 0<a.l+b.l\n" +
-                            "        Hash join\n" +
+                            "        Hash Join\n" +
                             "          condition: b.l=a.l\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -962,7 +962,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("create table a ( l long)",
                     "select * from a join (select l from a limit 40) on l",
                     "SelectedRecord\n" +
-                            "    Hash join\n" +
+                            "    Hash Join\n" +
                             "      condition: _xQdbA1.l=a.l\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -984,7 +984,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("create table a ( l long)",
                     "select * from a left join a a1 on l",
                     "SelectedRecord\n" +
-                            "    Hash outer join\n" +
+                            "    Hash Outer Join\n" +
                             "      condition: a1.l=a.l\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -1230,7 +1230,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByBoolean() throws Exception {
         assertPlan("create table a ( l long, b boolean)",
                 "select b, min(l)  from a group by b",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
                         "    DataFrame\n" +
@@ -1242,7 +1242,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByBooleanFunction() throws Exception {
         assertPlan("create table a ( l long, b1 boolean, b2 boolean)",
                 "select b1||b2, min(l) from a group by b1||b2",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [concat]\n" +
                         "  values: [min(l)]\n" +
                         "    VirtualRecord\n" +
@@ -1256,7 +1256,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByDouble() throws Exception {
         assertPlan("create table a ( l long, d double)",
                 "select d, min(l) from a group by d",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [d]\n" +
                         "  values: [min(l)]\n" +
                         "    DataFrame\n" +
@@ -1268,7 +1268,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByFloat() throws Exception {
         assertPlan("create table a ( l long, f float)",
                 "select f, min(l) from a group by f",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [f]\n" +
                         "  values: [min(l)]\n" +
                         "    DataFrame\n" +
@@ -1280,7 +1280,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByHour() throws Exception {
         assertPlan("create table a ( ts timestamp, d double)",
                 "select hour(ts), min(d) from a group by hour(ts)",
-                "GroupByRecord vectorized: true\n" +
+                "GroupBy vectorized: true\n" +
                         "  keys: [ts]\n" +
                         "  values: [min(d)]\n" +
                         "  workers: 1\n" +
@@ -1293,7 +1293,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByInt1() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select min(d), i from a group by i",
-                "GroupByRecord vectorized: true\n" +
+                "GroupBy vectorized: true\n" +
                         "  keys: [i]\n" +
                         "  values: [min(d)]\n" +
                         "  workers: 1\n" +
@@ -1305,7 +1305,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test//repeated int key disables vectorized impl
     public void testGroupByInt2() throws Exception {
         assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [i,i1]\n" +
                         "  values: [min(d)]\n" +
                         "    DataFrame\n" +
@@ -1319,7 +1319,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
         assertPlan("create table b ( j int, e double)",
                 "select d, max(i) from (select * from a except select * from b)",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [d]\n" +
                         "  values: [max(i)]\n" +
                         "    Except\n" +
@@ -1338,7 +1338,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
         assertPlan("create table b ( j int, e double)",
                 "select d, max(i) from (select * from a intersect select * from b)",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [d]\n" +
                         "  values: [max(i)]\n" +
                         "    Intersect\n" +
@@ -1355,7 +1355,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByKeyedOnUnion() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select d, max(i) from (select * from a union select * from a)",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [d]\n" +
                         "  values: [max(i)]\n" +
                         "    Union\n" +
@@ -1371,7 +1371,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByKeyedOnUnionAll() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select d, max(i) from (select * from a union all select * from a)",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [d]\n" +
                         "  values: [max(i)]\n" +
                         "    Union All\n" +
@@ -1387,7 +1387,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testGroupByLong() throws Exception {
         assertPlan("create table a ( l long, d double)",
                 "select l, min(d) from a group by l",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [l]\n" +
                         "  values: [min(d)]\n" +
                         "    DataFrame\n" +
@@ -1561,7 +1561,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a left join b on i",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b.i=a.i\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -1582,7 +1582,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from a left join b on i where b.i is not null",
                     "SelectedRecord\n" +
                             "    Filter filter: b.i!=null\n" +
-                            "        Hash outer join light\n" +
+                            "        Hash Outer Join Light\n" +
                             "          condition: b.i=a.i\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -1647,8 +1647,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a, b where a.i1 = b.i2",
                     "SelectedRecord\n" +
-                            "    Cross join\n" +
-                            "        Cross join\n" +
+                            "    Cross Join\n" +
+                            "        Cross Join\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -1812,7 +1812,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupByRecord vectorized: true\n" +
+                        "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
                         "              values: [count(1)]\n" +
                         "              workers: 1\n" +
@@ -1832,7 +1832,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupByRecord vectorized: true\n" +
+                        "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
                         "              values: [count(1)]\n" +
                         "              workers: 1\n" +
@@ -1851,7 +1851,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupByRecord vectorized: true\n" +
+                        "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
                         "              values: [count(1)]\n" +
                         "              workers: 1\n" +
@@ -1870,7 +1870,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctKey\n" +
-                        "            GroupByRecord vectorized: true\n" +
+                        "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
                         "              values: [count(1)]\n" +
                         "              workers: 1\n" +
@@ -2103,7 +2103,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a=b",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b=a\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2123,7 +2123,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2186,7 +2186,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from taba " +
                             "left join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
                             "        DataFrame\n" +
@@ -2215,7 +2215,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "SelectedRecord\n" +
                             "    Hash Join Light\n" +
                             "      condition: c1=a1\n" +
-                            "        Hash outer join light\n" +
+                            "        Hash Outer Join Light\n" +
                             "          condition: b1=a1\n" +
                             "          filter: taba.a1=5\n" +
                             "            DataFrame\n" +
@@ -2241,7 +2241,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
                             "        DataFrame\n" +
@@ -2263,7 +2263,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "      filter: taba.a2+5=tabb.b2+10\n" +
                             "        DataFrame\n" +
@@ -2285,7 +2285,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10 and 1=0",
                     "SelectedRecord\n" +
-                            "    Hash outer join\n" +
+                            "    Hash Outer Join\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "      filter: false\n" +
                             "        DataFrame\n" +
@@ -2306,7 +2306,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2!=a2",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: taba.a2!=taba.a2\n" +
                             "        DataFrame\n" +
@@ -2328,7 +2328,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from taba left join tabb on a1=b1  and a2=a2",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: taba.a2=taba.a2\n" +
                             "        DataFrame\n" +
@@ -2351,7 +2351,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from taba " +
                             "left join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
                     "SelectedRecord\n" +
-                            "    Hash outer join light\n" +
+                            "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
                             "        DataFrame\n" +
@@ -2376,7 +2376,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "where a1+10 < b1 - 10",
                     "SelectedRecord\n" +
                             "    Filter filter: taba.a1+10<tabb.b1-10\n" +
-                            "        Hash outer join light\n" +
+                            "        Hash Outer Join Light\n" +
                             "          condition: b2=a2 and b1=a1\n" +
                             "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
                             "            DataFrame\n" +
@@ -2399,7 +2399,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
                     "SelectedRecord\n" +
                             "    Filter filter: taba.a1=tabb.b1\n" +
-                            "        Hash outer join light\n" +
+                            "        Hash Outer Join Light\n" +
                             "          condition: b2=a2 and b1=a1\n" +
                             "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
                             "            DataFrame\n" +
@@ -2422,7 +2422,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from taba left join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
                     "SelectedRecord\n" +
                             "    Filter filter: taba.a2=tabb.b2\n" +
-                            "        Hash outer join light\n" +
+                            "        Hash Outer Join Light\n" +
                             "          condition: b1=a1\n" +
                             "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
                             "            DataFrame\n" +
@@ -2484,7 +2484,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2",
                     "SelectedRecord\n" +
                             "    Filter filter: a.ts::long*a.i<b.ts::long*b.i\n" +
-                            "        Lt join light\n" +
+                            "        Lt Join Light\n" +
                             "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -2503,7 +2503,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a lt join b on ts",
                     "SelectedRecord\n" +
-                            "    Lt join light\n" +
+                            "    Lt Join Light\n" +
                             "      condition: b.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2526,7 +2526,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
-                            "    Lt join light\n" +
+                            "    Lt Join Light\n" +
                             "        Async JIT Filter\n" +
                             "          filter: i=ts WRONG!\n" +//no guarantee that a.ts = b.ts 
                             "          workers: 1\n" +
@@ -2549,7 +2549,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt join light\n" +
+                            "        Lt Join Light\n" +
                             "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -2570,7 +2570,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt join no key\n" +
+                            "        Lt Join no key\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -2588,7 +2588,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a lt join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    Lt join light\n" +
+                            "    Lt Join Light\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2609,9 +2609,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 compiler.setFullFatJoins(true);
                 assertPlan("select * " +
                                 "from a " +
-                                "Lt join b on a.i = b.i",
+                                "Lt Join b on a.i = b.i",
                         "SelectedRecord\n" +
-                                "    Lt join\n" +
+                                "    Lt Join\n" +
                                 "      condition: b.i=a.i\n" +
                                 "        DataFrame\n" +
                                 "            Row forward scan\n" +
@@ -2633,7 +2633,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    Lt join light\n" +
+                            "    Lt Join Light\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -2658,9 +2658,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "lt join b on ts " +
                             "lt join a c on ts",
                     "SelectedRecord\n" +
-                            "    Lt join light\n" +
+                            "    Lt Join Light\n" +
                             "      condition: c.ts=a.ts\n" +
-                            "        Lt join light\n" +
+                            "        Lt Join Light\n" +
                             "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -3156,7 +3156,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select count(*) from (select * from a lt join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Lt join\n" +
+                        "        Lt Join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -3171,7 +3171,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select count(*) from (select * from a asof join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        AsOf join\n" +
+                        "        AsOf Join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -3186,7 +3186,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select count(*) from (select * from a cross join a b) ",
                 "Count\n" +
                         "    SelectedRecord\n" +
-                        "        Cross join\n" +
+                        "        Cross Join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -3407,7 +3407,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
                 "DistinctKey\n" +
-                        "    GroupByRecord vectorized: true\n" +
+                        "    GroupBy vectorized: true\n" +
                         "      keys: [s]\n" +
                         "      values: [count(1)]\n" +
                         "      workers: 1\n" +
@@ -3421,7 +3421,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
                 "DistinctKey\n" +
-                        "    GroupByRecord vectorized: true\n" +
+                        "    GroupBy vectorized: true\n" +
                         "      keys: [s]\n" +
                         "      values: [count(1)]\n" +
                         "      workers: 1\n" +
@@ -4721,7 +4721,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectWithReorder3() throws Exception {
         assertPlan("create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ",
-                "GroupByRecord vectorized: false\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [k]\n" +
                         "  values: [max(ts)]\n" +
                         "    SelectedRecord\n" +
@@ -4741,7 +4741,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "from a where l::short<i ) " +
                         "where mil + mini> 1 ",
                 "Filter filter: 1<mil+mini\n" +
-                        "    GroupByRecord vectorized: false\n" +
+                        "    GroupBy vectorized: false\n" +
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
                         "        SelectedRecord\n" +
@@ -4762,7 +4762,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a splice join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
-                            "    Splice join\n" +
+                            "    Splice Join\n" +
                             "        Async JIT Filter\n" +
                             "          filter: i=ts WRONG!\n" +
                             "          workers: 1\n" +
@@ -4784,7 +4784,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from a splice join b on ts where a.i + b.i = 1",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i+b.i=1\n" +
-                            "        Splice join\n" +
+                            "        Splice Join\n" +
                             "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -4803,7 +4803,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a splice join b on ts",
                     "SelectedRecord\n" +
-                            "    Splice join\n" +
+                            "    Splice Join\n" +
                             "      condition: b.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -4822,7 +4822,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a splice join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
-                            "    Splice join\n" +
+                            "    Splice Join\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -4842,7 +4842,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
-                            "    Splice join\n" +
+                            "    Splice Join\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -4866,7 +4866,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from a splice join b where a.i = b.i",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
-                            "        Splice join\n" +
+                            "        Splice Join\n" +
                             "          condition: \n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +

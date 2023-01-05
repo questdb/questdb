@@ -134,7 +134,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Splice join");
+        sink.type("Splice Join");
         sink.optAttr("condition", joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);

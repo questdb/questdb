@@ -113,7 +113,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf join light");
+        sink.type("AsOf Join Light");
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);

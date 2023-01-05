@@ -89,7 +89,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf join");
+        sink.type("AsOf Join");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
