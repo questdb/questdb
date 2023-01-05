@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -39,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 // contiguous mapped appendable readable writable
 public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
-    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
     private long extendSegmentMsb;
@@ -141,11 +139,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public int getFd() {
         return fd;
-    }
-
-    @Override
-    public FloatingDirectCharSink getFloatingSink() {
-        return floatingDirectCharSink;
     }
 
     @Override
@@ -265,11 +258,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             Vect.memset(mem + sz, fileSize - sz, 0);
             ff.munmap(mem, fileSize, memoryTag);
         }
-    }
-
-    @Override
-    public void updateAppendAddress(long appendAddress) {
-        this.appendAddress = appendAddress;
     }
 
     @Override

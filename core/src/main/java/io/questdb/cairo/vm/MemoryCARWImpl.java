@@ -29,7 +29,6 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.FloatingDirectCharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -40,7 +39,6 @@ import org.jetbrains.annotations.NotNull;
  */
 public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Mutable {
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
-    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
     private final int memoryTag;
@@ -111,11 +109,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public FloatingDirectCharSink getFloatingSink() {
-        return floatingDirectCharSink;
-    }
-
-    @Override
     public long getPageSize() {
         return getExtendSegmentSize();
     }
@@ -160,11 +153,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         extend0(0);
         // reset append offset
         appendAddress = pageAddress;
-    }
-
-    @Override
-    public void updateAppendAddress(long appendAddress) {
-        this.appendAddress = appendAddress;
     }
 
     @Override
