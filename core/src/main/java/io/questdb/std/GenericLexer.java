@@ -98,7 +98,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             FloatingSequence that = lexer.csPool.next();
             that.lo = lexer._lo;
             that.hi = lexer._hi;
-            assert that.lo < that.hi;
+            assert that.lo <= that.hi;
             return that;
         }
         return value;
@@ -168,7 +168,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         FloatingSequence that = csPool.next();
         that.lo = lo;
         that.hi = hi;
-        assert that.lo < that.hi;
+        assert that.lo <= that.hi;
         return that;
     }
 
@@ -177,9 +177,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
-        if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
-            throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
-        }
         FloatingSequencePair seqPair = csPairPool.next();
         seqPair.cs0 = (FloatingSequence) value0;
         seqPair.cs1 = (FloatingSequence) immutableOf(value1);
@@ -505,7 +502,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             FloatingSequence that = csPool.next();
             that.lo = lo + start;
             that.hi = lo + end;
-            assert that.lo < that.hi;
+            assert that.lo <= that.hi;
             return that;
         }
     }
