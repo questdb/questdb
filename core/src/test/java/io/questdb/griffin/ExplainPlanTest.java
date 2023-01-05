@@ -61,7 +61,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     protected final static Log LOG = LogFactory.getLog(ExplainPlanTest.class);
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinDoesntMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
@@ -89,7 +88,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                    Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinDoesntMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
@@ -116,7 +114,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinDoesntMoveOtherTwoTableEqJoinPredicate() throws Exception {
         test2686Prepare();
@@ -144,7 +141,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                    Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinDoesntPushJoinPredicateToLeftTable() throws Exception {
         test2686Prepare();
@@ -165,7 +161,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinDoesntPushJoinPredicateToRightTable() throws Exception {
         test2686Prepare();
@@ -184,7 +179,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinDoesntPushWherePredicateToRightTable() throws Exception {
         test2686Prepare();
@@ -207,7 +201,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                    Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftJoinCondition() throws Exception {
         test2686Prepare();
@@ -228,7 +221,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: table_2\n"));
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftTable() throws Exception {
         test2686Prepare();
@@ -290,15 +282,23 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: t\n");
     }
 
-    @Ignore
-    @Test//FIXME
+    @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( i int, ts timestamp) timestamp(ts)");
             compile("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a asof join b on ts where a.i = b.ts::int",
-                    "");
+                    "SelectedRecord\n" +
+                            "    Filter filter: a.i=b.ts::int\n" +
+                            "        AsOf Join Light\n" +
+                            "          condition: b.ts=a.ts\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n");
         });
     }
 
@@ -410,7 +410,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test//where clause predicate can't be pushed to join clause because asof is and outer join 
     public void testAsOfJoin5() throws Exception {
         assertMemoryLeak(() -> {
@@ -423,7 +422,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "where a.i = b.i",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
-                            "        AsOf Join [no key record]\n" +
+                            "        AsOf Join\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -515,20 +514,26 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         );
     }
 
-    @Ignore
-    @Test//TODO: check this plan, hash join is not expected here. It's treated as  a.s1=b.s2! 
+    @Test
     public void testCrossJoin0() throws Exception {
         assertPlan("create table a ( i int, s1 string, s2 string)",
                 "select * from a cross join a b where length(a.s1) = length(b.s2)",
                 "SelectedRecord\n" +
-                        "    Hash Join Light\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n" +
-                        "        Hash\n" +
+                        "    Filter filter: length(a.s1)=length(b.s2)\n" +
+                        "        Cross Join\n" +
                         "            DataFrame\n" +
                         "                Row forward scan\n" +
-                        "                Frame forward scan on: a\n\n");
+                        "                Frame forward scan on: a\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testCrossJoin0Output() throws Exception {
+        assertQuery("cnt\n9\n",
+                "select count(*) cnt from a cross join a b where length(a.s1) = length(b.s2)",
+                "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(3))", null, false, true, true);
     }
 
     @Test
@@ -561,14 +566,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n");
-    }
-
-    @Ignore
-    @Test//FIXME! where clause condition should be true for all row pairs but is executed as a.s1 = b.s2!
-    public void testCrossJoinOutput() throws Exception {
-        assertQuery("",
-                "select * from a cross join a b where length(a.s1) = length(b.s2)",
-                "create table a as (select x, 's' || x as s1, 's' || (x%3) as s2 from long_sequence(6))", null, false);
     }
 
     @Test
@@ -893,33 +890,29 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        \"Node Type\": \"SelectedRecord\",\n" +
                         "        \"Plans\": [\n" +
                         "        {\n" +
-                        "            \"Node Type\": \"Filter\",\n" +
+                        "            \"Node Type\": \"Nested Loop Left Join\",\n" +
                         "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
                         "            \"Plans\": [\n" +
                         "            {\n" +
-                        "                \"Node Type\": \"Cross Join\",\n" +
+                        "                \"Node Type\": \"DataFrame\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
-                        "                    \"Node Type\": \"DataFrame\",\n" +
-                        "                    \"Plans\": [\n" +
-                        "                    {\n" +
-                        "                        \"Node Type\": \"Row forward scan\"\n" +
-                        "                    },\n" +
-                        "                    {\n" +
-                        "                        \"Node Type\": \"Frame forward scan\",\n" +
-                        "                        \"on\": \"taba\"\n" +
-                        "                    } ]\n" +
+                        "                    \"Node Type\": \"Row forward scan\"\n" +
                         "                },\n" +
                         "                {\n" +
-                        "                    \"Node Type\": \"DataFrame\",\n" +
-                        "                    \"Plans\": [\n" +
-                        "                    {\n" +
-                        "                        \"Node Type\": \"Row forward scan\"\n" +
-                        "                    },\n" +
-                        "                    {\n" +
-                        "                        \"Node Type\": \"Frame forward scan\",\n" +
-                        "                        \"on\": \"tabb\"\n" +
-                        "                    } ]\n" +
+                        "                    \"Node Type\": \"Frame forward scan\",\n" +
+                        "                    \"on\": \"taba\"\n" +
+                        "                } ]\n" +
+                        "            },\n" +
+                        "            {\n" +
+                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Plans\": [\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"Row forward scan\"\n" +
+                        "                },\n" +
+                        "                {\n" +
+                        "                    \"Node Type\": \"Frame forward scan\",\n" +
+                        "                    \"on\": \"tabb\"\n" +
                         "                } ]\n" +
                         "            } ]\n" +
                         "        } ]\n" +
@@ -1595,57 +1588,17 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Ignore
-    @Test//FIXME: fails with "[24] unsupported join type" because full & right joins are not implemented yet
-    public void testHashRightJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table a ( i int)");
-            compile("create table b ( i int)");
-
-            assertPlan("select * from a right join b on i",
-                    "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: a\n" +
-                            "        Hash\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: b\n");
-        });
-    }
-
     //FIXME
-    //fails with io.questdb.griffin.SqlException: [42] Invalid table name or alias
-    //looks like column aliasing doesn't work for right-joined tables
-    @Ignore //fails with unsupported join 
-    @Test //FIXME: fails with "[24] unsupported join type" because full & right joins are not implemented yet
-    public void testHashRightJoin1() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table a (i int)");
-            compile("create table b (i int)");
-
-            assertPlan("select bi,ai from (select b.i bi, a.i ai from a right join b on i) where bi < ai",
-                    "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: a\n" +
-                            "        Hash\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: b\n");
-        });
-    }
-
-    //FIXME
-    @Ignore("Fails with 'io.questdb.griffin.SqlException: [17] unexpected token: b'")
+    //@Ignore("Fails with 'io.questdb.griffin.SqlException: [17] unexpected token: b'")
     @Test
     public void testImplicitJoin() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( i1 int)");
             compile("create table b ( i2 int)");
 
-            assertPlan("select * from a, b where a.i1 = b.i2",
+            assertQuery("", "select * from a , b where a.i1 = b.i2", null, null);
+
+            assertPlan("select * from a , b where a.i1 = b.i2",
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
                             "        Cross Join\n" +
@@ -2135,7 +2088,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test //FIXME: there should be no separate filter 
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
@@ -2155,7 +2107,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test //FIXME: join and where clause filters should be separated 
     public void testLeftJoinWithEquality4() throws Exception {
         assertMemoryLeak(() -> {
@@ -2176,7 +2127,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test //FIXME: ORed predicates should be applied as filter in hash join   
     public void testLeftJoinWithEquality5() throws Exception {
         assertMemoryLeak(() -> {
@@ -2201,7 +2151,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     //left join conditions aren't transitive because left record + null right is produced if they fail
     //that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLeftJoinWithEquality6() throws Exception {
         assertMemoryLeak(() -> {
@@ -2232,7 +2181,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLeftJoinWithEqualityAndExpressions1() throws Exception {
         assertMemoryLeak(() -> {
@@ -2254,7 +2202,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLeftJoinWithEqualityAndExpressions2() throws Exception {
         assertMemoryLeak(() -> {
@@ -2276,7 +2223,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLeftJoinWithEqualityAndExpressions3() throws Exception {
         assertMemoryLeak(() -> {
@@ -2296,7 +2242,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     //FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
     @Test
     public void testLeftJoinWithEqualityAndExpressions4() throws Exception {
@@ -2319,7 +2264,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test//FIXME: a2=a2 run as past of left join or be optimized away ! 
     public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
         assertMemoryLeak(() -> {
@@ -2341,7 +2285,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test//left join filter must remain intact !  
     public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
         assertMemoryLeak(() -> {
@@ -2364,7 +2307,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test //FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  ! 
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
         assertMemoryLeak(() -> {
@@ -2389,7 +2331,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
         assertMemoryLeak(() -> {
@@ -2412,7 +2353,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
         assertMemoryLeak(() -> {
@@ -2435,7 +2375,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test//FIXME: this should work as hash outer join of function results   
     public void testLeftJoinWithExpressions1() throws Exception {
         assertMemoryLeak(() -> {
@@ -2455,7 +2394,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test//FIXME: this should work as hash outer join of function results   
     public void testLeftJoinWithExpressions2() throws Exception {
         assertMemoryLeak(() -> {
@@ -2514,32 +2452,28 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
-    @Test //FIXME a.i = bt.s with a.ts = b.ts gets replaced by ai.=a.ts which is wrong because 
-    //lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
-    //should be Filter + lt join
-    //CONCLUSION: a join b on X  can't always be translated to a join b on a.X = b.X  
+    @Test
     public void testLtJoin1a() throws Exception {
+        //lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
+        //CONCLUSION: a join b on X  can't always be translated to a join b on a.X = b.X
         assertMemoryLeak(() -> {
             compile("create table a ( i int, ts timestamp) timestamp(ts)");
             compile("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertPlan("select * from a lt join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
-                            "    Lt Join Light\n" +
-                            "        Async JIT Filter\n" +
-                            "          filter: i=ts WRONG!\n" +//no guarantee that a.ts = b.ts 
-                            "          workers: 1\n" +
+                            "    Filter filter: a.i=b.ts\n" +
+                            "        Lt Join Light\n" +
+                            "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: b\n");
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n");
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLtJoin1b() throws Exception {
         assertMemoryLeak(() -> {
@@ -2560,7 +2494,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testLtJoin1c() throws Exception {
         assertMemoryLeak(() -> {
@@ -2570,7 +2503,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             assertPlan("select * from a lt join b where a.i = b.ts",
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
-                            "        Lt Join no key\n" +
+                            "        Lt Join\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -4753,7 +4686,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                    Frame forward scan on: a\n");
     }
 
-    @Ignore
     @Test
     public void testSpliceJoin0() throws Exception {
         assertMemoryLeak(() -> {
@@ -4762,16 +4694,15 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
             assertPlan("select * from a splice join b on ts where a.i = b.ts",
                     "SelectedRecord\n" +
-                            "    Splice Join\n" +
-                            "        Async JIT Filter\n" +
-                            "          filter: i=ts WRONG!\n" +
-                            "          workers: 1\n" +
+                            "    Filter filter: a.i=b.ts\n" +
+                            "        Splice Join\n" +
+                            "          condition: b.ts=a.ts\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: b\n");
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: b\n");
         });
     }
 
@@ -4856,7 +4787,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore//reenable after merge with join fix 
     @Test
     public void testSpliceJoin4() throws Exception {
         assertMemoryLeak(() -> {
