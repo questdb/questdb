@@ -70,11 +70,10 @@ class LineTcpMeasurementEvent implements Closeable {
         this.stringToCharCastAllowed = stringToCharCastAllowed;
     }
 
-    public static CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
-        // todo: user visible errors should not report writer index, should probably report name
+    public static CairoException boundsError(long entityValue, int columnIndex, int colType) {
         return CairoException.critical(0)
                 .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
+                .put(" bounds [columnIndex=").put(columnIndex)
                 .put(", value=").put(entityValue)
                 .put(']');
     }
@@ -357,7 +356,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addInt(offset, Numbers.INT_NaN);
                             } else {
-                                throw boundsError(entityValue, columnWriterIndex, ColumnType.INT);
+                                throw boundsError(entityValue, nEntity, ColumnType.INT);
                             }
                             break;
                         }
@@ -368,7 +367,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addShort(offset, (short) 0);
                             } else {
-                                throw boundsError(entityValue, columnWriterIndex, ColumnType.SHORT);
+                                throw boundsError(entityValue, nEntity, ColumnType.SHORT);
                             }
                             break;
                         }
@@ -379,7 +378,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addByte(offset, (byte) 0);
                             } else {
-                                throw boundsError(entityValue, columnWriterIndex, ColumnType.BYTE);
+                                throw boundsError(entityValue, nEntity, ColumnType.BYTE);
                             }
                             break;
                         }
