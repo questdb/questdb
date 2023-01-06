@@ -353,13 +353,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     timestamp = timestampAdapter.getMicros(ent.getLongValue());
                     columnIndex = DUPLICATED_COLUMN;
                 }
-                if (ld.getStructureVersion() < ww.getStructureVersion()) {
-                    // Nope. For WAL tables, it could mean that the column is already dropped. Let's check it.
-                    if (!metadata.hasColumn(columnIndex)) {
-                        // The column was dropped, so we skip it.
-                        columnIndex = COLUMN_NOT_FOUND;
-                    }
-                }
                 columnType = columnIndex < 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);
             }
             ld.addColumnType(columnIndex, columnType);

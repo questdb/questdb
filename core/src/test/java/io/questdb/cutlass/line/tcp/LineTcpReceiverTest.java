@@ -969,6 +969,64 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testNoAutoCreateNewColumns() throws Exception {
+        autoCreateNewColumns = false;
+        runInContext((receiver) -> {
+            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
+            try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
+                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
+            String lineData =
+                    "up out=1.0 631150000000000000\n" +
+                            "up out=2.0 631152000000000000\n" +
+                            "up out=3.0 631160000000000000\n" +
+                            "up out=4.0 631170000000000000\n";
+            sendLinger(receiver, lineData, "up");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("up"));
+            }
+            String expected = "ts\tsym\n";
+            assertTable(expected, "up");
+        });
+        autoCreateNewColumns = true;
+    }
+
+    @Test
+    public void testTimestampColumn() throws Exception {
+        String table = "Timestamp";
+        runInContext((receiver) -> {
+            String lineData = table + ",location=us-midwest timestamp=1465839830100400200t,temperature=82\n" +
+                    table + ",location=us-midwest timestamp=1465839830100500200t,temperature=83\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830101600200t,temperature=81\n" +
+                    table + ",location=us-midwest timestamp=1465839830102300200t,temperature=85\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
+                    table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
+
+            sendLinger(receiver, lineData, table);
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(table));
+            }
+
+            String expected = "location\ttimestamp\ttemperature\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
+                    "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
         runInContext((receiver) -> {
             String lineData =
@@ -988,6 +1046,26 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
                             "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
                             "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+            assertTable(expected, "up");
+        });
+    }
+
+    @Test
+    public void testWithInvalidColumn() throws Exception {
+        runInContext((receiver) -> {
+            String lineData =
+                    "up out=1.0 631150000000000000\n" +
+                            "up ..=2.0 631152000000000000\n" +
+                            "up ..=3.0 631160000000000000\n" +
+                            "up ..=4.0 631170000000000000\n";
+            sendLinger(receiver, lineData, "up");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("up"));
+            }
+            String expected = "out\ttimestamp\n" +
+                    "1.0\t1989-12-31T23:26:40.000000Z\n";
             assertTable(expected, "up");
         });
     }
