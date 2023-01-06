@@ -104,7 +104,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachCannotCopy() throws Exception {
         assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
+            configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
             ff = new FilesFacadeImpl() {
@@ -597,7 +597,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    copyPartitionOnAttach = true;
+                    configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
@@ -656,7 +656,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    copyPartitionOnAttach = true;
+                    configOverrideCopyPartitionOnAttach(true);
                     String tableName = testName.getMethodName();
                     attachableDirSuffix = DETACHED_DIR_MARKER;
 
@@ -1028,7 +1028,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDetachAttachSameDrive() throws Exception {
         assertMemoryLeak(() -> {
-            copyPartitionOnAttach = true;
+            configOverrideCopyPartitionOnAttach(true);
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
             ff = new FilesFacadeImpl() {
@@ -1822,7 +1822,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 dFile(src.chop$(), "ts", -1);
-                long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
+                int fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 8);
                 } finally {
@@ -1979,7 +1979,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab foobar",
                     16,
-                    "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected",
+                    "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected",
                     tableModel
             );
         }

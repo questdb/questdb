@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -45,6 +46,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -266,9 +268,9 @@ public class SqlCompiler implements Closeable {
         return compiledQuery;
     }
 
-    /*
+    /**
      * Allows processing of batches of sql statements (sql scripts) separated by ';' .
-     * Each query is processed in sequence and processing stops on first error and whole batch gets discarded .
+     * Each query is processed in sequence and processing stops on first error and whole batch gets discarded.
      * Noteworthy difference between this and 'normal' query is that all empty queries get ignored, e.g.
      * <br>
      * select 1;<br>
@@ -277,15 +279,15 @@ public class SqlCompiler implements Closeable {
      * <p>
      * Useful PG doc link :
      *
-     * @param query            - block of queries to process
-     * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
+     * @param query         - block of queries to process
+     * @param batchCallback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
     public void compileBatch(
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
 
         LOG.info().$("batch [text=").$(query).I$();
 
@@ -300,7 +302,7 @@ public class SqlCompiler implements Closeable {
         int position;
 
         while (lexer.hasNext()) {
-            //skip over empty statements that'd cause error in parser
+            // skip over empty statements that'd cause error in parser
             position = getNextValidTokenPosition();
             if (position == -1) {
                 return;
@@ -310,10 +312,10 @@ public class SqlCompiler implements Closeable {
             for (int retries = 0; recompileStale; retries++) {
                 try {
                     batchCallback.preCompile(this);
-                    clear();//we don't use normal compile here because we can't reset existing lexer
+                    clear(); // we don't use normal compile here because we can't reset existing lexer
                     CompiledQuery current = compileInner(executionContext, query);
-                    //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-                    //some code in postCompile might need full text of current query
+                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    // some code in postCompile might need full text of current query
                     CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
                     batchCallback.postCompile(this, current, currentQuery);
                     recompileStale = false;
@@ -515,12 +517,41 @@ public class SqlCompiler implements Closeable {
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'param' expected");
                     }
+                } else if (SqlKeywords.isResumeKeyword(tok)) {
+                    tok = expectToken(lexer, "'wal'");
+                    if (!SqlKeywords.isWalKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                    }
+
+                    tok = SqlUtil.fetchNext(lexer); // optional from part
+                    long fromTxn = -1;
+                    if (tok != null) {
+                        if (SqlKeywords.isFromKeyword(tok)) {
+                            tok = expectToken(lexer, "'transaction' or 'txn'");
+                            if (!(SqlKeywords.isTransactionKeyword(tok) || SqlKeywords.isTxnKeyword(tok))) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
+                            }
+                            CharSequence txnValue = expectToken(lexer, "transaction value");
+                            try {
+                                fromTxn = Numbers.parseLong(txnValue);
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(txnValue).put(']');
+                            }
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
+                        }
+                    }
+                    if (!TableSequencerAPI.isWalTable(tableName, path.of(configuration.getRoot()), ff)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), tableName).put(" is not a WAL table.");
+                    }
+                    return alterTableResume(tableNamePosition, tableName, fromTxn, executionContext);
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Throwable) e).$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' could not be altered: ").put(e);
+                e.position(lexer.lastTokenPosition());
+                throw e;
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -665,10 +696,10 @@ public class SqlCompiler implements Closeable {
                     symbolCapacity = configuration.getDefaultSymbolCapacity();
                 }
 
-                if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
+                if (Chars.equalsLowerCaseAsciiNc("cache", tok)) {
                     cache = true;
                     tok = SqlUtil.fetchNext(lexer);
-                } else if (Chars.equalsLowerCaseAsciiNc(tok, "nocache")) {
+                } else if (Chars.equalsLowerCaseAsciiNc("nocache", tok)) {
                     cache = false;
                     tok = SqlUtil.fetchNext(lexer);
                 } else {
@@ -677,12 +708,12 @@ public class SqlCompiler implements Closeable {
 
                 TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-                indexed = Chars.equalsLowerCaseAsciiNc(tok, "index");
+                indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
                 if (indexed) {
                     tok = SqlUtil.fetchNext(lexer);
                 }
 
-                if (Chars.equalsLowerCaseAsciiNc(tok, "capacity")) {
+                if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
                     tok = expectToken(lexer, "symbol index capacity");
 
                     try {
@@ -1019,6 +1050,20 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
         return compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private CompiledQuery alterTableResume(int tableNamePosition, String tableName, long resumeFromTxn, SqlExecutionContext executionContext) {
+        try {
+            engine.getTableSequencerAPI().resumeTable(tableName, resumeFromTxn, executionContext.getCairoSecurityContext());
+            return compiledQuery.ofTableResume();
+        } catch (CairoException ex) {
+            LOG.critical().$("table resume failed [table=").$(tableName)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
+        }
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableNamePosition, int tableId) throws SqlException {

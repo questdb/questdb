@@ -61,7 +61,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = 1;
+        configOverrideDefaultTableWriteMode(SqlWalMode.WAL_ENABLED);
         super.setUp();
     }
 
@@ -714,7 +714,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         try {
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
@@ -757,7 +757,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         try {
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);

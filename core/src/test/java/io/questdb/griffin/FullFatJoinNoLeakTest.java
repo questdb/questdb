@@ -25,135 +25,80 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
-
-import java.lang.reflect.Proxy;
-
+import org.junit.Assert;
+import org.junit.Test;
 
 public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
-    protected static SqlCompiler compiler;
-    protected static SqlExecutionContext sqlExecutionContext;
-
-    @BeforeClass
-    public static void setUpStatic() {
-        AbstractCairoTest.setUpStatic();
-
-        final CairoConfiguration ourConfig = configuration;
-        configuration = (CairoConfiguration) Proxy.newProxyInstance(
-                CairoConfiguration.class.getClassLoader(),
-                new Class<?>[]{CairoConfiguration.class},
-                (proxy, method, args) -> {
-                    if (method.getName().equals("getSqlJoinMetadataPageSize")) {
-                        return 10;
-                    }
-                    if (method.getName().equals("getSqlJoinMetadataMaxResizes")) {
-                        return -1;
-                    }
-                    return method.invoke(ourConfig, args);
-                }
-        );
-        // free engine from the superclass
-        Misc.free(engine);
-        engine = new CairoEngine(configuration, metrics, 2);
-        compiler = new SqlCompiler(engine, null, null);
-        compiler.setFullFatJoins(true);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        compiler.close();
-    }
-
-    @Before
-    @Override
-    public void setUp() {
-        super.setUp();
-        try {
-            // ASKS
-            compiler.compile(
-                    "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
-                    sqlExecutionContext
-            );
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(100, 0)");
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(101, 2);");
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(102, 4);");
-
-            // BIDS
-            compiler.compile(
-                    "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
-                    sqlExecutionContext
-            );
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(101, 1);");
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(102, 3);");
-            TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(103, 5);");
-
-            engine.releaseInactive();
-        } catch (SqlException e) {
-            Assert.fail(e.getMessage());
-        }
-    }
-
     @Test
     public void testAsOfJoinNoLeak() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    try {
-                        compiler.compile(
-                                "SELECT \n" +
-                                        "    b.timebid timebid,\n" +
-                                        "    a.timeask timeask, \n" +
-                                        "    b.b b, \n" +
-                                        "    a.a a\n" +
-                                        "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
-                                        "    ASOF JOIN\n" +
-                                        "(select a.ask a, a.ts timeask from asks a) a\n" +
-                                        "    ON (b.timebid != a.timeask);",
-                                sqlExecutionContext
-                        );
-                        Assert.fail();
-                    } catch (LimitOverflowException ex) {
-                        TestUtils.assertContains(
-                                ex.getFlyweightMessage(),
-                                "limit of -1 resizes exceeded in FastMap"
-                        );
-                        Assert.assertFalse(ex.isCritical());
-                    }
-                });
+        testJoinThrowsLimitOverflowException(
+                "SELECT \n" +
+                        "    b.timebid timebid,\n" +
+                        "    a.timeask timeask, \n" +
+                        "    b.b b, \n" +
+                        "    a.a a\n" +
+                        "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
+                        "    ASOF JOIN\n" +
+                        "(select a.ask a, a.ts timeask from asks a) a\n" +
+                        "WHERE (b.timebid != a.timeask)"
+        );
     }
 
     @Test
     public void testLtJoinNoLeak() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    try {
-                        compiler.compile(
-                                "SELECT \n" +
-                                        "    b.timebid timebid,\n" +
-                                        "    a.timeask timeask, \n" +
-                                        "    b.b b, \n" +
-                                        "    a.a a\n" +
-                                        "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
-                                        "    LT JOIN\n" +
-                                        "(select a.ask a, a.ts timeask from asks a) a\n" +
-                                        "    ON (b.timebid != a.timeask);",
-                                sqlExecutionContext
-                        );
-                        Assert.fail();
-                    } catch (LimitOverflowException ex) {
-                        TestUtils.assertContains(
-                                ex.getFlyweightMessage(),
-                                "limit of -1 resizes exceeded in FastMap"
-                        );
-                        Assert.assertFalse(ex.isCritical());
-                    }
-                });
+        testJoinThrowsLimitOverflowException(
+                "SELECT \n" +
+                        "    b.timebid timebid,\n" +
+                        "    a.timeask timeask, \n" +
+                        "    b.b b, \n" +
+                        "    a.a a\n" +
+                        "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
+                        "    LT JOIN\n" +
+                        "(select a.ask a, a.ts timeask from asks a) a\n" +
+                        "WHERE (b.timebid != a.timeask)"
+        );
+    }
+
+    private void createTablesToJoin(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // ASKS
+        compiler.compile(
+                "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
+                sqlExecutionContext
+        );
+        TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(100, 0)");
+        TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(101, 2);");
+        TestUtils.insert(compiler, sqlExecutionContext, "insert into asks values(102, 4);");
+
+        // BIDS
+        compiler.compile(
+                "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
+                sqlExecutionContext
+        );
+        TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(101, 1);");
+        TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(102, 3);");
+        TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(103, 5);");
+    }
+
+    private void testJoinThrowsLimitOverflowException(String sql) throws Exception {
+        configOverrideSqlJoinMetadataPageSize(10);
+        configOverrideSqlJoinMetadataMaxResizes(0);
+
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine, null, null);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                createTablesToJoin(compiler, sqlExecutionContext);
+                compiler.setFullFatJoins(true);
+                compiler.compile(sql, sqlExecutionContext);
+                Assert.fail("Expected LimitOverflowException is not thrown");
+            } catch (LimitOverflowException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
+                Assert.assertFalse(ex.isCritical());
+            }
+        });
     }
 }

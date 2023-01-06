@@ -33,10 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
 
@@ -63,6 +60,7 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
             final LogRecord record = LOG.advisory();
 
             record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
+            record.$("\n\tRSS: ").$(Os.getRss());
             record.$("\n\tMALLOC_COUNT: ").$(Unsafe.getMallocCount());
             record.$("\n\tREALLOC_COUNT: ").$(Unsafe.getReallocCount());
             record.$("\n\tFREE_COUNT: ").$(Unsafe.getFreeCount());

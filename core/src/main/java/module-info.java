@@ -102,6 +102,7 @@ open module io.questdb {
 
     provides FunctionFactory with
             // test functions
+            io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory,
@@ -191,6 +192,18 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory,
+//                    # 'trigonometric'
+            io.questdb.griffin.engine.functions.math.SinDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CosDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.TanDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CotDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AsinDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AcosDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AtanDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.Atan2DoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.PIDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.RadiansDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.DegreesDoubleFunctionFactory,
 //                    # '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
@@ -595,6 +608,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,

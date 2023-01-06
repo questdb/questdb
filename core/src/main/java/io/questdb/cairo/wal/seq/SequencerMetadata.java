@@ -184,6 +184,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
+    public void syncToDisk() {
+        metaMem.sync(false);
+    }
+
     private void addColumn0(CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -263,6 +267,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     void suspendTable() {
         suspended = true;
+        syncToMetaFile();
+    }
+
+    void resumeTable() {
+        suspended = false;
         syncToMetaFile();
     }
 

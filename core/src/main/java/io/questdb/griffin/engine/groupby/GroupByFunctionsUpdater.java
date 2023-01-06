@@ -26,8 +26,12 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.ObjList;
 
 public interface GroupByFunctionsUpdater {
+
+    void setFunctions(ObjList<GroupByFunction> groupByFunctions);
 
     void updateEmpty(MapValue value);
 

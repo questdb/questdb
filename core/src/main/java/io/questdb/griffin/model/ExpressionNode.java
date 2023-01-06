@@ -178,7 +178,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
         clear();
         // override literal with bind variable
-        if (type == LITERAL && token != null && (token.charAt(0) == '$' || token.charAt(0) == ':')) {
+        if (type == LITERAL && token != null && token.length() != 0 && (token.charAt(0) == '$' || token.charAt(0) == ':')) {
             this.type = BIND_VARIABLE;
         } else {
             this.type = type;

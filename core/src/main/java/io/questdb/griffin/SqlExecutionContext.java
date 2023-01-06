@@ -79,6 +79,8 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
+    long getMicrosecondTimestamp();
+
     long getNow();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
@@ -110,6 +112,8 @@ public interface SqlExecutionContext extends Closeable {
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
 
     void setJitMode(int jitMode);
+
+    void setNowAndFixClock(long now);
 
     void setRandom(Rnd rnd);
 

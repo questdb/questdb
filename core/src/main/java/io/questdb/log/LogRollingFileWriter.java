@@ -52,7 +52,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long buf;
     private String bufferSize;
     private long currentSize;
-    private long fd = -1;
+    private int fd = -1;
     private long idleSpinCount = 0;
     private long lim;
     // can be set via reflection
@@ -158,8 +158,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
             buf = 0;
         }
-        if (this.fd != -1) {
-            ff.close(this.fd);
+        if (ff.closeChecked(this.fd)) {
             this.fd = -1;
         }
         Misc.free(path);

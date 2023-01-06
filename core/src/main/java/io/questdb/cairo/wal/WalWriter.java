@@ -85,17 +85,17 @@ public class WalWriter implements TableWriterAPI {
     private ColumnVersionReader columnVersionReader;
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
-    private long lastSegmentTxn = -1L;
+    private int lastSegmentTxn = -1;
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
-    private long segmentLockFd = -1;
+    private int segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
-    private long walLockFd = -1;
+    private int walLockFd = -1;
 
     public WalWriter(CairoConfiguration configuration, String tableName, TableSequencerAPI tableSequencerAPI) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -167,7 +167,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
 
-                txn = tableSequencerAPI.nextStructureTxn(tableName, getStructureVersion(), operation);
+                txn = tableSequencerAPI.nextStructureTxn(tableName, metadata.getStructureVersion(), operation);
                 if (txn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }
@@ -541,7 +541,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
-        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableName, getStructureVersion())) {
+        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableName, metadata.getStructureVersion())) {
             long metadataVersion = getStructureVersion();
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();
@@ -606,10 +606,8 @@ public class WalWriter implements TableWriterAPI {
         // Each record is about primary and secondary file. File descriptor is set every half a record.
         int halfRecord = NEW_COL_RECORD_SIZE / 2;
         for (int fdIndex = 0; fdIndex < newColumnFiles.size(); fdIndex += halfRecord) {
-            long fd = newColumnFiles.get(fdIndex);
-            if (fd > -1L) {
-                ff.close(fd);
-            }
+            final int fd = (int) newColumnFiles.get(fdIndex);
+            ff.closeChecked(fd);
         }
     }
 
@@ -888,7 +886,7 @@ public class WalWriter implements TableWriterAPI {
             path.trimTo(rootLen);
         }
 
-        if (walLockFd == -1L) {
+        if (walLockFd == -1) {
             throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
@@ -902,7 +900,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void mayRollSegmentOnNextRow() {
-        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())) {
+        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount()) || lastSegmentTxn > Integer.MAX_VALUE - 2) {
             rollSegmentOnNextRow = true;
         }
     }
@@ -982,15 +980,13 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void releaseSegmentLock() {
-        if (segmentLockFd != -1L) {
-            ff.close(segmentLockFd);
-            segmentLockFd = -1L;
+        if (ff.closeChecked(segmentLockFd)) {
+            segmentLockFd = -1;
         }
     }
 
     private void releaseWalLock() {
-        if (walLockFd != -1L) {
-            ff.close(walLockFd);
+        if (ff.closeChecked(walLockFd)) {
             walLockFd = -1;
         }
     }
@@ -1061,7 +1057,7 @@ public class WalWriter implements TableWriterAPI {
         try {
             lockName(path);
             segmentLockFd = TableUtils.lock(ff, path);
-            if (segmentLockFd == -1L) {
+            if (segmentLockFd == -1) {
                 path.trimTo(segmentPathLen);
                 throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
             }
@@ -1198,16 +1194,16 @@ public class WalWriter implements TableWriterAPI {
 
     private void switchColumnsToNewSegment(LongList newColumnFiles) {
         for (int i = 0; i < columnCount; i++) {
-            long newPrimaryFd = newColumnFiles.get(i * NEW_COL_RECORD_SIZE);
-            if (newPrimaryFd > -1L) {
+            int newPrimaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE);
+            if (newPrimaryFd > -1) {
                 MemoryMA primaryColumnFile = getPrimaryColumn(i);
                 long currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 1);
                 long newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 2);
                 primaryColumnFile.jumpTo(currentOffset);
                 primaryColumnFile.switchTo(newPrimaryFd, newOffset, Vm.TRUNCATE_TO_POINTER);
 
-                long newSecondaryFd = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
-                if (newSecondaryFd > -1L) {
+                int newSecondaryFd = (int) newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 3);
+                if (newSecondaryFd > -1) {
                     MemoryMA secondaryColumnFile = getSecondaryColumn(i);
                     currentOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 4);
                     newOffset = newColumnFiles.get(i * NEW_COL_RECORD_SIZE + 5);

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
@@ -77,14 +78,8 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Before
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
+        configOverrideDefaultTableWriteMode(walEnabled ? SqlWalMode.WAL_ENABLED : SqlWalMode.WAL_DISABLED);
         super.setUp();
-    }
-
-    @After
-    public void tearDown() {
-        super.tearDown();
-        defaultTableWriteMode = -1;
     }
 
     @Test
@@ -393,7 +388,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
-        ioURingEnabled = false;
+        configOverrideIoURingEnabled(false);
 
         CopyRunnable stmt = () -> runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
