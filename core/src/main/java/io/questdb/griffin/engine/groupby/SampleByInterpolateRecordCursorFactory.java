@@ -502,10 +502,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                                @Transient @NotNull ArrayColumnTypes valueTypes) {
             super(functions);
             // this is the map itself, which we must not forget to free when factory closes
-            this.recordKeyMap = MapFactory.createSmallMap(configuration, keyTypes);
+            this.recordKeyMap = MapFactory.createMap(configuration, keyTypes);
             // data map will contain rounded timestamp value as last key column
             keyTypes.add(ColumnType.TIMESTAMP);
-            this.dataMap = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
+            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
             this.isOpen = true;
         }
 

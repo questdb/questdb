@@ -60,7 +60,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
+        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
     }
 
     @Override
