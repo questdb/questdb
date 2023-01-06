@@ -161,15 +161,25 @@ class WalWriterEvents implements Closeable {
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
+                    long appendAddress = eventMem.getAppendOffset();
                     eventMem.putInt(size);
 
+                    int symbolCount = 0;
                     for (int j = 0; j < size; j++) {
                         final CharSequence symbol = symbolMap.keys().getQuick(j);
                         final int value = symbolMap.get(symbol);
-
-                        eventMem.putInt(value);
-                        eventMem.putStr(symbol);
+                        // Ignore symbols cached from symbolMapReader
+                        if (value >= initialCount) {
+                            eventMem.putInt(value);
+                            eventMem.putStr(symbol);
+                            symbolCount += 1;
+                        }
                     }
+                    // Update the size with the exact symbolCount
+                    // An empty SymbolMapDiff can be created because symbolCount can be 0
+                    // in case all cached symbols come from symbolMapReader.
+                    // Alternatively, two-pass approach can be used.
+                    eventMem.putInt(appendAddress, symbolCount);
                     eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
                 }
             }

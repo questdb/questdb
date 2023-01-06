@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;

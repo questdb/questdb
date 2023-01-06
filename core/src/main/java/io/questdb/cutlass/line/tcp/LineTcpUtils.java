@@ -27,9 +27,9 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.MutableCharSink;
 
-final class LineTcpUtils {
+public final class LineTcpUtils {
 
-    static String utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+    public static String utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
         for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
             tempSink.put(utf8CharSeq.charAt(i));
