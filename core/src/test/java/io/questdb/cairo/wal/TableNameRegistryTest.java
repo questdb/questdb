@@ -287,6 +287,81 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentWALTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            int threadCount = 3;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+            ) {
+                for (int j = 0; j < tableCount; j++) {
+                    compiler.compile(
+                            "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
+                            executionContext
+                    );
+                }
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                final int threadId = i;
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
+                                } catch (SqlException | CairoException e) {
+                                    if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
+                                        throw e;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.getLast().start();
+            }
+
+            for (int i = 0; i < threads.size(); i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            engine.getTableTokens(tableTokenBucket, true);
+            if (tableCount != tableTokenBucket.size()) {
+                Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
+            }
+
+            for (int i = 0; i < tableCount; i++) {
+                int nameCount = 0;
+                for (int j = 0; j < threadCount; j++) {
+                    if (engine.getTableTokenIfExists("renamed_" + j + "_" + i) != null) {
+                        nameCount++;
+                    }
+                }
+                Assert.assertEquals("table named tab" + i + " tokens", 1, nameCount);
+            }
+        });
+    }
+
+    @Test
     public void testRestoreTableNamesFile() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tt1;

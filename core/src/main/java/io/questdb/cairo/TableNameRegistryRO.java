@@ -55,8 +55,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     public TableToken getTableToken(CharSequence tableName) {
         TableToken record = nameTableTokenMap.get(tableName);
         if (record == null && clockMs.getTicks() - lastReloadTimestampMs > autoReloadTimeout) {
-            reloadTableNameCache();
-            record = nameTableTokenMap.get(tableName);
+            reloadTableNameCacheThrottled();
+            return nameTableTokenMap.get(tableName);
         }
         return record;
     }
@@ -104,5 +104,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     @Override
     public void unlockTableName(TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
+    }
+
+    private synchronized void reloadTableNameCacheThrottled() {
+        if (clockMs.getTicks() - lastReloadTimestampMs > autoReloadTimeout) {
+            reloadTableNameCache();
+        }
     }
 }

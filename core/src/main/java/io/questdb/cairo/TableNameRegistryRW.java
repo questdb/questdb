@@ -45,13 +45,15 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public boolean dropTable(TableToken token) {
-        if (nameTableTokenMap.remove(token.getTableName(), token)) {
+        final ReverseTableMapItem reverseMapItem = reverseTableNameTokenMap.get(token.getDirName());
+        if (reverseMapItem != null && nameTableTokenMap.remove(token.getTableName(), token)) {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
                 reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
                 return true;
             } else {
-                return reverseTableNameTokenMap.remove(token.getDirName()) != null;
+                reverseTableNameTokenMap.remove(token.getDirName(), reverseMapItem);
+                return true;
             }
         }
         return false;
@@ -94,13 +96,17 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         TableToken newNameRecord = new TableToken(newTableNameStr, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
 
         if (nameTableTokenMap.putIfAbsent(newTableNameStr, newNameRecord) == null) {
-            // Persist to file
-            nameStore.logDropTable(tableToken);
-            nameStore.appendEntry(newNameRecord);
-
-            reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
-            nameTableTokenMap.remove(oldName, tableToken);
-            return newNameRecord;
+            if (nameTableTokenMap.remove(oldName, tableToken)) {
+                // Persist to file
+                nameStore.logDropTable(tableToken);
+                nameStore.appendEntry(newNameRecord);
+                reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
+                return newNameRecord;
+            } else {
+                // Already renamed by another thread. Revert new name reservation.
+                nameTableTokenMap.remove(newTableNameStr, newNameRecord);
+                throw CairoException.tableDoesNotExist(oldName);
+            }
         } else {
             throw CairoException.nonCritical().put("table '").put(newName).put("' already exists");
         }

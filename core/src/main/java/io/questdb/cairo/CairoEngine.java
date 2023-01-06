@@ -207,9 +207,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     tableCreated = true;
                 } finally {
                     if (!keepLock) {
-                        readerPool.unlock(tableToken);
-                        writerPool.unlock(tableToken, null, tableCreated);
-                        metadataPool.unlock(tableToken);
+                        unlockTableUnsafe(tableToken, null, tableCreated);
                         LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                     }
                 }
@@ -288,9 +286,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
-                    readerPool.unlock(tableToken);
-                    writerPool.unlock(tableToken, null, false);
-                    metadataPool.unlock(tableToken);
+                    unlockTableUnsafe(tableToken, null, false);
                 }
 
                 tableNameRegistry.dropTable(tableToken);
@@ -598,18 +594,20 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         assert null != lockReason;
         securityContext.checkWritePermission();
-
-        String lockedReason = writerPool.lock(tableToken, lockReason);
-        if (lockedReason == null) { // not locked
-            if (readerPool.lock(tableToken)) {
-                if (metadataPool.lock(tableToken)) {
+        // busy metadata is same as busy reader from user perspective
+        String lockedReason = BUSY_READER;
+        if (metadataPool.lock(tableToken)) {
+            lockedReason = writerPool.lock(tableToken, lockReason);
+            if (lockedReason == null) {
+                // not locked
+                if (readerPool.lock(tableToken)) {
                     LOG.info().$("locked [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(Thread.currentThread().getId()).I$();
                     return null;
                 }
-                readerPool.unlock(tableToken);
+                writerPool.unlock(tableToken);
+                lockedReason = BUSY_READER;
             }
-            writerPool.unlock(tableToken);
-            return BUSY_READER;
+            metadataPool.unlock(tableToken);
         }
         return lockedReason;
     }
@@ -778,9 +776,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean newTable
     ) {
         verifyTableToken(tableToken);
-        readerPool.unlock(tableToken);
-        writerPool.unlock(tableToken, writer, newTable);
-        metadataPool.unlock(tableToken);
+        unlockTableUnsafe(tableToken, writer, newTable);
         LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
     }
 
@@ -847,6 +843,12 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(" ,error=").$(th.getMessage()).I$();
             throw rethrow;
         }
+    }
+
+    private void unlockTableUnsafe(TableToken tableToken, TableWriter writer, boolean newTable) {
+        readerPool.unlock(tableToken);
+        writerPool.unlock(tableToken, writer, newTable);
+        metadataPool.unlock(tableToken);
     }
 
     private void validNameOrThrow(CharSequence tableName) {
