@@ -634,7 +634,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         String folderToDelete = "2020W02";
         int deletedPartitionIndex = 1;
         int rowCount = 10000;
-        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, 1428);
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, 1, rowCount, 1428);
     }
 
     @Test
