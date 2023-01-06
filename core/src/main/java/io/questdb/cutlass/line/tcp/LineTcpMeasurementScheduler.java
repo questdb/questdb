@@ -481,9 +481,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.CHAR:
-                                    if (stringToCharCastAllowed || entityValue.length() == 1) {
-                                        // todo: utf8 decode
+                                    if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
                                         r.putChar(columnIndex, entityValue.charAt(0));
+                                    } else if (stringToCharCastAllowed) {
+                                        int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                        if (Numbers.decodeLowShort(encodedResult) > 0) {
+                                            r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
+                                        } else {
+                                            throw castError("string", i, colType, ent.getName());
+                                        }
                                     } else {
                                         throw castError("string", i, colType, ent.getName());
                                     }

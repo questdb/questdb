@@ -951,6 +951,42 @@ public final class Chars {
         return 2;
     }
 
+    // a very specialised function to decode a single utf8 character
+    // used when it doesn't make sense to allocate a temporary sink
+    // returns an integer-encoded tuple (decoded number of bytes, character in utf16 encoding, stored as short type)
+    public static int utf8CharDecode(long lo, long hi) {
+        if (lo < hi) {
+            byte b1 = Unsafe.getUnsafe().getByte(lo);
+            if (b1 < 0) {
+                if (b1 >> 5 == -2 && (b1 & 30) != 0 && hi - lo > 1) {
+                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+                    if (isNotContinuation(b2)) {
+                        return 0;
+                    }
+                    return Numbers.encodeLowHighShorts((short) 2, (short) (b1 << 6 ^ b2 ^ 3968));
+                }
+
+                if (b1 >> 4 == -2 && hi - lo > 2) {
+                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+                    byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+                    if (isMalformed3(b1, b2, b3)) {
+                        return 0;
+                    }
+
+                    char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
+                    if (Character.isSurrogate(c)) {
+                        return 0;
+                    }
+                    return Numbers.encodeLowHighShorts((short) 3, (short) c);
+                }
+                return 0;
+            } else {
+                return Numbers.encodeLowHighShorts((short) 1, b1);
+            }
+        }
+        return 0;
+    }
+
     private static int utf8Decode2BytesZ(long lo, int b1, CharSink sink) {
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         if (b2 == 0) {

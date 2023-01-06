@@ -436,8 +436,15 @@ class LineTcpMeasurementEvent implements Closeable {
                                 break;
 
                             case ColumnType.CHAR:
-                                if (stringToCharCastAllowed || entityValue.length() == 1) {
+                                if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
                                     offset = buffer.addChar(offset, entityValue.charAt(0));
+                                } else if (stringToCharCastAllowed) {
+                                    int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                    if (Numbers.decodeLowShort(encodedResult) > 0) {
+                                        offset = buffer.addChar(offset, (char) Numbers.decodeHighShort(encodedResult));
+                                    } else {
+                                        throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    }
                                 } else {
                                     throw castError("string", columnWriterIndex, colType, entity.getName());
                                 }
