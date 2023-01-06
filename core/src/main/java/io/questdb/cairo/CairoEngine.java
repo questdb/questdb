@@ -193,7 +193,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 boolean tableCreated = false;
                 try {
                     int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
-                    if (status == TableUtils.TABLE_RESERVED) {
+                    if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
                         throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
                     }
                     createTableUnsafe(
