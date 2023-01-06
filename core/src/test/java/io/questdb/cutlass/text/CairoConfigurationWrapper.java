@@ -683,11 +683,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSmallMapPageSize() {
-        return conf.getSqlSmallMapPageSize();
-    }
-
-    @Override
     public int getSqlSortKeyMaxPages() {
         return conf.getSqlSortKeyMaxPages();
     }

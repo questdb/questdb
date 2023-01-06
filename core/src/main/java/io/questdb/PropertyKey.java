@@ -65,7 +65,6 @@ public enum PropertyKey {
     CAIRO_LEXER_POOL_CAPACITY("cairo.lexer.pool.capacity"),
     CAIRO_SQL_MAP_KEY_CAPACITY("cairo.sql.map.key.capacity"),
     CAIRO_SQL_SMALL_MAP_KEY_CAPACITY("cairo.sql.small.map.key.capacity"),
-    CAIRO_SQL_SMALL_MAP_PAGE_SIZE("cairo.sql.small.map.page.size"),
     CAIRO_SQL_MAP_PAGE_SIZE("cairo.sql.map.page.size"),
     CAIRO_SQL_MAP_MAX_PAGES("cairo.sql.map.max.pages"),
     CAIRO_SQL_MAP_MAX_RESIZES("cairo.sql.map.max.resizes"),

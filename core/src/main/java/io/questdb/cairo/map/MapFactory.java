@@ -44,16 +44,29 @@ public class MapFactory {
 
     public static Map createMap(
             CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes
-    ) {
-        return createMap(false, configuration, keyTypes);
-    }
+            @Transient @NotNull ColumnTypes keyTypes) {
+        CharSequence mapType = configuration.getDefaultMapType();
+        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
+            return new FastMap(
+                    configuration.getSqlMapPageSize(),
+                    keyTypes,
+                    configuration.getSqlMapKeyCapacity(),
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
+        }
 
-    public static Map createSmallMap(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes
-    ) {
-        return createMap(true, configuration, keyTypes);
+        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
+            return new CompactMap(
+                    configuration.getSqlMapPageSize(),
+                    keyTypes,
+                    EmptyRecordMetadata.INSTANCE,
+                    configuration.getSqlMapKeyCapacity(),
+                    configuration.getSqlCompactMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlMapMaxPages()
+            );
+        }
+        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
 
     public static Map createSmallMap(
@@ -67,58 +80,24 @@ public class MapFactory {
     private static Map createMap(
             boolean smallMap,
             CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes
-    ) {
-        final int keyCapacity = smallMap ? configuration.getSqlSmallMapKeyCapacity() : configuration.getSqlMapKeyCapacity();
-        final int pageSize = smallMap ? configuration.getSqlSmallMapPageSize() : configuration.getSqlMapPageSize();
-        CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
-            return new FastMap(
-                    pageSize,
-                    keyTypes,
-                    keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
-            );
-        }
-
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            return new CompactMap(
-                    pageSize,
-                    keyTypes,
-                    EmptyRecordMetadata.INSTANCE,
-                    keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
-            );
-        }
-        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
-    }
-
-    private static Map createMap(
-            boolean smallMap,
-            CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @NotNull ColumnTypes valueTypes
     ) {
         final int keyCapacity = smallMap ? configuration.getSqlSmallMapKeyCapacity() : configuration.getSqlMapKeyCapacity();
-        final int pageSize = smallMap ? configuration.getSqlSmallMapPageSize() : configuration.getSqlMapPageSize();
         final CharSequence mapType = configuration.getDefaultMapType();
         if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(
-                    pageSize,
+                    configuration.getSqlMapPageSize(),
                     keyTypes,
                     valueTypes,
                     keyCapacity,
                     configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
-            );
+                    configuration.getSqlMapMaxResizes());
         }
 
         if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
             return new CompactMap(
-                    pageSize,
+                    configuration.getSqlMapPageSize(),
                     keyTypes,
                     valueTypes,
                     keyCapacity,
@@ -129,4 +108,5 @@ public class MapFactory {
         }
         throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
+
 }
