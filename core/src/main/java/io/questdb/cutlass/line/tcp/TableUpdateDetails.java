@@ -568,11 +568,7 @@ public class TableUpdateDetails implements Closeable {
                     // column names with non-ASCII chars are handled properly
                     columnIndexByNameUtf8.put(utf8BytesToString(colNameUtf8, tempSink), colWriterIndex);
 
-                    if (processedCols.extendAndReplace(colWriterIndex, true)) {
-                        // column has been passed by index earlier on this event, duplicate should be skipped
-                        return DUPLICATED_COLUMN;
-                    }
-
+                    processedCols.extendAndReplace(colWriterIndex, true);
                     return colWriterIndex;
 
                 }
