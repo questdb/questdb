@@ -590,7 +590,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadata,
             RecordCursorFactory master,
             RecordCursorFactory slave,
-            int joinType
+            int joinType,
+            Function filter
     ) {
         /*
          * JoinContext provides the following information:
@@ -638,6 +639,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            if (filter != null) {
+                return new HashOuterJoinFilteredLightRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        master,
+                        slave,
+                        keyTypes,
+                        valueTypes,
+                        masterKeySink,
+                        slaveKeySink,
+                        masterMetadata.getColumnCount(),
+                        filter
+                );
+            }
+
             return new HashOuterJoinLightRecordCursorFactory(
                     configuration,
                     metadata,
@@ -671,6 +687,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveKeySink,
                     slaveSink,
                     masterMetadata.getColumnCount()
+            );
+        }
+
+        if (filter != null) {
+            return new HashOuterJoinFilteredRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    master,
+                    slave,
+                    keyTypes,
+                    valueTypes,
+                    masterKeySink,
+                    slaveKeySink,
+                    slaveSink,
+                    masterMetadata.getColumnCount(),
+                    filter
             );
         }
 
@@ -1428,9 +1460,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final int joinType = slaveModel.getJoinType();
                         final RecordMetadata masterMetadata = master.getMetadata();
                         final RecordMetadata slaveMetadata = slave.getMetadata();
+                        Function filter = null;
+                        JoinRecordMetadata joinMetadata = null;
 
                         switch (joinType) {
+                            case JOIN_CROSS_LEFT:
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                    filter = functionParser.parseFunction(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                }
+
+                                master = new NestedLoopLeftJoinRecordCursorFactory(
+                                        joinMetadata,
+                                        master,
+                                        slave,
+                                        masterMetadata.getColumnCount(),
+                                        filter,
+                                        NullRecordFactory.getInstance(slaveMetadata)
+                                );
+                                masterAlias = null;
+                                break;
                             case JOIN_CROSS:
+                                validateOuterJoinExpressions(slaveModel, "CROSS");
                                 master = new CrossJoinRecordCursorFactory(
                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                         master,
@@ -1441,6 +1492,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
@@ -1489,6 +1541,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                validateOuterJoinExpressions(slaveModel, "LT");
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
@@ -1537,6 +1590,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                validateOuterJoinExpressions(slaveModel, "SPLICE");
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
@@ -1567,11 +1621,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             default:
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                    filter = functionParser.parseFunction(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                }
+
+                                if (joinType == JOIN_OUTER &&
+                                        filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                    Misc.free(slave);
+                                    slave = new EmptyTableRecordCursorFactory(slaveMetadata);
+                                }
+
+                                if (joinType == JOIN_INNER) {
+                                    validateOuterJoinExpressions(slaveModel, "INNER");
+                                }
+
                                 master = createHashJoin(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                        joinMetadata,
                                         master,
                                         slave,
-                                        joinType
+                                        joinType,
+                                        filter
                                 );
                                 masterAlias = null;
                                 break;
@@ -4297,6 +4368,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
+        }
+    }
+
+    private void validateOuterJoinExpressions(QueryModel model, CharSequence joinType) throws SqlException {
+        if (model.getOuterJoinExpressionClause() != null) {
+            throw SqlException.$(model.getOuterJoinExpressionClause().position, "unsupported ").put(joinType).put(" join expression ")
+                    .put("[expr='").put(model.getOuterJoinExpressionClause()).put("']");
         }
     }
 
