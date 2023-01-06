@@ -367,6 +367,8 @@ public interface CairoConfiguration {
 
     int getSqlSmallMapKeyCapacity();
 
+    int getSqlSmallMapPageSize();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();

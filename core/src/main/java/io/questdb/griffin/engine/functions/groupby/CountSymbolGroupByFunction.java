@@ -26,22 +26,30 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CompactIntHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+    private static final ArrayColumnTypes groupedKeyTypes = new ArrayColumnTypes();
+
     private final Function arg;
-    private final ObjList<CompactIntHashSet> sets = new ObjList<>();
-    private int setIndex;
+    private int groupId;
+    // Contains <group id, int value> pairs as keys; we use this map as a set.
+    private Map groupedValues;
     private int valueIndex;
 
     public CountSymbolGroupByFunction(Function arg) {
@@ -50,41 +58,43 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void clear() {
-        sets.clear();
-        setIndex = 0;
+        groupId = 0;
+        groupedValues.restoreInitialCapacity();
+    }
+
+    @Override
+    public void close() {
+        UnaryFunction.super.close();
+        groupId = 0;
+        Misc.free(groupedValues);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final CompactIntHashSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
-        } else {
-            set = sets.getQuick(setIndex);
-        }
-        set.clear();
-
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
-            set.add(val);
-            mapValue.putLong(valueIndex, 1L);
+            MapKey groupedMapKey = groupedValues.withKey();
+            groupedMapKey.putInt(groupId);
+            groupedMapKey.putInt(val);
+            groupedMapKey.createValue();
+            mapValue.putLong(valueIndex, 1);
         } else {
-            mapValue.putLong(valueIndex, 0L);
+            mapValue.putLong(valueIndex, 0);
         }
-        mapValue.putInt(valueIndex + 1, setIndex++);
+        mapValue.putInt(valueIndex + 1, groupId++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final CompactIntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
-            final int index = set.keyIndex(val);
-            if (index < 0) {
-                return;
+            MapKey groupedMapKey = groupedValues.withKey();
+            groupedMapKey.putInt(mapValue.getInt(valueIndex + 1));
+            groupedMapKey.putInt(val);
+            MapValue groupedMapValue = groupedMapKey.createValue();
+            if (groupedMapValue.isNew()) {
+                mapValue.addLong(valueIndex, 1);
             }
-            set.addAt(index, val);
-            mapValue.addLong(valueIndex, 1);
         }
     }
 
@@ -99,6 +109,17 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        UnaryFunction.super.init(symbolTableSource, executionContext);
+        if (groupedValues == null) {
+            groupedValues = MapFactory.createSmallMap(
+                    executionContext.getCairoEngine().getConfiguration(),
+                    groupedKeyTypes
+            );
+        }
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -110,7 +131,7 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
+        valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
         columnTypes.add(ColumnType.INT);
     }
@@ -133,6 +154,12 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        setIndex = 0;
+        groupId = 0;
+        groupedValues.clear();
+    }
+
+    static {
+        groupedKeyTypes.add(ColumnType.INT);
+        groupedKeyTypes.add(ColumnType.INT);
     }
 }
