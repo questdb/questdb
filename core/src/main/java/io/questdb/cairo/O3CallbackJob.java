@@ -40,7 +40,9 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
         final int columnIndex = task.getColumnIndex();
         final int columnType = task.getColumnType();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
-        final long valueCount = task.getValueCount();
+        final long row1Count = task.getRow1Count();
+        final long row2Lo = task.getRow2Lo();
+        final long row2Hi = task.getRow2Hi();
         final TableWriter.O3ColumnUpdateMethod callbackMethod = task.getWriterCallbackMethod();
         final CountDownLatchSPI countDownLatchSPI = task.getCountDownLatchSPI();
         if (subSeq != null) {
@@ -52,7 +54,9 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
                     columnIndex,
                     columnType,
                     mergedTimestampsAddr,
-                    valueCount
+                    row1Count,
+                    row2Lo,
+                    row2Hi
             );
         } finally {
             countDownLatchSPI.countDown();

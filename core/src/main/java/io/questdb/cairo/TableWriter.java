@@ -76,6 +76,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     public static final int O3_BLOCK_O3 = 1;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
+    private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final Runnable NOOP = () -> {
     };
@@ -192,6 +193,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private ObjList<MemoryCARW> o3MemColumns2;
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
+    private final O3ColumnUpdateMethod o3MergeLagVarColumnRef = this::o3MergeVarColumnLag;
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
     private DirectLongList o3PartitionUpdateSink;
@@ -205,6 +207,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
+    private final O3ColumnUpdateMethod o3MergeLagFixColumnRef = this::o3MergeFixColumnLag;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
     private long todoTxn;
@@ -1318,22 +1321,22 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
             long o3TimestampOffset = o3TimestampMem.getAppendOffset();
-            long o3LagRowCount = o3TimestampOffset >> 4;
+            long lagRowCount = o3TimestampOffset >> 4;
 
             try {
                 long timestampAddr;
                 long o3Lo = rowLo;
                 long o3Hi = rowHi;
                 final boolean copiedToMemory;
-                final boolean needsOrdering = !ordered || o3LagRowCount > 0;
-                final long symbolRowLo = needsOrdering ? o3LagRowCount : rowLo;
+                final boolean needsOrdering = !ordered || lagRowCount > 0;
+                final long symbolRowLo = needsOrdering ? lagRowCount : rowLo;
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, symbolRowLo);
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
 
                 if (needsOrdering) {
                     LOG.info().$("sorting WAL [table=").$(tableToken)
                             .$(", ordered=").$(ordered)
-                            .$(", o3LagRowCount=").$(o3LagRowCount)
+                            .$(", lagRowCount=").$(lagRowCount)
                             .$(", rowLo=").$(rowLo)
                             .$(", rowHi=").$(rowHi).I$();
 
@@ -1345,18 +1348,18 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
                     Vect.radixSortABLongIndexAscInA(
                             timestampAddr,
-                            o3LagRowCount,
+                            lagRowCount,
                             mappedTimestampIndexAddr,
                             rowHi - rowLo,
                             o3TimestampMemCpy.addressOf(0)
                     );
-                    o3MergeIntoLag(timestampAddr, o3LagRowCount, rowLo, rowHi, timestampIndex);
+                    o3MergeIntoLag(timestampAddr, lagRowCount, rowLo, rowHi, timestampIndex);
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
                     // Row indexes start from 0, not rowLo
-                    o3Hi = rowHi - rowLo + o3LagRowCount;
+                    o3Hi = rowHi - rowLo + lagRowCount;
                     o3Lo = 0L;
-                    o3LagRowCount = 0L;
+                    lagRowCount = 0L;
                     o3Columns = o3MemColumns;
                     copiedToMemory = true;
                     o3TimestampMin = getTimestampIndexValue(timestampAddr, o3Lo);
@@ -1369,9 +1372,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 if (commitToTimestamp < o3TimestampMin) {
                     // Don't commit anything, move everything to memory instead.
                     LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
-                    o3LagRowCount = o3Hi - o3Lo;
+                    lagRowCount = o3Hi - o3Lo;
                     if (!copiedToMemory) {
-                        o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, o3Lo);
+                        o3ShiftLagRowsUp(timestampIndex, lagRowCount, o3Lo);
                     }
                     // otherwise the rows are already copied to LAG
                     return;
@@ -1386,22 +1389,22 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                                         BinarySearch.SCAN_DOWN
                                 );
                         assert lagThresholdRow > 0 && lagThresholdRow < o3Hi;
-                        o3LagRowCount = o3Hi - o3Lo - lagThresholdRow;
+                        lagRowCount = o3Hi - o3Lo - lagThresholdRow;
                         o3Hi = lagThresholdRow;
                         o3TimestampMax = getTimestampIndexValue(timestampAddr, o3Hi - 1);
                         assert o3TimestampMax >= o3TimestampMin && o3TimestampMax <= commitToTimestamp;
 
                         LOG.debug().$("committing WAL with LAG [table=").$(tableToken)
-                                .$(", o3LagRowCount=").$(o3LagRowCount)
+                                .$(", lagRowCount=").$(lagRowCount)
                                 .$(", rowLo=").$(o3Lo)
                                 .$(", rowHi=").$(o3Hi).I$();
                     } else {
-                        o3LagRowCount = 0;
+                        lagRowCount = 0;
                     }
 
-                    o3RowCount = o3Hi - o3Lo + o3LagRowCount;
+                    o3RowCount = o3Hi - o3Lo + lagRowCount;
                     processO3Block(
-                            o3LagRowCount,
+                            lagRowCount,
                             timestampIndex,
                             timestampAddr,
                             o3Hi,
@@ -1410,12 +1413,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             copiedToMemory,
                             o3Lo
                     );
-                    if (o3LagRowCount == 0) {
+                    if (lagRowCount == 0) {
                         o3TimestampMem.jumpTo(0);
                     }
                 }
             } finally {
-                finishO3Append(o3LagRowCount);
+                finishO3Append(lagRowCount);
                 o3Columns = o3MemColumns;
                 closeWalColumns();
             }
@@ -3646,7 +3649,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
-    private void o3MergeFixColumnLag(int columnIndex, int columnType, long mergeIndex, long mappedRowLo, long mappedRowHi, long lagRows) {
+    private void o3MergeFixColumnLag(int columnIndex, int columnType, long mergeIndex, long lagRows, long mappedRowLo, long mappedRowHi) {
         final long rowCount = lagRows + mappedRowHi - mappedRowLo;
         final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
         final MemoryCARW lagMem = o3MemColumns.getQuick(primaryColumnIndex);
@@ -3724,53 +3727,55 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
             if (timestampIndex != i && type > 0) {
-//                long cursor = pubSeq.next();
-//                if (cursor > -1) {
-//                    try {
-//                        final O3CallbackTask task = queue.get(cursor);
-//                        task.of(
-//                                o3DoneLatch,
-//                                i,
-//                                type,
-//                                mergedTimestamps,
-//                                rowCount,
-//                                ColumnType.isVariableLength(type) ? oooSortVarColumnRef : oooSortFixColumnRef
-//                        );
-//                        o3PendingCallbackTasks.add(task);
-//                    } finally {
-//                        queuedCount++;
-//                        pubSeq.done(cursor);
-//                    }
-//                } else {
-                o3MergeIntoLagColumn(mergedTimestamps, i, type, mappedRowLo, mappedRoHi, countInLag);
-//                }
+                long cursor = pubSeq.next();
+                if (cursor > -1) {
+                    try {
+                        final O3CallbackTask task = queue.get(cursor);
+                        task.of(
+                                o3DoneLatch,
+                                i,
+                                type,
+                                mergedTimestamps,
+                                countInLag,
+                                mappedRowLo,
+                                mappedRoHi,
+                                ColumnType.isVariableLength(type) ? o3MergeLagVarColumnRef : o3MergeLagFixColumnRef
+                        );
+                        o3PendingCallbackTasks.add(task);
+                    } finally {
+                        queuedCount++;
+                        pubSeq.done(cursor);
+                    }
+                } else {
+                    o3MergeIntoLagColumn(mergedTimestamps, i, type, countInLag, mappedRowLo, mappedRoHi);
+                }
             }
         }
 
-//        for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
-//            final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
-//            if (task.tryLock()) {
-//                O3CallbackJob.runCallbackWithCol(
-//                        task,
-//                        -1,
-//                        null
-//                );
-//            }
-//        }
-//
-//        o3DoneLatch.await(queuedCount);
+        for (int n = o3PendingCallbackTasks.size() - 1; n > -1; n--) {
+            final O3CallbackTask task = o3PendingCallbackTasks.getQuick(n);
+            if (task.tryLock()) {
+                O3CallbackJob.runCallbackWithCol(
+                        task,
+                        -1,
+                        null
+                );
+            }
+        }
+
+        o3DoneLatch.await(queuedCount);
         swapO3ColumnsExcept(timestampIndex);
     }
 
-    private void o3MergeIntoLagColumn(long mergedTimestampAddress, int columnIndex, int type, long mappedRowLo, long mappedRowHi, long lagRows) {
+    private void o3MergeIntoLagColumn(long mergedTimestampAddress, int columnIndex, int type, long lagRows, long mappedRowLo, long mappedRowHi) {
         if (ColumnType.isVariableLength(type)) {
-            o3MergeVarColumnLag(columnIndex, type, mergedTimestampAddress, mappedRowLo, mappedRowHi, lagRows);
+            o3MergeVarColumnLag(columnIndex, type, mergedTimestampAddress, lagRows, mappedRowLo, mappedRowHi);
         } else {
-            o3MergeFixColumnLag(columnIndex, type, mergedTimestampAddress, mappedRowLo, mappedRowHi, lagRows);
+            o3MergeFixColumnLag(columnIndex, type, mergedTimestampAddress, lagRows, mappedRowLo, mappedRowHi);
         }
     }
 
-    private void o3MergeVarColumnLag(int columnIndex, int type, long mergedTimestampAddress, long mappedRowLo, long mappedRowHi, long lagRows) {
+    private void o3MergeVarColumnLag(int columnIndex, int type, long mergedTimestampAddress, long lagRows, long mappedRowLo, long mappedRowHi) {
         final long rowCount = lagRows + mappedRowHi - mappedRowLo;
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
@@ -3838,7 +3843,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             int columnIndex,
             final int columnType,
             long o3LagRowCount,
-            long o3RowCount
+            long o3RowCount,
+            long ignore1,
+            long ignore2
     ) {
         if (columnIndex > -1) {
             MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
@@ -3914,7 +3921,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             int colIndex,
             int columnType,
             long committedTransientRowCount,
-            long transientRowsAdded
+            long transientRowsAdded,
+            long ignore1,
+            long ignore2
     ) {
         if (colIndex > -1) {
             MemoryMA srcDataMem = getPrimaryColumn(colIndex);
@@ -4154,6 +4163,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                                     columnType,
                                     committedTransientRowCount,
                                     transientRowsAdded,
+                                    IGNORE,
+                                    IGNORE,
                                     this.o3MoveUncommittedRef
                             );
 
@@ -4163,7 +4174,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             pubSeq.done(cursor);
                         }
                     } else {
-                        o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
+                        o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded, IGNORE, IGNORE);
                     }
                 }
             }
@@ -4226,7 +4237,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
             int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
-            long cursor = -1;// pubSeq.next();
+            long cursor = pubSeq.next();
 
             // Pass column index as -1 when it's designated timestamp column to o3 move method
             if (cursor > -1 && columnType > 0) {
@@ -4238,6 +4249,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             columnType,
                             o3LagRowCount,
                             o3RowCount,
+                            IGNORE,
+                            IGNORE,
                             this.o3MoveLagRef
                     );
 
@@ -4247,7 +4260,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     pubSeq.done(cursor);
                 }
             } else if (columnType > 0) {
-                o3MoveLag0(columnIndex, columnType, o3LagRowCount, o3RowCount);
+                o3MoveLag0(columnIndex, columnType, o3LagRowCount, o3RowCount, IGNORE, IGNORE);
             }
         }
 
@@ -4286,6 +4299,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                                 type,
                                 mergedTimestamps,
                                 rowCount,
+                                IGNORE,
+                                IGNORE,
                                 ColumnType.isVariableLength(type) ? oooSortVarColumnRef : oooSortFixColumnRef
                         );
                         o3PendingCallbackTasks.add(task);
@@ -4316,9 +4331,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private void o3SortColumn(long mergedTimestamps, int i, int type, long rowCount) {
         if (ColumnType.isVariableLength(type)) {
-            o3SortVarColumn(i, type, mergedTimestamps, rowCount);
+            o3SortVarColumn(i, type, mergedTimestamps, rowCount, IGNORE, IGNORE);
         } else {
-            o3SortFixColumn(i, type, mergedTimestamps, rowCount);
+            o3SortFixColumn(i, type, mergedTimestamps, rowCount, IGNORE, IGNORE);
         }
     }
 
@@ -4326,7 +4341,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             int columnIndex,
             final int columnType,
             long mergedTimestampsAddr,
-            long valueCount
+            long valueCount,
+            long ignore1,
+            long ignore2
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
         final MemoryCR mem = o3Columns.getQuick(columnOffset);
@@ -4364,7 +4381,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             int columnIndex,
             int columnType,
             long mergedTimestampsAddr,
-            long valueCount
+            long valueCount,
+            long ignore1,
+            long ignore2
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
@@ -6506,7 +6525,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 int columnIndex,
                 final int columnType,
                 long mergedTimestampsAddr,
-                long valueCount
+                long row1Count,
+                long row2CountLo,
+                long row2CountHi
         );
     }
 

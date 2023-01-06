@@ -193,6 +193,7 @@ public final class TestUtils {
                             try {
                                 assertColumnValues(symAsStrTypes, symAsStrTypes, chainLR, chainRR, 0, false);
                                 recordsMatched++;
+                                break;
                             } catch (AssertionError ignore) {
                                 // ignore
                             }
