@@ -77,6 +77,11 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public int getSqlSmallMapPageSize() {
+                return 64;
+            }
+
+            @Override
             public int getSqlSortKeyMaxPages() {
                 return 2;
             }
@@ -699,9 +704,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
                         null,
-                        false,
-                        readOnlyExecutionContext
-                );
+                        false, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 MatcherAssert.assertThat(ex.toString(), Matchers.containsString("limit of 2 resizes exceeded"));
