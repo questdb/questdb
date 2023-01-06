@@ -266,7 +266,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                             "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
                             "    ASOF JOIN\n" +
                             "(select a.ask a, a.ts timeask from asks a) a\n" +
-                            "    ON (b.timebid != a.timeask);";
+                            "WHERE (b.timebid != a.timeask);";
 
             String expected = "timebid\ttimeask\tb\ta\n" +
                     "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000000Z\t101\t100\n" +
@@ -541,7 +541,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                             "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
                             "    LT JOIN\n" +
                             "(select a.ask a, a.ts timeask from asks a) a\n" +
-                            "    ON (b.timebid != a.timeask);";
+                            "WHERE (b.timebid != a.timeask);";
 
             String expected = "timebid\ttimeask\tb\ta\n" +
                     "1970-01-01T00:00:00.000000Z\t\t101\tNaN\n" +

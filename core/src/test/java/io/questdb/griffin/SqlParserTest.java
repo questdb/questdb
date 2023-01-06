@@ -58,7 +58,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx left join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
                 "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -68,7 +68,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasTopJoinTable() throws SqlException {
         assertQuery(
-                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid] from y ty on yid = xid where a = 1 or b = 2) tx",
+                "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx left join select [yid] from y ty on yid = xid where a = 1 or b = 2) tx",
                 "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
                 modelOf("x").col("xid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("y").col("yid", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -193,7 +193,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAsOfJoinOuterWhereClause() throws Exception {
         assertQuery(
-                "select-choose trade_time, quote_time, trade_price, trade_size, quote_price, quote_size from (select-choose [trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size] trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size from (select [ts, price, size, sym] from trade asof join select [ts, price, size, sym] from book on book.sym = trade.sym post-join-where book.price != NaN))",
+                "select-choose trade_time, quote_time, trade_price, trade_size, quote_price, quote_size from (select-choose [trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size] trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size from (select [ts, price, size, sym] from trade asof join select [ts, price, size, sym] from book post-join-where trade.sym = book.sym and book.price != NaN))",
                 "select * from \n" +
                         "(\n" +
                         "select \n" +
@@ -203,8 +203,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "trade.size as trade_size,\n" +
                         "book.price as quote_price,\n" +
                         "book.size as quote_size\n" +
-                        "from\n" +
-                        "trade asof join book\n" +
+                        "from trade\n" +
+                        "asof join book\n" +
                         "where trade.sym = book.sym\n" +
                         ")\n" +
                         "where quote_price != NaN;",
@@ -257,7 +257,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testAsOfJoinSubQueryInnerPredicates() throws Exception {
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertQuery(
-                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c asof join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees where lastName = 'x') where blah = 'y' order by lastName) e on e.employeeId = c.customerId join select [customerId] from orders o on o.customerId = c.customerId) c",
+                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from " +
+                        "(select [customerId] from customers c " +
+                        "asof join select [blah, lastName, employeeId, timestamp] from " +
+                        "(select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from " +
+                        "(select [lastName, employeeId, timestamp] from employees) " +
+                        "order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y' join select [customerId] from orders o on o.customerId = c.customerId) c",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId and e.lastName = 'x' and e.blah = 'y'",
@@ -694,9 +699,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCount() throws Exception {
-        assertQuery("select-group-by customerId, count() count from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c",
+        assertQuery("select-group-by customerId, count() count from (select-choose [c.customerId customerId] c.customerId customerId from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c",
                 "select c.customerId, count() from customers c" +
-                        " outer join orders o on c.customerId = o.customerId " +
+                        " left join orders o on c.customerId = o.customerId " +
                         " where o.customerId = NaN",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
@@ -2379,6 +2384,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testEmptyColumnAliasDisallowed() throws Exception {
+        assertSyntaxError("select x as '' from long_sequence(1)", 15, "column alias");
+        assertSyntaxError("select 'x' '' from long_sequence(1)", 14, "column alias");
+        assertSyntaxError("select x as \"\" from long_sequence(1)", 15, "column alias");
+    }
+
+    @Test
+    public void testEmptyCommonTableExpressionNameDisallowed() throws Exception {
+        assertSyntaxError("with \"\" as (select 'a' ) select * from \"\"", 5, "empty");
+    }
+
+    @Test
     public void testEmptyOrderBy() throws Exception {
         assertSyntaxError("select x, y from tab order by", 29, "literal expected");
     }
@@ -2386,6 +2403,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEmptySampleBy() throws Exception {
         assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
+    }
+
+    @Test
+    public void testEmptyTableAliasDisallowed() throws Exception {
+        assertSyntaxError("select x from long_sequence(1) ''", 31, "table alias");
+        assertSyntaxError("select x from long_sequence(1) as ''", 34, "table alias");
+        assertSyntaxError("select * from long_sequence(1) \"\"", 31, "table alias");
+        assertSyntaxError("select * from long_sequence(1) as \"\"", 34, "table alias");
+        assertSyntaxError("select ''.* from long_sequence(1) as ''", 37, "table alias");
+        assertSyntaxError("select \"\".* from long_sequence(1) as \"\"", 37, "table alias");
+        assertSyntaxError("select ''.\"*\" from long_sequence(1) as ''", 39, "table alias");
     }
 
     @Test
@@ -2404,9 +2432,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEqualsConstantTransitivityLhs() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, o.customerId customerId1 from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where 100 = customerId) c",
+                "select-choose c.customerId customerId, o.customerId customerId1 from (select [customerId] from customers c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where 100 = customerId) c",
                 "customers c" +
-                        " outer join orders o on c.customerId = o.customerId" +
+                        " left join orders o on c.customerId = o.customerId" +
                         " where 100 = c.customerId",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -2416,9 +2444,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEqualsConstantTransitivityRhs() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, o.customerId customerId1 from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1 from (select [customerId] from customers c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100) c",
                 "customers c" +
-                        " outer join orders o on c.customerId = o.customerId" +
+                        " left join orders o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -2437,9 +2465,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testEraseColumnPrefixInJoin() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c outer join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c left join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
                 "customers c" +
-                        " outer join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders")
@@ -2724,9 +2752,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testFilterOnSubQuery() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by [customerId, customerName, count() count] customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200) where count > 1) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN) c order by customerId",
+                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by [customerId, customerName, count() count] customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200) where count > 1) c left join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN) c order by customerId",
                 "(select customerId, customerName, count() count from customers) c" +
-                        " outer join orders o on c.customerId = o.customerId " +
+                        " left join orders o on c.customerId = o.customerId " +
                         " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
@@ -2771,6 +2799,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.DOUBLE)
                         .col("y", ColumnType.DOUBLE)
         );
+    }
+
+    @Test
+    public void testFullJoinAfterSubqueryClauseGivesError() throws Exception {
+        assertSyntaxError(
+                "select * from (select * from t1 ) full join t1 on x",
+                34,
+                "unsupported join type",
+                modelOf("t1").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testFullJoinAsFirstJoinGivesError() throws Exception {
+        assertSyntaxError(
+                "select * from t1 full join t1 on x",
+                17,
+                "unsupported join type",
+                modelOf("t1").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testFullJoinDeepInFromClauseGivesError() throws Exception {
+        assertSyntaxError(
+                "select * from t1 join t1 on x full join t1 on x",
+                30,
+                "unsupported join type",
+                modelOf("t1").col("x", ColumnType.INT));
     }
 
     @Test
@@ -2931,7 +2986,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInnerJoinColumnAliasNull() throws SqlException {
         assertQuery(
                 "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c join (select [customerId] from orders o where customerId = null) o on o.customerId = c.customerId) c) c) limit 10",
-                "(select c.customerId, o.customerId kk, count() from customers c" +
+                "(select c.customerId, o.customerId kk, count() " +
+                        "from customers c" +
                         " join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
@@ -3362,12 +3418,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidOuterJoin1() throws Exception {
-        assertSyntaxError("select x from a a outer join b z", 31, "'on'");
+        assertSyntaxError("select x from a a left join b z", 30, "'on'");
     }
 
     @Test
     public void testInvalidOuterJoin2() throws Exception {
-        assertSyntaxError("select x from a a outer join b z on", 33, "Expression");
+        assertSyntaxError("select x from a a left join b z on", 32, "Expression");
     }
 
     @Test
@@ -3479,7 +3535,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinClauseAlignmentBug() throws SqlException {
         assertQuery(
-                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema',true,case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema',switch(relkind,'r','SYSTEM TABLE','v','SYSTEM VIEW','i','SYSTEM INDEX',NULL),TABLE_SCHEM = 'pg_toast',switch(relkind,'r','SYSTEM TOAST TABLE','i','SYSTEM TOAST INDEX',NULL),switch(relkind,'r','TEMPORARY TABLE','p','TEMPORARY TABLE','i','TEMPORARY INDEX','S','TEMPORARY SEQUENCE','v','TEMPORARY VIEW',NULL)),false,switch(relkind,'r','TABLE','p','PARTITIONED TABLE','i','INDEX','S','SEQUENCE','v','VIEW','c','TYPE','f','FOREIGN TABLE','m','MATERIALIZED VIEW',NULL),NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' outer join (select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d where objsubid = 0) d on d.objoid = c.oid outer join (select [oid, relname, relnamespace] from pg_catalog.pg_class() dc where relname = 'pg_class') dc on dc.oid = d.classoid outer join (select [oid, nspname] from pg_catalog.pg_namespace() dn where nspname = 'pg_catalog') dn on dn.oid = dc.relnamespace) n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
+                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema',true,case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema',switch(relkind,'r','SYSTEM TABLE','v','SYSTEM VIEW','i','SYSTEM INDEX',NULL),TABLE_SCHEM = 'pg_toast',switch(relkind,'r','SYSTEM TOAST TABLE','i','SYSTEM TOAST INDEX',NULL),switch(relkind,'r','TEMPORARY TABLE','p','TEMPORARY TABLE','i','TEMPORARY INDEX','S','TEMPORARY SEQUENCE','v','TEMPORARY VIEW',NULL)),false,switch(relkind,'r','TABLE','p','PARTITIONED TABLE','i','INDEX','S','SEQUENCE','v','VIEW','c','TYPE','f','FOREIGN TABLE','m','MATERIALIZED VIEW',NULL),NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' left join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 left join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' left join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog') n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
                 "SELECT \n" +
                         "     NULL AS TABLE_CAT, \n" +
                         "     n.nspname AS TABLE_SCHEM, \n" +
@@ -3664,7 +3720,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinFunction() throws SqlException {
         assertQuery(
-                "select-choose tab.x x, t.y y, t1.z z from (select [x] from tab join select [y] from t on f(y) = f(x) join select [z] from t1 on z = f(x) const-where 1 = 1)",
+                "select-choose tab.x x, t.y y, t1.z z from (select [x] from tab cross join select [y] from t post-join-where f(x) = f(y) cross join select [z] from t1 post-join-where z = f(x) const-where 1 = 1)",
                 "select * from tab join t on f(x)=f(y) join t1 on 1=1 where z=f(x)",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("t").col("y", ColumnType.INT),
@@ -3689,7 +3745,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
                 "select-choose country, sum from (select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) o where sum > 2)",
-                "(select country, sum(quantity) sum from orders o " +
+                "(select country, sum(quantity) sum " +
+                        "from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
                         " where country ~ '^Z') where sum > 2",
@@ -3789,7 +3846,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinOnEqCondition() throws SqlException {
         assertQuery(
-                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a outer join (select [id, c, m] from b where c = 2) b on b.id = a.id post-join-where m > 20)",
+                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a left join select [id, c, m] from b on b.id = a.id outer-join-expression c = 2 post-join-where m > 20)",
                 "select * from a left join b on ( a.id=b.id and c = 2) where m > 20",
                 modelOf("a").col("id", ColumnType.INT),
                 modelOf("b").col("id", ColumnType.INT).col("c", ColumnType.INT).col("m", ColumnType.INT)
@@ -3819,7 +3876,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinOnOrCondition() throws SqlException {
         assertQuery(
-                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a outer join (select [id, c, m] from b where c = 2 or c = 10) b on b.id = a.id post-join-where m > 20)",
+                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a left join select [id, c, m] from b on b.id = a.id outer-join-expression c = 2 or c = 10 post-join-where m > 20)",
                 "select * from a left join b on (a.id=b.id and (c = 2 or c = 10)) where m > 20",
                 modelOf("a").col("id", ColumnType.INT),
                 modelOf("b").col("id", ColumnType.INT).col("c", ColumnType.INT).col("m", ColumnType.INT)
@@ -3829,7 +3886,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinOnOtherCondition() throws SqlException {
         assertQuery(
-                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a outer join (select [id, c, m] from b where c > 0) b on b.id = a.id post-join-where m > 20)",
+                "select-choose a.id id, b.id id1, b.c c, b.m m from (select [id] from a left join select [id, c, m] from b on b.id = a.id outer-join-expression c > 0 post-join-where m > 20)",
                 "select * from a left join b on ( a.id=b.id and c > 0) where m > 20",
                 modelOf("a").col("id", ColumnType.INT),
                 modelOf("b").col("id", ColumnType.INT).col("c", ColumnType.INT).col("m", ColumnType.INT)
@@ -3922,9 +3979,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinReorder3() throws Exception {
         assertQuery(
-                "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 from (select [orderId] from orders join select [shipper] from shippers on shippers.shipper = orders.orderId join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper join select [productId, supplier] from products on products.productId = d.productId join select [supplier] from suppliers on suppliers.supplier = products.supplier cross join select [customerId] from customers const-where 1 = 1)",
+                "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
+                        "from (select [orderId] from orders " +
+                        "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join select [productId, supplier] from products on products.productId = d.productId " +
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1)",
                 "orders" +
-                        " outer join customers on 1=1" +
+                        " left join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
                         " join suppliers on products.supplier = suppliers.supplier" +
@@ -3961,9 +4024,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinReorderRoot2() throws Exception {
         assertQuery(
-                "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, products.productId productId1, products.supplier supplier, suppliers.supplier supplier1 from (select [orderId] from orders join select [shipper] from shippers on shippers.shipper = orders.orderId join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper join select [productId, supplier] from products on products.productId = d.productId join select [supplier] from suppliers on suppliers.supplier = products.supplier cross join select [customerId] from customers const-where 1 = 1)",
+                "select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, products.productId productId1, products.supplier supplier, suppliers.supplier supplier1 " +
+                        "from (select [orderId] from orders " +
+                        "join select [shipper] from shippers on shippers.shipper = orders.orderId join " +
+                        "(select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join select [productId, supplier] from products on products.productId = d.productId " +
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1)",
                 "orders" +
-                        " outer join customers on 1=1" +
+                        " left join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
                         " join products on d.productId = products.productId" +
@@ -4009,9 +4078,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinSubQueryConstantWhere() throws Exception {
         assertQuery(
-                "select-choose o.customerId customerId from (select [cid] from (select-choose [customerId cid] customerId cid from (select [customerId] from customers where 100 = customerId)) c outer join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.cid const-where 10 = 9) c",
+                "select-choose o.customerId customerId from (select [cid] from (select-choose [customerId cid] customerId cid from (select [customerId] from customers where 100 = customerId)) c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.cid const-where 10 = 9) c",
                 "select o.customerId from (select customerId cid from customers) c" +
-                        " outer join orders o on c.cid = o.customerId" +
+                        " left join orders o on c.cid = o.customerId" +
                         " where 100 = c.cid and 10=9",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -4021,9 +4090,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinSubQueryWherePosition() throws Exception {
         assertQuery(
-                "select-choose o.customerId customerId from (select [cid] from (select-choose [customerId cid] customerId cid from (select [customerId] from customers where 100 = customerId)) c outer join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.cid) c",
+                "select-choose o.customerId customerId from (select [cid] from (select-choose [customerId cid] customerId cid from (select [customerId] from customers where 100 = customerId)) c left join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.cid) c",
                 "select o.customerId from (select customerId cid from customers) c" +
-                        " outer join orders o on c.cid = o.customerId" +
+                        " left join orders o on c.cid = o.customerId" +
                         " where 100 = c.cid",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -4069,12 +4138,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinTimestampPropagationWhenTimestampNotSelected() throws SqlException {
         assertQuery(
-                "select-distinct [id] id from (select-choose [id] id from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) timestamp (created)) a lt join select [id, created] from (select-choose [id] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000) a))",
+                "select-distinct [id] id from (select-choose [id] id from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from " +
+                        "(select [id, created] from (select-choose [id, created] id, created, event, timestamp from " +
+                        "(select-choose [created, id] id, created, event, timestamp from " +
+                        "(select [created, id, event] from telemetry_users timestamp (timestamp) " +
+                        "where event = 101 " +
+                        "and id != '0x05ab1e873d165b00000005743f2c17') " +
+                        "order by created) timestamp (created)) a " +
+                        "lt join select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp " +
+                        "from (select [created, id, event] from telemetry_users timestamp (timestamp) " +
+                        "where event = 100) " +
+                        "order by created) timestamp (created)) b on b.id = a.id " +
+                        "post-join-where a.created - b.created > 10000000000) a))",
                 "with \n" +
                         "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
                         "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
                         "\n" +
-                        "select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                        "select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id " +
+                        "from stops a " +
+                        "lt join starts b on (id)) " +
+                        "where id <> '0x05ab1e873d165b00000005743f2c17' " +
+                        "and ts_stop - ts_start > 10000000000\n",
                 modelOf("telemetry_users")
                         .col("id", ColumnType.LONG256)
                         .col("created", ColumnType.TIMESTAMP)
@@ -4118,11 +4202,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinWithClausesDefaultAlias() throws SqlException {
         assertQuery(
-                "select-choose cust.customerId customerId, cust.name name, ord.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~ 'X')) cust outer join select [customerId] from (select-choose [customerId] customerId from (select [customerId, amount] from orders where amount > 100)) ord on ord.customerId = cust.customerId post-join-where ord.customerId != null) cust limit 10",
+                "select-choose cust.customerId customerId, cust.name name, ord.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~ 'X')) cust left join select [customerId] from (select-choose [customerId] customerId from (select [customerId, amount] from orders where amount > 100)) ord on ord.customerId = cust.customerId post-join-where ord.customerId != null) cust limit 10",
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
-                        " select * from cust outer join ord on (customerId) " +
+                        " select * from cust left join ord on (customerId) " +
                         " where ord.customerId != null" +
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
@@ -4133,11 +4217,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinWithClausesExplicitAlias() throws SqlException {
         assertQuery(
-                "select-choose c.customerId customerId, c.name name, o.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~ 'X')) c outer join select [customerId] from (select-choose [customerId] customerId from (select [customerId, amount] from orders where amount > 100)) o on o.customerId = c.customerId post-join-where o.customerId != null) c limit 10",
+                "select-choose c.customerId customerId, c.name name, o.customerId customerId1 from (select [customerId, name] from (select-choose [customerId, name] customerId, name from (select [customerId, name] from customers where name ~ 'X')) c left join select [customerId] from (select-choose [customerId] customerId from (select [customerId, amount] from orders where amount > 100)) o on o.customerId = c.customerId post-join-where o.customerId != null) c limit 10",
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
-                        " select * from cust c outer join ord o on (customerId) " +
+                        " select * from cust c left join ord o on (customerId) " +
                         " where o.customerId != null" +
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
@@ -4419,8 +4503,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testLeftOuterJoin() throws Exception {
         assertQuery(
-                "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
-                "select a.x from a a left outer join b on b.x = a.x",
+                "select-choose a.x x from (select [x] from a a left join select [x] from b on b.x = a.x) a",
+                "select a.x from a a left join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
         );
@@ -5120,8 +5204,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByOnJoinSubQuery3() throws SqlException {
         assertQuery(
-                "select-choose a.x x, b.y y from (select [x] from (select-choose [x, z] x, z from (select [x, z] from tab1 where x = 'Z') order by z) a asof join select [y, z] from (select-choose [y, z, s] y, z, s from (select [y, z, s] from tab2 where s ~ 'K') order by s) b on b.z = a.x) a",
-                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by z) a asof join (select y,z,s from tab2 where s ~ 'K' order by s) b where a.x = b.z",
+                "select-choose a.x x, b.y y from " +
+                        "(select [x] from " +
+                        "(select-choose [x, z] x, z from " +
+                        "(select [x, z] from tab1 where x = 'Z') order by z) a " +
+                        "asof join select [y, z] from " +
+                        "(select-choose [y, z, s] y, z, s from (select [y, z, s] from tab2 where s ~ 'K') order by s) b " +
+                        "post-join-where a.x = b.z) a",
+                //select-choose a.x x, b.y y from (select [x] from (select-choose [x, z] x, z from (select [x, z] from tab1 where x = 'Z') order by z) a asof join select [y, z] from (select-choose [y, s] y, z, s from (select [y, s] from tab2 where s ~ 'K') order by s) b post-join-where a.x = b.z) a
+                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by z) a " +
+                        "asof join (select y,z,s from tab2 where s ~ 'K' order by s) b where a.x = b.z",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.INT),
@@ -5490,8 +5582,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoin() throws Exception {
         assertQuery(
-                "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
-                "select a.x from a a outer join b on b.x = a.x",
+                "select-choose a.x x from (select [x] from a a left join select [x] from b on b.x = a.x) a",
+                "select a.x from a a left join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
         );
@@ -5499,9 +5591,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOuterJoinColumnAlias() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
+        assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
-                        " outer join orders o on c.customerId = o.customerId) " +
+                        " left join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -5511,10 +5603,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoinColumnAliasConst() throws SqlException {
         assertQuery(
-                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 10) o on o.customerId = c.customerId) c) c) limit 10",
-                "(select c.customerId, o.customerId kk, count() from customers c" +
-                        " outer join orders o on c.customerId = o.customerId) " +
-                        " where kk = 10 limit 10",
+                "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count " +
+                        "from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk " +
+                        "from (select [customerId] " +
+                        "from customers c " +
+                        "left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = 10) c) c) limit 10",
+                "(select c.customerId, o.customerId kk, count() " +
+                        "from customers c " +
+                        "left join orders o on c.customerId = o.customerId) " +
+                        "where kk = 10 " +
+                        "limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
         );
@@ -5522,9 +5620,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOuterJoinColumnAliasNull() throws SqlException {
-        assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
+        assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c left join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
-                        " outer join orders o on c.customerId = o.customerId) " +
+                        " left join orders o on c.customerId = o.customerId) " +
                         " where kk = null limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -5534,7 +5632,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoinRightPredicate() throws SqlException {
         assertQuery(
-                "select-choose x, y from (select [x] from l outer join select [y] from r on r.y = l.x post-join-where y > 0)",
+                "select-choose x, y from (select [x] from l left join select [y] from r on r.y = l.x post-join-where y > 0)",
                 "select x, y\n" +
                         "from l left join r on l.x = r.y\n" +
                         "where y > 0",
@@ -5546,7 +5644,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOuterJoinRightPredicate1() throws SqlException {
         assertQuery(
-                "select-choose x, y from (select [x] from l outer join select [y] from r on r.y = l.x post-join-where y > 0 or y > 10)",
+                "select-choose x, y from (select [x] from l left join select [y] from r on r.y = l.x post-join-where y > 0 or y > 10)",
                 "select x, y\n" +
                         "from l left join r on l.x = r.y\n" +
                         "where y > 0 or y > 10",
@@ -5595,7 +5693,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c outer join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
+                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +
@@ -5645,8 +5743,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testPipeConcatInJoin() throws SqlException {
         assertQuery(
-                "select-virtual 1 1, x from (select [x] from tab join select [y] from bap on " +
-                        "concat('2',substring(bap.y,0,5)) = concat(tab.x,'1'))",
+                "select-virtual 1 1, x from (select [x] from tab cross join select [y] from bap post-join-where concat(tab.x,'1') = concat('2',substring(bap.y,0,5)))",
                 "select 1, x from tab join bap on tab.x || '1' = '2' || substring(bap.y, 0, 5)",
                 modelOf("tab").col("x", ColumnType.STRING),
                 modelOf("bap").col("y", ColumnType.STRING)
@@ -5763,6 +5860,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testQuotedTableAliasFollowedByStar() throws Exception {
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select foo.* from long_sequence(1) as foo"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as foo"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select foo.* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo\".* from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo\".* from long_sequence(1) as 'foo'"
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.* from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.\"*\" from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select 'foo'.'*' from long_sequence(1) as \"foo\""
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) foo) foo",
+                "select \"foo.*\" from long_sequence(1) as \"foo\""
+        );
+
+        // the alias itself contains double quotes. should this be allowed at all?
+        assertQuery(
+                "select-choose x from (select [x] from long_sequence(1) \\\"foo\\\") \\\"foo\\\"",
+                "select \\\"foo\\\".* from long_sequence(1) as \\\"foo\\\""
+        );
+    }
+
+    @Test
     public void testRedundantSelect() throws Exception {
         assertSyntaxError(
                 "select x from select (select x from a) timestamp(x)",
@@ -5778,6 +5934,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a from (select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100)) where a ~ '^W')",
                 "(select rnd_str() a from long_sequence(100)) where a ~ '^W'"
         );
+    }
+
+    @Test
+    public void testRightJoinAfterSubqueryClauseGivesError() throws Exception {
+        assertSyntaxError(
+                "select * from (select * from t1 ) right join t1 on x",
+                34,
+                "unsupported join type",
+                modelOf("t1").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testRightJoinAsFirstJoinGivesError() throws Exception {
+        assertSyntaxError(
+                "select * from t1 right join t1 on x",
+                17,
+                "unsupported join type",
+                modelOf("t1").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testRightJoinDeepInFromClauseGivesError() throws Exception {
+        assertSyntaxError(
+                "select * from t1 join t1 on x right join t1 on x",
+                30,
+                "unsupported join type",
+                modelOf("t1").col("x", ColumnType.INT));
     }
 
     @Test
@@ -6099,7 +6282,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct [Schema] Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c outer join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
+        assertQuery("select-distinct [Schema] Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -7286,16 +7469,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual [1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8] 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union " +
                         "select-choose [orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1] " +
                         "orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
-                        "from (select [orderId] from orders join select [shipper] " +
-                        "from shippers on shippers.shipper = orders.orderId join (select [orderId, productId] " +
-                        "from orderDetails d where productId = orderId) d on d.productId = shippers.shipper " +
-                        "join select [productId, supplier] from products on products.productId = d.productId join select [supplier] " +
-                        "from suppliers on suppliers.supplier = products.supplier cross " +
-                        "join select [customerId] from customers const-where 1 = 1)",
+                        "from (select [orderId] from orders " +
+                        "join select [shipper] from shippers on shippers.shipper = orders.orderId " +
+                        "join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper and d.orderId = orders.orderId " +
+                        "join select [productId, supplier] from products on products.productId = d.productId " +
+                        "join select [supplier] from suppliers on suppliers.supplier = products.supplier " +
+                        "join select [customerId] from customers outer-join-expression 1 = 1)",
                 "select 1, 2, 3, 4, 5, 6, 7, 8 from long_sequence(1)" +
                         " union " +
                         "orders" +
-                        " outer join customers on 1=1" +
+                        " left join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = shippers.shipper" +
                         " join suppliers on products.supplier = suppliers.supplier" +
@@ -7364,13 +7547,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual [1 1, 2 2, 3 3] 1 1, 2 2, 3 3 from (long_sequence(1)) " +
                         "union " +
                         "select-choose [c.customerId customerId, o.customerId customerId1, o.x x] c.customerId customerId, o.customerId customerId1, o.x x from " +
-                        "(select [customerId] from customers c outer join " +
+                        "(select [customerId] from customers c left join " +
                         "select [customerId, x] from (select-choose [customerId, x] customerId, x from " +
                         "(select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
                 "select 1, 2, 3 from long_sequence(1)" +
                         " union " +
                         "customers c" +
-                        " outer join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders")
@@ -7466,9 +7649,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereNotSelectedColumn() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, c.weight weight, o.customerId customerId1, o.x x from (select [customerId, weight] from customers c outer join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10) o) o on o.customerId = c.customerId where weight = 100) c",
+                "select-choose c.customerId customerId, c.weight weight, o.customerId customerId1, o.x x from (select [customerId, weight] from customers c left join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10) o) o on o.customerId = c.customerId where weight = 100) c",
                 "customers c" +
-                        " outer join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " left join (orders o where o.x = 10) o on c.customerId = o.customerId" +
                         " where c.weight = 100",
                 modelOf("customers").col("customerId", ColumnType.INT).col("weight", ColumnType.DOUBLE),
                 modelOf("orders")
