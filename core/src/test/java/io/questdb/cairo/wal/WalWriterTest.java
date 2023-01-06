@@ -1622,11 +1622,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals(String.valueOf(i), record.getSym(24));
                         assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
 
-                        assertEquals(i, record.getUuidLo(26));
-                        assertEquals(i + 1, record.getUuidHi(26));
+                        long loc = record.getUuidLocation(26);
+                        assertEquals(i, record.getUuidLo(26, loc));
+                        assertEquals(i + 1, record.getUuidHi(26, loc));
 
-                        assertEquals(i, record.getUuidLo(27));
-                        assertEquals(i + 1, record.getUuidHi(27));
+                        loc = record.getUuidLocation(27);
+                        assertEquals(i, record.getUuidLo(27, loc));
+                        assertEquals(i + 1, record.getUuidHi(27, loc));
 
                         assertEquals(ts, record.getTimestamp(28));
                         assertEquals(i, record.getRowId());

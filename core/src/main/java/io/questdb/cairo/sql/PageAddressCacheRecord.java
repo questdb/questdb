@@ -297,21 +297,28 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public long getUuidHi(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (address == 0) {
-            return NullMemoryMR.INSTANCE.getUuidHi(0);
+    public long getUuidHi(int col, long location) {
+        if (location == 0) {
+            return NullMemoryMR.INSTANCE.getUuidLo(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * UuidUtil.BYTES + Long.BYTES);
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public long getUuidLo(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (address == 0) {
+    public long getUuidLo(int rec, long location) {
+        if (location == 0) {
             return NullMemoryMR.INSTANCE.getUuidLo(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * UuidUtil.BYTES);
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getUuidLocation(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return 0;
+        }
+        return address + rowIndex * UuidUtil.BYTES;
     }
 
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {

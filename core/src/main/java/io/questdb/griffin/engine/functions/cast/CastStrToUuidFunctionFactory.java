@@ -72,7 +72,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getUuidHi(Record rec) {
+        public long getUuidHi(Record rec, long location) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
                 return UuidUtil.NULL_HI_AND_LO;
@@ -86,7 +86,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getUuidLo(Record rec) {
+        public long getUuidLo(Record rec, long location) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
                 return UuidUtil.NULL_HI_AND_LO;
@@ -97,6 +97,11 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return UuidUtil.NULL_HI_AND_LO;
             }
+        }
+
+        @Override
+        public long getUuidLocation(Record rec) {
+            return 1;
         }
     }
 }

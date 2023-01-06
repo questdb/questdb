@@ -133,8 +133,9 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(8));
-                Assert.assertEquals(rnd.nextLong(), value.getUuidLo(9));
-                Assert.assertEquals(rnd.nextLong(), value.getUuidHi(9));
+                long loc = value.getUuidLocation(9);
+                Assert.assertEquals(rnd.nextLong(), value.getUuidLo(9, loc));
+                Assert.assertEquals(rnd.nextLong(), value.getUuidHi(9, loc));
             }
 
             try (RecordCursor cursor = map.getCursor()) {
@@ -356,8 +357,9 @@ public class FastMapTest extends AbstractCairoTest {
                             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
                             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
                             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-                            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9));
-                            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9));
+                            long loc = record.getUuidLocation(9);
+                            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9, loc));
+                            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9, loc));
                         }
                     }
                 }
@@ -815,8 +817,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getUuidLo(col));
-            Assert.assertEquals(rnd.nextLong(), record.getUuidHi(col));
+            long loc = record.getUuidLocation(col);
+            Assert.assertEquals(rnd.nextLong(), record.getUuidLo(col, loc));
+            Assert.assertEquals(rnd.nextLong(), record.getUuidHi(col, loc));
 
             // value part, it comes first in record
             col = 0;
@@ -829,8 +832,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            Assert.assertEquals(rnd.nextLong(), record.getUuidLo(col));
-            Assert.assertEquals(rnd.nextLong(), record.getUuidHi(col));
+            loc = record.getUuidLocation(col);
+            Assert.assertEquals(rnd.nextLong(), record.getUuidLo(col, loc));
+            Assert.assertEquals(rnd.nextLong(), record.getUuidHi(col, loc));
         }
     }
 
@@ -850,8 +854,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9));
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9));
+            long loc = record.getUuidLocation(9);
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9, loc));
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9, loc));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -925,12 +930,13 @@ public class FastMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
+            loc = record.getUuidLocation(keyColumnOffset + 12);
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12));
-                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12));
+                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(UuidUtil.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12, loc));
             } else {
-                Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12));
-                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12, loc));
             }
         }
         Assert.assertEquals(5000, c);

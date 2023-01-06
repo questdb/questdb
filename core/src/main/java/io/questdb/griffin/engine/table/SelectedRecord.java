@@ -189,13 +189,18 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public long getUuidHi(int col) {
-        return base.getUuidHi(getColumnIndex(col));
+    public long getUuidHi(int col, long location) {
+        return base.getUuidHi(getColumnIndex(col), location);
     }
 
     @Override
-    public long getUuidLo(int col) {
-        return base.getUuidLo(getColumnIndex(col));
+    public long getUuidLo(int col, long location) {
+        return base.getUuidLo(getColumnIndex(col), location);
+    }
+
+    @Override
+    public long getUuidLocation(int col) {
+        return base.getUuidLocation(getColumnIndex(col));
     }
 
     private int getColumnIndex(int columnIndex) {

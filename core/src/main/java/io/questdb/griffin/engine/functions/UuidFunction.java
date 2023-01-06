@@ -30,13 +30,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.UuidUtil;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
 public abstract class UuidFunction implements ScalarFunction {
-    private final StringSink sinkA = new StringSink(UuidUtil.UUID_LENGTH);
-    private final StringSink sinkB = new StringSink(UuidUtil.UUID_LENGTH);
 
     @Override
     public BinarySequence getBin(Record rec) {

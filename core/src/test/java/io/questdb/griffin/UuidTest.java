@@ -223,8 +223,6 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testEqualityComparisonExplicitCast() throws Exception {
-        MutableUuid uuid = new MutableUuid();
-        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
         assertQuery("u\n" +

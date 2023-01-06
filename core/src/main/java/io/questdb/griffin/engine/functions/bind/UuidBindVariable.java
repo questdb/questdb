@@ -39,13 +39,18 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     }
 
     @Override
-    public long getUuidHi(Record rec) {
+    public long getUuidHi(Record rec, long location) {
         return value.getHi();
     }
 
     @Override
-    public long getUuidLo(Record rec) {
+    public long getUuidLo(Record rec, long location) {
         return value.getLo();
+    }
+
+    @Override
+    public long getUuidLocation(Record rec) {
+        return 1;
     }
 
     void set(long lo, long hi) {

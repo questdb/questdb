@@ -185,13 +185,18 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public long getUuidHi(Record rec) {
-        return getBase().getUuidHi(rec);
+    public long getUuidHi(Record rec, long location) {
+        return getBase().getUuidHi(rec, location);
     }
 
     @Override
-    public long getUuidLo(Record rec) {
-        return getBase().getUuidLo(rec);
+    public long getUuidLo(Record rec, long location) {
+        return getBase().getUuidLo(rec, location);
+    }
+
+    @Override
+    public long getUuidLocation(Record rec) {
+        return getBase().getUuidLocation(rec);
     }
 
     public String getVariableName() {

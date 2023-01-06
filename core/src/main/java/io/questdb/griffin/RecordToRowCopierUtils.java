@@ -59,8 +59,9 @@ public class RecordToRowCopierUtils {
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
         int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
-        int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(I)J");
-        int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(I)J");
+        int rGetUuidLoc = asm.poolInterfaceMethod(Record.class, "getUuidLocation", "(I)J");
+        int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(IJ)J");
+        int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(IJ)J");
 
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
@@ -157,7 +158,7 @@ public class RecordToRowCopierUtils {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 15, 4);
+        asm.startMethod(copyNameIndex, copySigIndex, 15, 5);
 
         for (int i = 0; i < n; i++) {
 
@@ -770,16 +771,28 @@ public class RecordToRowCopierUtils {
                 case ColumnType.UUID:
                     switch (ColumnType.tagOf(toColumnType)) {
                         case ColumnType.UUID:
-                            // at this point the stack looks like this: [RowWriter, Record, columnIndex]
-                            asm.invokeInterface(rGetUuidLo); // this consumes the Record and columnIndex and push uuidLo to a stack
-                            // Stack now looks like this: [RowWriter, uuidLo]
-                            // we also need to get uuidHi from the Record -> we have to push Record and columnIndex back to the stack
+                            // Stack: [RowWriter, Record, columnIndex]
+                            asm.invokeInterface(rGetUuidLoc);
+                            // Stack: [RowWriter, location]
+                            asm.lstore(3);
+                            // Stack: [RowWriter]
                             asm.aload(1);  // Record is at the local variables slot #1. Push it to a stack.
-                            asm.iconst(i); // "i" is a column index. Push it to a stack
-                            // Stack now looks like this: [RowWriter, uuidLo, Record, columnIndex]
-                            asm.invokeInterface(rGetUuidHi); // this consumes the Record and columnIndex and push uuidHi to a stack
-                            // Stack now looks this: [RowWriter, uuidLo, uuidHi]
-                            asm.invokeInterface(wPutUuid, 5); //uuidLo and uuidHi are longs and each long uses 2 slots on the stack -> 5 arg in total
+                            // Stack: [RowWriter, Record]
+                            asm.iconst(i);
+                            // Stack: [RowWriter, Record, columnIndex]
+                            asm.lload(3);
+                            // Stack: [RowWriter, Record, columnIndex, location]
+                            asm.invokeInterface(rGetUuidLo, 3);
+                            // Stack: [RowWriter, lo]
+                            asm.aload(1);  // Push record to the stack.
+                            // Stack: [RowWriter, lo, Record]
+                            asm.iconst(i); // Push column index to a stack
+                            // Stack: [RowWriter, lo, Record, columnIndex]
+                            asm.lload(3);
+                            // Stack: [RowWriter, lo, Record, columnIndex, location]
+                            asm.invokeInterface(rGetUuidHi, 3);
+                            // Stack: [RowWriter, lo, hi]
+                            asm.invokeInterface(wPutUuid, 5);
                             // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
                             // The stack is now empty, and we are done with this column
                             break;
@@ -791,10 +804,27 @@ public class RecordToRowCopierUtils {
                             // complicated as JVM requires jump targets to have stack maps, etc. This would complicate things
                             // so we rely on an auxiliary method `transferUuidToStrCol()` to do branching job and javac generates
                             // the stack maps.
-                            asm.invokeInterface(rGetUuidLo);
-                            asm.aload(1);
+                            // Stack: [RowWriter, Record, columnIndex]
+                            asm.invokeInterface(rGetUuidLoc);
+                            // Stack: [RowWriter, location]
+                            asm.lstore(3);
+                            // Stack: [RowWriter]
+                            asm.aload(1);  // Record is at the local variables slot #1. Push it to a stack.
+                            // Stack: [RowWriter, Record]
                             asm.iconst(i);
-                            asm.invokeInterface(rGetUuidHi);
+                            // Stack: [RowWriter, Record, columnIndex]
+                            asm.lload(3);
+                            // Stack: [RowWriter, Record, columnIndex, location]
+                            asm.invokeInterface(rGetUuidLo, 3);
+                            // Stack: [RowWriter, lo]
+                            asm.aload(1);  // Push record to the stack.
+                            // Stack: [RowWriter, lo, Record]
+                            asm.iconst(i); // Push column index to a stack
+                            // Stack: [RowWriter, lo, Record, columnIndex]
+                            asm.lload(3);
+                            // Stack: [RowWriter, lo, Record, columnIndex, location]
+                            asm.invokeInterface(rGetUuidHi, 3);
+                            // Stack: [RowWriter, lo, hi]
                             asm.invokeStatic(transferUuidToStrCol);
                             break;
                         default:

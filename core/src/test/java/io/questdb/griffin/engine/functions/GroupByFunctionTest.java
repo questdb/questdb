@@ -216,13 +216,18 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public long getUuidHi(Record rec) {
+        public long getUuidHi(Record rec, long location) {
             return 0;
         }
 
         @Override
-        public long getUuidLo(Record rec) {
+        public long getUuidLo(Record rec, long location) {
             return 0;
+        }
+
+        @Override
+        public long getUuidLocation(Record rec) {
+            return 1;
         }
 
         @Override

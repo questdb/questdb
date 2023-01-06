@@ -69,8 +69,9 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
-        final int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(I)J");
-        final int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(I)J");
+        final int rGetUuidLoc = asm.poolInterfaceMethod(Record.class, "getUuidLocation", "(I)J");
+        final int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(IJ)J");
+        final int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(IJ)J");
 
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
@@ -102,7 +103,7 @@ public class RecordSinkFactory {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 5, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 7, 5);
 
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -272,16 +273,36 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutLong, 2);
                     break;
                 case ColumnType.UUID:
+                    int skewedIndex = getSkewedIndex(index, skewIndex);
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetUuidLo, 1);
+                    asm.iconst(skewedIndex);
+                    asm.invokeInterface(rGetUuidLoc, 1);
+                    asm.lstore(3);
 
                     asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetUuidHi, 1);
+                    asm.iconst(skewedIndex);
+                    asm.lload(3);
+                    asm.invokeInterface(rGetUuidLo, 3);
+
+                    asm.aload(1);
+                    asm.iconst(skewedIndex);
+                    asm.lload(3);
+                    asm.invokeInterface(rGetUuidHi, 3);
 
                     asm.invokeInterface(wPutUuid, 4);
+
+//                    asm.aload(2);
+//                    asm.aload(1);
+//                    int skewedIndex = getSkewedIndex(index, skewIndex);
+//                    asm.iconst(skewedIndex);
+//                    asm.invokeInterface(rGetUuidLo, 1);
+//
+//                    asm.aload(1);
+//                    asm.iconst(skewedIndex);
+//                    asm.invokeInterface(rGetUuidHi, 1);
+//
+//                    asm.invokeInterface(wPutUuid, 4);
                     break;
                 default:
                     break;

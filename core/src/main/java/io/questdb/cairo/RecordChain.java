@@ -449,13 +449,18 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public long getUuidHi(int col) {
-            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
+        public long getUuidHi(int col, long location) {
+            return mem.getLong(location + Long.BYTES);
         }
 
         @Override
-        public long getUuidLo(int col) {
-            return mem.getLong(fixedWithColumnOffset(col));
+        public long getUuidLo(int col, long location) {
+            return mem.getLong(location);
+        }
+
+        @Override
+        public long getUuidLocation(int col) {
+            return fixedWithColumnOffset(col);
         }
 
         private long fixedWithColumnOffset(int index) {

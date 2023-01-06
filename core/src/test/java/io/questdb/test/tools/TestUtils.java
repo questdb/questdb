@@ -1133,8 +1133,9 @@ public final class TestUtils {
                 }
                 break;
             case ColumnType.UUID:
-                long hi = r.getUuidHi(i);
-                long lo = r.getUuidLo(i);
+                long loc = r.getUuidLocation(i);
+                long hi = r.getUuidHi(i, loc);
+                long lo = r.getUuidLo(i, loc);
                 if (!UuidUtil.isNull(lo, hi)) {
                     MutableUuid uuid = new MutableUuid(lo, hi);
                     uuid.toSink(sink);
@@ -1325,8 +1326,10 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
                     case ColumnType.UUID:
-                        Assert.assertEquals(rr.getUuidHi(i), lr.getUuidHi(i));
-                        Assert.assertEquals(rr.getUuidLo(i), lr.getUuidLo(i));
+                        long rrLoc = rr.getUuidLocation(i);
+                        long lrLoc = lr.getUuidLocation(i);
+                        Assert.assertEquals(rr.getUuidHi(i, rrLoc), lr.getUuidHi(i, lrLoc));
+                        Assert.assertEquals(rr.getUuidLo(i, rrLoc), lr.getUuidLo(i, lrLoc));
                         break;
                     default:
                         // Unknown record type.

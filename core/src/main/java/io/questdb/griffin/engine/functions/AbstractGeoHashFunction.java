@@ -155,12 +155,17 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public long getUuidHi(Record rec) {
+    public long getUuidHi(Record rec, long location) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getUuidLo(Record rec) {
+    public long getUuidLo(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidLocation(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

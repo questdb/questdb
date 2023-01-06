@@ -343,11 +343,23 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default long getUuidHi(int col) {
+    default long getUuidHi(int col, long location) {
         throw new UnsupportedOperationException();
     }
 
-    default long getUuidLo(int col) {
+    default long getUuidLo(int col, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Returns a location where the value of a given UUID column is stored.
+     * The location is an opaque value that should not be directly interpreted.
+     * It is used to pass the location to {@link #getUuidHi(int, long)} and {@link #getUuidLo(int, long)}.
+     *
+     * @param col numeric index of the column
+     * @return location of the UUID value
+     */
+    default long getUuidLocation(int col) {
         throw new UnsupportedOperationException();
     }
 

@@ -221,13 +221,18 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public long getUuidHi(Record rec) {
+    public long getUuidHi(Record rec, long location) {
         return UuidUtil.NULL_HI_AND_LO;
     }
 
     @Override
-    public long getUuidLo(Record rec) {
+    public long getUuidLo(Record rec, long location) {
         return UuidUtil.NULL_HI_AND_LO;
+    }
+
+    @Override
+    public long getUuidLocation(Record rec) {
+        return 0;
     }
 
     @Override

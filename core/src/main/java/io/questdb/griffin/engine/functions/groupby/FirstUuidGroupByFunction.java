@@ -45,7 +45,8 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putUuid(valueIndex, arg.getUuidLo(record), arg.getUuidHi(record));
+        long loc = arg.getUuidLocation(record);
+        mapValue.putUuid(valueIndex, arg.getUuidLo(record, loc), arg.getUuidHi(record, loc));
     }
 
     @Override
@@ -59,13 +60,18 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public long getUuidHi(Record rec) {
-        return rec.getUuidHi(valueIndex);
+    public long getUuidHi(Record rec, long location) {
+        return rec.getUuidHi(valueIndex, location);
     }
 
     @Override
-    public long getUuidLo(Record rec) {
-        return rec.getUuidLo(valueIndex);
+    public long getUuidLo(Record rec, long location) {
+        return rec.getUuidLo(valueIndex, location);
+    }
+
+    @Override
+    public long getUuidLocation(Record rec) {
+        return rec.getUuidLocation(valueIndex);
     }
 
     @Override

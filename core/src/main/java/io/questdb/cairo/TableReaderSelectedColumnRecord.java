@@ -296,23 +296,29 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public long getUuidHi(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        MemoryR column = reader.getColumn(absoluteColumnIndex);
-        return column.getLong(offset + Long.BYTES);
+    public long getUuidHi(int columnIndex, long location) {
+        if (location == 0) {
+            return UuidUtil.NULL_HI_AND_LO;
+        }
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public long getUuidLo(int columnIndex) {
+    public long getUuidLo(int columnIndex, long location) {
+        if (location == 0) {
+            return UuidUtil.NULL_HI_AND_LO;
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getUuidLocation(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
-        return column.getLong(offset);
+        return column.addressOf(offset);
     }
 
     public void incrementRecordIndex() {

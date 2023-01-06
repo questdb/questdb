@@ -50,7 +50,8 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            if (SqlUtil.implicitCastUuidAsStr(func.getUuidLo(null), func.getUuidHi(null), sink)) {
+            long loc = func.getUuidLocation(null);
+            if (SqlUtil.implicitCastUuidAsStr(func.getUuidLo(null, loc), func.getUuidHi(null, loc), sink)) {
                 return new StrConstant(Chars.toString(sink));
             } else {
                 return StrConstant.NULL;
@@ -76,24 +77,28 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             sinkA.clear();
-            return SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec), arg.getUuidHi(rec), sinkA) ? sinkA : null;
+            long loc = arg.getUuidLocation(rec);
+            return SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec, loc), arg.getUuidHi(rec, loc), sinkA) ? sinkA : null;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec), arg.getUuidHi(rec), sink);
+            long loc = arg.getUuidLocation(rec);
+            SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec, loc), arg.getUuidHi(rec, loc), sink);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            return SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec), arg.getUuidHi(rec), sinkB) ? sinkB : null;
+            long loc = arg.getUuidLocation(rec);
+            return SqlUtil.implicitCastUuidAsStr(arg.getUuidLo(rec, loc), arg.getUuidHi(rec, loc), sinkB) ? sinkB : null;
         }
 
         @Override
         public int getStrLen(Record rec) {
-            long lo = arg.getUuidLo(rec);
-            long hi = arg.getUuidHi(rec);
+            long loc = arg.getUuidLocation(rec);
+            long lo = arg.getUuidLo(rec, loc);
+            long hi = arg.getUuidHi(rec, loc);
             return UuidUtil.isNull(lo, hi) ? TableUtils.NULL_LEN : UuidUtil.UUID_LENGTH;
         }
     }

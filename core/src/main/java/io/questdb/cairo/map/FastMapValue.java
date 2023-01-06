@@ -154,15 +154,19 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public long getUuidHi(int index) {
+    public long getUuidHi(int index, long location) {
         long address0 = address0(index);
-        return Unsafe.getUnsafe().getLong(address0 + Long.BYTES);
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public long getUuidLo(int index) {
-        long address0 = address0(index);
-        return Unsafe.getUnsafe().getLong(address0);
+    public long getUuidLo(int index, long location) {
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getUuidLocation(int index) {
+        return address0(index);
     }
 
     @Override

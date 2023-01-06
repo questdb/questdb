@@ -68,15 +68,18 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     }
 
     private static BooleanConstant createConstant(Function a, Function b) {
-        long aHi = a.getUuidHi(null);
-        long aLo = a.getUuidLo(null);
-        long bHi = b.getUuidHi(null);
-        long bLo = b.getUuidLo(null);
+        long aLoc = a.getUuidLocation(null);
+        long bLoc = b.getUuidLocation(null);
+        long aHi = a.getUuidHi(null, aLoc);
+        long aLo = a.getUuidLo(null, aLoc);
+        long bHi = b.getUuidHi(null, bLoc);
+        long bLo = b.getUuidLo(null, bLoc);
         return BooleanConstant.of(aHi == bHi && aLo == bLo);
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        return new ConstCheckFunc(varFunc, constFunc.getUuidHi(null), constFunc.getUuidLo(null));
+        long loc = constFunc.getUuidLocation(null);
+        return new ConstCheckFunc(varFunc, constFunc.getUuidHi(null, loc), constFunc.getUuidLo(null, loc));
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -97,8 +100,9 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long hi = arg.getUuidHi(rec);
-            long lo = arg.getUuidLo(rec);
+            long loc = arg.getUuidLocation(rec);
+            long hi = arg.getUuidHi(rec, loc);
+            long lo = arg.getUuidLo(rec, loc);
             return negated != (hi == hiConstant && lo == loConstant);
         }
     }
@@ -114,10 +118,12 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long leftHi = left.getUuidHi(rec);
-            final long leftLo = left.getUuidLo(rec);
-            final long rightHi = right.getUuidHi(rec);
-            final long rightLo = right.getUuidLo(rec);
+            long leftLoc = left.getUuidLocation(rec);
+            long rightLoc = right.getUuidLocation(rec);
+            final long leftHi = left.getUuidHi(rec, leftLoc);
+            final long leftLo = left.getUuidLo(rec, leftLoc);
+            final long rightHi = right.getUuidHi(rec, rightLoc);
+            final long rightLo = right.getUuidLo(rec, rightLoc);
             return negated != (leftHi == rightHi && leftLo == rightLo);
         }
 
