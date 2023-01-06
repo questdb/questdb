@@ -234,7 +234,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             TableToken token = engine.getTableTokenByDirName(tableName, tableId);
 
                             if (token == null) {
-                                LOG.debug().$("table deleted, skipping [privateTable=").$(tableName).I$();
+                                LOG.debug().$("table deleted, skipping [tableDir=").utf8(tableName).I$();
                                 continue;
                             }
 
