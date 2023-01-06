@@ -740,6 +740,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'm';
     }
 
+    public static boolean isFullKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i) | 32) == 'l';
+    }
+
     public static boolean isGeoHashKeyword(CharSequence tok) {
         if (tok.length() != 7) {
             return false;
@@ -1476,6 +1488,19 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'u'
                 && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i) | 32) == 'e';
+    }
+
+    public static boolean isRightKeyword(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'g'
+                && (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isSampleKeyword(CharSequence tok) {
