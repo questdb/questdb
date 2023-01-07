@@ -4558,10 +4558,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     } else {
                         if (partitionTimestamp == lastPartitionTimestamp) {
                             commitTransientRowCount = srcDataMax;
-                        } else if (partitionTimestamp > lastPartitionTimestamp) {
-                            // this is a new last partition
-                            this.txWriter.fixedRowCount += commitTransientRowCount - srcOooBatchRowSize;
-                            commitTransientRowCount = srcDataMax;
                         }
                         // move over read-only partitions
                         LOG.critical()
