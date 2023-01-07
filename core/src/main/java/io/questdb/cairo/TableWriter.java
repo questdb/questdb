@@ -3870,15 +3870,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
-                    if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
-                        int errno = ff.unlinkOrRemove(other, LOG);
-                        if (!(errno == 0 || errno == -1)) {
-                            LOG.info()
-                                    .$("could not purge partition version, async purge will be scheduled [path=")
-                                    .utf8(other)
-                                    .$(", errno=").$(errno).I$();
-                            scheduleAsyncPurge = true;
-                        }
+                    int errno = ff.unlinkOrRemove(other, LOG);
+                    if (!(errno == 0 || errno == -1)) {
+                        LOG.info()
+                                .$("could not purge partition version, async purge will be scheduled [path=")
+                                .utf8(other)
+                                .$(", errno=").$(errno).I$();
+                        scheduleAsyncPurge = true;
                     }
                 } finally {
                     other.trimTo(rootLen);
