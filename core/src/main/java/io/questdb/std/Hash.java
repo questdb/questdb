@@ -26,6 +26,7 @@ package io.questdb.std;
 
 public final class Hash {
 
+    private static final long M2 = 0x7a646e4d;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
     private static final long XXH_PRIME64_1 = -7046029288634856825L; /* 0b1001111000110111011110011011000110000101111010111100101010000111 */
     private static final long XXH_PRIME64_2 = -4417276706812531889L; /* 0b1100001010110010101011100011110100100111110101001110101101001111 */
@@ -72,6 +73,22 @@ public final class Hash {
      */
     public static long hashMem(long p, long len) {
         return xxHash64(p, len, 0, unsafeAccessor);
+    }
+
+    public static long hashMem64(long p, long len) {
+        long h = 0;
+        int i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+        }
+        for (; i + 3 < len; i += 4) {
+            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+        }
+        for (; i < len; i++) {
+            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+        }
+        h *= M2;
+        return h ^ (h >>> 32);
     }
 
     /**
