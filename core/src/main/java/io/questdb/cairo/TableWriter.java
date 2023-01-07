@@ -4556,9 +4556,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             commitTransientRowCount = partitionSize;
                         }
                     } else {
-                        if (partitionTimestamp == lastPartitionTimestamp) {
-                            commitTransientRowCount = srcDataMax;
-                        }
                         // move over read-only partitions
                         LOG.critical()
                                 .$("o3 ignoring write on read-only partition [table=").utf8(tableName)
