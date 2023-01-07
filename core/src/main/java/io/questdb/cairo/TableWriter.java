@@ -4543,19 +4543,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             .$(", memUsed=").$(Unsafe.getMemUsed())
                             .I$();
 
-                    if (!partitionIsReadOnly) {
-                        if (partitionTimestamp < lastPartitionTimestamp) {
-                            // increment fixedRowCount by number of rows old partition incremented
-                            this.txWriter.fixedRowCount += srcOooBatchRowSize;
-                        } else if (partitionTimestamp == lastPartitionTimestamp) {
-                            // this is existing "last" partition, we can set the size directly
-                            commitTransientRowCount = partitionSize;
-                        } else {
-                            // this is potentially a new last partition
-                            this.txWriter.fixedRowCount += commitTransientRowCount;
-                            commitTransientRowCount = partitionSize;
-                        }
-                    } else {
+                    if (partitionIsReadOnly) {
                         // move over read-only partitions
                         LOG.critical()
                                 .$("o3 ignoring write on read-only partition [table=").utf8(tableName)
@@ -4563,6 +4551,18 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
                         continue;
+                    }
+
+                    if (partitionTimestamp < lastPartitionTimestamp) {
+                        // increment fixedRowCount by number of rows old partition incremented
+                        this.txWriter.fixedRowCount += srcOooBatchRowSize;
+                    } else if (partitionTimestamp == lastPartitionTimestamp) {
+                        // this is existing "last" partition, we can set the size directly
+                        commitTransientRowCount = partitionSize;
+                    } else {
+                        // this is potentially a new last partition
+                        this.txWriter.fixedRowCount += commitTransientRowCount;
+                        commitTransientRowCount = partitionSize;
                     }
 
                     o3PartitionUpdRemaining.incrementAndGet();
