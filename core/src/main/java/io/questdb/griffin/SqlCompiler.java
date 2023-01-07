@@ -2777,18 +2777,19 @@ public class SqlCompiler implements Closeable {
         };
         private transient SqlExecutionContext currentExecutionContext;
         private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
-            if (type == Files.DT_DIR && Files.notDots(pUtf8NameZ)) { // no backup for linked folders
-                fileNameSink.clear();
-                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
-                try {
+            int plen = srcPath.length();
+            try {
+                if (ff.isDirOrSoftLinkDirNoDots(srcPath, plen, pUtf8NameZ, type, fileNameSink)) {
                     backupTable(fileNameSink, currentExecutionContext);
-                } catch (CairoException e) {
-                    LOG.error()
-                            .$("could not backup [path=").utf8(fileNameSink)
-                            .$(", e=").$(e.getFlyweightMessage())
-                            .$(", errno=").$(e.getErrno())
-                            .I$();
                 }
+            } catch (CairoException e) {
+                LOG.error()
+                        .$("could not backup [path=").utf8(fileNameSink)
+                        .$(", e=").$(e.getFlyweightMessage())
+                        .$(", errno=").$(e.getErrno())
+                        .I$();
+            } finally {
+                srcPath.trimTo(plen).$();
             }
         };
 
