@@ -626,10 +626,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
     }
 
-    protected long unsafeGetRawMemorySize() {
-        return Math.max(super.unsafeGetRawMemorySize(), writeAreaSize + writeBaseOffset);
-    }
-
     void updatePartitionColumnVersion(long partitionTimestamp) {
         final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);

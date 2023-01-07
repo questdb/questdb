@@ -489,10 +489,6 @@ public class TxReader implements Closeable, Mutable {
         size = readRecordSize;
     }
 
-    protected long unsafeGetRawMemorySize() {
-        return size + baseOffset;
-    }
-
     protected long unsafeReadFixedRowCount() {
         return getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
     }
