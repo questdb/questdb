@@ -2778,18 +2778,17 @@ public class SqlCompiler implements Closeable {
         private transient SqlExecutionContext currentExecutionContext;
         private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
             int plen = srcPath.length();
-            try {
-                if (ff.isDirOrSoftLinkDirNoDots(srcPath, plen, pUtf8NameZ, type, fileNameSink)) {
-                    backupTable(fileNameSink, currentExecutionContext);
-                }
-            } catch (CairoException e) {
-                LOG.error()
-                        .$("could not backup [path=").utf8(fileNameSink)
-                        .$(", e=").$(e.getFlyweightMessage())
-                        .$(", errno=").$(e.getErrno())
-                        .I$();
-            } finally {
+            if (ff.isDirOrSoftLinkDirNoDots(srcPath, plen, pUtf8NameZ, type, fileNameSink)) {
                 srcPath.trimTo(plen).$();
+                try {
+                    backupTable(fileNameSink, currentExecutionContext);
+                } catch (CairoException e) {
+                    LOG.error()
+                            .$("could not backup [path=").utf8(fileNameSink)
+                            .$(", e=").$(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                }
             }
         };
 

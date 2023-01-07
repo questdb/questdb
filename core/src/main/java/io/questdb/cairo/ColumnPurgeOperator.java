@@ -166,7 +166,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
 
         // In exclusive mode we still need to check that purge will delete column in correct table,
-        // e.g. table is not truncated after the update happened, as well as partition read only state
+        // e.g. table is not truncated after the update happened
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL || scoreboardUseMode == ScoreboardUseMode.EXCLUSIVE) {
             int tableId = readTableId(path);
             if (tableId != task.getTableId()) {
