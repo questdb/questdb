@@ -678,7 +678,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
         detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         int detachedRootLen = detachedPath.length();
-        boolean validateDataFiles = partitionSize < 0;
+        boolean forceRenamePartitionDir = partitionSize < 0;
 
         boolean checkPassed = false;
         boolean isSoftLink;
@@ -701,14 +701,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     return AttachDetachStatus.ATTACH_ERR_EMPTY_PARTITION;
                 }
 
-                if (validateDataFiles && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
+                if (forceRenamePartitionDir && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
                     attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
                 }
 
                 // main columnVersionWriter is now aligned with the detached partition values read from partition _cv file
                 // in case of an error it has to be clean up
 
-                if (validateDataFiles && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are read-only, no copy involved
+                if (forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are read-only, no copy involved
                     // Copy partition if configured to do so and it's not CSV import
                     if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
                         LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
