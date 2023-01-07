@@ -57,13 +57,45 @@ public class PathTest {
     }
 
     @Test
+    public void testCheckClosed() {
+        try (Path p0 = new Path().put("root")) {
+            p0.close();
+            p0.of("pigeon");
+            Assert.assertEquals("pigeon", p0.toString());
+        }
+    }
+
+    @Test
     public void testConcatNoSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").concat("123").$());
     }
 
     @Test
+    public void testConcatWithExtend() {
+        try (Path p0 = new Path().put("sumerians").$();
+             Path p1 = new Path(1)) {
+            p1.concat(p0.address());
+            Assert.assertEquals(p0.toString(), p1.toString());
+        }
+    }
+
+    @Test
     public void testConcatWithSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz/").concat("123").$());
+    }
+
+    @Test
+    public void testDollarAt() {
+        String name = "header";
+        try (Path p = new Path(1)) {
+            p.put(name).concat("footer").flush();
+            Assert.assertEquals(name + Files.SEPARATOR + "footer", p.toString());
+            for (int i = name.length(); i < p.length(); i++) {
+                p.$at(i);
+            }
+            Assert.assertEquals(name + "\u0000\u0000\u0000\u0000\u0000\u0000\u0000", p.toString());
+            Assert.assertEquals(name.length() + 7, p.length());
+        }
     }
 
     @Test
@@ -93,6 +125,13 @@ public class PathTest {
                 p.of("/xyz/").concat(p1.address()).$();
                 Assert.assertEquals(separator + "xyz" + separator + "abc" + separator + "123", p.toString());
             }
+        }
+    }
+
+    @Test
+    public void testOfCharSequence() {
+        try (Path p0 = new Path().of("sumerians", 2, 7).$()) {
+            Assert.assertEquals("meria", p0.toString());
         }
     }
 
@@ -178,6 +217,24 @@ public class PathTest {
     }
 
     @Test
+    public void testPutWithExtension0() {
+        try (Path p0 = new Path(1)) {
+            p0.put("sumerians".toCharArray(), 2, 5);
+            p0.$();
+            Assert.assertEquals("meria", p0.toString());
+        }
+    }
+
+    @Test
+    public void testPutWithExtension1() {
+        try (Path p0 = new Path(1)) {
+            p0.put("sumerians", 2, 7);
+            p0.$();
+            Assert.assertEquals("meria", p0.toString());
+        }
+    }
+
+    @Test
     public void testSeekZ() {
         try (Path path = new Path()) {
             path.of("12345656788990").$();
@@ -192,6 +249,15 @@ public class PathTest {
 
             path.concat("next");
             TestUtils.assertEquals("hello" + Files.SEPARATOR + "next", path);
+        }
+    }
+
+    @Test
+    public void testSelfPath() {
+        try (Path p0 = new Path().put("root")) {
+            p0.flush();
+            p0.of((CharSequence) p0);
+            Assert.assertEquals("root", p0.toString());
         }
     }
 
@@ -290,6 +356,14 @@ public class PathTest {
                 Assert.assertNotNull(count);
                 Assert.assertTrue(count.get() > 0);
             }
+        }
+    }
+
+    @Test
+    public void testToStringOfClosedPath() {
+        try (Path p0 = new Path(1)) {
+            p0.close();
+            Assert.assertEquals("", p0.toString());
         }
     }
 
