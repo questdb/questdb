@@ -391,6 +391,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 for (int i = 0, n = partitionCount - 1; i < n; i++) {
                     txWriter.setPartitionReadOnly(i, true);
                 }
+                try {
+                    txWriter.setPartitionReadOnly(-1, true);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "bad partition index -1");
+                }
                 txWriter.bumpTruncateVersion();
                 txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
             }

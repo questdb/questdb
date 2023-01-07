@@ -290,11 +290,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionReadOnlyByIndex(int index, boolean isReadOnly) {
-        if (index > -1) {
-            int offset = index + PARTITION_MASKED_SIZE_OFFSET;
-            long maskedSize = attachedPartitions.getQuick(offset);
-            attachedPartitions.setQuick(offset, updatePartitionIsReadOnly(maskedSize, isReadOnly));
+        if (index < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
         }
+        int offset = index + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        attachedPartitions.setQuick(offset, updatePartitionIsReadOnly(maskedSize, isReadOnly));
     }
 
     public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
