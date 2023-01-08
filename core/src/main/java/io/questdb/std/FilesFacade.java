@@ -36,6 +36,8 @@ public interface FilesFacade {
 
     long append(int fd, long buf, int len);
 
+    void checkIsDirOrSoftLinkDir(Path path);
+
     boolean close(int fd);
 
     default boolean closeChecked(int fd) {

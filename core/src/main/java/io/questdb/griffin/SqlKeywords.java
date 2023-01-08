@@ -1476,6 +1476,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isResumeKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isRightKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -1753,6 +1767,17 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isTxnKeyword(CharSequence tok) {
+        if (tok.length() != 3) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
     public static boolean isUnionKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -1808,6 +1833,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 's';
     }
 
+    public static boolean isVolumeKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'v'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isWalKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;
@@ -1817,17 +1856,6 @@ public class SqlKeywords {
         return (tok.charAt(i++) | 32) == 'w'
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i) | 32) == 'l';
-    }
-
-    public static boolean isTxnKeyword(CharSequence tok) {
-        if (tok.length() != 3) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i) | 32) == 'n';
     }
 
     public static boolean isWeekKeyword(CharSequence tok) {
@@ -1917,20 +1945,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 'e';
-    }
-
-    public static boolean isResumeKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'r'
-            && (tok.charAt(i++) | 32) == 'e'
-            && (tok.charAt(i++) | 32) == 's'
-            && (tok.charAt(i++) | 32) == 'u'
-            && (tok.charAt(i++) | 32) == 'm'
-            && (tok.charAt(i) | 32) == 'e';
     }
 
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {

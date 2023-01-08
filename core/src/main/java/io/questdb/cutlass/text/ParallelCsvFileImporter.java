@@ -219,6 +219,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 mkDirMode,
                                 memory,
                                 path,
+                                false,
                                 tableName,
                                 structure,
                                 ColumnType.VERSION,

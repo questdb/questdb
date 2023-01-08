@@ -67,6 +67,7 @@ public class CairoTestUtils {
                 model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
+                false,
                 model,
                 version,
                 1
@@ -78,6 +79,7 @@ public class CairoTestUtils {
                 model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
+                false,
                 model,
                 version,
                 tableId

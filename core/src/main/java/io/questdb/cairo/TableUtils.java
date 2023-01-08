@@ -210,10 +210,11 @@ public final class TableUtils {
             CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
+            boolean pathIsOtherVolume,
             TableStructure structure,
             int tableId
     ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
+        createTable(configuration, memory, path, pathIsOtherVolume, structure, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
@@ -221,13 +222,38 @@ public final class TableUtils {
             MemoryMARW memory,
             Path path,
             TableStructure structure,
+            int tableId
+    ) {
+        createTable(configuration, memory, path, false, structure, ColumnType.VERSION, tableId);
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
+            MemoryMARW memory,
+            Path path,
+            boolean pathIsOtherVolume,
+            TableStructure structure,
             int tableVersion,
             int tableId
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, pathIsOtherVolume, structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            boolean pathIsOtherVolume,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        createTable(ff, root, mkDirMode, memory, path, pathIsOtherVolume, structure.getTableName(), structure, tableVersion, tableId);
     }
 
     public static void createTable(
@@ -240,7 +266,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTable(ff, root, mkDirMode, memory, path, structure.getTableName(), structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, false, structure.getTableName(), structure, tableVersion, tableId);
     }
 
     public static void createTable(
@@ -249,19 +275,28 @@ public final class TableUtils {
             int mkDirMode,
             MemoryMARW memory,
             Path path,
+            boolean pathIsOtherVolume,
             CharSequence tableName,
             TableStructure structure,
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(tableName).$(']').$();
-        path.of(root).concat(tableName);
+        LOG.debug().$("create table [name=").$(tableName).I$();
+
+        // path may have been set by CREATE TABLE ... [IN VOLUME 'path'].
+        // if so, it is a valid folder or link to folder
+        if (!pathIsOtherVolume) {
+            path.of(root);
+        }
+        path.concat(tableName);
+        final int rootLen = path.length();
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
-
-        final int rootLen = path.length();
+        if (pathIsOtherVolume && ff.softLink(path.trimTo(rootLen).$(), Path.getThreadLocal2(root).concat(tableName).$()) != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path).put(", tableName=").put(tableName).put(']');
+        }
 
         final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -338,7 +373,7 @@ public final class TableUtils {
                     LOG.error()
                             .$("could not fsync [fd=").$(dirFd)
                             .$(", errno=").$(ff.errno())
-                            .$(']').$();
+                            .I$();
                 }
                 ff.close(dirFd);
             }

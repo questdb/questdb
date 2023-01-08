@@ -186,11 +186,21 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    public void createTableUnsafe(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            TableStructure struct
+    ) {
+        createTableUnsafe(securityContext, mem, path, false, struct);
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
+            boolean pathIsOtherVolume,
             TableStructure struct
     ) {
         securityContext.checkWritePermission();
@@ -204,6 +214,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 configuration,
                 mem,
                 path,
+                pathIsOtherVolume,
                 struct,
                 tableId
         );

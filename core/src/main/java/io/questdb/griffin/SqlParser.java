@@ -573,6 +573,19 @@ public final class SqlParser {
 
         model.setWalEnabled(isWalEnabled);
 
+        if (tok != null && isInKeyword(tok)) {
+            tok = tok(lexer, "volume");
+            if (!isVolumeKeyword(tok)) {
+                throw SqlException.position(lexer.getPosition()).put(" expected 'volume'");
+            }
+            tok = tok(lexer, "path");
+            if (Os.isWindows()) {
+                throw SqlException.position(lexer.getPosition()).put(" 'in volume' is not supported in windows");
+            }
+            model.setVolumePath(GenericLexer.unquote(tok));
+            tok = optTok(lexer);
+        }
+
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
         }

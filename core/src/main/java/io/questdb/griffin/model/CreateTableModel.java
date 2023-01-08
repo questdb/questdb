@@ -47,6 +47,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private ExpressionNode partitionBy;
     private QueryModel queryModel;
     private ExpressionNode timestamp;
+    private CharSequence volumePath;
     private boolean walEnabled;
 
     private CreateTableModel() {
@@ -183,6 +184,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
     }
 
+    public CharSequence getVolumePath() {
+        return volumePath;
+    }
+
     public boolean isIgnoreIfExists() {
         return ignoreIfExists;
     }
@@ -241,6 +246,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public void setVolumePath(CharSequence volumePath) {
+        // set if the create table statement contains IN VOLUME 'volumePath'
+        this.volumePath = volumePath;
     }
 
     public void setWalEnabled(boolean walEnabled) {

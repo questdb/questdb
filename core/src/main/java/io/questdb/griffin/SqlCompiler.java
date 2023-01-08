@@ -1554,12 +1554,16 @@ public class SqlCompiler implements Closeable {
                     }
                     throw SqlException.$(name.position, "table already exists");
                 }
+                CharSequence volumePath = createTableModel.getVolumePath();
+                if (volumePath != null) {
+                    ff.checkIsDirOrSoftLinkDir(path.of(volumePath).$());
+                }
                 try {
                     if (createTableModel.getQueryModel() == null) {
                         if (createTableModel.getLikeTableName() != null) {
                             copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                         }
-                        engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, volumePath != null, createTableModel);
                         newTable = true;
                     } else {
                         tableWriter = createTableFromCursor(createTableModel, executionContext);
@@ -1604,6 +1608,7 @@ public class SqlCompiler implements Closeable {
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,
+                    model.getVolumePath() != null,
                     tableStructureAdapter.of(model, metadata, typeCast)
             );
 
