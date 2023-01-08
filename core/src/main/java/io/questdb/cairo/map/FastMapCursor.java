@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Unsafe;
 
 public final class FastMapCursor implements RecordCursor {
+    // Set to -1 when key-value pair is var-size.
+    private final int keyValueSize;
     private final FastMap map;
     private final FastMapRecord recordA;
     private final MapRecord recordB;
@@ -41,6 +43,11 @@ public final class FastMapCursor implements RecordCursor {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
+        if (map.keySize() != -1) {
+            keyValueSize = map.keySize() + map.valueSize();
+        } else {
+            keyValueSize = -1;
+        }
     }
 
     @Override
@@ -62,7 +69,11 @@ public final class FastMapCursor implements RecordCursor {
     public boolean hasNext() {
         if (remaining > 0) {
             long address = this.address;
-            this.address = address + Unsafe.getUnsafe().getInt(address);
+            if (keyValueSize == -1) {
+                this.address = address + Unsafe.getUnsafe().getInt(address);
+            } else {
+                this.address = address + keyValueSize;
+            }
             remaining--;
             recordA.of(address);
             return true;

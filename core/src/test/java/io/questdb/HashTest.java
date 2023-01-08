@@ -24,30 +24,6 @@
 
 package io.questdb;
 
-import io.questdb.cairo.map.FastMap;
-import io.questdb.std.*;
-import org.junit.Assert;
-import org.junit.Test;
-
 public class HashTest {
-
-    @Test
-    public void testStringHash() {
-        FastMap.HashFunction hashFunction = Hash::hashMem;
-        testHash(hashFunction);
-    }
-
-    private void testHash(FastMap.HashFunction hashFunction) {
-        Rnd rnd = new Rnd();
-        LongHashSet hashes = new LongHashSet(100000);
-        final int LEN = 64;
-
-        long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
-
-        for (int i = 0; i < 100000; i++) {
-            rnd.nextChars(address, LEN / 2);
-            hashes.add(hashFunction.hash(address, LEN));
-        }
-        Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
-    }
+    // TODO wait for https://github.com/questdb/questdb/pull/2868
 }

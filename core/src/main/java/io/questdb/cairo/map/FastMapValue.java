@@ -25,9 +25,12 @@
 package io.questdb.cairo.map;
 
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 import io.questdb.std.Unsafe;
 
 final class FastMapValue implements MapValue {
+    private final Long256Impl long256 = new Long256Impl();
     private final int[] valueOffsets;
     private boolean _new;
     private long address;
@@ -69,7 +72,13 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void addLong256(int index, Long256 value) {
-
+        Long256 acc = getLong256A(index);
+        Long256Util.add(acc, value);
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, acc.getLong0());
+        Unsafe.getUnsafe().putLong(p + Long.BYTES, acc.getLong1());
+        Unsafe.getUnsafe().putLong(p + 2 * Long.BYTES, acc.getLong2());
+        Unsafe.getUnsafe().putLong(p + 3 * Long.BYTES, acc.getLong3());
     }
 
     @Override
@@ -144,6 +153,18 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public Long256 getLong256A(int index) {
+        final long p = address0(index);
+        long256.setAll(
+                Unsafe.getUnsafe().getLong(p),
+                Unsafe.getUnsafe().getLong(p + Long.BYTES),
+                Unsafe.getUnsafe().getLong(p + 2 * Long.BYTES),
+                Unsafe.getUnsafe().getLong(p + 3 * Long.BYTES)
+        );
+        return long256;
+    }
+
+    @Override
     public short getShort(int index) {
         return Unsafe.getUnsafe().getShort(address0(index));
     }
@@ -200,7 +221,11 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void putLong256(int index, Long256 value) {
-
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, value.getLong0());
+        Unsafe.getUnsafe().putLong(p + Long.BYTES, value.getLong1());
+        Unsafe.getUnsafe().putLong(p + 2 * Long.BYTES, value.getLong2());
+        Unsafe.getUnsafe().putLong(p + 3 * Long.BYTES, value.getLong3());
     }
 
     @Override
@@ -215,7 +240,7 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        this.record.of(address);
+        record.of(address);
     }
 
     private long address0(int index) {

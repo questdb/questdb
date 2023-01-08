@@ -75,7 +75,7 @@ public final class Hash {
         return xxHash64(p, len, 0, unsafeAccessor);
     }
 
-    public static long hashMem64(long p, long len) {
+    public static int hashMem32(long p, long len) {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
@@ -88,7 +88,7 @@ public final class Hash {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M2;
-        return h ^ (h >>> 32);
+        return (int) h ^ (int) (h >>> 32);
     }
 
     /**
