@@ -168,6 +168,24 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public long getUuidHi(int col, long location) {
+        return values[4 * col + 1];
+    }
+
+    @Override
+    public long getUuidLo(int col, long location) {
+        return values[4 * col];
+    }
+
+    @Override
+    public long getUuidLocation(int col) {
+        // we could return the index to the array: 4 * col
+        // but this would only save a single multiplication by constant 4, which is just a bit-shifting
+        // and casting from int to long and back would be probably more work than the multiplication
+        return 1;
+    }
+
+    @Override
     public boolean isNew() {
         return false;
     }
@@ -234,8 +252,8 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putUuid(int index, long lo, long hi) {
         final int idx = 4 * index;
-        values[idx] = hi;
-        values[idx + 1] = lo;
+        values[idx] = lo;
+        values[idx + 1] = hi;
     }
 
     @Override

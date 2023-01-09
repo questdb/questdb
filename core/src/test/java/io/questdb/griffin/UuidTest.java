@@ -459,6 +459,28 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonKeyedFirstAggregation() throws Exception {
+        assertCompile("create table xxx(u uuid)");
+        assertCompile("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
+        assertCompile("insert into xxx values ('')");
+
+        assertQuery("first\n" +
+                        "54710940-38c0-4d93-92db-43b7cad84228\n",
+                "select first(u) from xxx", null, null, false, true, true);
+    }
+
+    @Test
+    public void testNonKeyedLastAggregation() throws Exception {
+        assertCompile("create table xxx(u uuid)");
+        assertCompile("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
+        assertCompile("insert into xxx values ('')");
+
+        assertQuery("last\n" +
+                        "54710940-38c0-4d93-92db-43b7cad84228\n",
+                "select last(u) from xxx", null, null, false, true, true);
+    }
+
+    @Test
     public void testO3_differentPartition() throws Exception {
         assertCompile("create table x (ts timestamp, u UUID) timestamp(ts) partition by DAY");
         assertCompile("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
