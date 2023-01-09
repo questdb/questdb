@@ -92,7 +92,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
         Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
 
-        String tableName = "patrons";
+        String tableName = "patrons_table";
         String firstPartitionName = "2023-01-01";
         int partitionCount = 11;
 
@@ -113,7 +113,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                                 .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
                                 .timestamp("ts");
                         MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(OTHER_VOLUME).concat(tableName)
+                        Path path = new Path().of(OTHER_VOLUME).concat(tableName).$()
                 ) {
                     createTable(cairoConfig, mem, path, true, tableModel, 1);
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
@@ -125,7 +125,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         sink,
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts1\tpatrons\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", sink, "ts1\tpatrons_table\tts\tDAY\t500000\t600000000\tfalse\n");
             }
         });
     }
