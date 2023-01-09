@@ -104,7 +104,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     public void testConversionToDate() throws Exception {
         testConversionToType("DATE", "testCol\ttime\n" +
                 "1970-01-01T00:00:00.100Z\t2016-06-13T17:43:50.100418Z\n" +
-                "1969-12-31T23:59:59.900Z\t2016-06-13T17:43:50.100419Z\n"
+                "1969-12-31T23:59:59.900Z\t2016-06-13T17:43:50.100419Z\n" +
+                "2016-06-13T17:43:50.101Z\t2016-06-13T17:43:50.100426Z\n"
         );
     }
 

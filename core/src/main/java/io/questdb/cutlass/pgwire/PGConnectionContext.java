@@ -2554,7 +2554,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         appendSingleRecord(record, columnCount);
                         responseAsciiSink.bookmark();
                     }
-                    if (rowCount >= maxRows) break;
+                    if (rowCount >= maxRows) {
+                        break;
+                    }
                 } catch (SqlException e) {
                     clearCursorAndFactory();
                     responseAsciiSink.resetToBookmark();
@@ -2579,6 +2581,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             prepareCommandComplete(true);
         } else {
             prepareSuspended();
+            // Prevents re-sending current record row when buffer is sent fully.
+            resumeProcessor = null;
         }
     }
 
