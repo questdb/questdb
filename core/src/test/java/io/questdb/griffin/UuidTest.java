@@ -473,10 +473,10 @@ public class UuidTest extends AbstractGriffinTest {
     public void testNonKeyedLastAggregation() throws Exception {
         assertCompile("create table xxx(u uuid)");
         assertCompile("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
-        assertCompile("insert into xxx values ('')");
+        assertCompile("insert into xxx values ('')"); // empty string is implicitly cast to null
 
         assertQuery("last\n" +
-                        "54710940-38c0-4d93-92db-43b7cad84228\n",
+                        "\n",
                 "select last(u) from xxx", null, null, false, true, true);
     }
 
