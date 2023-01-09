@@ -3690,7 +3690,6 @@ class SqlOptimiser {
                 }
             }
 
-            // Save update table name as a String to not re-create string later on from CharSequence;
             TableToken tableToken = metadata.getTableToken();
             if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName().token)) {
                 // Table renamed

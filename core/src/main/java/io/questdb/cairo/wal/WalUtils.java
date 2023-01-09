@@ -51,7 +51,7 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
-    public static String TABLE_REGISTRY_NAME_FILE = "tables.d";
+    public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {

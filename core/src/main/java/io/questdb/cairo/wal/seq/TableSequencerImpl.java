@@ -109,7 +109,7 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());
         metadata.dropTable();
-        engine.notifyWalTxnCommitted(tableToken, Integer.MAX_VALUE);
+        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
     }
 
     @Override
