@@ -27,16 +27,16 @@ package io.questdb.std;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IntHashSetTest {
+public class LongHashSetTest {
 
     @Test
     public void testBasicOperations() {
         Rnd rnd = new Rnd();
-        IntHashSet set = new IntHashSet();
+        LongHashSet set = new LongHashSet();
         final int N = 1000;
 
         for (int i = 0; i < N; i++) {
-            set.add(rnd.nextPositiveInt());
+            set.add(rnd.nextPositiveLong());
         }
 
         Assert.assertEquals(N, set.size());
@@ -44,19 +44,19 @@ public class IntHashSetTest {
         rnd.reset();
 
         for (int i = 0; i < N; i++) {
-            Assert.assertTrue(set.keyIndex(rnd.nextPositiveInt()) < 0);
+            Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong()) < 0);
         }
 
         rnd.reset();
 
         for (int i = 0; i < N; i++) {
-            Assert.assertEquals(rnd.nextPositiveInt(), set.get(i));
+            Assert.assertEquals(rnd.nextPositiveLong(), set.get(i));
         }
 
         rnd.reset();
 
         for (int i = 0; i < N; i++) {
-            Assert.assertTrue(set.contains(rnd.nextPositiveInt()));
+            Assert.assertTrue(set.contains(rnd.nextPositiveLong()));
         }
     }
 
@@ -64,8 +64,8 @@ public class IntHashSetTest {
     public void testEqualsAndHashCode() {
         final int items = 100;
 
-        final IntHashSet setA = new IntHashSet();
-        final IntHashSet setB = new IntHashSet();
+        final LongHashSet setA = new LongHashSet();
+        final LongHashSet setB = new LongHashSet();
 
         Assert.assertEquals(setA, setB);
         Assert.assertEquals(setA.hashCode(), setB.hashCode());
@@ -94,10 +94,10 @@ public class IntHashSetTest {
     @Test
     public void testRemove() {
         Rnd rnd = new Rnd();
-        IntHashSet set = new IntHashSet();
+        LongHashSet set = new LongHashSet();
         final int N = 1000;
         for (int i = 0; i < N; i++) {
-            Assert.assertTrue(set.add(rnd.nextPositiveInt()));
+            Assert.assertTrue(set.add(rnd.nextPositiveLong()));
         }
         Assert.assertEquals(N, set.size());
 
@@ -105,7 +105,7 @@ public class IntHashSetTest {
 
         // assert that set contains the values we just added
         for (int i = 0; i < N; i++) {
-            Assert.assertTrue(set.contains(rnd.nextPositiveInt()));
+            Assert.assertTrue(set.contains(rnd.nextPositiveLong()));
         }
 
         Rnd rnd2 = new Rnd();
@@ -115,8 +115,8 @@ public class IntHashSetTest {
         // remove some keys and assert that the size() complies
         int removed = 0;
         for (int i = 0; i < N; i++) {
-            int n = rnd.nextPositiveInt();
-            if (rnd2.nextPositiveInt() % 16 == 0) {
+            long n = rnd.nextPositiveLong();
+            if (rnd2.nextPositiveLong() % 16 == 0) {
                 Assert.assertTrue(set.remove(n) > -1);
                 removed++;
                 Assert.assertEquals(N - removed, set.size());
@@ -132,8 +132,8 @@ public class IntHashSetTest {
         // assert that keys we didn't remove are still there and
         // keys we removed are not
         for (int i = 0; i < N; i++) {
-            int n = rnd.nextPositiveInt();
-            if (rnd2.nextPositiveInt() % 16 == 0) {
+            long n = rnd.nextPositiveLong();
+            if (rnd2.nextPositiveLong() % 16 == 0) {
                 Assert.assertFalse(set.contains(n));
             } else {
                 Assert.assertTrue(set.contains(n));
