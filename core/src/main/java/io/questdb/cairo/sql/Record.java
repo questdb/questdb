@@ -353,7 +353,8 @@ public interface Record {
 
     /**
      * Returns a location where the value of a given UUID column is stored.
-     * The location is an opaque value that should not be directly interpreted.
+     * The location is an opaque value and callers should not access it directly,
+     * because it does not have to directly map to a memory address.
      * It is used to pass the location to {@link #getUuidHi(int, long)} and {@link #getUuidLo(int, long)}.
      *
      * @param col numeric index of the column
