@@ -102,19 +102,6 @@ public final class Files {
         return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
     }
 
-    public static boolean checkIsDirOrSoftLinkDir(Path path) {
-        long ptr = findFirst(path);
-        if (ptr < 1L) {
-            return false;
-        }
-        try {
-            int type = findType(ptr);
-            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
-        } finally {
-            findClose(ptr);
-        }
-    }
-
     public static int close(int fd) {
         assert auditClose(fd);
         int res = close0(fd);
@@ -224,6 +211,19 @@ public final class Files {
 
     public static int hardLink(LPSZ src, LPSZ hardLink) {
         return hardLink(src.address(), hardLink.address());
+    }
+
+    public static boolean isDirOrSoftLinkDir(Path path) {
+        long ptr = findFirst(path);
+        if (ptr < 1L) {
+            return false;
+        }
+        try {
+            int type = findType(ptr);
+            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+        } finally {
+            findClose(ptr);
+        }
     }
 
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {

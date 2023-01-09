@@ -36,8 +36,6 @@ public interface FilesFacade {
 
     long append(int fd, long buf, int len);
 
-    void checkIsDirOrSoftLinkDir(Path path);
-
     boolean close(int fd);
 
     default boolean closeChecked(int fd) {
@@ -85,6 +83,8 @@ public interface FilesFacade {
     int hardLinkDirRecursive(Path src, Path dst, int dirMode);
 
     boolean isCrossDeviceCopyError(int errno);
+
+    boolean isDirOrSoftLinkDir(Path path);
 
     boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
 

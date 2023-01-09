@@ -92,6 +92,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         partitionBy = null;
         likeTableName = null;
         name = null;
+        volumePath = null;
         columnBits.clear();
         columnNames.clear();
         columnNameIndexMap.clear();
@@ -351,6 +352,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
         if (partitionBy != null) {
             sink.put(" partition by ").put(partitionBy.token);
+        }
+
+        if (volumePath != null) {
+            sink.put(" in volume '").put(volumePath).put('\'');
         }
     }
 

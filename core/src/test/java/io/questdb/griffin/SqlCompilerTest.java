@@ -34,10 +34,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -2226,6 +2223,66 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "Could not create table. See log for details"
 
         );
+    }
+
+    @Test
+    public void testCreateAsSelectInVolume() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertQuery(
+                "geohash\n",
+                "select geohash from geohash",
+                "create table geohash (geohash geohash(1c)) in volume '" + temp.newFolder("other").getAbsolutePath() + "'",
+                null,
+                "insert into geohash " +
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                "geohash\n" +
+                        "q\n" +
+                        "q\n" +
+                        "u\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
+                        "u\n" +
+                        "q\n" +
+                        "u\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectInVolumeFail() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        try {
+
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c)) in volume 'niza'",
+                    null,
+                    "insert into geohash " +
+                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                    "geohash\n" +
+                            "q\n" +
+                            "q\n" +
+                            "u\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "u\n" +
+                            "q\n" +
+                            "u\n",
+                    true,
+                    true,
+                    true
+            );
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "not a valid folder [path=niza]");
+        }
     }
 
     @Test

@@ -1556,7 +1556,9 @@ public class SqlCompiler implements Closeable {
                 }
                 CharSequence volumePath = createTableModel.getVolumePath();
                 if (volumePath != null) {
-                    ff.checkIsDirOrSoftLinkDir(path.of(volumePath).$());
+                    if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                        throw CairoException.critical(0).put("not a valid folder [path=").put(path).put(']');
+                    }
                 }
                 try {
                     if (createTableModel.getQueryModel() == null) {

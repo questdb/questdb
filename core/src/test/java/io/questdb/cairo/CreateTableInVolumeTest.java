@@ -68,7 +68,7 @@ public class CreateTableInVolumeTest extends AbstractGriffinTest {
         assertSql("SELECT min(t), max(t), count() FROM " + tableName,
                 "min\tmax\tcount\n" +
                         "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
-        FilesFacadeImpl.INSTANCE.checkIsDirOrSoftLinkDir(path.of(configuration.getRoot()).concat(tableName).$());
+        FilesFacadeImpl.INSTANCE.isDirOrSoftLinkDir(path.of(configuration.getRoot()).concat(tableName).$());
         Assert.assertTrue(FilesFacadeImpl.INSTANCE.isSoftLink(path));
     }
 }

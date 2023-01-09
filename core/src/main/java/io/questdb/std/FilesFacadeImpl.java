@@ -50,13 +50,6 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void checkIsDirOrSoftLinkDir(Path path) {
-        if (!Files.checkIsDirOrSoftLinkDir(path)) {
-            throw CairoException.critical(Os.errno()).put("not a valid folder [path=").put(path).put(']');
-        }
-    }
-
-    @Override
     public boolean close(int fd) {
         return Files.close(fd) == 0;
     }
@@ -180,6 +173,10 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return Os.isPosix() && errno == 18;
+    }
+
+    public boolean isDirOrSoftLinkDir(Path path) {
+        return Files.isDirOrSoftLinkDir(path);
     }
 
     @Override

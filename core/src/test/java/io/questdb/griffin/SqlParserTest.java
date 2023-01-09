@@ -1444,6 +1444,95 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableInVolume() throws SqlException {
+        assertCreateTable(
+                "create table tst0 (i INT) in volume 'volume'",
+                "create table tst0 (i int) in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst1 (i INT) in volume 'volume'",
+                "create table tst1 (i int) in volume volume");
+
+        assertCreateTable(
+                "create table tst2 (i INT, ts TIMESTAMP) timestamp(ts) in volume 'volume'",
+                "create table tst2 (i int, ts timestamp) timestamp(ts) in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
+                "create table tst4 (i symbol, ts timestamp), index(i capacity 32) in volume 'volume'");
+    }
+
+    @Test
+    public void testCreateTableInVolumeFail() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compile("create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid folder [path=12]");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableInVolumeSyntaxError() throws Exception {
+        assertSyntaxError(
+                "create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR VOLUME peterson",
+                86,
+                "unexpected token: VOLUME");
+
+        assertSyntaxError(
+                "create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR IN peterson",
+                97,
+                "expected 'volume'");
+
+        assertSyntaxError(
+                "create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR IN VOLUME",
+                95,
+                "path for volume expected");
+    }
+
+    @Test
     public void testCreateTableIndexUnsupportedColumnType() throws Exception {
         assertSyntaxError(
                 "create table x (" +

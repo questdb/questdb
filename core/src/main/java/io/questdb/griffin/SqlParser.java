@@ -555,6 +555,12 @@ public final class SqlParser {
                         }
                         tok = optTok(lexer);
                         if (null != tok && Chars.equals(tok, ',')) {
+                            CharSequence peek = optTok(lexer);
+                            if (peek != null && isInKeyword(peek)) { // in volume
+                                tok = peek;
+                                break;
+                            }
+                            lexer.unparseLast();
                             continue;
                         }
                         break;
@@ -576,11 +582,11 @@ public final class SqlParser {
         if (tok != null && isInKeyword(tok)) {
             tok = tok(lexer, "volume");
             if (!isVolumeKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put(" expected 'volume'");
+                throw SqlException.position(lexer.getPosition()).put("expected 'volume'");
             }
-            tok = tok(lexer, "path");
+            tok = tok(lexer, "path for volume");
             if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put(" 'in volume' is not supported in windows");
+                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported in windows");
             }
             model.setVolumePath(GenericLexer.unquote(tok));
             tok = optTok(lexer);
