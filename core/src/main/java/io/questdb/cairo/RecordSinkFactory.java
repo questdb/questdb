@@ -291,18 +291,6 @@ public class RecordSinkFactory {
                     asm.invokeInterface(rGetUuidHi, 3);
 
                     asm.invokeInterface(wPutUuid, 4);
-
-//                    asm.aload(2);
-//                    asm.aload(1);
-//                    int skewedIndex = getSkewedIndex(index, skewIndex);
-//                    asm.iconst(skewedIndex);
-//                    asm.invokeInterface(rGetUuidLo, 1);
-//
-//                    asm.aload(1);
-//                    asm.iconst(skewedIndex);
-//                    asm.invokeInterface(rGetUuidHi, 1);
-//
-//                    asm.invokeInterface(wPutUuid, 4);
                     break;
                 default:
                     break;
