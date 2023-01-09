@@ -31,10 +31,12 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -1445,6 +1447,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateTableInVolume() throws SqlException {
+        Assume.assumeFalse(Os.isWindows());
         assertCreateTable(
                 "create table tst0 (i INT) in volume 'volume'",
                 "create table tst0 (i int) in volume 'volume'");
@@ -1491,7 +1494,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=12]");
+                if (Os.isWindows()) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in windows");
+                } else {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=12]");
+                }
             }
         });
     }
