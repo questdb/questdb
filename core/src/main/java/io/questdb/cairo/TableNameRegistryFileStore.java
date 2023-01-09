@@ -177,11 +177,11 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
-    private boolean isLocked() {
+    public boolean isLocked() {
         return lockFd != -1;
     }
 
-    private int readTableId(Path path, String dirName, FilesFacade ff) {
+    private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.META_FILE_NAME).$();
         int fd = ff.openRO(path);
         if (fd < 1) {
@@ -201,7 +201,7 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
-    private String readTableName(Path path, String dirName, FilesFacade ff) {
+    private String readTableName(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
         int fd = ff.openRO(path);
         if (fd < 1) {
@@ -242,41 +242,41 @@ public class TableNameRegistryFileStore implements Closeable {
         do {
             long fileName = ff.findName(findPtr);
             if (Files.isDir(fileName, ff.findType(findPtr), sink)) {
-                if (nameTableTokenMap.get(sink) == null
+                if (!reverseTableNameTokenMap.containsKey(sink)
                         && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
                     String dirName = sink.toString();
-                    if (!reverseTableNameTokenMap.containsKey(dirName)) {
-                        int tableId = readTableId(path, dirName, ff);
-                        boolean isWal = tableId < 0;
-                        tableId = Math.abs(tableId);
-                        String tableName = readTableName(path, dirName, ff);
-                        if (tableName == null) {
-                            if (isWal) {
-                                LOG.error().$("could not read table name from [path=").$(path).$(", dirName=").$(dirName).I$();
-                                continue;
-                            } else {
-                                // Non-wal tables may not have _name file.
-                                tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
-                            }
+                    int tableId = readTableId(path, dirName, ff);
+                    boolean isWal = tableId < 0;
+                    tableId = Math.abs(tableId);
+                    String tableName = readTableName(path, dirName, ff);
+                    if (tableName == null) {
+                        if (isWal) {
+                            LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();
+                            continue;
+                        } else {
+                            // Non-wal tables may not have _name file.
+                            tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
+                        }
+                    }
+
+                    if (tableId > -1L) {
+                        if (tableIds.contains(tableId)) {
+                            LOG.critical().$("duplicate table id found, table will not be available " +
+                                    "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
+                            continue;
                         }
 
-                        if (tableId > -1L) {
-                            if (tableIds.contains(tableId)) {
-                                LOG.critical().$("duplicate table id found [dirName=").$(dirName).$(", id=").$(tableId).$(']').$();
-                                continue;
-                            }
-
-                            if (nameTableTokenMap.containsKey(tableName)) {
-                                LOG.critical().$("duplicate table name found [dirName=").$(dirName).$(", name=").$(tableName)
-                                        .$(", existingTableDir=").$(nameTableTokenMap.get(tableName).getDirName()).I$();
-                                continue;
-                            }
-
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal);
-                            nameTableTokenMap.put(tableName, token);
-                            reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        if (nameTableTokenMap.containsKey(tableName)) {
+                            LOG.critical().$("duplicate table name found, table will not be available " +
+                                            "[dirName=").utf8(dirName).$(", name=").utf8(tableName)
+                                    .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName()).I$();
+                            continue;
                         }
+
+                        TableToken token = new TableToken(tableName, dirName, tableId, isWal);
+                        nameTableTokenMap.put(tableName, token);
+                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
                     }
                 }
             }
@@ -364,6 +364,20 @@ public class TableNameRegistryFileStore implements Closeable {
         }
 
         if (isLocked()) {
+            // Check that the table directories exist
+            for (TableToken token : nameTableTokenMap.values()) {
+                if (TableUtils.exists(ff, path, configuration.getRoot(), token.getDirName()) != TableUtils.TABLE_EXISTS) {
+                    LOG.error().$("table directory directly removed from File System, table will not be available [path=").utf8(path)
+                            .$(", dirName=").utf8(token.getDirName()).
+                            $(", table=").utf8(token.getTableName())
+                            .I$();
+
+                    nameTableTokenMap.remove(token.getTableName());
+                    reverseTableNameTokenMap.remove(token.getDirName());
+                    deletedRecordsFound++;
+                }
+            }
+
             if (deletedRecordsFound > 0) {
                 LOG.info().$("compacting tables file [path=").$(path).$(']').$();
                 path.trimTo(pathRootLen);

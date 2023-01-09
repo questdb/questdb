@@ -87,6 +87,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public synchronized void reloadTableNameCache() {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
+        if (!nameStore.isLocked()) {
+            nameStore.lock();
+        }
         nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap);
     }
 

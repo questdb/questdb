@@ -45,6 +45,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
+    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
     private int capacity;
     private int len;
     private long ptr;
@@ -350,7 +351,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @NotNull
     public String toString() {
         if (ptr != 0) {
-            final CharSink b = Misc.getThreadLocalBuilder();
+            // Don't use Misc.getThreadLocalBuilder() to convert Path to String.
+            // This leads difficulties in debugging / running tests when FilesFacade tracks open files 
+            // when this method called implicitly
+            final StringSink b = tlBuilder.get();
+            b.clear();
             toSink(b);
             return b.toString();
         }
