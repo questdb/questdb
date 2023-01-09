@@ -27,12 +27,12 @@ package io.questdb.std;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IntHashSetTest {
+public class CompactIntHashSetTest {
 
     @Test
     public void testBasicOperations() {
         Rnd rnd = new Rnd();
-        IntHashSet set = new IntHashSet();
+        CompactIntHashSet set = new CompactIntHashSet();
         final int N = 1000;
 
         for (int i = 0; i < N; i++) {
@@ -50,12 +50,6 @@ public class IntHashSetTest {
         rnd.reset();
 
         for (int i = 0; i < N; i++) {
-            Assert.assertEquals(rnd.nextPositiveInt(), set.get(i));
-        }
-
-        rnd.reset();
-
-        for (int i = 0; i < N; i++) {
             Assert.assertTrue(set.contains(rnd.nextPositiveInt()));
         }
     }
@@ -64,8 +58,8 @@ public class IntHashSetTest {
     public void testEqualsAndHashCode() {
         final int items = 100;
 
-        final IntHashSet setA = new IntHashSet();
-        final IntHashSet setB = new IntHashSet();
+        final CompactIntHashSet setA = new CompactIntHashSet();
+        final CompactIntHashSet setB = new CompactIntHashSet();
 
         Assert.assertEquals(setA, setB);
         Assert.assertEquals(setA.hashCode(), setB.hashCode());
@@ -94,7 +88,7 @@ public class IntHashSetTest {
     @Test
     public void testRemove() {
         Rnd rnd = new Rnd();
-        IntHashSet set = new IntHashSet();
+        CompactIntHashSet set = new CompactIntHashSet();
         final int N = 1000;
         for (int i = 0; i < N; i++) {
             Assert.assertTrue(set.add(rnd.nextPositiveInt()));
