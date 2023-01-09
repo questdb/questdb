@@ -2228,7 +2228,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     @Test
     public void testCreateAsSelectInVolumeFail() throws Exception {
         try {
-
             assertQuery(
                     "geohash\n",
                     "select geohash from geohash",
@@ -2253,7 +2252,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             );
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=niza]");
+            if (Os.isWindows()) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in windows");
+            } else {
+                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=niza]");
+            }
         }
     }
 
@@ -2283,7 +2286,11 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     true,
                     true);
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + volume + ']');
+            if (Os.isWindows()) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in windows");
+            } else {
+                TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + volume + ']');
+            }
         }
     }
 

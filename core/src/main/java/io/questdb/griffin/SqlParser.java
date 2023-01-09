@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
@@ -586,7 +583,7 @@ public final class SqlParser {
             }
             tok = tok(lexer, "path for volume");
             if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported in windows");
+                throw CairoException.critical(0).position(lexer.getPosition()).put("'in volume' is not supported in windows");
             }
             model.setVolumePath(GenericLexer.unquote(tok));
             tok = optTok(lexer);
