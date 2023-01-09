@@ -46,7 +46,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int n = args.size();
-        LongLongHashSet set = new LongLongHashSet(n - 1, 0.6, Uuid.NULL_HI_AND_LO);
+        LongLongHashSet set = new LongLongHashSet(n - 1, 0.6, Numbers.LONG_NaN);
 
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
@@ -69,7 +69,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                     long loc = func.getUuidLocation(null);
                     long lo = func.getUuidLo(null, loc);
                     long hi = func.getUuidHi(null, loc);
-                    if (hi == Uuid.NULL_HI_AND_LO && lo == Uuid.NULL_HI_AND_LO) {
+                    if (hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN) {
                         throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
                     }
                     set.add(lo, hi);

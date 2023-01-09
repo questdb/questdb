@@ -30,13 +30,12 @@ public final class Uuid implements Sinkable {
     public static final int BYTES = Long.BYTES * 2;
     public static final int FIRST_DASH_POS = 8;
     public static final int FOURTH_DASH_POS = 23;
-    public static final long NULL_HI_AND_LO = Numbers.LONG_NaN;
     public static final int SECOND_DASH_POS = 13;
     public static final int THIRD_DASH_POS = 18;
     public static final int UUID_LENGTH = 36;
 
-    private long hi = NULL_HI_AND_LO;
-    private long lo = NULL_HI_AND_LO;
+    private long hi = Numbers.LONG_NaN;
+    private long lo = Numbers.LONG_NaN;
 
     public Uuid(long lo, long hi) {
         of(lo, hi);
@@ -74,7 +73,7 @@ public final class Uuid implements Sinkable {
      * @return true if UUID is null
      */
     public static boolean isNull(long lo, long hi) {
-        return hi == NULL_HI_AND_LO && lo == NULL_HI_AND_LO;
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
     }
 
     /**
@@ -156,8 +155,8 @@ public final class Uuid implements Sinkable {
     }
 
     public void ofNull() {
-        this.lo = NULL_HI_AND_LO;
-        this.hi = NULL_HI_AND_LO;
+        this.lo = Numbers.LONG_NaN;
+        this.hi = Numbers.LONG_NaN;
     }
 
     @Override

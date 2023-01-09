@@ -298,7 +298,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUuidHi(int columnIndex, long location) {
         if (location == 0) {
-            return Uuid.NULL_HI_AND_LO;
+            return Numbers.LONG_NaN;
         }
         return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
@@ -306,7 +306,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUuidLo(int columnIndex, long location) {
         if (location == 0) {
-            return Uuid.NULL_HI_AND_LO;
+            return Numbers.LONG_NaN;
         }
         return Unsafe.getUnsafe().getLong(location);
     }

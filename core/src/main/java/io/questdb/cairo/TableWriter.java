@@ -1883,7 +1883,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128LittleEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                // fall through
+            case ColumnType.UUID:
+                nullers.add(() -> mem1.putLongLong(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -1914,9 +1916,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 break;
             case ColumnType.GEOLONG:
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
-                break;
-            case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(Uuid.NULL_HI_AND_LO, Uuid.NULL_HI_AND_LO));
                 break;
             default:
                 nullers.add(NOOP);

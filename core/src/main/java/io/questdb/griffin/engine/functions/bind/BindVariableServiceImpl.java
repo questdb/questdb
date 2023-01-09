@@ -646,7 +646,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     public void setUuid(int index) throws SqlException {
-        setUuid(index, Uuid.NULL_HI_AND_LO, Uuid.NULL_HI_AND_LO);
+        setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
     }
 
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {

@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.Metrics;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.Uuid;
 
 public class CairoTestUtils {
 
@@ -172,7 +171,7 @@ public class CairoTestUtils {
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putUuid(12, Uuid.NULL_HI_AND_LO, Uuid.NULL_HI_AND_LO);
+                    row.putUuid(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 } else {
                     row.putUuid(12, rnd.nextLong(), rnd.nextLong());
                 }

@@ -207,7 +207,7 @@ public class WalDataRecord implements Record, Sinkable {
     @Override
     public long getUuidHi(int col, long location) {
         if (location == 0) {
-            return Uuid.NULL_HI_AND_LO;
+            return Numbers.LONG_NaN;
         }
         return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
@@ -215,7 +215,7 @@ public class WalDataRecord implements Record, Sinkable {
     @Override
     public long getUuidLo(int col, long location) {
         if (location == 0) {
-            return Uuid.NULL_HI_AND_LO;
+            return Numbers.LONG_NaN;
         }
         return Unsafe.getUnsafe().getLong(location);
     }

@@ -33,10 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Uuid;
+import io.questdb.std.*;
 
 public final class CastStrToUuidFunctionFactory implements FunctionFactory {
     @Override
@@ -78,13 +75,13 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getUuidHi(Record rec, long location) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return Uuid.NULL_HI_AND_LO;
+                return Numbers.LONG_NaN;
             }
             try {
                 Uuid.checkDashesAndLength(value);
                 return Uuid.parseHi(value);
             } catch (NumericException e) {
-                return Uuid.NULL_HI_AND_LO;
+                return Numbers.LONG_NaN;
             }
         }
 
@@ -92,13 +89,13 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getUuidLo(Record rec, long location) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return Uuid.NULL_HI_AND_LO;
+                return Numbers.LONG_NaN;
             }
             try {
                 Uuid.checkDashesAndLength(value);
                 return Uuid.parseLo(value);
             } catch (NumericException e) {
-                return Uuid.NULL_HI_AND_LO;
+                return Numbers.LONG_NaN;
             }
         }
 

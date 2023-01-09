@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import org.jetbrains.annotations.Nullable;
@@ -57,8 +58,8 @@ final class UuidEqUtils {
             long lo;
             long hi;
             if (uuidStr == null) {
-                lo = Uuid.NULL_HI_AND_LO;
-                hi = Uuid.NULL_HI_AND_LO;
+                lo = Numbers.LONG_NaN;
+                hi = Numbers.LONG_NaN;
             } else {
                 try {
                     Uuid.checkDashesAndLength(uuidStr);
@@ -141,7 +142,7 @@ final class UuidEqUtils {
         public boolean getBool(Record rec) {
             CharSequence uuidStr = fun.getStr(rec);
             if (uuidStr == null) {
-                return negated != (constUuidHi == Uuid.NULL_HI_AND_LO && constUuidLo == Uuid.NULL_HI_AND_LO);
+                return negated != (constUuidHi == Numbers.LONG_NaN && constUuidLo == Numbers.LONG_NaN);
             }
             try {
                 Uuid.checkDashesAndLength(uuidStr);

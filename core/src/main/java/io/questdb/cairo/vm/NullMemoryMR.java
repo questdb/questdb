@@ -152,11 +152,11 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     public long getUuidHi(long offset) {
-        return Uuid.NULL_HI_AND_LO;
+        return Numbers.LONG_NaN;
     }
 
     public long getUuidLo(long offset) {
-        return Uuid.NULL_HI_AND_LO;
+        return Numbers.LONG_NaN;
     }
 
     @Override

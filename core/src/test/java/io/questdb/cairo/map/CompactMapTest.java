@@ -780,8 +780,8 @@ public class CompactMapTest extends AbstractCairoTest {
 
             loc = record.getUuidLocation(keyColumnOffset + 12);
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Uuid.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12, loc));
-                Assert.assertEquals(Uuid.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getUuidLo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getUuidHi(keyColumnOffset + 12, loc));
             } else {
                 Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12, loc));
                 Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12, loc));

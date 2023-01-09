@@ -57,7 +57,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     public void computeFirst(MapValue mapValue, Record record) {
         LongLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, Uuid.NULL_HI_AND_LO));
+            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, Numbers.LONG_NaN));
         } else {
             set = sets.getQuick(setIndex);
         }
