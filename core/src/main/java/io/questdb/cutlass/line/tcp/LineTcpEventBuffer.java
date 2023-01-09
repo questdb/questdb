@@ -228,19 +228,22 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
-    public long addUuid(long offset, DirectByteCharSequence value, boolean hasNonAsciiChars) throws NumericException {
-        int maxLen = 2 * value.length();
-        checkCapacity(offset, Byte.BYTES + Integer.BYTES + maxLen);
-        long strPos = offset + Byte.BYTES + Integer.BYTES; // skip field type and string length
-        tempSink.of(strPos, strPos + maxLen);
-        if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(value, tempSink);
-        } else {
-            tempSink.put(value);
-        }
-        Uuid.checkDashesAndLength(tempSink);
-        long hi = Uuid.parseHi(tempSink);
-        long lo = Uuid.parseLo(tempSink);
+    /**
+     * Add UUID encoded as a string to the buffer.
+     * <p>
+     * Technically, DirectByteCharSequence is UTF-8 encoded, but any non-ASCII character will cause the UUID
+     * to be rejected by the parser. Hence, we do not have to bother with UTF-8 decoding.
+     *
+     * @param offset offset in the buffer to write to
+     * @param value  value to write
+     * @return new offset
+     * @throws NumericException if the value is not a valid UUID string
+     */
+    public long addUuid(long offset, DirectByteCharSequence value) throws NumericException {
+        checkCapacity(offset, Byte.BYTES + 2 * Long.BYTES);
+        Uuid.checkDashesAndLength(value);
+        long hi = Uuid.parseHi(value);
+        long lo = Uuid.parseLo(value);
         Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
         offset += Byte.BYTES;
         Unsafe.getUnsafe().putLong(offset, lo);

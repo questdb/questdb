@@ -466,7 +466,7 @@ class LineTcpMeasurementEvent implements Closeable {
 
                             case ColumnType.UUID:
                                 try {
-                                    offset = buffer.addUuid(offset, entityValue, parser.hasNonAsciiChars());
+                                    offset = buffer.addUuid(offset, entityValue);
                                 } catch (NumericException e) {
                                     throw castError("string", columnWriterIndex, colType, entity.getName());
                                 }

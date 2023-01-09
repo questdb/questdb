@@ -265,15 +265,21 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testInsertBadStringIntoUuidColumn() throws Exception {
+        testValueCannotBeInsertedToUuidColumn("totally not a uuid");
+    }
+
+    @Test
+    public void testInsertNonAsciiStringAndUuid() throws Exception {
+        // this is to check that a non-ASCII string will not prevent 
+        // parsing a subsequent UUID
         runInContext(r -> {
-            // create table with UUID column
             try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
-                    .col("u1", ColumnType.UUID)
+                    .col("s", ColumnType.STRING)
+                    .col("u", ColumnType.UUID)
                     .timestamp()) {
                 CairoTestUtils.create(model);
             }
 
-            // this sender fails as the string is not UUID
             try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
                     .port(bindPort)
@@ -281,31 +287,24 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
-                        .stringColumn("u1", "totally not a uuid")
+                        .stringColumn("s", "non-ascii äöü")
+                        .stringColumn("u", "11111111-2222-3333-4444-555555555555")
                         .at(tsMicros * 1000);
                 sender.flush();
             }
-
-            // this sender succeeds as the string is in the UUID format
-            try (Sender sender = Sender.builder()
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
-                sender.table("mytable")
-                        .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
-                        .at(tsMicros * 1000);
-                sender.flush();
-            }
-
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
-                TestUtils.assertReader("u1\ttimestamp\n" +
-                        "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                TestUtils.assertReader("s\tu\ttimestamp\n" +
+                        "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
+    }
+
+    @Test
+    public void testInsertNonAsciiStringIntoUuidColumn() throws Exception {
+        // carefully crafted value so when encoded as UTF-8 it has the same byte length as a proper UUID
+        testValueCannotBeInsertedToUuidColumn("11111111-1111-1111-1111-1111111111ü");
     }
 
     @Test
@@ -553,6 +552,50 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     TestUtils.assertContains(e.getMessage(), "before any other column types");
                     sender.atNow();
                 }
+            }
+        });
+    }
+
+    private void testValueCannotBeInsertedToUuidColumn(String value) throws Exception {
+        runInContext(r -> {
+            // create table with UUID column
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+                    .col("u1", ColumnType.UUID)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            // this sender fails as the string is not UUID
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", value)
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            // this sender succeeds as the string is in the UUID format
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                TestUtils.assertReader("u1\ttimestamp\n" +
+                        "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
     }
