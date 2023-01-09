@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.wal;
 
-import io.questdb.Func;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -34,7 +33,10 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.*;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -49,6 +51,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -917,7 +920,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testWalTableSuspendResume() throws Exception {
-        FilesFacade filesFacade = new FilesFacadeImpl() {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
             @Override
@@ -952,7 +955,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testWalTableSuspendResumeFromTxn() throws Exception {
-        FilesFacade filesFacade = new FilesFacadeImpl() {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
             @Override
@@ -1076,7 +1079,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
-        FilesFacade filesFacade = new FilesFacadeImpl() {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
             @Override
@@ -1145,7 +1148,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         return engine.getTableToken(tableName);
     }
 
-    private void failToApplyAlter(String error, Func<TableToken, AlterOperation> alterOperationFunc) throws Exception {
+    private void failToApplyAlter(String error, Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             TableToken tt = createStandardWalTable(tableName);
@@ -1167,7 +1170,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     }
 
-    private void failToApplyDoubleAlter(String error, Func<TableToken, AlterOperation> alterOperationFunc) throws Exception {
+    private void failToApplyDoubleAlter(String error, Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             TableToken token = createStandardWalTable(tableName);

@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.NumericException;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -358,7 +361,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                     // Delete failure
                     TableToken tableToken = engine.getTableToken("up_part");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-02").concat("str.i").$();
-                    Assert.assertTrue(Chars.toString(path), FilesFacadeImpl.INSTANCE.exists(path));
+                    Assert.assertTrue(Chars.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path));
 
                     // Should retry
                     runPurgeJob(purgeJob);
@@ -867,22 +870,22 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     private void assertFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
         TableToken tableToken = engine.getTableToken(up_part);
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("x.d").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.d").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.i").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.d").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.k").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.v").put(colSuffix).$();
-        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
     }
 
     @NotNull

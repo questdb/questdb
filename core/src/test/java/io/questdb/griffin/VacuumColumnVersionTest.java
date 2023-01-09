@@ -385,7 +385,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
-            Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 

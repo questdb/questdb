@@ -88,7 +88,7 @@ public class FilesTest {
         // for that reason (until we understood the problem better) we won't run this test
         // on OSX
         Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
         AtomicInteger errors = new AtomicInteger();

@@ -444,5 +444,13 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
+    /**
+     * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
+     * When it is enabled directory name of table TRADE becomes TRADE~, so that ~ sign is added at the end.
+     * The flag is enabled in tests and disabled in released code for backward compatibility. Tests verify that
+     * we do not rely on the fact that table directory name is the same as table name.
+     *
+     * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
+     */
     boolean mangleTableDirNames();
 }
