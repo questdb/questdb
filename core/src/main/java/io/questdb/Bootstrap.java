@@ -335,6 +335,14 @@ public class Bootstrap {
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker");
             verifyFileOpts(path, cairoConfig);
         }
+        CharSequenceHashSet volumePaths = cairoConfig.getAllowedVolumePaths();
+        int len = volumePaths.size();
+        if (len > 0) {
+            log.advisoryW().$(" - create.allowed.volume.paths: ").$();
+            for (int i = 0; i < len; i++) {
+                log.advisoryW().$("   + ").utf8(volumePaths.get(i)).$();
+            }
+        }
         if (JitUtil.isJitSupported()) {
             final int jitMode = cairoConfig.getSqlJitMode();
             switch (jitMode) {

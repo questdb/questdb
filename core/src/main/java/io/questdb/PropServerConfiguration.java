@@ -1532,6 +1532,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CharSequenceHashSet getAllowedVolumePaths() {
+            return allowedVolumePaths;
+        }
+
+        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }

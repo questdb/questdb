@@ -50,6 +50,8 @@ public interface CairoConfiguration {
 
     boolean enableTestFactories();
 
+    CharSequenceHashSet getAllowedVolumePaths();
+
     int getAnalyticColumnPoolCapacity();
 
     // the '+' is used to prevent overlap with table names
