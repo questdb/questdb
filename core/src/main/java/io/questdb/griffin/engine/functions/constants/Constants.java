@@ -110,7 +110,6 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
 
         for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
