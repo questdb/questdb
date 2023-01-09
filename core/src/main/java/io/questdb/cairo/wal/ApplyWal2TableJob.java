@@ -84,7 +84,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
                 if (updatedToken == null) {
                     if (engine.isTableDropped(tableToken)) {
-                        tryDestroyDroppedTable(tableToken, null, engine, tempPath);
+                        return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
                     }
                     // else: table is dropped and fully cleaned, this is late notification.
                     return Long.MAX_VALUE;
@@ -114,8 +114,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } catch (CairoException ex) {
             if (engine.isTableDropped(tableToken)) {
                 // Table is dropped, and we received cairo exception in the middle of apply
-                tryDestroyDroppedTable(tableToken, null, engine, tempPath);
-                return Long.MAX_VALUE;
+                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
             }
 
             LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(tableToken.getDirName())
@@ -140,7 +139,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return useful;
     }
 
-    private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
+    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
         // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -183,12 +182,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // Remove _txn and _meta files when all other files are removed
                     ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
                     ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                    return true;
                 }
             } finally {
                 ff.findClose(p);
             }
         }
-
+        return false;
     }
 
     private static AlterOperation compileAlter(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
@@ -228,7 +228,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return true;
     }
 
-    private static void tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
+    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
         if (engine.lockReadersByTableToken(tableToken)) {
             TableWriter writerToClose = null;
             try {
@@ -244,7 +244,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // Force writer to close all the files.
                     writer.destroy();
                 }
-                cleanDroppedTableDirectory(engine, tempPath, tableToken);
+                return cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
                 if (writerToClose != null) {
                     writerToClose.close();
@@ -255,6 +255,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.info().$("table '").utf8(tableToken.getDirName())
                     .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
         }
+        return false;
     }
 
     private void applyOutstandingWalTransactions(
