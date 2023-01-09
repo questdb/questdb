@@ -90,15 +90,15 @@ public class RecordComparatorCompiler {
         }
         asm.methodCount(3);
         asm.defineDefaultConstructor();
-        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, keyColumnIndices, columnTypes, getUuidLocationIndex);
-        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, keyColumnIndices, columnTypes, getUuidLocationIndex);
+        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, getUuidLocationIndex, keyColumnIndices, columnTypes);
+        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, getUuidLocationIndex, keyColumnIndices, columnTypes);
 
         // class attribute count
         asm.putShort(0);
         return asm.newInstance();
     }
 
-    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes, int getUuidLocationIndex) {
+    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, int getUuidLocationIndex, IntList keyColumns, ColumnTypes columnTypes) {
         // if UUID is used, we need to allocate extra long on stack and also one extra long local variable
         // long uses 2 slots on stack and also 2 slots in local variable table
         int uuidSpace = getUuidLocationIndex == -1 ? 0 : 2;
@@ -125,7 +125,7 @@ public class RecordComparatorCompiler {
             if (columnType == ColumnType.UUID) {
                 asm.aload(1);
                 asm.iconst(columnIndex);
-                asm.invokeInterface(getUuidLocationIndex, 1); // call getUuidLocation
+                asm.invokeInterface(getUuidLocationIndex, 1);
                 asm.lstore(3);
                 argCount = 3;
             }
@@ -208,7 +208,7 @@ public class RecordComparatorCompiler {
      * all this complicated dancing around is to have class names, method names, field names
      * method signatures in constant pool in bytecode.
      */
-    private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes, int getUuidLocationIndex) {
+    private void instrumentSetLeftMethod(int nameIndex, int descIndex, int getUuidLocationIndex, IntList keyColumns, ColumnTypes columnTypes) {
         // if UUID is used, we need to allocate extra long on stack and also one extra long local variable
         // long uses 2 slots on stack and also 2 slots in local variable table
         int uuidSpace = getUuidLocationIndex == -1 ? 0 : 2;
@@ -259,6 +259,16 @@ public class RecordComparatorCompiler {
         asm.endMethod();
     }
 
+    /**
+     * Pool methods that are used to compare records.
+     *
+     * @param compareMethodIndex
+     * @param thisClassIndex
+     * @param recordClassIndex
+     * @param columnTypes
+     * @param keyColumnIndices
+     * @return true if at least one key is UUID
+     */
     private boolean poolFieldArtifacts(
             int compareMethodIndex,
             int thisClassIndex,
@@ -400,19 +410,32 @@ public class RecordComparatorCompiler {
             int methodIndex;
             String getterType = fieldType;
             if (columnType == ColumnType.LONG128 || columnType == ColumnType.UUID) {
-                // Special case, Long128 is 2 longs of type J on comparison
+                // Special cases: Long128 & UUID are 2 longs to compare
                 fieldTypeIndices.add(typeIndex);
                 int nameIndex2 = asm.poolUtf8().put('f').put(i).put(i).$();
                 fieldNameIndices.add(nameIndex2);
                 int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
                 fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
-            String getterSignature = columnType == ColumnType.UUID ? "(IJ)" + getterType : "(I)" + getterType;
-            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameA, getterSignature));
+            BytecodeAssembler.Utf8Appender utf8 = asm.poolUtf8();
+            if (columnType != ColumnType.UUID) {
+                // Default case: getters receive a single parameter: (int column_index)
+                utf8.put("(I)");
+            } else {
+                // Special case: UUID getters receive the extra parameter: (int column_index, long location) 
+                utf8.put("(IJ)");
+            }
+            int getterSignatureIndex = utf8.put(getterType).$();
+            int getterNameIndex = asm.poolUtf8(getterNameA);
+            int getterNameAndTypeIndex = asm.poolNameAndType(getterNameIndex, getterSignatureIndex);
+
+            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameAndTypeIndex));
             fieldRecordAccessorIndicesA.add(methodIndex);
 
             if (getterNameB != null) {
-                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameB, getterSignature));
+                getterNameIndex = asm.poolUtf8(getterNameB);
+                getterNameAndTypeIndex = asm.poolNameAndType(getterNameIndex, getterSignatureIndex);
+                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameAndTypeIndex));
             }
 
             fieldRecordAccessorIndicesB.add(methodIndex);
