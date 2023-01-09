@@ -961,7 +961,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final long loc = record.getUuidLocation(columnIndex);
         final long lo = record.getUuidLo(columnIndex, loc);
         final long hi = record.getUuidHi(columnIndex, loc);
-        if (UuidUtil.isNull(lo, hi)) {
+        if (Uuid.isNull(lo, hi)) {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
@@ -974,7 +974,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final long loc = record.getUuidLocation(columnIndex);
         final long lo = record.getUuidLo(columnIndex, loc);
         final long hi = record.getUuidHi(columnIndex, loc);
-        if (UuidUtil.isNull(lo, hi)) {
+        if (Uuid.isNull(lo, hi)) {
             responseAsciiSink.setNullValue();
         } else {
             responseAsciiSink.putNetworkInt(Long.BYTES * 2);
@@ -2592,7 +2592,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void setUuidBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(index, UuidUtil.BYTES, valueLen);
+        ensureValueLength(index, Uuid.BYTES, valueLen);
         long hi = getLongUnsafe(address);
         long lo = getLongUnsafe(address + Long.BYTES);
         bindVariableService.setUuid(index, lo, hi);

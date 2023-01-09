@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.NumericException;
-import io.questdb.std.UuidUtil;
+import io.questdb.std.Uuid;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -57,13 +57,13 @@ final class UuidEqUtils {
             long lo;
             long hi;
             if (uuidStr == null) {
-                lo = UuidUtil.NULL_HI_AND_LO;
-                hi = UuidUtil.NULL_HI_AND_LO;
+                lo = Uuid.NULL_HI_AND_LO;
+                hi = Uuid.NULL_HI_AND_LO;
             } else {
                 try {
-                    UuidUtil.checkDashesAndLength(uuidStr);
-                    lo = UuidUtil.parseLo(uuidStr);
-                    hi = UuidUtil.parseHi(uuidStr);
+                    Uuid.checkDashesAndLength(uuidStr);
+                    lo = Uuid.parseLo(uuidStr);
+                    hi = Uuid.parseHi(uuidStr);
                 } catch (NumericException e) {
                     // ok, so the constant string is not a UUID format -> it cannot be equal to any UUID
                     return BooleanConstant.FALSE;
@@ -80,7 +80,7 @@ final class UuidEqUtils {
                 long loc = uuidFun.getUuidLocation(null);
                 long lo = uuidFun.getUuidLo(null, loc);
                 long hi = uuidFun.getUuidHi(null, loc);
-                if (UuidUtil.isNull(lo, hi)) {
+                if (Uuid.isNull(lo, hi)) {
                     return new EqStrFunctionFactory.NullCheckFunc(strFun);
                 } else {
                     return new ConstUuidFun(lo, hi, strFun);
@@ -141,11 +141,11 @@ final class UuidEqUtils {
         public boolean getBool(Record rec) {
             CharSequence uuidStr = fun.getStr(rec);
             if (uuidStr == null) {
-                return negated != (constUuidHi == UuidUtil.NULL_HI_AND_LO && constUuidLo == UuidUtil.NULL_HI_AND_LO);
+                return negated != (constUuidHi == Uuid.NULL_HI_AND_LO && constUuidLo == Uuid.NULL_HI_AND_LO);
             }
             try {
-                UuidUtil.checkDashesAndLength(uuidStr);
-                return negated != (constUuidHi == UuidUtil.parseHi(uuidStr) && constUuidLo == UuidUtil.parseLo(uuidStr));
+                Uuid.checkDashesAndLength(uuidStr);
+                return negated != (constUuidHi == Uuid.parseHi(uuidStr) && constUuidLo == Uuid.parseLo(uuidStr));
             } catch (NumericException e) {
                 return negated;
             }
@@ -171,11 +171,11 @@ final class UuidEqUtils {
             long lo = uuidFunction.getUuidLo(rec, loc);
             long hi = uuidFunction.getUuidHi(rec, loc);
             if (str == null) {
-                return negated != UuidUtil.isNull(lo, hi);
+                return negated != Uuid.isNull(lo, hi);
             }
             try {
-                UuidUtil.checkDashesAndLength(str);
-                return negated != (hi == UuidUtil.parseHi(str) && lo == UuidUtil.parseLo(str));
+                Uuid.checkDashesAndLength(str);
+                return negated != (hi == Uuid.parseHi(str) && lo == Uuid.parseLo(str));
             } catch (NumericException e) {
                 return negated;
             }

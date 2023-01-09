@@ -27,7 +27,7 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.NumericException;
-import io.questdb.std.UuidUtil;
+import io.questdb.std.Uuid;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public final class UuidAdapter extends AbstractTypeAdapter {
@@ -44,9 +44,9 @@ public final class UuidAdapter extends AbstractTypeAdapter {
     @Override
     public boolean probe(DirectByteCharSequence text) {
         try {
-            UuidUtil.checkDashesAndLength(text);
-            UuidUtil.parseHi(text);
-            UuidUtil.parseLo(text);
+            Uuid.checkDashesAndLength(text);
+            Uuid.parseHi(text);
+            Uuid.parseLo(text);
         } catch (NumericException e) {
             return false;
         }

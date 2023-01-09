@@ -32,7 +32,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 import static org.junit.Assert.*;
 
-public class MutableUuidTest {
+public class UuidTest {
 
     @Test
     public void testEdgeCases() {
@@ -45,8 +45,8 @@ public class MutableUuidTest {
 
     @Test
     public void testEqualsAndHashcode() throws Exception {
-        MutableUuid m1 = new MutableUuid();
-        MutableUuid m2 = new MutableUuid();
+        Uuid m1 = new Uuid();
+        Uuid m2 = new Uuid();
         for (int i = 0; i < 100; i++) {
             UUID uuid = UUID.randomUUID();
             m1.of(uuid.getLeastSignificantBits(), uuid.getMostSignificantBits());
@@ -74,7 +74,7 @@ public class MutableUuidTest {
     public void testHappyParsing() throws Exception {
         UUID javaUuid = UUID.randomUUID();
 
-        MutableUuid uuid = new MutableUuid();
+        Uuid uuid = new Uuid();
         uuid.of(javaUuid.toString());
 
         assertEqualsBitS(javaUuid, uuid);
@@ -83,7 +83,7 @@ public class MutableUuidTest {
     @Test
     public void testHappySinking() {
         UUID javaUuid = UUID.randomUUID();
-        MutableUuid uuid = new MutableUuid(javaUuid.getLeastSignificantBits(), javaUuid.getMostSignificantBits());
+        Uuid uuid = new Uuid(javaUuid.getLeastSignificantBits(), javaUuid.getMostSignificantBits());
 
         assertEqualsString(javaUuid, uuid);
     }
@@ -115,7 +115,7 @@ public class MutableUuidTest {
         // rfc4122 section 3 says:
         // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
 
-        MutableUuid mutableUuid = new MutableUuid();
+        Uuid mutableUuid = new Uuid();
         for (int i = 0; i < 100; i++) {
             UUID uuid = UUID.randomUUID();
             mutableUuid.of(uuid.toString().toUpperCase());
@@ -124,20 +124,20 @@ public class MutableUuidTest {
         }
     }
 
-    private static void assertEqualsBitS(UUID expected, MutableUuid actual) {
+    private static void assertEqualsBitS(UUID expected, Uuid actual) {
         assertEquals("Bad parsing " + expected, expected.getMostSignificantBits(), actual.getHi());
         assertEquals("Bad parsing " + expected, expected.getLeastSignificantBits(), actual.getLo());
     }
 
     private static void assertEqualsString(long lo, long hi) {
         UUID javaUuid = new UUID(hi, lo);
-        MutableUuid uuid = new MutableUuid();
+        Uuid uuid = new Uuid();
         uuid.of(lo, hi);
 
         assertEqualsString(javaUuid, uuid);
     }
 
-    private static void assertEqualsString(UUID expected, MutableUuid actual) {
+    private static void assertEqualsString(UUID expected, Uuid actual) {
         StringSink sink = new StringSink();
         actual.toSink(sink);
 
@@ -145,7 +145,7 @@ public class MutableUuidTest {
     }
 
     private static void assertExceptionWhileParsing(String uuid) {
-        MutableUuid muuid = new MutableUuid();
+        Uuid muuid = new Uuid();
         try {
             muuid.of(uuid);
             fail();

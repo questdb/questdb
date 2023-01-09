@@ -298,7 +298,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUuidHi(int columnIndex, long location) {
         if (location == 0) {
-            return UuidUtil.NULL_HI_AND_LO;
+            return Uuid.NULL_HI_AND_LO;
         }
         return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
@@ -306,7 +306,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUuidLo(int columnIndex, long location) {
         if (location == 0) {
-            return UuidUtil.NULL_HI_AND_LO;
+            return Uuid.NULL_HI_AND_LO;
         }
         return Unsafe.getUnsafe().getLong(location);
     }
@@ -315,7 +315,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     public long getUuidLocation(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
+        final long offset = getAdjustedRecordIndex(col) * Uuid.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
         return column.addressOf(offset);

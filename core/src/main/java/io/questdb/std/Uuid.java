@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-public final class UuidUtil {
+import io.questdb.std.str.CharSink;
+
+public final class Uuid implements Sinkable {
     public static final int BYTES = Long.BYTES * 2;
     public static final int FIRST_DASH_POS = 8;
     public static final int FOURTH_DASH_POS = 23;
@@ -33,7 +35,15 @@ public final class UuidUtil {
     public static final int THIRD_DASH_POS = 18;
     public static final int UUID_LENGTH = 36;
 
-    private UuidUtil() {
+    private long hi = NULL_HI_AND_LO;
+    private long lo = NULL_HI_AND_LO;
+
+    public Uuid(long lo, long hi) {
+        of(lo, hi);
+    }
+
+    public Uuid() {
+
     }
 
     /**
@@ -50,8 +60,8 @@ public final class UuidUtil {
         }
         if (uuid.charAt(FIRST_DASH_POS) != '-'
                 || uuid.charAt(SECOND_DASH_POS) != '-'
-                || uuid.charAt(UuidUtil.THIRD_DASH_POS) != '-'
-                || uuid.charAt(UuidUtil.FOURTH_DASH_POS) != '-') {
+                || uuid.charAt(THIRD_DASH_POS) != '-'
+                || uuid.charAt(FOURTH_DASH_POS) != '-') {
             throw NumericException.INSTANCE;
         }
     }
@@ -89,7 +99,6 @@ public final class UuidUtil {
         return (hi1 << 32) | (hi2 << 16) | hi3;
     }
 
-
     /**
      * Returns lowest 64 bits of UUID.
      * <p>
@@ -108,5 +117,51 @@ public final class UuidUtil {
         lo1 = Numbers.parseHexLong(uuid, THIRD_DASH_POS + 1, FOURTH_DASH_POS);
         lo2 = Numbers.parseHexLong(uuid, FOURTH_DASH_POS + 1, UUID_LENGTH);
         return (lo1 << 48) | lo2;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || o.getClass() != Uuid.class) {
+            return false;
+        }
+        Uuid that = (Uuid) o;
+        return lo == that.lo && hi == that.hi;
+    }
+
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
+    }
+
+    @Override
+    public int hashCode() {
+        return Hash.hash(lo, hi);
+    }
+
+    public void of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+    }
+
+    public void of(CharSequence uuid) throws NumericException {
+        checkDashesAndLength(uuid);
+        this.lo = parseLo(uuid);
+        this.hi = parseHi(uuid);
+    }
+
+    public void ofNull() {
+        this.lo = NULL_HI_AND_LO;
+        this.hi = NULL_HI_AND_LO;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        Numbers.appendUuid(lo, hi, sink);
     }
 }

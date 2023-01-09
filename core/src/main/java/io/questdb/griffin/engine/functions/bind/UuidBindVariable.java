@@ -28,10 +28,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.Mutable;
-import io.questdb.std.MutableUuid;
+import io.questdb.std.Uuid;
 
 public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable {
-    final MutableUuid value = new MutableUuid();
+    final Uuid value = new Uuid();
 
     @Override
     public void clear() {

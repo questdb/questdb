@@ -482,7 +482,7 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static void implicitCastStrAsUuid(CharSequence str, MutableUuid uuid) {
+    public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
         if (str == null || str.length() == 0) {
             uuid.ofNull();
             return;
@@ -495,7 +495,7 @@ public class SqlUtil {
     }
 
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
-        if (UuidUtil.isNull(lo, hi)) {
+        if (Uuid.isNull(lo, hi)) {
             return false;
         }
         Numbers.appendUuid(lo, hi, sink);

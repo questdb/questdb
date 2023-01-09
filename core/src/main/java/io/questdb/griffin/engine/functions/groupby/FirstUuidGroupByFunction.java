@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.UuidUtil;
+import io.questdb.std.Uuid;
 
 public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
@@ -82,6 +82,6 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putUuid(valueIndex, UuidUtil.NULL_HI_AND_LO, UuidUtil.NULL_HI_AND_LO);
+        mapValue.putUuid(valueIndex, Uuid.NULL_HI_AND_LO, Uuid.NULL_HI_AND_LO);
     }
 }

@@ -79,7 +79,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final String tableName;
     private final TableSequencerAPI tableSequencerAPI;
-    private final MutableUuid uuid = new MutableUuid();
+    private final Uuid uuid = new Uuid();
     private final int walId;
     private final SequencerMetadataChangeSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final String walName;
@@ -526,7 +526,7 @@ public class WalWriter implements TableWriterAPI {
                 nullers.add(() -> mem1.putLong128LittleEndian(Long128Constant.NULL_HI, Long128Constant.NULL_LO));
                 break;
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(UuidUtil.NULL_HI_AND_LO, UuidUtil.NULL_HI_AND_LO));
+                nullers.add(() -> mem1.putLongLong(Uuid.NULL_HI_AND_LO, Uuid.NULL_HI_AND_LO));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

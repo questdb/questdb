@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.LongLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.UuidUtil;
+import io.questdb.std.Uuid;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
@@ -57,7 +57,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     public void computeFirst(MapValue mapValue, Record record) {
         LongLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, UuidUtil.NULL_HI_AND_LO));
+            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, Uuid.NULL_HI_AND_LO));
         } else {
             set = sets.getQuick(setIndex);
         }
@@ -66,7 +66,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long loc = arg.getUuidLocation(record);
         long lo = arg.getUuidLo(record, loc);
         long hi = arg.getUuidHi(record, loc);
-        if (!UuidUtil.isNull(lo, hi)) {
+        if (!Uuid.isNull(lo, hi)) {
             set.add(lo, hi);
             mapValue.putLong(valueIndex, 1L);
         } else {
@@ -81,7 +81,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long loc = arg.getUuidLocation(record);
         long lo = arg.getUuidLo(record, loc);
         long hi = arg.getUuidHi(record, loc);
-        if (!UuidUtil.isNull(lo, hi)) {
+        if (!Uuid.isNull(lo, hi)) {
             final int index = set.keySlot(lo, hi);
             if (index < 0) {
                 return;

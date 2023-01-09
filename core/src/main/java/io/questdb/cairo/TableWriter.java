@@ -152,7 +152,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final TxWriter txWriter;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
-    private final MutableUuid uuid = new MutableUuid();
+    private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
@@ -1916,7 +1916,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(UuidUtil.NULL_HI_AND_LO, UuidUtil.NULL_HI_AND_LO));
+                nullers.add(() -> mem1.putLongLong(Uuid.NULL_HI_AND_LO, Uuid.NULL_HI_AND_LO));
                 break;
             default:
                 nullers.add(NOOP);

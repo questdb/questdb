@@ -263,7 +263,7 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUuidHi(int col, long location) {
         if (location == 0) {
-            return UuidUtil.NULL_HI_AND_LO;
+            return Uuid.NULL_HI_AND_LO;
         }
         return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
@@ -271,7 +271,7 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUuidLo(int col, long location) {
         if (location == 0) {
-            return UuidUtil.NULL_HI_AND_LO;
+            return Uuid.NULL_HI_AND_LO;
         }
         return Unsafe.getUnsafe().getLong(location);
     }
@@ -279,7 +279,7 @@ public class TableReaderRecord implements Record, Sinkable {
     @Override
     public long getUuidLocation(int col) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * UuidUtil.BYTES;
+        final long offset = getAdjustedRecordIndex(col) * Uuid.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).addressOf(offset);
     }

@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.std.MutableUuid;
+import io.questdb.std.Uuid;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -440,7 +440,7 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testNegatedEqualityComparisonExplicitCast() throws Exception {
-        MutableUuid uuid = new MutableUuid();
+        Uuid uuid = new Uuid();
         uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");

@@ -180,7 +180,7 @@ public class FastMap implements Map, Reopenable {
                         break;
                     case ColumnType.LONG128:
                     case ColumnType.UUID:
-                        offset += UuidUtil.BYTES;
+                        offset += Uuid.BYTES;
                         break;
                     default:
                         close();
@@ -699,10 +699,10 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putUuid(long lo, long hi) {
-            checkSize(UuidUtil.BYTES);
+            checkSize(Uuid.BYTES);
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += UuidUtil.BYTES;
+            appendAddress += Uuid.BYTES;
             writeOffset();
         }
 

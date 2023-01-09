@@ -99,7 +99,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
             long loc = arg.getUuidLocation(rec);
             long lo = arg.getUuidLo(rec, loc);
             long hi = arg.getUuidHi(rec, loc);
-            return UuidUtil.isNull(lo, hi) ? TableUtils.NULL_LEN : UuidUtil.UUID_LENGTH;
+            return Uuid.isNull(lo, hi) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
         }
     }
 }

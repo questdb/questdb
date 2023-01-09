@@ -257,7 +257,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private static void putUuidOrNull(HttpChunkedResponseSocket socket, long lo, long hi) {
-        if (UuidUtil.isNull(lo, hi)) {
+        if (Uuid.isNull(lo, hi)) {
             return;
         }
         Numbers.appendUuid(lo, hi, socket);

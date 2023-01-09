@@ -318,7 +318,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         if (address == 0) {
             return 0;
         }
-        return address + rowIndex * UuidUtil.BYTES;
+        return address + rowIndex * Uuid.BYTES;
     }
 
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {

@@ -238,9 +238,9 @@ public class LineTcpEventBuffer {
         } else {
             tempSink.put(value);
         }
-        UuidUtil.checkDashesAndLength(tempSink);
-        long hi = UuidUtil.parseHi(tempSink);
-        long lo = UuidUtil.parseLo(tempSink);
+        Uuid.checkDashesAndLength(tempSink);
+        long hi = Uuid.parseHi(tempSink);
+        long lo = Uuid.parseLo(tempSink);
         Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
         offset += Byte.BYTES;
         Unsafe.getUnsafe().putLong(offset, lo);
@@ -280,7 +280,7 @@ public class LineTcpEventBuffer {
             case LineTcpParser.ENTITY_TYPE_DOUBLE:
                 return Double.BYTES;
             case LineTcpParser.ENTITY_TYPE_UUID:
-                return UuidUtil.BYTES;
+                return Uuid.BYTES;
             case ENTITY_TYPE_NULL:
                 return 0;
             default:

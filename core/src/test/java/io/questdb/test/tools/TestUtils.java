@@ -1136,8 +1136,8 @@ public final class TestUtils {
                 long loc = r.getUuidLocation(i);
                 long hi = r.getUuidHi(i, loc);
                 long lo = r.getUuidLo(i, loc);
-                if (!UuidUtil.isNull(lo, hi)) {
-                    MutableUuid uuid = new MutableUuid(lo, hi);
+                if (!Uuid.isNull(lo, hi)) {
+                    Uuid uuid = new Uuid(lo, hi);
                     uuid.toSink(sink);
                 }
                 break;
