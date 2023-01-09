@@ -1557,7 +1557,10 @@ public class SqlCompiler implements Closeable {
                 CharSequence volumePath = createTableModel.getVolumePath();
                 if (volumePath != null) {
                     if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                        throw CairoException.critical(0).put("not a valid folder [path=").put(path).put(']');
+                        throw CairoException.critical(0).put("not a valid path for volume [path=").put(path).put(']');
+                    }
+                    if (!configuration.isAllowedVolumePath(volumePath)) {
+                        throw CairoException.critical(0).put("volume path is not allowed [path=").put(path).put(']');
                     }
                 }
                 try {

@@ -1491,7 +1491,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid folder [path=12]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=12]");
             }
         });
     }

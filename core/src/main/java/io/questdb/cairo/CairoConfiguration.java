@@ -417,6 +417,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isAllowedVolumePath(CharSequence volumePath);
+
     boolean isIOURingEnabled();
 
     boolean isO3QuickSortEnabled();

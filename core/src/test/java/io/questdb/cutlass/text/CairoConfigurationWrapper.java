@@ -808,6 +808,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAllowedVolumePath(CharSequence volumePath) {
+        return false;
+    }
+
+    @Override
     public boolean isIOURingEnabled() {
         return conf.isIOURingEnabled();
     }

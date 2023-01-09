@@ -69,6 +69,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    private final CharSequenceHashSet allowedVolumePaths = new CharSequenceHashSet();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -483,6 +484,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
+            extractAllowedVolumePaths(overrideWithEnv(properties, env, PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS), ',', path);
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
@@ -1140,6 +1142,51 @@ public class PropServerConfiguration implements ServerConfiguration {
         map.put(old, sb.toString());
     }
 
+    private void extractAllowedVolumePaths(@Nullable String paths, char separator, Path path) throws ServerConfigurationException {
+        if (paths != null) {
+            FilesFacade ff = getCairoConfiguration().getFilesFacade();
+            final int len = paths.length();
+            int start = 0, end;
+            int separatorCount = 0;
+            for (int i = 0; i < len; i++) {
+                if (separator == paths.charAt(i)) {
+                    separatorCount++;
+                    while (start < len && paths.charAt(start) == ' ') { // left trim
+                        start++;
+                    }
+                    end = i;
+                    while (end > start && paths.charAt(end - 1) == ' ') { // right trim
+                        end--;
+                    }
+                    if (end > start) {
+                        if (!ff.isDirOrSoftLinkDir(path.of(paths, start, end).$())) {
+                            throw ServerConfigurationException.forInvalidVolumePath(path);
+                        }
+                        allowedVolumePaths.add(path);
+                    } else {
+                        throw new ServerConfigurationException("volume path cannot be empty");
+                    }
+                    start = i + 1;
+                }
+            }
+            while (start < len && paths.charAt(start) == ' ') { // left trim
+                start++;
+            }
+            end = len;
+            while (end > start && paths.charAt(end - 1) == ' ') { // right trim
+                end--;
+            }
+            if (end > start) {
+                if (!ff.isDirOrSoftLinkDir(path.of(paths, start, end).$())) {
+                    throw ServerConfigurationException.forInvalidVolumePath(path);
+                }
+                allowedVolumePaths.add(path);
+            } else if (separatorCount > 0) {
+                throw new ServerConfigurationException("volume path cannot be empty");
+            }
+        }
+    }
+
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, PropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
         String value = overrideWithEnv(properties, env, key);
@@ -1289,7 +1336,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         String envCandidate = "QDB_" + key.getPropertyPath().replace('.', '_').toUpperCase();
         String envValue = env != null ? env.get(envCandidate) : null;
         if (envValue != null) {
-            log.info().$("env config [key=").$(envCandidate).$(']').$();
+            log.info().$("env config [key=").$(envCandidate).I$();
             return envValue;
         }
         return properties.getProperty(key.getPropertyPath());
@@ -2226,6 +2273,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isAllowedVolumePath(CharSequence volumePath) {
+            return volumePath != null && allowedVolumePaths.contains(volumePath);
         }
 
         @Override

@@ -2226,35 +2226,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateAsSelectInVolume() throws Exception {
-        Assume.assumeFalse(Os.isWindows());
-        assertQuery(
-                "geohash\n",
-                "select geohash from geohash",
-                "create table geohash (geohash geohash(1c)) in volume '" + temp.newFolder("other").getAbsolutePath() + "'",
-                null,
-                "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testCreateAsSelectInVolumeFail() throws Exception {
-        Assume.assumeFalse(Os.isWindows());
         try {
 
             assertQuery(
@@ -2281,7 +2253,37 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             );
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "not a valid folder [path=niza]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=niza]");
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectInVolumeNotAllowed() throws Exception {
+        String volume = temp.newFolder("other").getAbsolutePath();
+        try {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c)) in volume '" + volume + "'",
+                    null,
+                    "insert into geohash " +
+                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                    "geohash\n" +
+                            "q\n" +
+                            "q\n" +
+                            "u\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "u\n" +
+                            "q\n" +
+                            "u\n",
+                    true,
+                    true,
+                    true);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + volume + ']');
         }
     }
 

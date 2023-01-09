@@ -65,11 +65,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             "2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\n" +
             "2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\n";
 
+    private static String OTHER_VOLUME;
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
+        OTHER_VOLUME = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
         try {
-            createDummyConfiguration();
+            createDummyConfiguration(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + OTHER_VOLUME);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -85,9 +88,52 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testServerMainCreateTableInAllowedVolume() throws Exception {
+
+        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+
+        String tableName = "patrons";
+        String firstPartitionName = "2023-01-01";
+        int partitionCount = 11;
+
+        assertMemoryLeak(() -> {
+
+            // create table with some data
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                try (
+                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                                .col("investmentMill", ColumnType.LONG)
+                                .col("ticketThous", ColumnType.INT)
+                                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                                .timestamp("ts");
+                        MemoryMARW mem = Vm.getMARWInstance();
+                        Path path = new Path().of(OTHER_VOLUME).concat(tableName)
+                ) {
+                    createTable(cairoConfig, mem, path, true, tableModel, 1);
+                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
+                }
+                StringSink sink = Misc.getThreadLocalBuilder();
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        sink,
+                        TABLE_START_CONTENT);
+                assertSql(compiler, context, "tables()", sink, "ts1\tpatrons\tts\tDAY\t500000\t600000000\tfalse\n");
+            }
+        });
+    }
+
+    @Test
     public void testServerMainCreateTableMoveItsFolderAwayAndSoftLinkIt() throws Exception {
 
-        Assume.assumeTrue(!Os.isWindows()); // windows requires special privileges to create soft links
+        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
 
         String tableName = "sponsors";
         String firstPartitionName = "2023-01-01";

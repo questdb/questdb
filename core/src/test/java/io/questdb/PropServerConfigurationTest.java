@@ -34,12 +34,10 @@ import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.*;
@@ -59,6 +57,9 @@ public class PropServerConfigurationTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private final static Log LOG = LogFactory.getLog(PropServerConfigurationTest.class);
+
+    private final static Rnd rnd = new Rnd();
+    private final static StringSink sink = new StringSink();
     private static String root;
 
     @AfterClass
@@ -739,6 +740,54 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testNotValidAllowedVolumePaths0() throws Exception {
+        String volumeA = temp.newFolder("volumeZ").getAbsolutePath();
+        String volumeB = "banana";
+
+        Properties properties = new Properties();
+        StringSink sink = new StringSink();
+        sink.clear();
+        sink.put(randWhiteSpace()).put(volumeA).put(randWhiteSpace()).put(',')
+                .put(randWhiteSpace()).put(volumeB).put(randWhiteSpace());
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
+        try {
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "inaccessible volume [path=banana]");
+        }
+    }
+
+    @Test
+    public void testNotValidAllowedVolumePaths1() throws Exception {
+        String volumeA = "coconut";
+        String volumeB = temp.newFolder("volumeY").getAbsolutePath();
+
+        Properties properties = new Properties();
+        StringSink sink = new StringSink();
+        sink.clear();
+        sink.put(randWhiteSpace()).put(volumeA).put(randWhiteSpace()).put(',')
+                .put(randWhiteSpace()).put(volumeB).put(randWhiteSpace());
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
+        try {
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "inaccessible volume [path=coconut]");
+        }
+    }
+
+    @Test
+    public void testNotValidAllowedVolumePaths2() throws Exception {
+        String p = ",";
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), p);
+        try {
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "volume path cannot be empty");
+        }
+    }
+
+    @Test
     public void testObsoleteValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.timeout", "10000");
@@ -1162,6 +1211,40 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testValidAllowedVolumePaths0() throws Exception {
+
+        String volumeA = temp.newFolder("volumeA").getAbsolutePath();
+        String volumeB = temp.newFolder("volumeB").getAbsolutePath();
+        String volumeC = temp.newFolder("volumeC").getAbsolutePath();
+
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), "");
+        Assert.assertNull(PropServerConfiguration.validate(properties));
+        StringSink sink = new StringSink();
+        for (int i = 0; i < 20; i++) {
+            sink.clear();
+            sink.put(randWhiteSpace()).put(volumeA).put(randWhiteSpace()).put(',')
+                    .put(randWhiteSpace()).put(volumeB).put(randWhiteSpace()).put(',')
+                    .put(randWhiteSpace()).put(volumeC).put(randWhiteSpace());
+            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
+            CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
+            Assert.assertTrue(cairoConfig.isAllowedVolumePath(volumeA));
+            Assert.assertTrue(cairoConfig.isAllowedVolumePath(volumeB));
+            Assert.assertTrue(cairoConfig.isAllowedVolumePath(volumeC));
+            Assert.assertFalse(cairoConfig.isAllowedVolumePath("banana"));
+        }
+    }
+
+    @Test
+    public void testValidAllowedVolumePaths1() throws Exception {
+        String p = "   ";
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), p);
+        CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
+        Assert.assertFalse(cairoConfig.isAllowedVolumePath("banana"));
+    }
+
+    @Test
     public void testValidConfiguration() {
         Properties properties = new Properties();
         properties.setProperty("http.net.connection.rcvbuf", "10000");
@@ -1191,5 +1274,13 @@ public class PropServerConfigurationTest {
 
     private String getRelativePath(String path) {
         return path + File.separator + ".." + File.separator + new File(path).getName();
+    }
+
+    private String randWhiteSpace() {
+        sink.clear();
+        for (int i = 0, n = Math.abs(rnd.nextInt()) % 4; i < n; i++) {
+            sink.put(' ');
+        }
+        return sink.toString();
     }
 }
