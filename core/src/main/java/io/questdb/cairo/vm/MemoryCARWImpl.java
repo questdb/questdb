@@ -66,16 +66,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public void checkAndExtend(long address) {
-        assert appendAddress <= lim;
-        assert address >= pageAddress;
-        if (address <= lim) {
-            return;
-        }
-        extend0(address - pageAddress);
-    }
-
-    @Override
     public void clear() {
         super.clear();
         if (pageAddress != 0) {
@@ -159,6 +149,15 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     public void zero() {
         long baseLength = lim - pageAddress;
         Vect.memset(pageAddress, baseLength, 0);
+    }
+
+    private void checkAndExtend(long address) {
+        assert appendAddress <= lim;
+        assert address >= pageAddress;
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - pageAddress);
     }
 
     private void extend0(long size) {

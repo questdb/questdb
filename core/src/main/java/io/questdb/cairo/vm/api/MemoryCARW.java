@@ -32,8 +32,6 @@ import io.questdb.std.str.DirectByteCharSequence;
 //contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
-    void checkAndExtend(long address);
-
     @Override
     default long getAddress() {
         return getPageAddress(0);

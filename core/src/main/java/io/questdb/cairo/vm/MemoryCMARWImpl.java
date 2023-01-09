@@ -67,14 +67,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void checkAndExtend(long address) {
-        if (address <= lim) {
-            return;
-        }
-        extend0(address - pageAddress);
-    }
-
-    @Override
     public void close(boolean truncate, byte truncateMode) {
         if (pageAddress != 0) {
             final long truncateSize;
@@ -264,6 +256,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     public void zero() {
         long baseLength = lim - pageAddress;
         Vect.memset(pageAddress, baseLength, 0);
+    }
+
+    private void checkAndExtend(long address) {
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - pageAddress);
     }
 
     private void extend0(long newSize) {

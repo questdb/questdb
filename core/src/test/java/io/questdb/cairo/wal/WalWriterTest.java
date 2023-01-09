@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1987,10 +1988,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                 try {
                     row.putSym(1, "anything");
                     fail("UnsupportedOperationException expected");
-                } catch (UnsupportedOperationException e) {
-                    // ignore, this is expected
+                } catch (UnsupportedOperationException ignore) {
                 }
-                row.putSym(2, "symc");
+                try {
+                    putUtf8Symbol(row, "Щось", 1);
+                    fail("UnsupportedOperationException expected");
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                putUtf8Symbol(row, "Таке-Сяке", 2);
                 row.append();
                 walWriter.commit();
             }
@@ -2067,7 +2073,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
                     assertEquals(133, record.getInt(0));
-                    assertEquals("symc", record.getSym(2));
+                    assertEquals("Таке-Сяке", record.getSym(2));
                     assertEquals(0, record.getRowId());
                     assertFalse(cursor.hasNext());
 
@@ -2093,6 +2099,22 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    private static void putUtf8Symbol(TableWriter.Row r, String s, int columnIndex) {
+        byte[] bytes = s.getBytes(Files.UTF_8);
+        long len = bytes.length;
+        long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            DirectByteCharSequence seq = new DirectByteCharSequence();
+            seq.of(p, p + len);
+            r.putSymUtf8(columnIndex, seq, true);
+        } finally {
+            Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test

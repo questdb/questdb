@@ -55,11 +55,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void checkAndExtend(long address) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void close() {
     }
 

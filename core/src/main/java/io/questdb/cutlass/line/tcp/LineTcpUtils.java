@@ -28,7 +28,6 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.MutableCharSink;
 
 public final class LineTcpUtils {
-
     public static String utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
         for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
