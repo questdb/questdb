@@ -36,6 +36,7 @@ import io.questdb.cairo.wal.seq.SequencerMetadataChangeSPI;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -1491,7 +1492,8 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
-            WriterRowUtils.putUuidStr(columnIndex, uuidStr, uuid, this);
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putUuid(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

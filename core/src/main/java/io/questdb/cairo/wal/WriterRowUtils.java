@@ -28,8 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.std.MutableUuid;
 import io.questdb.std.NumericException;
 
 public class WriterRowUtils {
@@ -77,10 +75,5 @@ public class WriterRowUtils {
             val = GeoHashes.NULL;
         }
         putGeoHash(index, val, type, row);
-    }
-
-    public static void putUuidStr(int columnIndex, CharSequence str, MutableUuid uuid, TableWriter.Row row) {
-        SqlUtil.implicitCastStrAsUuid(str, uuid);
-        row.putUuid(columnIndex, uuid.getLo(), uuid.getHi());
     }
 }

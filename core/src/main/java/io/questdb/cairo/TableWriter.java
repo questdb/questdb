@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -6424,7 +6425,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
-            WriterRowUtils.putUuidStr(columnIndex, uuidStr, uuid, this);
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putUuid(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
