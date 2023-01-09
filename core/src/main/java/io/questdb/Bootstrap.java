@@ -334,13 +334,9 @@ public class Bootstrap {
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input");
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker");
             verifyFileOpts(path, cairoConfig);
-        }
-        CharSequenceHashSet volumePaths = cairoConfig.getAllowedVolumePaths();
-        int len = volumePaths.size();
-        if (len > 0) {
-            log.advisoryW().$(" - create.allowed.volume.paths: ").$();
-            for (int i = 0; i < len; i++) {
-                log.advisoryW().$("   + ").utf8(volumePaths.get(i)).$();
+            CharSequenceHashSet volumePaths = cairoConfig.getAllowedVolumePaths();
+            for (int i = 0, len = volumePaths.size(); i < len; i++) {
+                verifyFileSystem(path, volumePaths.get(i), "create table allowed volume");
             }
         }
         if (JitUtil.isJitSupported()) {
