@@ -106,7 +106,7 @@ public class TableBackupTest {
         };
         CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
         backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
-        mainConfiguration = new DefaultCairoConfiguration(root) {
+        mainConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
             public DateFormat getBackupDirTimestampFormat() {
                 return new TimestampFormatCompiler().compile("ddMMMyyyy");

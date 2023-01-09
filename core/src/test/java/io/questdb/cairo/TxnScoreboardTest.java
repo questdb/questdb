@@ -575,7 +575,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                    final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
             ) {
                 scoreboard.acquireTxn(15);
                 scoreboard.releaseTxn(15);
@@ -589,7 +589,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         try (
                 final Path shmPath = new Path();
-                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+                final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
         ) {
             final CyclicBarrier barrier = new CyclicBarrier(readers + 1);
             final CountDownLatch latch = new CountDownLatch(readers + 1);

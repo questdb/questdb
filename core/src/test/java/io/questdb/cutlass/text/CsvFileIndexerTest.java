@@ -158,11 +158,11 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
     }
 
     private void assertChunksFor(String fileName, long bufSize, int timestampIndex, int chunkSize, IndexChunk... chunks) throws Exception {
-        assertChunksFor(FilesFacadeImpl.INSTANCE, fileName, bufSize, timestampIndex, chunkSize, chunks);
+        assertChunksFor(TestFilesFacadeImpl.INSTANCE, fileName, bufSize, timestampIndex, chunkSize, chunks);
     }
 
     private void assertChunksFor(FilesFacade ff2, String fileName, long bufSize, int timestampIndex, int chunkSize, IndexChunk... chunks) throws Exception {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         assertMemoryLeak(() -> {
             long bufAddr = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
 

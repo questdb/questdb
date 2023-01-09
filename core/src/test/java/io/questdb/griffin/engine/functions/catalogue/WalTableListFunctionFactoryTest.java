@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,7 +37,7 @@ import org.junit.Test;
 public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testWalTablesSelectAll() throws Exception {
-        FilesFacade filesFacade = new FilesFacadeImpl() {
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
             @Override

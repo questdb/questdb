@@ -38,9 +38,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
@@ -83,6 +82,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
         private Path rootPath;
+        private CairoEngine engine;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
@@ -94,6 +94,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
         }
@@ -109,14 +110,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         }
 
         private class TableListRecordCursor implements RecordCursor {
-            private final StringSink dirNameSink = new StringSink();
             private final TableListRecord record = new TableListRecord();
             private final TxReader txReader = new TxReader(ff);
-            private long findPtr = 0;
+            private final ObjList<TableToken> tableBucket = new ObjList<>();
+            private int tableIndex = -1;
 
             @Override
             public void close() {
-                findPtr = ff.findClose(findPtr);
                 txReader.close();
             }
 
@@ -132,32 +132,21 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                int rootLen = rootPath.length();
-                while (true) {
-                    if (findPtr == 0) {
-                        findPtr = ff.findFirst(rootPath.$());
-                        rootPath.trimTo(rootLen);
-                        if (findPtr <= 0) {
-                            return false;
-                        }
-                    } else {
-                        if (ff.findNext(findPtr) <= 0) {
-                            return false;
-                        }
-                    }
-                    boolean isDir = Files.isDir(ff.findName(findPtr), ff.findType(findPtr), dirNameSink);
-                    if (isDir) {
-                        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-                        final TableToken tableToken = engine.getTableTokenByDirName(dirNameSink);
-                        final boolean isWalTable = engine.isWalTable(tableToken);
-                        rootPath.trimTo(rootLen);
-                        if (isWalTable) {
-                            if (record.switchTo(dirNameSink, tableToken)) {
-                                return true;
-                            }
-                        }
+                if (tableIndex < 0) {
+                    engine.getTableTokens(tableBucket, false);
+                    tableIndex = -1;
+                }
+
+                tableIndex++;
+                int n = tableBucket.size();
+                for (; tableIndex < n; tableIndex++) {
+                    TableToken tableToken = tableBucket.get(tableIndex);
+                    if (engine.isWalTable(tableToken) && record.switchTo(tableToken)) {
+                        break;
                     }
                 }
+
+                return tableIndex < n;
             }
 
             @Override
@@ -218,10 +207,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                private boolean switchTo(final CharSequence dirName, final TableToken tableToken) {
+                private boolean switchTo(final TableToken tableToken) {
                     tableName = tableToken.getTableName();
                     int rootLen = rootPath.length();
-                    rootPath.concat(dirName).concat(SEQ_DIR);
+                    rootPath.concat(tableToken.getDirName()).concat(SEQ_DIR);
                     int metaFd = -1;
                     int txnFd = -1;
                     try {
@@ -235,7 +224,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         ff.closeChecked(txnFd);
                     }
 
-                    rootPath.concat(dirName).concat(TableUtils.TXN_FILE_NAME).$();
+                    rootPath.concat(tableToken.getDirName()).concat(TableUtils.TXN_FILE_NAME).$();
                     txReader.ofRO(rootPath, PartitionBy.NONE);
                     rootPath.trimTo(rootLen);
 

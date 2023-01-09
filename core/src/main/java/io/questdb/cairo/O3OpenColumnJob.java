@@ -642,7 +642,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
                 }
             } catch (Throwable e) {
-                LOG.error().$("append mid partition error 1 [table=").utf8(tableWriter.getTableToken().getTableName())
+                LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
                 freeTs(

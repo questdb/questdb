@@ -322,6 +322,9 @@ public class Bootstrap {
         log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
         log.advisoryW().$(" - open database [id=").$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();
+        if (cairoConfig.isReadOnlyInstance()) {
+            log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
+        }
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db");
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup");

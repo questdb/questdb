@@ -22,9 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.math;
 
-@FunctionalInterface
-public interface Func<T, R> {
-    R apply(T t);
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
+
+public class AcosDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, DELTA);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-1.0).andAssert(Math.PI, DELTA);
+    }
+
+    @Test
+    public void testPositive() throws SqlException {
+        call(1.0).andAssert(0.0, DELTA);
+    }
+
+    @Test
+    public void testZero() throws SqlException {
+        call(0.0).andAssert(Math.PI / 2.0, DELTA);
+        call(-0.0000000000000001).andAssert(Math.PI / 2, DELTA);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new AcosDoubleFunctionFactory();
+    }
 }

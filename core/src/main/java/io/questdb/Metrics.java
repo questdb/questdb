@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
@@ -101,6 +102,7 @@ public class Metrics implements Scrapable {
         metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
         metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
         metricsRegistry.newVirtualGauge("memory_realloc_count", Unsafe::getReallocCount);
+        metricsRegistry.newVirtualGauge("memory_rss", Os::getRss);
         metricsRegistry.newVirtualGauge("memory_jvm_free", jvmFreeMemRef);
         metricsRegistry.newVirtualGauge("memory_jvm_total", jvmTotalMemRef);
         metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);

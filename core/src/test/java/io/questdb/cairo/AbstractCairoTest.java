@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.*;
-import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -182,7 +181,7 @@ public abstract class AbstractCairoTest {
     }
 
     public static void refreshTablesInBaseEngine() {
-        AbstractGriffinTest.engine.reloadTableNames();
+        engine.reloadTableNames();
     }
 
     @BeforeClass

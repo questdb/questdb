@@ -123,14 +123,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(tableWriter.getTableToken().getTableName())
+                            .$(" ,table=").$(tableWriter.getTableToken())
                             .I$();
                     throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableToken().getTableName())
+            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableToken())
                     .$(", command=").$(command)
                     .$(", errno=").$(e.getErrno())
                     .$(", message=`").$(e.getFlyweightMessage()).$('`')
@@ -304,7 +304,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableToken)
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", detachStatus=").put(attachDetachStatus.name())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
@@ -319,7 +319,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableToken)
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", detachStatus=").put(attachDetachStatus.name())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
@@ -352,7 +352,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = longList.getQuick(i * 2);
             if (!tableWriter.removePartition(partitionTimestamp)) {
                 throw CairoException.nonCritical()
-                        .put("could not remove partition [table=").put(tableToken)
+                        .put("could not remove partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
                         .put(']')
@@ -366,7 +366,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             tableWriter.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").$(tableToken)
+            LOG.error().$("could not change o3MaxLag [table=").utf8(tableToken != null ? tableToken.getTableName() : "<null>")
                     .$(", errno=").$(e.getErrno())
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();

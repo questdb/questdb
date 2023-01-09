@@ -47,10 +47,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_CROSS = 3;
+    public static final int JOIN_CROSS_LEFT = 8;
     public static final int JOIN_INNER = 1;
     public static final int JOIN_LT = 6;
+    public static final int JOIN_MAX = JOIN_CROSS_LEFT;
     public static final int JOIN_ONE = 7;
-    public static final int JOIN_MAX = JOIN_ONE;
     public static final int JOIN_OUTER = 2;
     public static final int JOIN_SPLICE = 5;
     public static final int LATEST_BY_DEPRECATED = 1;
@@ -141,6 +142,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     //position of the order by clause token
     private int orderByPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
+    /* Expression clause that is actually part of left/outer join but not in join model.
+     *  Inner join expressions */
+    private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByOffset = null;
@@ -338,6 +342,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnAliasIndexes.clear();
         modelAliasIndexes.clear();
         postJoinWhereClause = null;
+        outerJoinExpressionClause = null;
         context = null;
         orderedJoinModels = orderedJoinModels2;
         limitHi = null;
@@ -542,6 +547,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(whereClause, that.whereClause)
                 && Objects.equals(backupWhereClause, that.backupWhereClause)
                 && Objects.equals(postJoinWhereClause, that.postJoinWhereClause)
+                && Objects.equals(outerJoinExpressionClause, that.outerJoinExpressionClause)
                 && Objects.equals(constWhereClause, that.constWhereClause)
                 && Objects.equals(nestedModel, that.nestedModel)
                 && Objects.equals(tableName, that.tableName)
@@ -741,6 +747,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderedJoinModels;
     }
 
+    public ExpressionNode getOuterJoinExpressionClause() {
+        return outerJoinExpressionClause;
+    }
+
     public ObjList<ExpressionNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -853,7 +863,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 withClauseModel, updateSetColumns, updateTableColumnTypes,
                 updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
                 latestByType, whereClause, backupWhereClause,
-                postJoinWhereClause, constWhereClause, nestedModel,
+                postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
                 tableName, tableVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
                 sampleByUnit, context, joinCriteria,
@@ -1065,6 +1075,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.orderedJoinModels = that;
     }
 
+    public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
         this.postJoinWhereClause = postJoinWhereClause;
     }
@@ -1266,7 +1280,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 if (model != this) {
                     switch (model.getJoinType()) {
                         case JOIN_OUTER:
-                            sink.put(" outer join ");
+                            sink.put(" left join ");
                             break;
                         case JOIN_ASOF:
                             sink.put(" asof join ");
@@ -1312,6 +1326,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         }
                     }
 
+                    if (model.getOuterJoinExpressionClause() != null) {
+                        sink.put(" outer-join-expression ");
+                        model.getOuterJoinExpressionClause().toSink(sink);
+                    }
+
                     if (model.getPostJoinWhereClause() != null) {
                         sink.put(" post-join-where ");
                         model.getPostJoinWhereClause().toSink(sink);
@@ -1333,6 +1352,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (!joinSlave && postJoinWhereClause != null) {
             sink.put(" post-join-where ");
             postJoinWhereClause.toSink(sink);
+        }
+
+        if (!joinSlave && outerJoinExpressionClause != null) {
+            sink.put(" outer-join-expressions ");
+            outerJoinExpressionClause.toSink(sink);
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {

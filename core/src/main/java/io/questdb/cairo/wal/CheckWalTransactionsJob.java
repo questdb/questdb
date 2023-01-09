@@ -77,7 +77,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                     if (txReader2.getSeqTxn() < txn) {
-                        // table name should be immutable when in the notification message
                         engine.notifyWalTxnCommitted(tableToken, txn);
                     }
                 }

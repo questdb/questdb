@@ -2865,7 +2865,7 @@ public class SqlCompiler implements Closeable {
 
         private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {
             TableToken tableToken = engine.getTableToken(tableName);
-            srcPath.of(backupRoot).concat(tableToken.getTableName()).slash$();
+            srcPath.of(backupRoot).concat(tableToken).slash$();
 
             if (ff.exists(srcPath)) {
                 throw CairoException.nonCritical().put("Backup dir for table \"").put(tableName).put("\" already exists [dir=").put(srcPath).put(']');

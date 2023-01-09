@@ -27,6 +27,7 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -320,25 +321,27 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             assertSql(tableName, "x\tsym\tsym2\tts\n" +
                     "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
 
-            compile("drop table " + tableName);
-            SharedRandom.RANDOM.get().reset();
-            compile(createSql + " WAL");
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tsym2\tts\n" +
-                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                compile("drop table " + tableName);
+                SharedRandom.RANDOM.get().reset();
+                compile(createSql + " WAL");
+                drainWalQueue(walApplyJob);
+                assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                        "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
 
-            compile("drop table " + tableName);
-            SharedRandom.RANDOM.get().reset();
-            compile(createSql);
-            assertSql(tableName, "x\tsym\tsym2\tts\n" +
-                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+                compile("drop table " + tableName);
+                SharedRandom.RANDOM.get().reset();
+                compile(createSql);
+                assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                        "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
 
-            compile("drop table " + tableName);
-            SharedRandom.RANDOM.get().reset();
-            compile(createSql + " WAL");
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tsym2\tts\n" +
-                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+                compile("drop table " + tableName);
+                SharedRandom.RANDOM.get().reset();
+                compile(createSql + " WAL");
+                drainWalQueue(walApplyJob);
+                assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                        "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+            }
 
         });
     }
@@ -627,23 +630,25 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            drainWalQueue();
-            TableToken sysTableName1 = engine.getTableToken(tableName);
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                drainWalQueue(walApplyJob);
+                TableToken sysTableName1 = engine.getTableToken(tableName);
 
-            try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
-                compile("drop table " + tableName);
-                drainWalQueue();
-                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
+                try (TableReader ignore = sqlExecutionContext.getReader(sysTableName1)) {
+                    compile("drop table " + tableName);
+                    drainWalQueue(walApplyJob);
+                    checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
+                }
+
+                if (Os.type == Os.WINDOWS) {
+                    // Release WAL writers
+                    engine.releaseInactive();
+                }
+                drainWalQueue(walApplyJob);
+
+                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+                checkWalFilesRemoved(sysTableName1);
             }
-
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
-            }
-            drainWalQueue();
-
-            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-            checkWalFilesRemoved(sysTableName1);
         });
     }
 
@@ -666,18 +671,20 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            drainWalQueue();
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                drainWalQueue(walApplyJob);
 
-            for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
-                compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
+                for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
+                    compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
+                }
+
+                TableToken table2directoryName = engine.getTableToken(tableName + "2");
+                compile("drop table " + tableName + "2");
+
+                drainWalQueue(walApplyJob);
+
+                checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
             }
-
-            TableToken table2directoryName = engine.getTableToken(tableName + "2");
-            compile("drop table " + tableName + "2");
-
-            drainWalQueue();
-
-            checkTableFilesExist(table2directoryName, "2022-02-24", "x.d", false);
         });
     }
 
@@ -708,16 +715,18 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             );
             TableToken sysTableName1 = engine.getTableToken(tableName);
 
-            drainWalQueue();
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                drainWalQueue(walApplyJob);
 
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
-                drainWalQueue();
+                if (Os.type == Os.WINDOWS) {
+                    // Release WAL writers
+                    engine.releaseInactive();
+                    drainWalQueue(walApplyJob);
+                }
+
+                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+                checkWalFilesRemoved(sysTableName1);
             }
-
-            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-            checkWalFilesRemoved(sysTableName1);
         });
     }
 
@@ -1117,33 +1126,34 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            drainWalQueue();
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                drainWalQueue();
 
-            TableToken sysTableName1 = engine.getTableToken(tableName);
-            compile("drop table " + tableName);
+                TableToken sysTableName1 = engine.getTableToken(tableName);
+                compile("drop table " + tableName);
 
-            latch.set(true);
-            drainWalQueue();
+                latch.set(true);
+                drainWalQueue(walApplyJob);
 
-            latch.set(false);
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
+                latch.set(false);
+                if (Os.type == Os.WINDOWS) {
+                    // Release WAL writers
+                    engine.releaseInactive();
+                }
+
+                drainWalQueue(walApplyJob);
+
+                checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+                checkWalFilesRemoved(sysTableName1);
+
+                try {
+                    compile(tableName);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(0, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
+                }
             }
-
-            drainWalQueue();
-
-            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-            checkWalFilesRemoved(sysTableName1);
-
-            try {
-                compile(tableName);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(0, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
-            }
-
         });
     }
 }

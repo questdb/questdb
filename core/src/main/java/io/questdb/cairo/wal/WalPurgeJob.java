@@ -62,7 +62,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final NativeLPSZ walName = new NativeLPSZ();
     private final IntHashSet walsInUse = new IntHashSet();
     private long last = 0;
-    private TableToken tableName;
+    private TableToken tableToken;
     private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
     private int walId;
     private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
@@ -146,7 +146,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void accumDebugState() {
         debugBuffer.clear();
-        debugBuffer.put("table=").put(tableName.getDirName())
+        debugBuffer.put("table=").put(tableToken.getDirName())
                 .put(", discoveredWalIds=[");
         for (PrimitiveIterator.OfInt it = discoveredWalIds.iterator(); it.hasNext(); ) {
             final int walId = it.nextInt();
@@ -179,7 +179,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
         try {
-            this.tableName = tableToken;
+            this.tableToken = tableToken;
             discoveredWalIds.clear();
             walsInUse.clear();
             walInfoDataFrame.clear();
@@ -238,7 +238,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void deleteClosedSegments() {
-        setWalPath(tableName, walId);
+        setWalPath(tableToken, walId);
         ff.iterateDir(path, deleteClosedSegmentsIterFunc);
     }
 
@@ -250,8 +250,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             } catch (NumericException _ne) {
                 return; // Ignore non-segment directory.
             }
-            if (couldObtainLock(setSegmentLockPath(tableName, walId, segmentId))) {
-                deleteSegmentDirectory(tableName, walId, segmentId);
+            if (couldObtainLock(setSegmentLockPath(tableToken, walId, segmentId))) {
+                deleteSegmentDirectory(tableToken, walId, segmentId);
             }
         }
     }
@@ -299,7 +299,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         for (int index = 0; index < walInfoDataFrame.size(); ++index) {
             walId = walInfoDataFrame.walIds.get(index);
             walsLatestSegmentId = walInfoDataFrame.segmentIds.get(index);
-            ff.iterateDir(setWalPath(tableName, walId), deleteUnreachableSegmentsIterFunc);
+            ff.iterateDir(setWalPath(tableToken, walId), deleteUnreachableSegmentsIterFunc);
         }
     }
 
@@ -312,22 +312,22 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 return; // Ignore non-segment directory.
             }
             if (segmentIsReapable(segmentId, walsLatestSegmentId)) {
-                deleteSegmentDirectory(tableName, walId, segmentId);
+                deleteSegmentDirectory(tableToken, walId, segmentId);
             }
         }
     }
 
     private void deleteWalDirectory() {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL directory [table=").utf8(tableName.getDirName())
+        LOG.info().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
                 .$(", walId=").$(walId).$(']').$();
-        if (deleteFile(setWalLockPath(tableName, walId))) {
-            recursiveDelete(setWalPath(tableName, walId));
+        if (deleteFile(setWalLockPath(tableToken, walId))) {
+            recursiveDelete(setWalPath(tableToken, walId));
         }
     }
 
     private void discoverWalDirectories() {
-        ff.iterateDir(setTablePath(tableName), discoverWalDirectoriesIterFunc);
+        ff.iterateDir(setTablePath(tableToken), discoverWalDirectoriesIterFunc);
     }
 
     private void discoverWalDirectoriesIter(long pUtf8NameZ, int type) {
@@ -340,7 +340,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 return;  // Ignore non-wal directory
             }
             discoveredWalIds.add(walId);
-            if (walIsInUse(tableName, walId)) {
+            if (walIsInUse(tableToken, walId)) {
                 walsInUse.add(walId);
             }
         }
@@ -354,15 +354,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void populateWalInfoDataFrame() {
-        setTxnPath(tableName);
-        if (!engine.isTableDropped(tableName)) {
+        setTxnPath(tableToken);
+        if (!engine.isTableDropped(tableToken)) {
             try {
                 txReader.ofRO(path, PartitionBy.NONE);
                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                 final long lastAppliedTxn = txReader.getSeqTxn();
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
-                try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableName, lastAppliedTxn)) {
+                try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, lastAppliedTxn)) {
                     while (transactionLogCursor.hasNext() && (discoveredWalIds.size() > 0)) {
                         final int walId = transactionLogCursor.getWalId();
                         if (discoveredWalIds.contains(walId)) {
@@ -384,8 +384,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void recursiveDelete(Path path) {
         final int errno = ff.rmdir(path);
-        if (errno > 0 && errno != 2) {
-            LOG.error().$("could not delete directory [path=").$(path)
+        if (errno > 0 && !CairoException.errnoRemovePathDoesNotExist(errno)) {
+            LOG.error().$("could not delete directory [path=").utf8(path)
                     .$(", errno=").$(errno).$(']').$();
         }
     }

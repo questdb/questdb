@@ -40,6 +40,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VALIDATION = -100;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    private static final int ERRNO_ACCESS_DENIED_WIN = 5;
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
@@ -88,6 +89,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return duplicateColumn(columnName, null);
     }
 
+    public static boolean errnoReadPathDoesNotExist(int errno) {
+        return errnoRemovePathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
+    }
+
+    public static boolean errnoRemovePathDoesNotExist(int errno) {
+        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
     }
@@ -100,8 +109,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("table does not exist [table=").put(tableName).put(']');
     }
 
-    public boolean errnoPathDoesNotExist() {
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    public boolean errnoReadPathDoesNotExist() {
+        return errnoReadPathDoesNotExist(errno);
     }
 
     public int getErrno() {

@@ -43,7 +43,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                         "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
                         "    ASOF JOIN\n" +
                         "(select a.ask a, a.ts timeask from asks a) a\n" +
-                        "    ON (b.timebid != a.timeask)"
+                        "WHERE (b.timebid != a.timeask)"
         );
     }
 
@@ -58,7 +58,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                         "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
                         "    LT JOIN\n" +
                         "(select a.ask a, a.ts timeask from asks a) a\n" +
-                        "    ON (b.timebid != a.timeask)"
+                        "WHERE (b.timebid != a.timeask)"
         );
     }
 

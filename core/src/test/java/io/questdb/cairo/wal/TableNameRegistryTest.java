@@ -240,6 +240,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.getLast().start();
             }
 
+            TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY);
+            Path rmPath = new Path().of(configuration.getRoot());
+            tm.timestamp().col("c", ColumnType.TIMESTAMP);
+
             // Add / remove tables
             engine.closeNameRegistry();
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -254,8 +258,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         // Add table
                         String tableName = "tab" + iteration;
                         TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
-                        addedTables.add(iteration);
                         rw.registerName(tableToken);
+                        addedTables.add(iteration);
+                        TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
                     } else if (addedTables.size() > 0) {
                         // Remove table
                         int tableId = addedTables.getLast();
@@ -263,17 +268,22 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         TableToken tableToken = rw.getTableToken(tableName);
                         rw.dropTable(tableToken);
                         addedTables.remove(tableId);
+                        configuration.getFilesFacade().rmdir(rmPath.trimTo(configuration.getRoot().length()).concat(tableName).$());
                     }
 
                     if (rnd.nextBoolean()) {
                         // May run compaction
                         rw.reloadTableNameCache();
-                        Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
+                        if (addedTables.size() != getNonDroppedSize(rw)) {
+                            Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
+                        }
                     }
                 }
                 Path.clearThreadLocals();
             } finally {
                 done.set(true);
+                tm.close();
+                rmPath.close();
             }
 
             for (int i = 0; i < threads.size(); i++) {
@@ -283,6 +293,115 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }
+        });
+    }
+
+    @Test
+    public void testConcurrentWALTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            int threadCount = 3;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+            ) {
+                for (int j = 0; j < tableCount; j++) {
+                    compiler.compile(
+                            "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL",
+                            executionContext
+                    );
+                }
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                final int threadId = i;
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("rename table tab" + j + " to renamed_" + threadId + "_" + j, executionContext);
+                                } catch (SqlException | CairoException e) {
+                                    if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")) {
+                                        throw e;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.getLast().start();
+            }
+
+            for (int i = 0; i < threads.size(); i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            final ObjList<TableToken> tableTokenBucket = new ObjList<>();
+            engine.getTableTokens(tableTokenBucket, true);
+            if (tableCount != tableTokenBucket.size()) {
+                Assert.assertEquals(formatTableDirs(tableTokenBucket), 0, tableTokenBucket.size());
+            }
+
+            for (int i = 0; i < tableCount; i++) {
+                int nameCount = 0;
+                for (int j = 0; j < threadCount; j++) {
+                    if (engine.getTableTokenIfExists("renamed_" + j + "_" + i) != null) {
+                        nameCount++;
+                    }
+                }
+                Assert.assertEquals("table named tab" + i + " tokens", 1, nameCount);
+            }
+        });
+    }
+
+    @Test
+    public void testMissingDirsRemovedFromRegistryOnLoad() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1;
+            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            TableToken tt2;
+            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt2));
+
+            engine.releaseInactive();
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertEquals(0, ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
+
+            engine.reloadTableNames();
+
+            Assert.assertNull(engine.getTableTokenIfExists("tab1"));
+            Assert.assertEquals(tt2, engine.getTableToken("tab2"));
         });
     }
 
@@ -320,11 +439,25 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.isWalTable(tt3));
 
             try (MemoryMARW mem = Vm.getMARWInstance()) {
-                tt2 = engine.rename(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), mem, "tab2", Path.getThreadLocal2(""), "tab2_ࠄ");
+                tt2 = engine.rename(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        Path.getThreadLocal(""),
+                        mem,
+                        "tab2",
+                        Path.getThreadLocal2(""),
+                        "tab2_ࠄ"
+                );
                 Assert.assertTrue(engine.isWalTable(tt2));
                 drainWalQueue();
 
-                tt3 = engine.rename(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), mem, "tab3", Path.getThreadLocal2(""), "tab3_ࠄ");
+                tt3 = engine.rename(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        Path.getThreadLocal(""),
+                        mem,
+                        "tab3",
+                        Path.getThreadLocal2(""),
+                        "tab3_ࠄ"
+                );
             }
 
             engine.closeNameRegistry();
