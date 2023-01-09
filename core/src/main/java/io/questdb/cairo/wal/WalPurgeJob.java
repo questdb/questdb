@@ -384,8 +384,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void recursiveDelete(Path path) {
         final int errno = ff.rmdir(path);
-        if (errno > 0 && errno != 2) {
-            LOG.error().$("could not delete directory [path=").$(path)
+        if (errno > 0 && !CairoException.errnoRemovePathDoesNotExist(errno)) {
+            LOG.error().$("could not delete directory [path=").utf8(path)
                     .$(", errno=").$(errno).$(']').$();
         }
     }

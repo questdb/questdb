@@ -433,6 +433,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (lastAppliedSeqTxn > -1L) {
                 lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
             } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {
+                // Set processed transaction marker as Long.MAX_VALUE - 1
+                // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
+                // and got picked up for processing in this apply job.
                 lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);
                 engine.getTableSequencerAPI().suspendTable(tableToken);
             }

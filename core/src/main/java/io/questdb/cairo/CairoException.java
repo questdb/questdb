@@ -89,6 +89,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return duplicateColumn(columnName, null);
     }
 
+    public static boolean errnoReadPathDoesNotExist(int errno) {
+        return errnoRemovePathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
+    }
+
+    public static boolean errnoRemovePathDoesNotExist(int errno) {
+        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
     public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
     }
@@ -101,9 +109,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("table does not exist [table=").put(tableName).put(']');
     }
 
-    public boolean errnoPathDoesNotExist() {
-        return errno == ERRNO_FILE_DOES_NOT_EXIST ||
-                (Os.type == Os.WINDOWS && (errno == ERRNO_FILE_DOES_NOT_EXIST_WIN || errno == ERRNO_ACCESS_DENIED_WIN));
+    public boolean errnoReadPathDoesNotExist() {
+        return errnoReadPathDoesNotExist(errno);
     }
 
     public int getErrno() {

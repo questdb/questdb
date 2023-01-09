@@ -544,7 +544,7 @@ public final class TableUtils {
 
     public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (isMetaFileMissingFileSystemError(ex)) {
+        if (ex.errnoReadPathDoesNotExist()) {
             if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").utf8(tableName)
                         .$(", errno=").$(ex.getErrno())
@@ -1257,10 +1257,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
-    }
-
-    private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        return ex.errnoPathDoesNotExist();
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

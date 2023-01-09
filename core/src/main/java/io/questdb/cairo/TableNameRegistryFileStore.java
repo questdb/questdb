@@ -306,7 +306,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 }
             } catch (CairoException e) {
                 if (!isLocked()) {
-                    if (e.errnoPathDoesNotExist()) {
+                    if (e.errnoReadPathDoesNotExist()) {
                         if (lastFileVersion == 0) {
                             // This is RO mode and file and tables.d.0 does not exist.
                             return;
