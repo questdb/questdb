@@ -74,6 +74,12 @@ public final class FastMapCursor implements RecordCursor {
             } else {
                 this.address = address + keyValueSize;
             }
+            // Key-value pairs start at 8 byte aligned addresses, so we may need to align the next pointer.
+            if ((this.address & 0x7) != 0) {
+                this.address |= 0x7;
+                this.address++;
+            }
+
             remaining--;
             recordA.of(address);
             return true;
@@ -94,8 +100,8 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        this.address = topAddress;
-        this.remaining = count;
+        address = topAddress;
+        remaining = count;
     }
 
     FastMapCursor init(long address, int count) {
