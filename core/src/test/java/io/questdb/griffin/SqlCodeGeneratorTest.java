@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -164,7 +161,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -190,7 +187,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -217,7 +214,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBindVariableInSelect3() throws Exception {
         assertMemoryLeak(() -> {
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -244,7 +241,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -524,7 +521,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             engine.clear();
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public boolean getDefaultSymbolCacheFlag() {
                     return false;
@@ -533,11 +530,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllCairoSecurityContext.INSTANCE, null, null)
             ) {
                 compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = getReader(engine, "y")) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
                 }
             }
@@ -567,7 +566,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = getReader("y")) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
             }
         });
@@ -3522,7 +3521,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByIOFailure() throws Exception {
         assertMemoryLeak(() -> {
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRO(LPSZ name) {
                     if (Chars.endsWith(name, "b.d")) {
@@ -3531,7 +3530,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     return super.openRO(name);
                 }
             };
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3539,7 +3538,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             };
 
             try (CairoEngine engine = new CairoEngine(configuration);
-                 SqlCompiler compiler = new SqlCompiler(engine)) {
+                 SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(AllowAllCairoSecurityContext.INSTANCE, null, null)
+            ) {
                 try {
                     compiler.compile(("create table x as " +
                                     "(" +
@@ -3548,6 +3550,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     ") timestamp(k) partition by DAY"),
                             sqlExecutionContext);
 
+                    AbstractGriffinTest.refreshTablesInBaseEngine();
                     try (final RecordCursorFactory factory = compiler.compile(
                             "select * from x where b = 'PEHN' and a < 22 latest on k partition by b",
                             sqlExecutionContext
@@ -3557,7 +3560,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "a\tb\tk\n" +
                                             "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                                     factory,
-                                    true,
                                     true,
                                     false,
                                     false,
@@ -5366,7 +5368,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testNamedBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -7679,12 +7681,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, new Rnd())
             ) {
                 compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
+                AbstractGriffinTest.refreshTablesInBaseEngine();
                 bindVariableService.clear();
                 try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
 

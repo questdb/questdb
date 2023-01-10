@@ -41,7 +41,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
-        // This test makes sense for only non-WAL tables since they support commit lag.
+        // This test only makes sense for non-WAL tables since they support commit lag.
         Assume.assumeFalse(walEnabled);
 
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
@@ -85,7 +85,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedFraction() throws Exception {
-        // This test only makes sense for non-WAL tables since they support commit lag.
+        // This test makes sense for only non-WAL tables since they support commit lag.
         Assume.assumeFalse(walEnabled);
 
         // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
@@ -143,16 +143,16 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
-        runTest((factoryType, thread, name, event, segment, position) -> {
+        runTest((factoryType, thread, token, event, segment, position) -> {
 
             if (walEnabled) {
                 // There is no locking as such in WAL, so we treat writer return as an unlock event.
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    handleWriterUnlockEvent(name);
+                    handleWriterUnlockEvent(token.getTableName());
                 }
             } else {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
-                    handleWriterUnlockEvent(name);
+                    handleWriterUnlockEvent(token.getTableName());
                 }
             }
         }, minIdleMsBeforeWriterRelease);

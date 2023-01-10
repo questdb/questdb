@@ -54,7 +54,7 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
-    private final String tableNameUtf16;
+    private final TableToken tableToken;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
     private boolean assignedToJob = false;
@@ -90,7 +90,7 @@ public class TableUpdateDetails implements Closeable {
         this.writerAPI = writer;
         TableRecordMetadata tableMetadata = writer.getMetadata();
         this.timestampIndex = tableMetadata.getTimestampIndex();
-        this.tableNameUtf16 = Chars.toString(writer.getTableName());
+        this.tableToken = writer.getTableToken();
         if (writer instanceof MetadataChangeSPI) {
             writerSPI = (MetadataChangeSPI) writer;
             writerSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
@@ -113,7 +113,7 @@ public class TableUpdateDetails implements Closeable {
         networkIOOwnerCount++;
         LOG.info()
                 .$("network IO thread using table [workerId=").$(workerId)
-                .$(", tableName=").$(tableNameUtf16)
+                .$(", tableName=").$(tableToken)
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
     }
@@ -127,14 +127,14 @@ public class TableUpdateDetails implements Closeable {
 
     public void closeLocals() {
         for (int n = 0; n < localDetailsArray.length; n++) {
-            LOG.info().$("closing table parsers [tableName=").$(tableNameUtf16).$(']').$();
+            LOG.info().$("closing table parsers [tableName=").$(tableToken).$(']').$();
             localDetailsArray[n] = Misc.free(localDetailsArray[n]);
         }
     }
 
     public void closeNoLock() {
         if (writerThreadId != Integer.MIN_VALUE) {
-            LOG.info().$("closing table writer [tableName=").$(tableNameUtf16).$(']').$();
+            LOG.info().$("closing table writer [tableName=").$(tableToken).$(']').$();
             closeLocals();
             if (null != writerAPI) {
                 try {
@@ -142,7 +142,7 @@ public class TableUpdateDetails implements Closeable {
                         writerAPI.commit();
                     }
                 } catch (Throwable ex) {
-                    LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableNameUtf16).$(",ex=").$(ex).I$();
+                    LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$(ex).I$();
                 } finally {
                     // returning to pool rolls back the transaction
                     writerAPI = Misc.free(writerAPI);
@@ -166,7 +166,11 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public String getTableNameUtf16() {
-        return tableNameUtf16;
+        return tableToken.getTableName();
+    }
+
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     public int getWriterThreadId() {
@@ -190,7 +194,7 @@ public class TableUpdateDetails implements Closeable {
         localDetailsArray[workerId].clear();
         LOG.info()
                 .$("network IO thread released table [workerId=").$(workerId)
-                .$(", tableName=").$(tableNameUtf16)
+                .$(", tableName=").$(tableToken)
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .I$();
     }
@@ -212,7 +216,7 @@ public class TableUpdateDetails implements Closeable {
     private void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
-                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
+                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
                 if (withLag) {
                     writerAPI.ic();
                 } else {
@@ -220,11 +224,11 @@ public class TableUpdateDetails implements Closeable {
                 }
             } catch (Throwable ex) {
                 setWriterInError();
-                LOG.error().$("could not commit [table=").$(tableNameUtf16).$(", e=").$(ex).I$();
+                LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
                 try {
                     writerAPI.rollback();
                 } catch (Throwable th) {
-                    LOG.error().$("could not perform emergency rollback [table=").$(tableNameUtf16).$(", e=").$(th).I$();
+                    LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
                 }
                 throw CommitFailedException.instance(ex);
             }
@@ -269,14 +273,14 @@ public class TableUpdateDetails implements Closeable {
             }
             return;
         }
-        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
+        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableToken).I$();
         nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
 
         try {
             writerAPI.ic();
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableName())
+                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();
@@ -305,11 +309,11 @@ public class TableUpdateDetails implements Closeable {
         if (writerAPI != null) {
             try {
                 if (commit) {
-                    LOG.debug().$("release commit [table=").$(tableNameUtf16).I$();
+                    LOG.debug().$("release commit [table=").$(tableToken).I$();
                     writerAPI.commit();
                 }
             } catch (Throwable ex) {
-                LOG.error().$("writer commit fails, force closing it [table=").$(tableNameUtf16).$(",ex=").$(ex).I$();
+                LOG.error().$("writer commit fails, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
             } finally {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
@@ -371,7 +375,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         private SymbolLookup addSymbolCache(int colWriterIndex) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                 final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
                     // looks like the column has just been added to the table, and
@@ -380,8 +384,8 @@ public class TableUpdateDetails implements Closeable {
                     return NOT_FOUND_LOOKUP;
                 }
                 final CairoConfiguration cairoConfiguration = engine.getConfiguration();
-                path.of(cairoConfiguration.getRoot()).concat(tableNameUtf16);
-                final SymbolCache symCache;
+                path.of(cairoConfiguration.getRoot()).concat(tableToken);
+                SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
                 if (lastUnusedSymbolCacheIndex > -1) {
                     symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
@@ -572,7 +576,7 @@ public class TableUpdateDetails implements Closeable {
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
-                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16);
+                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
             }
         }
     }

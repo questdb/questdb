@@ -55,7 +55,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
 
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -74,7 +74,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = new TableReader(configuration, "all")) {
+        try (TableReader reader = newTableReader(configuration, "all")) {
             final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
             try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
 
@@ -139,7 +139,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
 
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -158,7 +158,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = new TableReader(configuration, "all")) {
+        try (TableReader reader = newTableReader(configuration, "all")) {
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BOOLEAN);
             valueTypes.add(ColumnType.TIMESTAMP);

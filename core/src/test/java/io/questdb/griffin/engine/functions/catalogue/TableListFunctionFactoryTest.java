@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -90,9 +91,12 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
 
         FilesFacade filesFacade = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            path.concat(configuration.getRoot()).concat("table1").concat(META_FILE_NAME).$();
+            TableToken tableToken = engine.getTableToken("table1");
+            path.concat(configuration.getRoot()).concat(tableToken).concat(META_FILE_NAME).$();
             filesFacade.remove(path);
         }
+
+        refreshTablesInBaseEngine();
         assertSql(
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +

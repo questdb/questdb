@@ -48,7 +48,7 @@ import static io.questdb.log.LogAlertSocketWriter.ALERT_PROPS;
 import static io.questdb.log.LogAlertSocketWriter.QDB_VERSION_ENV;
 
 public class LogAlertSocketWriterTest {
-    private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+    private static final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
     private Rnd rand;
     private StringSink sink;
 
@@ -581,7 +581,7 @@ public class LogAlertSocketWriterTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
-                    FilesFacadeImpl.INSTANCE,
+                    TestFilesFacadeImpl.INSTANCE,
                     nf,
                     clock,
                     null,

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
@@ -158,7 +159,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private QueryModel updateTableModel;
-    private String updateTableName;
+    private TableToken updateTableToken;
     private ExpressionNode whereClause;
 
     private QueryModel() {
@@ -375,7 +376,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableColumnTypes.clear();
         updateTableColumnNames.clear();
         updateTableModel = null;
-        updateTableName = null;
+        updateTableToken = null;
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
     }
@@ -564,7 +565,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(limitAdviceHi, that.limitAdviceHi)
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableName, that.updateTableName);
+                && Objects.equals(updateTableToken, that.updateTableToken);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -826,8 +827,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
     }
 
-    public String getUpdateTableName() {
-        return updateTableName;
+    public TableToken getUpdateTableToken() {
+        return updateTableToken;
     }
 
     public ExpressionNode getWhereClause() {
@@ -873,7 +874,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableName, artificialStar
+                updateTableToken, artificialStar
         );
     }
 
@@ -1135,8 +1136,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public void setUpdateTableName(String tableName) {
-        this.updateTableName = tableName;
+    public void setUpdateTableToken(TableToken tableName) {
+        this.updateTableToken = tableName;
     }
 
     public void setWhereClause(ExpressionNode whereClause) {

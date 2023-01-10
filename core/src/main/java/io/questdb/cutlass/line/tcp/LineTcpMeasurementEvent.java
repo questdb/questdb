@@ -189,7 +189,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         try {
                             alterOperationBuilder.clear();
                             alterOperationBuilder
-                                    .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
+                                    .ofAddColumn(0, tableUpdateDetails.getTableToken(), 0)
                                     .addColumnToList(columnName, 0, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
                             writer.apply(alterOperationBuilder.build(), true);
                         } catch (CairoException e) {
@@ -291,7 +291,7 @@ class LineTcpMeasurementEvent implements Closeable {
             throw commitFailedException;
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableNameUtf16())
+                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();

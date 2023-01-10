@@ -707,7 +707,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable e) {
             LOG.error()
-                    .$("index error [table=").$(tableWriter.getTableName())
+                    .$("index error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount();
@@ -801,7 +801,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug()
-                .$("idle [table=").$(tableWriter.getTableName())
+                .$("idle [table=").utf8(tableWriter.getTableToken().getTableName())
                 .$(", columnsRemaining=").$(columnsRemaining)
                 .I$();
         if (columnsRemaining == 0) {

@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,6 +39,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
     public void testFactory() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 100;
+            TableToken tableToken;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.STRING).
@@ -47,7 +48,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                tableToken = CairoTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -61,7 +62,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -73,7 +74,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, 0)) {
+            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, 0)) {
                 long count = 0;
                 try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC)) {
                     DataFrame frame;
@@ -84,14 +85,14 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(M, count);
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
                     writer.removeColumn("b");
                 }
 
                 try {
                     factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC);
                     Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                } catch (TableReferenceOutOfDateException ignored) {
                 }
             }
         });

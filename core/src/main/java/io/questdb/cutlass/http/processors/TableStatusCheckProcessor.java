@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -59,7 +60,8 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
         if (tableName == null) {
             context.simpleResponse().sendStatus(200, "table name missing");
         } else {
-            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableName);
+            TableToken tableToken = cairoEngine.getTableTokenIfExists(tableName);
+            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableToken);
             if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");

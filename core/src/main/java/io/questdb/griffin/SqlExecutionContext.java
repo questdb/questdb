@@ -25,17 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,11 +64,13 @@ public interface SqlExecutionContext extends Closeable {
 
     BindVariableService getBindVariableService();
 
-    @NotNull CairoEngine getCairoEngine();
+    @NotNull
+    CairoEngine getCairoEngine();
 
     CairoSecurityContext getCairoSecurityContext();
 
-    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
+    @NotNull
+    SqlExecutionCircuitBreaker getCircuitBreaker();
 
     boolean getCloneSymbolTables();
 
@@ -77,6 +78,16 @@ public interface SqlExecutionContext extends Closeable {
 
     default @NotNull MessageBus getMessageBus() {
         return getCairoEngine().getMessageBus();
+    }
+
+    default TableRecordMetadata getMetadata(TableToken tableToken) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(getCairoSecurityContext(), tableToken);
+    }
+
+    default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(getCairoSecurityContext(), tableToken, structureVersion);
     }
 
     long getMicrosecondTimestamp();
@@ -87,10 +98,38 @@ public interface SqlExecutionContext extends Closeable {
 
     Rnd getRandom();
 
+    default TableReader getReader(TableToken tableName, long version) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, version);
+    }
+
+    default TableReader getReader(TableToken tableName) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), tableName);
+    }
+
     long getRequestFd();
 
     default int getSharedWorkerCount() {
         return getWorkerCount();
+    }
+
+    default int getStatus(Path path, TableToken tableName) {
+        return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
+    }
+
+    default TableToken getTableToken(CharSequence tableName) {
+        return getCairoEngine().getTableToken(tableName);
+    }
+
+    default TableToken getTableToken(CharSequence tableName, int lo, int hi) {
+        return getCairoEngine().getTableToken(tableName, lo, hi);
+    }
+
+    default TableToken getTableTokenIfExists(CharSequence tableName) {
+        return getCairoEngine().getTableTokenIfExists(tableName);
+    }
+
+    default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
+        return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
     int getWorkerCount();

@@ -55,6 +55,8 @@ public class Overrides implements ConfigurationOverrides {
     private String inputWorkRoot = null;
     private Boolean ioURingEnabled = null;
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
+    private boolean mangleTableDirNames = true;
+    private int maxFileNameLength = -1;
     private int maxUncommittedRows = -1;
     private long o3MaxLag = -1;
     private boolean o3QuickSortEnabled = false;
@@ -81,7 +83,6 @@ public class Overrides implements ConfigurationOverrides {
     private long writerAsyncCommandMaxTimeout = -1;
     private int writerCommandQueueCapacity = 4;
     private long writerCommandQueueSlotSize = 2048L;
-    private int maxFileNameLength = -1;
 
     @Override
     public String getAttachableDirSuffix() {
@@ -171,6 +172,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getJitMode() {
         return jitMode;
+    }
+
+    @Override
+    public int getMaxFileNameLength() {
+        return maxFileNameLength;
     }
 
     @Override
@@ -324,8 +330,8 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public int getMaxFileNameLength() {
-        return maxFileNameLength;
+    public boolean mangleTableDirNames() {
+        return mangleTableDirNames;
     }
 
     @Override
@@ -367,6 +373,7 @@ public class Overrides implements ConfigurationOverrides {
         dataAppendPageSize = -1;
         o3QuickSortEnabled = false;
         walSegmentRolloverRowCount = -1;
+        mangleTableDirNames = true;
     }
 
     @Override
@@ -472,6 +479,16 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setMangleTableDirNames(boolean mangle) {
+        this.mangleTableDirNames = mangle;
+    }
+
+    @Override
+    public void setMaxFileNameLength(int maxFileNameLength) {
+        this.maxFileNameLength = maxFileNameLength;
     }
 
     @Override
@@ -607,10 +624,5 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWriterCommandQueueSlotSize(long writerCommandQueueSlotSize) {
         this.writerCommandQueueSlotSize = writerCommandQueueSlotSize;
-    }
-
-    @Override
-    public void setMaxFileNameLength(int maxFileNameLength) {
-        this.maxFileNameLength = maxFileNameLength;
     }
 }

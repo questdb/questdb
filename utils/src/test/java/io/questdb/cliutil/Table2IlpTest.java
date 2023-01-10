@@ -238,6 +238,7 @@ public class Table2IlpTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.reloadTableNames();
     }
 
     @After
@@ -406,7 +407,7 @@ public class Table2IlpTest {
         CountDownLatch done = new CountDownLatch(1);
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                if (Chars.equals(tableNameDst, name)) {
+                if (Chars.equals(tableNameDst, name.getTableName())) {
                     done.countDown();
                 }
             }
