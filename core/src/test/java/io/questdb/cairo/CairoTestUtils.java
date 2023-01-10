@@ -115,7 +115,7 @@ public class CairoTestUtils {
                         .col("k", ColumnType.BOOLEAN)
                         .col("l", ColumnType.BINARY)
                         .col("m", ColumnType.UUID);
-                create(model);
+                create(model, engine);
             }
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
