@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1486,6 +1485,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
+                    .col("symbol8", ColumnType.SYMBOL) // putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
+                    .col("string8", ColumnType.STRING) // putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
                     .timestamp("ts")
                     .wal()
             ) {
@@ -1548,11 +1549,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                         row.putSym(24, String.valueOf(i));
                         row.putSym(25, (char) (65 + i % 26));
 
+                        WriterRowUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 26, true);
+                        WriterRowUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 27, false);
+
                         row.append();
                     }
 
                     walSymbolCounts.add(walWriter.getSymbolMapReader(24).getSymbolCount());
                     walSymbolCounts.add(walWriter.getSymbolMapReader(25).getSymbolCount());
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(26).getSymbolCount());
 
                     assertEquals(rowsToInsertTotal, walWriter.getSegmentRowCount());
                     assertEquals("WalWriter{name=" + walName + ", table=" + tableName + "}", walWriter.toString());
@@ -1560,7 +1565,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(27, reader.getColumnCount());
+                    assertEquals(29, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -1617,7 +1622,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals(String.valueOf(i), record.getSym(24));
                         assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
 
-                        assertEquals(ts, record.getTimestamp(26));
+                        assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSym(26).toString());
+                        assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStr(27).toString());
+
+                        assertEquals(ts, record.getTimestamp(28));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);
@@ -1991,12 +1999,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 } catch (UnsupportedOperationException ignore) {
                 }
                 try {
-                    putUtf8Symbol(row, "Щось", 1);
+                    WriterRowUtils.putUtf8(row, "Щось", 1, true);
                     fail("UnsupportedOperationException expected");
                 } catch (UnsupportedOperationException ignore) {
                 }
 
-                putUtf8Symbol(row, "Таке-Сяке", 2);
+                WriterRowUtils.putUtf8(row, "Таке-Сяке", 2, true);
                 row.append();
                 walWriter.commit();
             }
@@ -2099,22 +2107,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
         });
-    }
-
-    private static void putUtf8Symbol(TableWriter.Row r, String s, int columnIndex) {
-        byte[] bytes = s.getBytes(Files.UTF_8);
-        long len = bytes.length;
-        long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-            }
-            DirectByteCharSequence seq = new DirectByteCharSequence();
-            seq.of(p, p + len);
-            r.putSymUtf8(columnIndex, seq, true);
-        } finally {
-            Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
-        }
     }
 
     @Test

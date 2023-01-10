@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -3088,6 +3089,41 @@ public class TableWriterTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
         });
+    }
+
+    @Test
+    public void testUtf8() {
+        String name = "utf8";
+        try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        String something = "Щось";
+        String boring = "Таке-Сяке";
+        try (TableWriter writer = new TableWriter(configuration, name, metrics)) {
+            TableWriter.Row r = writer.newRow();
+            WriterRowUtils.putUtf8(r, something, 0, false);
+            try {
+                // putSymUtf8 is not implemented for TableWriter
+                WriterRowUtils.putUtf8(r, boring, 1, true);
+                Assert.fail("UnsupportedOperationException");
+            } catch (UnsupportedOperationException ignore) {
+            }
+            r.putSym(1, boring);
+            r.append();
+            writer.commit(CommitMode.SYNC);
+        }
+
+        try (TableReader reader = new TableReader(configuration, name)) {
+            RecordCursor cursor = reader.getCursor();
+            final Record r = cursor.getRecord();
+            while (cursor.hasNext()) {
+                TestUtils.assertEquals(something, r.getStr(0).toString());
+                TestUtils.assertEquals(boring, r.getSym(1).toString());
+            }
+        }
     }
 
     @Test
