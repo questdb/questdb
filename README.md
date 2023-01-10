@@ -97,7 +97,7 @@ You can interact with QuestDB using the following interfaces:
 
 ### Insert data
 
-Below are our official InfluxDB line protocol clients for popular programming
+Below are our official questdb clients for popular programming
 languages:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
