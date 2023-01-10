@@ -184,9 +184,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sort light");
-        if (loFunction != null) {
-            sink.meta("lo").val(loFunction);
-        }
+        sink.meta("lo").val(loFunction);
         if (hiFunction != null) {
             sink.meta("hi").val(hiFunction);
         }

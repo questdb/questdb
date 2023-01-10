@@ -64,7 +64,7 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("DistinctSymbol");
-        sink.meta("tableName").val(tableName);
+        sink.meta("tableName").val(tableToken);
         sink.attr("columnIndex").val(cursor.columnIndex);
     }
 

@@ -1772,7 +1772,7 @@ public class SqlCompiler implements Closeable {
             QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
             final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = prepareForUpdate(
-                    updateQueryModel.getUpdateTableName(),
+                    updateQueryModel.getUpdateTableToken(),
                     selectQueryModel,
                     updateQueryModel,
                     executionContext

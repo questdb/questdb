@@ -992,7 +992,12 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFunctions() {
+    public void testFunctions() throws Exception {
+
+        assertMemoryLeak(() -> {//test table for show_columns
+            compile("create table bbb( a int )");
+        });
+
         final StringSink sink = new StringSink();
 
         IntObjHashMap<Function> constFuncs = new IntObjHashMap<>();
