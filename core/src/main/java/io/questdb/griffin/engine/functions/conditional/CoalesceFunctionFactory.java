@@ -92,6 +92,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                     }
                 }
                 return new SymStrCoalesceFunction(args, argsSize);
+            case ColumnType.UUID:
+                return argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
@@ -707,6 +709,114 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getTimestamp(rec);
+        }
+    }
+
+    private static class TwoUuidCoalesceFunction extends UuidFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoUuidCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public long getUuidHi(Record rec, long location) {
+            if (location == 0) {
+                long loc = args0.getUuidLocation(rec);
+                return args0.getUuidHi(rec, loc);
+            } else if (location == 1) {
+                long loc = args1.getUuidLocation(rec);
+                return args1.getUuidHi(rec, loc);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override
+        public long getUuidLo(Record rec, long location) {
+            if (location == 0) {
+                long loc = args0.getUuidLocation(rec);
+                return args0.getUuidLo(rec, loc);
+            } else if (location == 1) {
+                long loc = args1.getUuidLocation(rec);
+                return args1.getUuidLo(rec, loc);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override
+        public long getUuidLocation(Record rec) {
+            long loc = args0.getUuidLocation(rec);
+            long lo = args0.getUuidLo(rec, loc);
+            long hi = args0.getUuidHi(rec, loc);
+            return Uuid.isNull(lo, hi) ? 1 : 0;
+        }
+    }
+
+    private static class UuidCoalesceFunction extends UuidFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final int size;
+        private int selectedPos;
+
+        public UuidCoalesceFunction(ObjList<Function> args, int argsSize) {
+            this.args = args;
+            this.size = argsSize;
+            this.selectedPos = -1;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getUuidHi(Record rec, long location) {
+            if (selectedPos == -1) {
+                return Numbers.LONG_NaN;
+            }
+            return args.getQuick(selectedPos).getUuidHi(rec, location);
+        }
+
+        @Override
+        public long getUuidLo(Record rec, long location) {
+            if (selectedPos == -1) {
+                return Numbers.LONG_NaN;
+            }
+            return args.getQuick(selectedPos).getUuidLo(rec, location);
+        }
+
+        @Override
+        public long getUuidLocation(Record rec) {
+            for (int i = 0; i < size; i++) {
+                long loc = args.getQuick(i).getUuidLocation(rec);
+                long lo = args.getQuick(i).getUuidLo(rec, loc);
+                long hi = args.getQuick(i).getUuidHi(rec, loc);
+                if (!Uuid.isNull(lo, hi)) {
+                    selectedPos = i;
+                    return loc;
+                }
+            }
+            selectedPos = -1;
+            return -1;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }
