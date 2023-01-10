@@ -63,7 +63,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

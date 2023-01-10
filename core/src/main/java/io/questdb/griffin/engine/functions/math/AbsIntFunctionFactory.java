@@ -70,7 +70,7 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "abs";
         }
     }

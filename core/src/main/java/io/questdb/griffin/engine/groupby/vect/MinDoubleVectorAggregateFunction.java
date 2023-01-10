@@ -100,7 +100,7 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

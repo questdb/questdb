@@ -79,7 +79,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

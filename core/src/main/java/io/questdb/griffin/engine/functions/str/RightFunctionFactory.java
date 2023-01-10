@@ -152,13 +152,13 @@ public class RightFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return countFunc;
+        public String getName() {
+            return "right";
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink);
+        public Function getRight() {
+            return countFunc;
         }
 
         @Override
@@ -170,6 +170,11 @@ public class RightFunctionFactory implements FunctionFactory {
                 final int pos = getPos(len, count);
                 sink.put(str, pos, len);
             }
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink);
         }
 
         @Override
@@ -185,11 +190,6 @@ public class RightFunctionFactory implements FunctionFactory {
                 return len - (len == TableUtils.NULL_LEN ? 0 : getPos(len, count));
             }
             return TableUtils.NULL_LEN;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "right";
         }
 
         @Nullable

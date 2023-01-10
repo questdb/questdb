@@ -49,7 +49,7 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.val(getSymbol()).val('(').putColumnName(getColumnIndex()).val(')');
+        sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');
     }
 
     // sets null as result of aggregation of all nulls

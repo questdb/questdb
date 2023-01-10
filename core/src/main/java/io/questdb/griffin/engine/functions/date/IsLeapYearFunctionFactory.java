@@ -73,7 +73,7 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "is_leap_year";
         }
     }

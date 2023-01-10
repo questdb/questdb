@@ -114,7 +114,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "avg";
     }
 

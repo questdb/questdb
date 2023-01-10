@@ -41,7 +41,7 @@ public class LastIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

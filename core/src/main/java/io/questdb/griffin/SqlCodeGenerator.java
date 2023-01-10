@@ -1839,13 +1839,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getTableId(),
                     model.getTableVersion(),
                     intrinsicModel.buildIntervalModel(),
-                    timestampIndex
+                    timestampIndex,
+                    GenericRecordMetadata.deepCopyOf(reader.getMetadata())
             );
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(
                     tableName,
                     model.getTableId(),
-                    model.getTableVersion()
+                    model.getTableVersion(),
+                    GenericRecordMetadata.deepCopyOf(reader.getMetadata())
             );
         }
 
@@ -3708,6 +3710,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
+        GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(reader.getMetadata());
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
         final String tableName = metadata.getTableName();
 
@@ -3793,10 +3796,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                dfcFactory = new IntervalFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex);
+                dfcFactory = new IntervalFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                dfcFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
+                dfcFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 intervalHitsOnlyOnePartition = false;
             }
 
@@ -4017,7 +4020,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
                 Misc.free(dfcFactory);
-                dfcFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
+                dfcFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 rowFactory = new BwdDataFrameRowCursorFactory();
             } else {
                 rowFactory = new DataFrameRowCursorFactory();
@@ -4047,10 +4050,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RowCursorFactory rowCursorFactory;
 
             if (isOrderDescendingByDesignatedTimestampOnly(model)) {
-                cursorFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
+                cursorFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdDataFrameRowCursorFactory();
             } else {
-                cursorFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
+                cursorFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 rowCursorFactory = new DataFrameRowCursorFactory();
             }
 
@@ -4078,7 +4081,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByAllIndexedRecordCursorFactory(
                         myMeta,
                         configuration,
-                        new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
+                        new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
                         prefixes
@@ -4091,7 +4094,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
+                        new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                         latestByColumnIndex,
                         null,
                         columnIndexes
@@ -4111,7 +4114,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
                     myMeta,
                     configuration,
-                    new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
+                    new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     partitionByColumnIndexes,
@@ -4124,7 +4127,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByAllFilteredRecordCursorFactory(
                 myMeta,
                 configuration,
-                new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
+                new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                 RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                 keyTypes,
                 null,

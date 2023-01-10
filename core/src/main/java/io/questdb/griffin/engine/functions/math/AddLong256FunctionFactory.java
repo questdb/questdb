@@ -81,13 +81,13 @@ public class AddLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
+        public String getName() {
+            return "+";
         }
 
         @Override
-        public String getSymbol() {
-            return "+";
+        public Function getRight() {
+            return right;
         }
 
         @Override

@@ -112,7 +112,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "avg";
     }
 

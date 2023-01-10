@@ -67,7 +67,7 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

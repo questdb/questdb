@@ -101,11 +101,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return base.getMetadata().getColumnName(idx);
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }

@@ -31,8 +31,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
 
-    public FullBwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
-        super(tableName, tableId, tableVersion);
+    public FullBwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion, GenericRecordMetadata metadata) {
+        super(tableName, tableId, tableVersion, metadata);
     }
 
     @Override

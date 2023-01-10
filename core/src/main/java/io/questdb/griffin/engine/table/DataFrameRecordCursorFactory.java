@@ -84,18 +84,13 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return dataFrameCursorFactory.getColumnName(columnIndexes.getQuick(idx), sqlExecutionContext);
+    public String getBaseColumnName(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(idx));
     }
 
     @Override
-    public String getBaseColumnNameNoRemap(int idx, SqlExecutionContext sqlExecutionContext) {
-        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
-    }
-
-    @Override
-    public String getColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return getMetadata().getColumnName(idx);
+    public String getBaseColumnNameNoRemap(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
     }
 
     @Override

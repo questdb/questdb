@@ -121,7 +121,7 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

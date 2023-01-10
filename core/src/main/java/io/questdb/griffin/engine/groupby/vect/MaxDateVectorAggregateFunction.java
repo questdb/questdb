@@ -91,7 +91,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

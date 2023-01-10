@@ -89,6 +89,11 @@ public class RPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "rpad";
+        }
+
+        @Override
         public Function getRight() {
             return fillTextFunc;
         }
@@ -113,11 +118,6 @@ public class RPadStrFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
-        }
-
-        @Override
-        public String getSymbol() {
-            return "rpad";
         }
 
         @Nullable

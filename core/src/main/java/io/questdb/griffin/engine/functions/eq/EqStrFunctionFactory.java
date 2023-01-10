@@ -128,7 +128,7 @@ public class EqStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             if (negated) {
                 return "!=";
             } else {

@@ -103,7 +103,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

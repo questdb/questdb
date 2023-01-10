@@ -41,7 +41,7 @@ public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction 
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

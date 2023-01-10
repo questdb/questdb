@@ -115,7 +115,7 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "nsum";
     }
 

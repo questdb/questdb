@@ -86,7 +86,7 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

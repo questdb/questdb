@@ -69,7 +69,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

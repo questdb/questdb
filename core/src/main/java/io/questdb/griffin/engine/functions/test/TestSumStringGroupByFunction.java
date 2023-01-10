@@ -71,6 +71,11 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
+    public String getName() {
+        return "sum_t";
+    }
+
+    @Override
     public CharSequence getStr(Record rec) {
         return null;
     }
@@ -78,11 +83,6 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public CharSequence getStrB(Record rec) {
         return null;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum_t";
     }
 
     @Override

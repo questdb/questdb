@@ -75,7 +75,7 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "day";
         }
     }

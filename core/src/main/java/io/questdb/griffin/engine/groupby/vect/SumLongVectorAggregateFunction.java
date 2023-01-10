@@ -96,7 +96,7 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

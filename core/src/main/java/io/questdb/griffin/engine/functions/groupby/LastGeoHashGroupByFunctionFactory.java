@@ -60,7 +60,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public String getSymbol() {
+                    public String getName() {
                         return "last";
                     }
                 };
@@ -72,7 +72,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public String getSymbol() {
+                    public String getName() {
                         return "last";
                     }
                 };
@@ -84,7 +84,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public String getSymbol() {
+                    public String getName() {
                         return "last";
                     }
                 };
@@ -96,7 +96,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     }
 
                     @Override
-                    public String getSymbol() {
+                    public String getName() {
                         return "last";
                     }
                 };

@@ -68,7 +68,7 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return SYMBOL;
         }
     }

@@ -68,7 +68,7 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sumx";
     }
 

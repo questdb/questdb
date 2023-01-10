@@ -68,7 +68,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

@@ -68,7 +68,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

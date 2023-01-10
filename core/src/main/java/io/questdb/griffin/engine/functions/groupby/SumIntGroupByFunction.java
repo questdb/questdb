@@ -75,7 +75,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

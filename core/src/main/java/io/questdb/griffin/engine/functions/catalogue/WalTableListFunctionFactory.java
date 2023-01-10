@@ -42,8 +42,10 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TXNLOG_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.SEQ_META_SUSPENDED;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class WalTableListFunctionFactory implements FunctionFactory {

@@ -151,13 +151,13 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return countFunc;
+        public String getName() {
+            return "left";
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink);
+        public Function getRight() {
+            return countFunc;
         }
 
         @Override
@@ -169,6 +169,11 @@ public class LeftFunctionFactory implements FunctionFactory {
                 final int pos = getPos(len, count);
                 sink.put(str, 0, pos);
             }
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink);
         }
 
         @Override
@@ -184,11 +189,6 @@ public class LeftFunctionFactory implements FunctionFactory {
                 return getPos(len, count);
             }
             return TableUtils.NULL_LEN;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "left";
         }
 
         @Nullable

@@ -67,7 +67,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

@@ -97,7 +97,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "count_distinct";
     }
 

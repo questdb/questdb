@@ -100,13 +100,13 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return columnNameFunction;
+        public String getName() {
+            return ".";
         }
 
         @Override
-        public String getSymbol() {
-            return ".";
+        public Function getRight() {
+            return columnNameFunction;
         }
 
         @Override

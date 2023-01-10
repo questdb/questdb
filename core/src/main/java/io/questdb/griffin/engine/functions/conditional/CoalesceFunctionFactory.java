@@ -115,14 +115,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     private interface BinaryCoalesceFunction extends BinaryFunction {
         @Override
-        default String getSymbol() {
+        default String getName() {
             return "coalesce";
         }
     }
 
     private interface MultiArgCoalesceFunction extends MultiArgFunction {
         @Override
-        default String getSymbol() {
+        default String getName() {
             return "coalesce";
         }
     }

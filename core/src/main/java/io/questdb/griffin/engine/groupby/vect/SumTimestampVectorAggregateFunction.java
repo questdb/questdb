@@ -88,7 +88,7 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

@@ -72,7 +72,7 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return SYMBOL;
         }
     }

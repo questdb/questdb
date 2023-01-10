@@ -63,7 +63,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

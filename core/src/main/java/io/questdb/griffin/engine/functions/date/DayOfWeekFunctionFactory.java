@@ -72,7 +72,7 @@ public class DayOfWeekFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "day_of_week";
         }
     }

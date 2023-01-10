@@ -41,7 +41,7 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

@@ -64,7 +64,7 @@ public class CeilFloatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "ceil";
         }
     }

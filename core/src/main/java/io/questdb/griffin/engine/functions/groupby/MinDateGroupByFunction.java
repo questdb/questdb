@@ -68,7 +68,7 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

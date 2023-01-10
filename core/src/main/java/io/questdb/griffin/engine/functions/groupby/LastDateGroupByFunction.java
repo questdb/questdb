@@ -41,7 +41,7 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

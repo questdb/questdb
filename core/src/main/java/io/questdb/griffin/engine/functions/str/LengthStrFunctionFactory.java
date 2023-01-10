@@ -63,7 +63,7 @@ public class LengthStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "length";
         }
     }

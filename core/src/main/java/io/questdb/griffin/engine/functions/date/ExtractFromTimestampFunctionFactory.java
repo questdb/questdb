@@ -220,7 +220,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "extract";
         }
     }
@@ -268,7 +268,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "extract";
         }
     }

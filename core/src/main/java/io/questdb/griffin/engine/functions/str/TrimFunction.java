@@ -51,6 +51,18 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
+    public String getName() {
+        switch (type) {
+            case LTRIM:
+                return "ltrim";
+            case RTRIM:
+                return "rtrim";
+            default:
+                return "trim";
+        }
+    }
+
+    @Override
     public CharSequence getStr(final Record rec) {
         final CharSequence charSequence = getArg().getStr(rec);
         if (charSequence == null) {
@@ -78,17 +90,5 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
         }
         trim(type, getArg().getStr(rec), sink1);
         return sink1.length();
-    }
-
-    @Override
-    public String getSymbol() {
-        switch (type) {
-            case LTRIM:
-                return "ltrim";
-            case RTRIM:
-                return "rtrim";
-            default:
-                return "trim";
-        }
     }
 }

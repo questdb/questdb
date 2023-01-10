@@ -68,7 +68,7 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

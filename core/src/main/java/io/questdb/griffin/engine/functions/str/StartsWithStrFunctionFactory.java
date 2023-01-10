@@ -75,13 +75,13 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return prefixFunc;
+        public String getName() {
+            return "starts_with";
         }
 
         @Override
-        public String getSymbol() {
-            return "starts_with";
+        public Function getRight() {
+            return prefixFunc;
         }
     }
 }

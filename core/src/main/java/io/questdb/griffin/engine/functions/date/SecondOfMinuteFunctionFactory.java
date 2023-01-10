@@ -73,7 +73,7 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "second";
         }
     }

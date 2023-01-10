@@ -67,7 +67,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

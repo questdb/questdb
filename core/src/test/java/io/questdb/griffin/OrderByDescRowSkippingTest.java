@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.FullBwdDataFrameCursorFactory;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -507,7 +504,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitionPerRowSelectFirstNwithDifferentCaseInOrderBy() throws Exception {//here
+    public void testPartitionPerRowSelectFirstNwithDifferentCaseInOrderBy() throws Exception {
         preparePartitionPerRowTableWithLongNames();
 
         assertQuery("record_type\n10\n9\n8\n7\n6\n", "select record_type from trips order by created_ON desc limit 5");
@@ -741,7 +738,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                         "  from long_sequence(10);");
     }
 
-    private RecordCursorFactory prepareFactory(TableReader reader) throws SqlException {
+    private RecordCursorFactory prepareFactory(TableReader reader) {
         TableReaderMetadata metadata = reader.getMetadata();
         IntList columnIndexes = new IntList();
         columnIndexes.add(0);
@@ -752,7 +749,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
 
         return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
-                new FullBwdDataFrameCursorFactory("trips", metadata.getTableId(), reader.getVersion()),
+                new FullBwdDataFrameCursorFactory("trips", metadata.getTableId(), reader.getVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
                 new BwdDataFrameRowCursorFactory(),
                 false,
                 null,

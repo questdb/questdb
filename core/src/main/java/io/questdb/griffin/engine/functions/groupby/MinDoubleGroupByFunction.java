@@ -67,7 +67,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

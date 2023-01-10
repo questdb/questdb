@@ -64,7 +64,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

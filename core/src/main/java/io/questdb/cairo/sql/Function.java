@@ -110,6 +110,13 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return null;
     }
 
+    /**
+     * Returns function name or symbol, e.g. concat or + .
+     */
+    default String getName() {
+        return getClass().getName();
+    }
+
     // function returns a record of values
     Record getRecord(Record rec);
 
@@ -136,11 +143,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getStrLen(Record rec, int arrayIndex);
 
     CharSequence getSymbol(Record rec);
-
-    //used in generic toSink implementations
-    default String getSymbol() {
-        return getClass().getName();
-    }
 
     CharSequence getSymbolB(Record rec);
 
@@ -187,7 +189,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.val(getSymbol()).val("()");
+        sink.val(getName()).val("()");
     }
 
     default void toTop() {

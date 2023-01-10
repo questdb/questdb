@@ -63,7 +63,7 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

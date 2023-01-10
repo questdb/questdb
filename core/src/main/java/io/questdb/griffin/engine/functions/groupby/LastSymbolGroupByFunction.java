@@ -40,7 +40,7 @@ public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

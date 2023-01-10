@@ -40,11 +40,11 @@ public interface BinaryFunction extends Function {
 
     Function getLeft();
 
-    Function getRight();
-
-    default String getSymbol() {
+    default String getName() {
         return getClass().getName();
     }
+
+    Function getRight();
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -76,9 +76,9 @@ public interface BinaryFunction extends Function {
     @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
-            sink.val(getLeft()).val(getSymbol()).val(getRight());
+            sink.val(getLeft()).val(getName()).val(getRight());
         } else {
-            sink.val(getSymbol()).val('(').val(getLeft()).val(',').val(getRight()).val(')');
+            sink.val(getName()).val('(').val(getLeft()).val(',').val(getRight()).val(')');
         }
     }
 

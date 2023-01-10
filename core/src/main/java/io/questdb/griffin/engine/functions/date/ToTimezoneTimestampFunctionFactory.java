@@ -79,13 +79,13 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return timezone;
+        public String getName() {
+            return "to_timezone";
         }
 
         @Override
-        public String getSymbol() {
-            return "to_timezone";
+        public Function getRight() {
+            return timezone;
         }
 
         @Override

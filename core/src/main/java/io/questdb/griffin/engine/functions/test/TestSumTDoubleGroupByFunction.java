@@ -72,7 +72,7 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum_t";
     }
 

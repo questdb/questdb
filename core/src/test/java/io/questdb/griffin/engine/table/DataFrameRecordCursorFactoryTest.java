@@ -88,14 +88,14 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
-                RecordMetadata metadata;
+                GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true, BitmapIndexReader.DIR_FORWARD, null);
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION, metadata)) {
 
                     // entity index
                     final IntList columnIndexes = new IntList();
@@ -226,7 +226,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                RecordMetadata metadata;
+                GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
@@ -235,7 +235,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,
@@ -337,7 +337,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                RecordMetadata metadata;
+                GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
@@ -346,7 +346,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,

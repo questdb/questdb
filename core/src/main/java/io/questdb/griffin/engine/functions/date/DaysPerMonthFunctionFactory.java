@@ -76,7 +76,7 @@ public class DaysPerMonthFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "days_in_month";
         }
     }

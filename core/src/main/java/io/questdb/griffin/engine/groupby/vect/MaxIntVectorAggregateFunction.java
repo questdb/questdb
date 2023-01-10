@@ -92,7 +92,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

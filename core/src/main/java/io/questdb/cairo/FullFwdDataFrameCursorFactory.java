@@ -32,8 +32,8 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
     private FullBwdDataFrameCursor bwdCursor;
 
-    public FullFwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
-        super(tableName, tableId, tableVersion);
+    public FullFwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion, GenericRecordMetadata metadata) {
+        super(tableName, tableId, tableVersion, metadata);
     }
 
     @Override

@@ -71,7 +71,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

@@ -96,7 +96,7 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

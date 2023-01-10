@@ -70,10 +70,10 @@ public class TextPlanSink extends BasePlanSink {
         newLine();
         if (p instanceof RecordCursorFactory) {
             factoryStack.push((RecordCursorFactory) p);
-        }
-        p.toPlan(this);
-        if (p instanceof RecordCursorFactory) {
+            p.toPlan(this);
             factoryStack.pop();
+        } else {
+            p.toPlan(this);
         }
         depth--;
 

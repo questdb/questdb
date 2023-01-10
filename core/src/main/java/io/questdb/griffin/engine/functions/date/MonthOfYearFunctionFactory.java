@@ -74,7 +74,7 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "month";
         }
     }

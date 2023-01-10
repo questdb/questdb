@@ -101,7 +101,7 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "stddev_samp";
     }
 

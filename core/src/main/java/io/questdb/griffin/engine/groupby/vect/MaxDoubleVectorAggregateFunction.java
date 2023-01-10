@@ -95,7 +95,7 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

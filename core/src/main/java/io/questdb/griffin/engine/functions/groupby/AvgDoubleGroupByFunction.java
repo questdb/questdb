@@ -75,7 +75,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "avg";
     }
 

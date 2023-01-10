@@ -45,11 +45,11 @@ public interface PlanSink {
 
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value);
 
-    PlanSink putBaseColumnName(int no);
+    PlanSink putBaseColumnName(int columnIdx);
 
-    PlanSink putBaseColumnNameNoRemap(int no);
+    PlanSink putBaseColumnNameNoRemap(int columnIdx);
 
-    PlanSink putColumnName(int no);
+    PlanSink putColumnName(int columnIdx);
 
     PlanSink type(CharSequence type);
 

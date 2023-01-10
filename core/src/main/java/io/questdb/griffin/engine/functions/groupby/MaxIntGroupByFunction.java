@@ -69,7 +69,7 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

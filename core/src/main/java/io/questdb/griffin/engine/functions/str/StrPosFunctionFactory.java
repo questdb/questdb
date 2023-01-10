@@ -149,13 +149,13 @@ public class StrPosFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return substrFunc;
+        public String getName() {
+            return "strpos";
         }
 
         @Override
-        public String getSymbol() {
-            return "strpos";
+        public Function getRight() {
+            return substrFunc;
         }
     }
 }

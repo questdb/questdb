@@ -81,6 +81,11 @@ public class LPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "lpad";
+        }
+
+        @Override
         public Function getRight() {
             return lenFunc;
         }
@@ -104,11 +109,6 @@ public class LPadFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
-        }
-
-        @Override
-        public String getSymbol() {
-            return "lpad";
         }
 
         @Nullable

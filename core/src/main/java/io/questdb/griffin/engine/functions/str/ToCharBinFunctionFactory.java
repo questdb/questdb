@@ -65,13 +65,18 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return toSink(rec, sink1);
+        public String getName() {
+            return "to_char";
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
             Chars.toSink(arg.getBin(rec), sink);
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return toSink(rec, sink1);
         }
 
         @Override
@@ -96,11 +101,6 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
                 count--; // subtract extra line end we took into account
             }
             return count;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "to_char";
         }
 
         @Nullable

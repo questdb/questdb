@@ -72,7 +72,7 @@ public class YearFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "year";
         }
     }

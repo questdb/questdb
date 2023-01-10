@@ -77,7 +77,7 @@ public interface TernaryFunction extends Function {
 
     @Override
     default void toPlan(PlanSink sink) {
-        sink.val(getSymbol()).val('(').val(getLeft()).val(',').val(getCenter()).val(',').val(getRight()).val(')');
+        sink.val(getName()).val('(').val(getLeft()).val(',').val(getCenter()).val(',').val(getRight()).val(')');
     }
 
     @Override

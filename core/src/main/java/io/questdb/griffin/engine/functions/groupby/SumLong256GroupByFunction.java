@@ -93,7 +93,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

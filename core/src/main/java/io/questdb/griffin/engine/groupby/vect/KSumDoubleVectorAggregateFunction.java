@@ -116,7 +116,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "ksum";
     }
 

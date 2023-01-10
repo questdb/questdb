@@ -57,7 +57,7 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+    public String getBaseColumnName(int idx) {
         if (idx < factoryA.getMetadata().getColumnCount()) {
             return factoryA.getMetadata().getColumnName(idx);
         } else {

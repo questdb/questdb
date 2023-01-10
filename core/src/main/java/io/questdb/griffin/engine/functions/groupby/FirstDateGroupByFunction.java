@@ -64,7 +64,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

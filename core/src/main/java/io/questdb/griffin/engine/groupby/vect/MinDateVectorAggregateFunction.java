@@ -103,7 +103,7 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

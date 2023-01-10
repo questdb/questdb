@@ -270,16 +270,16 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
-        public String getSymbol() {
+        public String getName() {
             if (negated) {
                 return "!=";
             }
             return "=";
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
 
         @Override

@@ -86,13 +86,13 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return lo;
+        public String getName() {
+            return "to_long128";
         }
 
         @Override
-        public String getSymbol() {
-            return "to_long128";
+        public Function getRight() {
+            return lo;
         }
 
         @Override

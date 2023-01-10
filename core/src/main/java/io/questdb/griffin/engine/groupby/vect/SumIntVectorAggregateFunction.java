@@ -93,7 +93,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

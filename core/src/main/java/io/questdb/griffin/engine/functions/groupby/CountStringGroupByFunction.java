@@ -98,7 +98,7 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "count";
     }
 

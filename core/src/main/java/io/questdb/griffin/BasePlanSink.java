@@ -92,19 +92,19 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
-    public PlanSink putBaseColumnName(int no) {
-        return val(factoryStack.peek().getBaseColumnName(no, executionContext));
+    public PlanSink putBaseColumnName(int columnIdx) {
+        return val(factoryStack.peek().getBaseColumnName(columnIdx));
     }
 
-    public PlanSink putBaseColumnNameNoRemap(int no) {
-        return val(factoryStack.peek().getBaseColumnNameNoRemap(no, executionContext));
+    public PlanSink putBaseColumnNameNoRemap(int columnIdx) {
+        return val(factoryStack.peek().getBaseColumnNameNoRemap(columnIdx));
     }
 
-    public PlanSink putColumnName(int no) {
+    public PlanSink putColumnName(int columnIdx) {
         if (useBaseMetadata) {
-            putBaseColumnName(no);
+            putBaseColumnName(columnIdx);
         } else {
-            val(factoryStack.peek().getColumnName(no, executionContext));
+            val(factoryStack.peek().getMetadata().getColumnName(columnIdx));
         }
         return this;
     }

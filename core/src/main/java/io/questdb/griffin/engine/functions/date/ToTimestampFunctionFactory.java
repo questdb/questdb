@@ -61,7 +61,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "to_timestamp";
         }
 

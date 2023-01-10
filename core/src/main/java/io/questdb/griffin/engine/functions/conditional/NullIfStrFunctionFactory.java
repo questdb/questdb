@@ -69,6 +69,11 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "nullif";
+        }
+
+        @Override
         public Function getRight() {
             return strFunc2;
         }
@@ -97,11 +102,6 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             return Chars.equals(cs1, cs2) ? null : cs1;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "nullif";
         }
     }
 }

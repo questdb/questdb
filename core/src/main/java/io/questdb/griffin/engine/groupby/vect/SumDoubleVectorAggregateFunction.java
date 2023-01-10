@@ -109,7 +109,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "sum";
     }
 

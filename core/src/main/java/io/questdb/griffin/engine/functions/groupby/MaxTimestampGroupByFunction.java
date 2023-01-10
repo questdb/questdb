@@ -63,7 +63,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "max";
     }
 

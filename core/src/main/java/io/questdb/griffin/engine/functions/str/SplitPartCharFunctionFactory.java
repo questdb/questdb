@@ -111,13 +111,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return indexFunc;
+        public String getName() {
+            return "split_part";
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink, true);
+        public Function getRight() {
+            return indexFunc;
         }
 
         @Override
@@ -126,13 +126,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB, true);
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink, true);
         }
 
         @Override
-        public String getSymbol() {
-            return "split_part";
+        public CharSequence getStrB(Record rec) {
+            return getStr0(rec, sinkB, true);
         }
 
         @Override

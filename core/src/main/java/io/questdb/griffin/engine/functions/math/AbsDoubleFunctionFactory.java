@@ -64,7 +64,7 @@ public class AbsDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "abs";
         }
     }

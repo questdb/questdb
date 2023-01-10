@@ -103,7 +103,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "min";
     }
 

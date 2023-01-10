@@ -60,11 +60,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return baseFactory.getMetadata().getColumnName(idx);
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return baseFactory;
     }

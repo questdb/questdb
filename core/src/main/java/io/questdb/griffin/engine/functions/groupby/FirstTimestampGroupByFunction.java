@@ -59,7 +59,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

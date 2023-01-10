@@ -103,7 +103,7 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "count";
     }
 

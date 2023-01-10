@@ -81,7 +81,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "ksum";
     }
 

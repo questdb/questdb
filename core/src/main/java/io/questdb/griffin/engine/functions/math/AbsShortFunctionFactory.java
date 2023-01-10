@@ -58,14 +58,14 @@ public class AbsShortFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getShort(Record rec) {
-            short value = function.getShort(rec);
-            return (short) Math.abs(value);
+        public String getName() {
+            return "abs";
         }
 
         @Override
-        public String getSymbol() {
-            return "abs";
+        public short getShort(Record rec) {
+            short value = function.getShort(rec);
+            return (short) Math.abs(value);
         }
     }
 }

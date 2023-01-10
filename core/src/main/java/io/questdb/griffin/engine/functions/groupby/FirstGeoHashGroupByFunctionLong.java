@@ -79,7 +79,7 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "first";
     }
 

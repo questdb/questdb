@@ -97,6 +97,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "substring";
+        }
+
+        @Override
         public Function getRight() {
             return lenFunc;
         }
@@ -130,11 +135,6 @@ public class SubStringFunctionFactory implements FunctionFactory {
             }
             int end = Math.min(strLen, rawStart + len - 1);
             return Math.max(0, end - start);
-        }
-
-        @Override
-        public String getSymbol() {
-            return "substring";
         }
 
         @Nullable

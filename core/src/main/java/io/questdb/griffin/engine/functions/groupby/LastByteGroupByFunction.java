@@ -41,7 +41,7 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

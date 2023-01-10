@@ -173,13 +173,13 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
+        public String getName() {
+            return "dateadd";
         }
 
         @Override
-        public String getSymbol() {
-            return "dateadd";
+        public Function getRight() {
+            return right;
         }
 
         @Override

@@ -41,7 +41,7 @@ public class LastCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "last";
     }
 }

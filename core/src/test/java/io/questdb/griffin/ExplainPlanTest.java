@@ -1053,16 +1053,16 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
         PlanSink planSink = new TextPlanSink() {
             @Override
-            public PlanSink putColumnName(int no) {
-                val("column(").val(no).val(")");
+            public PlanSink putColumnName(int columnIdx) {
+                val("column(").val(columnIdx).val(")");
                 return this;
             }
         };
 
         PlanSink tmpPlanSink = new TextPlanSink() {
             @Override
-            public PlanSink putColumnName(int no) {
-                val("column(").val(no).val(")");
+            public PlanSink putColumnName(int columnIdx) {
+                val("column(").val(columnIdx).val(")");
                 return this;
             }
         };
@@ -2793,7 +2793,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                             "        Frame forward scan on: tab\n");
         });
     }
-
 
     @Ignore
     @Test
@@ -4552,6 +4551,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
+    }
+
+    @Test
+    public void testSelectWithNotOperator() throws Exception {
+        assertPlan("CREATE TABLE tst ( timestamp TIMESTAMP );",
+                "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ",
+                "Async Filter\n" +
+                        "  filter: not (timestamp between 1609459200000000 and 1610236800000000)\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tst\n");
     }
 
     @Test

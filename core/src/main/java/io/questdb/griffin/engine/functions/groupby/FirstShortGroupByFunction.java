@@ -58,13 +58,13 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
-    public short getShort(Record rec) {
-        return rec.getShort(this.valueIndex);
+    public String getName() {
+        return "first";
     }
 
     @Override
-    public String getSymbol() {
-        return "first";
+    public short getShort(Record rec) {
+        return rec.getShort(this.valueIndex);
     }
 
     @Override

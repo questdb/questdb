@@ -73,7 +73,7 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public String getSymbol() {
+    public String getName() {
         return "isOrdered";
     }
 

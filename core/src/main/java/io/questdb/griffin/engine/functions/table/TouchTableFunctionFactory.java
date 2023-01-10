@@ -90,10 +90,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            sinkA.clear();
-            getStr(rec, sinkA);
-            return sinkA;
+        public String getName() {
+            return "touch";
         }
 
         @Override
@@ -108,15 +106,17 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getStr(Record rec) {
+            sinkA.clear();
+            getStr(rec, sinkA);
+            return sinkA;
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
             getStr(rec, sinkB);
             return sinkB;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "touch";
         }
 
         @Override

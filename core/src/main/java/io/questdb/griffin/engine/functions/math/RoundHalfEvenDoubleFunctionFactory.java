@@ -101,13 +101,13 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
+        public String getName() {
+            return SYMBOL;
         }
 
         @Override
-        public String getSymbol() {
-            return SYMBOL;
+        public Function getRight() {
+            return right;
         }
     }
 

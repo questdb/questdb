@@ -25,35 +25,31 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
+    private final GenericRecordMetadata metadata;
     private final int tableId;
     private final String tableName;
     private final long tableVersion;
 
-    public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
+    public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion, GenericRecordMetadata metadata) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
+        this.metadata = metadata;
     }
 
     @Override
     public void close() {
     }
 
-    public String getColumnName(int idx, SqlExecutionContext executionContext) {
-        try (TableReader reader = executionContext.getCairoEngine().getReader(
-                executionContext.getCairoSecurityContext(),
-                tableName,
-                tableId,
-                tableVersion
-        )) {
-            return reader.getMetadata().getColumnName(idx);
-        }
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override

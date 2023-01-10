@@ -68,7 +68,7 @@ public class LnDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getSymbol() {
+        public String getName() {
             return "ln";
         }
     }

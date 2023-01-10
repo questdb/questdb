@@ -69,9 +69,9 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     @Override
     void close();
 
-    String getColumnName(int idx, SqlExecutionContext executionContext);
-
     DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
+
+    RecordMetadata getMetadata();
 
     /**
      * Order of records in the data frame in regard to timestamp.
