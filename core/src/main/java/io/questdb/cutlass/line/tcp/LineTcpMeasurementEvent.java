@@ -275,7 +275,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         offset += Long.BYTES;
                         break;
                     case LineTcpParser.ENTITY_TYPE_UUID:
-                        row.putUuid(colIndex, buffer.readLong(offset), buffer.readLong(offset + Long.BYTES));
+                        row.putLong128(colIndex, buffer.readLong(offset), buffer.readLong(offset + Long.BYTES));
                         offset += Long.BYTES * 2;
                         break;
                     case ENTITY_TYPE_NULL:

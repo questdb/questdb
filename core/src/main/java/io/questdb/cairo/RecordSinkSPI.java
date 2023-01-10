@@ -47,7 +47,7 @@ public interface RecordSinkSPI {
 
     void putLong(long value);
 
-    void putLong128LittleEndian(long hi, long lo);
+    void putLong128(long lo, long hi);
 
     void putLong256(Long256 value);
 
@@ -68,8 +68,6 @@ public interface RecordSinkSPI {
     }
 
     void putTimestamp(long value);
-
-    void putUuid(long lo, long hi);
 
     void skip(int bytes);
 }

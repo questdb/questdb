@@ -118,6 +118,13 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putLong(appendAddressFor(offset, Long.BYTES), value);
     }
 
+    @Override
+    default void putLong128(long lo, long hi) {
+        long addr = appendAddressFor(16);
+        Unsafe.getUnsafe().putLong(addr, lo);
+        Unsafe.getUnsafe().putLong(addr + 8, hi);
+    }
+
     default void putLong256(long l0, long l1, long l2, long l3) {
         final long addr = appendAddressFor(32);
         Unsafe.getUnsafe().putLong(addr, l0);
@@ -166,13 +173,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     default void putLong256Null() {
         Long256Impl.putNull(appendAddressFor(Long256.BYTES));
-    }
-
-    @Override
-    default void putLongLong(long l0, long l1) {
-        long addr = appendAddressFor(16);
-        Unsafe.getUnsafe().putLong(addr, l0);
-        Unsafe.getUnsafe().putLong(addr + 8, l1);
     }
 
     default long putNullBin() {

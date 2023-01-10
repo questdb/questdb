@@ -78,7 +78,7 @@ public class RecordSinkFactory {
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
-        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128LittleEndian", "(JJ)V");
+        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
         final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
         final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
         final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
@@ -90,7 +90,6 @@ public class RecordSinkFactory {
         final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
         final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
-        final int wPutUuid = asm.poolInterfaceMethod(RecordSinkSPI.class, "putUuid", "(JJ)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
@@ -219,11 +218,11 @@ public class RecordSinkFactory {
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128Hi, 1);
+                    asm.invokeInterface(rGetLong128Lo, 1);
 
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128Lo, 1);
+                    asm.invokeInterface(rGetLong128Hi, 1);
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;
@@ -290,7 +289,7 @@ public class RecordSinkFactory {
                     asm.lload(3);
                     asm.invokeInterface(rGetUuidHi, 3);
 
-                    asm.invokeInterface(wPutUuid, 4);
+                    asm.invokeInterface(wPutLong128, 4);
                     break;
                 default:
                     break;

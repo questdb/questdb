@@ -62,10 +62,9 @@ public interface MemoryA extends Closeable {
 
     void putLong(long value);
 
-    default void putLong128LittleEndian(long hi, long lo) {
-        putLongLong(lo, hi);
-    }
-
+    // two longs are written back to back: little endian
+    void putLong128(long lo, long hi);
+    
     void putLong256(long l0, long l1, long l2, long l3);
 
     void putLong256(Long256 value);
@@ -73,9 +72,6 @@ public interface MemoryA extends Closeable {
     void putLong256(CharSequence hexString);
 
     void putLong256(@NotNull CharSequence hexString, int start, int end);
-
-    // two longs are written back to back
-    void putLongLong(long l0, long l1);
 
     long putNullBin();
 

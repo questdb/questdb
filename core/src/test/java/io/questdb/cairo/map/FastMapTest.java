@@ -83,7 +83,7 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
                 key.putShort(rnd.nextShort());
-                key.putUuid(rnd.nextLong(), rnd.nextLong());
+                key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -119,7 +119,7 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
                 key.putShort(rnd.nextShort());
-                key.putUuid(rnd.nextLong(), rnd.nextLong());
+                key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
@@ -1074,10 +1074,12 @@ public class FastMapTest extends AbstractCairoTest {
                     binarySequence.of(rnd.nextBytes(25));
                     row.putBin(11, binarySequence);
                 }
+
+                // UUID
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putUuid(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                    row.putLong128(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 } else {
-                    row.putUuid(12, rnd.nextLong(), rnd.nextLong());
+                    row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
                 row.append();
             }

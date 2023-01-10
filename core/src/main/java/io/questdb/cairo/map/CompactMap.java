@@ -483,8 +483,8 @@ public class CompactMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128LittleEndian(long hi, long lo) {
-            entries.putLong128LittleEndian(hi, lo);
+        public void putLong128(long lo, long hi) {
+            entries.putLong128(lo, hi);
         }
 
         @Override
@@ -527,12 +527,6 @@ public class CompactMap implements Map, Reopenable {
         @Override
         public void putTimestamp(long value) {
             putLong(value);
-        }
-
-        @Override
-        public void putUuid(long lo, long hi) {
-            entries.putLong(lo);
-            entries.putLong(hi);
         }
 
         @Override

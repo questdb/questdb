@@ -386,7 +386,7 @@ public class WalWriter implements TableWriterAPI {
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLongLong(timestamp, segmentRowCount);
+                primaryColumn.putLong128(timestamp, segmentRowCount);
                 setRowValueNotNull(timestampIndex);
                 row.timestamp = timestamp;
             }
@@ -548,7 +548,7 @@ public class WalWriter implements TableWriterAPI {
             case ColumnType.LONG128:
                 // fall through
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -1424,7 +1424,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+        public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
@@ -1502,15 +1502,9 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putUuid(int columnIndex, long lo, long hi) {
-            getPrimaryColumn(columnIndex).putLongLong(lo, hi);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putUuid(columnIndex, uuid.getLo(), uuid.getHi());
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

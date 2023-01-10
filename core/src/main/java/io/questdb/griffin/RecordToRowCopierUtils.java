@@ -81,8 +81,7 @@ public class RecordToRowCopierUtils {
         int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
-        int wPutUuid = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(IJJ)V");
+        int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
         int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
@@ -651,10 +650,10 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.LONG128:
                     assert toColumnTypeTag == ColumnType.LONG128;
-                    asm.invokeInterface(rGetLong128Hi);
+                    asm.invokeInterface(rGetLong128Lo);
                     asm.aload(1);
                     asm.iconst(i);
-                    asm.invokeInterface(rGetLong128Lo);
+                    asm.invokeInterface(rGetLong128Hi);
                     asm.invokeInterface(wPutLong128, 5);
                     break;
                 case ColumnType.GEOBYTE:
@@ -792,7 +791,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, lo, Record, columnIndex, location]
                             asm.invokeInterface(rGetUuidHi, 3);
                             // Stack: [RowWriter, lo, hi]
-                            asm.invokeInterface(wPutUuid, 5);
+                            asm.invokeInterface(wPutLong128, 5);
                             // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
                             // The stack is now empty, and we are done with this column
                             break;

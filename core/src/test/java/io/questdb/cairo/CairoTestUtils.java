@@ -190,10 +190,11 @@ public class CairoTestUtils {
                     row.putBin(11, binarySequence);
                 }
 
+                // UUID
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putUuid(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                    row.putLong128(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
                 } else {
-                    row.putUuid(12, rnd.nextLong(), rnd.nextLong());
+                    row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
                 row.append();
             }

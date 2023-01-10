@@ -120,7 +120,7 @@ class WalWriterEvents implements Closeable {
                 break;
             case ColumnType.UUID:
                 long uuidLocation = function.getUuidLocation(null);
-                eventMem.putLongLong(function.getUuidLo(null, uuidLocation), function.getUuidHi(null, uuidLocation));
+                eventMem.putLong128(function.getUuidLo(null, uuidLocation), function.getUuidHi(null, uuidLocation));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

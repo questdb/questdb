@@ -167,9 +167,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
                             case ColumnType.LONG128:
                                 if (!isNull) {
-                                    row.putLong128LittleEndian(index, rnd.nextLong(), rnd.nextLong());
+                                    row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 } else {
-                                    row.putLong128LittleEndian(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                                    row.putLong128(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
                                 }
                                 break;
 
@@ -201,7 +201,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 row.putGeoHash(index, rnd.nextLong());
                                 break;
                             case ColumnType.UUID:
-                                row.putUuid(index, rnd.nextLong(), rnd.nextLong());
+                                row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 break;
                             default:
                                 throw new UnsupportedOperationException();

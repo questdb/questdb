@@ -1540,7 +1540,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                         row.putSym(24, String.valueOf(i));
                         row.putSym(25, (char) (65 + i % 26));
-                        row.putUuid(26, i, i + 1);
+                        row.putLong128(26, i, i + 1); // UUID
                         stringSink.clear();
                         Numbers.appendUuid(i, i + 1, stringSink);
                         row.putUuid(27, stringSink);

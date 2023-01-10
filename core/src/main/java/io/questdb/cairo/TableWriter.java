@@ -1920,7 +1920,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             case ColumnType.LONG128:
                 // fall through
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -3766,7 +3766,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
                 // putLong128(hi, lo)
                 // written in memory as lo then hi
-                o3TimestampMem.putLongLong(ts, o3RowCount + n);
+                o3TimestampMem.putLong128(ts, o3RowCount + n);
             }
 
             if (locallyMapped) {
@@ -4140,7 +4140,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private void o3TimestampSetter(long timestamp) {
         // putLong128(hi, lo)
         // written in memory as lo then hi
-        o3TimestampMem.putLongLong(timestamp, getO3RowCount0());
+        o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
     }
 
@@ -6294,7 +6294,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         void putLong(int columnIndex, long value);
 
-        void putLong128LittleEndian(int columnIndex, long first, long second);
+        void putLong128(int columnIndex, long lo, long hi);
 
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
@@ -6323,8 +6323,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         default void putTimestamp(int columnIndex, long value) {
             putLong(columnIndex, value);
         }
-
-        void putUuid(int columnIndex, long lo, long hi);
 
         void putUuid(int columnIndex, CharSequence uuid);
     }
@@ -6413,7 +6411,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+        public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
@@ -6481,15 +6479,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         @Override
-        public void putUuid(int columnIndex, long lo, long hi) {
-            getPrimaryColumn(columnIndex).putLongLong(lo, hi);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
             SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putUuid(columnIndex, uuid.getLo(), uuid.getHi());
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

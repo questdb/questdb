@@ -814,7 +814,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
-        row.putUuid(col, Hash.fastLongMix(i), Hash.fastLongMix(i + 1));
+        row.putLong128(col, Hash.fastLongMix(i), Hash.fastLongMix(i + 1)); // UUID
         row.append();
     }
 
