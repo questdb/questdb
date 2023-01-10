@@ -224,7 +224,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         ff.closeChecked(txnFd);
                     }
 
-                    rootPath.concat(tableToken.getDirName()).concat(TableUtils.TXN_FILE_NAME).$();
+                    rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                     txReader.ofRO(rootPath, PartitionBy.NONE);
                     rootPath.trimTo(rootLen);
 
