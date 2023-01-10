@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -57,7 +54,7 @@ public class EmbeddedApiTest {
     @Test
     public void testConcurrentReadsAndCreateTableIfNotExists() throws Exception {
         final int N = 100;
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -87,7 +84,7 @@ public class EmbeddedApiTest {
 
     @Test
     public void testConcurrentSQLExec() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
         final Log log = LogFactory.getLog("testConcurrentSQLExec");
 
         TestUtils.assertMemoryLeak(() -> {
@@ -107,7 +104,7 @@ public class EmbeddedApiTest {
                         compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
                         long timestamp = 0;
-                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
+                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), engine.getTableToken("abc"), "testing")) {
                             for (int i = 0; i < 10_000_000; i++) {
                                 TableWriter.Row row = writer.newRow(timestamp);
                                 row.putDouble(0, rnd.nextDouble());
@@ -136,7 +133,7 @@ public class EmbeddedApiTest {
 
     @Test
     public void testReadWrite() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
             // write part
@@ -146,7 +143,7 @@ public class EmbeddedApiTest {
                     final SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
-                try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
+                try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), engine.getTableToken("abc"), "testing")) {
                     for (int i = 0; i < 10; i++) {
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
                         row.putInt(0, 123);
@@ -166,7 +163,7 @@ public class EmbeddedApiTest {
 
                 try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
                     try (RecordCursor cursor = factory.getCursor(ctx)) {
-                        final Record record = cursor.getRecord();
+                        final Record ignore = cursor.getRecord();
                         //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                             // access 'record' instance for field values
@@ -204,7 +201,7 @@ public class EmbeddedApiTest {
                             final RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory();
                             final RecordCursor cursor = factory.getCursor(ctx)
                     ) {
-                        final Record record = cursor.getRecord();
+                        final Record ignore = cursor.getRecord();
                         //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                             // access 'record' instance for field values
@@ -246,7 +243,7 @@ public class EmbeddedApiTest {
                             final SqlCompiler compiler = new SqlCompiler(engine)
                     ) {
                         compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
-                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
+                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), engine.getTableToken("abc"), "testing")) {
                             for (int j = 0; j < 100; j++) {
                                 TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
                                 row.putInt(0, j);

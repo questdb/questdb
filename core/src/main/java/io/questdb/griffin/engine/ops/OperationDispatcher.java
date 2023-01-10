@@ -60,7 +60,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         try (
                 TableWriterAPI writer = engine.getTableWriterAPI(
                         sqlExecutionContext.getCairoSecurityContext(),
-                        operation.getTableName(),
+                        operation.getTableToken(),
                         lockReason
                 )
         ) {

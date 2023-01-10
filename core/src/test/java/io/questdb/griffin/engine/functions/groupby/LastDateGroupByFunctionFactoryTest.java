@@ -42,7 +42,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f date)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -66,7 +66,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f date)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putLong(0, rnd.nextLong());
@@ -250,7 +250,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f date)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 if (i % 4 == 0) {

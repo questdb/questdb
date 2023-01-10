@@ -25,12 +25,12 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -59,8 +59,9 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             try (Path path = new Path(); Path other = new Path()) {
-                path.of(configuration.getRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
-                other.of(configuration.getRoot()).concat(tableName).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
                 Assert.assertTrue(Files.rename(path, other) > -1);
             }
 
@@ -90,6 +91,19 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
                     " from long_sequence(5)" +
                     "), index(sym capacity 8) timestamp(ts) partition by DAY WAL");
+
+            executeOperation(
+                    "alter table " + tableName + " alter column sym drop index",
+                    CompiledQuery.ALTER
+            );
+
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "2\tBC\t2022-02-24T06:00:00.000000Z\tFG\n" +
+                    "3\tCD\t2022-02-24T12:00:00.000000Z\tFG\n" +
+                    "4\tCD\t2022-02-24T18:00:00.000000Z\tFG\n" +
+                    "5\tAB\t2022-02-25T00:00:00.000000Z\tDE\n");
 
             executeOperation(
                     "alter table " + tableName + " alter column sym drop index",
@@ -194,7 +208,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: will be fixed with #2752
     public void createWalAndDropPartitionsWithWhere22() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 22, 2, "x\tsym\tts\tsym2\n" +
@@ -214,7 +227,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: will be fixed with #2752
     public void createWalAndDropPartitionsWithWhere23() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 23, 2, "x\tsym\tts\tsym2\n" +
@@ -234,7 +246,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: will be fixed with #2752
     public void createWalAndDropPartitionsWithWhere24() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 24, 2, "x\tsym\tts\tsym2\n" +
@@ -277,6 +288,30 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     public void createWalAndDropPartitionsWithWhere28() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 28, 5, "x\tsym\tts\tsym2\n");
+    }
+
+    @Test
+    public void createWalDropTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 21600000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertSql(
+                    "select name from tables()",
+                    "name\n" + tableName + "\n");
+
+            executeOperation("drop table " + tableName, CompiledQuery.DROP);
+            drainWalQueue();
+
+            assertSql(
+                    "select name from tables() where name = '" + tableName + "'",
+                    "name\n");
+        });
     }
 
     @Test
@@ -368,7 +403,7 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 Assert.assertEquals(expectedTxn, reader.getTxn());
                 Assert.assertEquals(2, reader.getTxFile().getSeqTxn());
             }

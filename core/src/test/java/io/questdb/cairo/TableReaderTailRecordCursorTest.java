@@ -136,8 +136,9 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
+            TableToken tableToken = engine.getTableToken("xyz");
             new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "testing")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
                     barrier.await();
                     long ts = 0;
                     long addr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
@@ -171,7 +172,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
             }).start();
 
             new Thread(() -> {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                     Rnd rnd = new Rnd();
                     int count = 0;
                     final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
@@ -225,7 +226,8 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "testing")) {
+            TableToken tableToken = engine.getTableToken("xyz");
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
                 long ts = 0;
                 long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -237,8 +239,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                         cursor.of(
                                 engine.getReader(
                                         AllowAllCairoSecurityContext.INSTANCE,
-                                        "xyz",
-                                        TableUtils.ANY_TABLE_ID,
+                                        tableToken,
                                         TableUtils.ANY_TABLE_VERSION
                                 )
                         );
@@ -288,7 +289,8 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "testing")) {
+            TableToken tableToken = engine.getTableToken("xyz");
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
                 long ts = 0;
                 long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -300,8 +302,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                         cursor.of(
                                 engine.getReader(
                                         AllowAllCairoSecurityContext.INSTANCE,
-                                        "xyz",
-                                        TableUtils.ANY_TABLE_ID,
+                                        tableToken,
                                         TableUtils.ANY_TABLE_VERSION
                                 )
                         );

@@ -47,7 +47,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() {
-        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
     }
 
     @Test
@@ -74,9 +74,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         AtomicInteger columnsAdded = new AtomicInteger();
         AtomicInteger reloadCount = new AtomicInteger();
         int totalColAddCount = 1000;
+        TableToken tableToken = engine.getTableToken("all");
 
         Thread writerThread = new Thread(() -> {
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "all", "test")) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
                 start.await();
                 for (int i = 0; i < totalColAddCount; i++) {
                     writer.addColumn("col" + i, ColumnType.INT);
@@ -91,7 +92,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         });
 
         Thread readerThread = new Thread(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                 start.await();
                 int colAdded = -1, newColsAdded;
                 while (colAdded < totalColAddCount) {
@@ -161,7 +162,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
         String tableName = "all";
         try (
-                Path path = new Path().of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+                Path path = getMetaFilePath(root, tableName);
                 TableReaderMetadata metadata = new TableReaderMetadata(configuration)
         ) {
             metadata.load(path);
@@ -387,13 +388,18 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
     }
 
+    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
+        TableToken tableToken = engine.getTableToken(tableName);
+        return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+    }
+
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "all");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, engine.getTableToken("all"));
         }
-        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
 
         // Test in one go
         runWithManipulators(expected, w -> {
@@ -407,12 +413,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
                 metadata.load();
                 tableId = metadata.getTableId();
                 for (ColumnManipulator manipulator : manipulators) {
                     long structVersion;
-                    try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                    try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
                         manipulator.restructure(writer);
                         structVersion = writer.getStructureVersion();
                     }
@@ -442,7 +448,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             }
 
             // Check that table has same tableId.
-            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.getTableToken(tableName))) {
                 metadata.load();
                 Assert.assertEquals(tableId, metadata.getTableId());
             }

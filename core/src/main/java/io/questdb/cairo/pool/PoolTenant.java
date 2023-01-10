@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
 
 public interface PoolTenant extends QuietCloseable {
@@ -51,7 +52,7 @@ public interface PoolTenant extends QuietCloseable {
      *
      * @return valid table name.
      */
-    String getTableName();
+    TableToken getTableToken();
 
     /**
      * Pool informs the reader that it no longer belongs to the pool. Implementations must assume that
@@ -64,4 +65,9 @@ public interface PoolTenant extends QuietCloseable {
      * the reader to be fully up-to-date with all data and metadata changes.
      */
     void refresh();
+
+    /**
+     * Refreshes value of the Table Token to the one it was created with.
+     */
+    void updateTableToken(TableToken tableToken);
 }

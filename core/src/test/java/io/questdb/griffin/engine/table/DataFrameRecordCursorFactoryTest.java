@@ -49,6 +49,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            TableToken tableToken;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
@@ -56,7 +57,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                tableToken = CairoTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -72,7 +73,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -89,13 +90,13 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 int columnIndex;
                 int symbolKey;
                 RecordMetadata metadata;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = getReader(engine, "x")) {
                     columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true, BitmapIndexReader.DIR_FORWARD, null);
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
 
                     // entity index
                     final IntList columnIndexes = new IntList();
@@ -182,11 +183,12 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
         pageFrameMaxRows = maxSize;
 
         TestUtils.assertMemoryLeak(() -> {
+            TableToken tableToekn;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                tableToekn = CairoTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -199,7 +201,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data, writing rows in the backward direction
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -227,7 +229,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 RecordMetadata metadata;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = getReader(engine, "x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
 
@@ -235,7 +237,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToekn, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,
@@ -295,17 +297,21 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 }
             }
         });
+        // This method can be called multiple times during the test. Remove created tables.
+        tearDown();
+        setUp();
     }
 
     private void testFwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
         pageFrameMaxRows = maxSize;
 
         TestUtils.assertMemoryLeak(() -> {
+            TableToken tt;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                tt = CairoTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
@@ -313,7 +319,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -338,7 +344,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 RecordMetadata metadata;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = getReader(engine, "x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
 
@@ -346,7 +352,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tt, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
                     DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
                             configuration,
@@ -406,5 +412,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 }
             }
         });
+        tearDown();
+        setUp();
     }
 }

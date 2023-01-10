@@ -29,8 +29,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -173,7 +173,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             factory,
                             configuration.getKeepAliveHeader()
                     );
-                } catch (ReaderOutOfDateException e) {
+                } catch (TableReferenceOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
                     Misc.free(factory);
                     compileQuery(state);
@@ -410,8 +410,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                         configuration.getKeepAliveHeader()
                 );
                 recompileStale = false;
-            } catch (ReaderOutOfDateException e) {
-                if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                     throw e;
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
@@ -624,7 +624,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final int waitResult;
         try {
             waitResult = fut.await(0);
-        } catch (ReaderOutOfDateException e) {
+        } catch (TableReferenceOutOfDateException e) {
             state.freeAsyncOperation();
             compileQuery(state);
             return;

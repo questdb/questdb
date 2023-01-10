@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -47,7 +46,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
 
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    try (TableWriter writer = getWriter("x")) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
                         Assert.assertEquals(1024, blockCapacity);
                     }
@@ -60,7 +59,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         try {
                             reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
                             Assert.fail();
@@ -70,7 +69,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x alter column ik add index", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
                     }
                 }
@@ -120,7 +119,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 CyclicBarrier startBarrier = new CyclicBarrier(2);
                 CountDownLatch haltLatch = new CountDownLatch(1);
                 new Thread(() -> {
-                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    try (TableWriter ignore = getWriter("x")) {
                         // make sure writer is locked before test begins
                         startBarrier.await();
                         // make sure we don't release writer until main test finishes

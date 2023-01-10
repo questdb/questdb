@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -240,16 +239,17 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, 0, null, null, metrics)) {
                     // create table
-                    try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
+                    String tableName = "tab";
+                    try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                             .col("colour", ColumnType.SYMBOL)
                             .col("shape", ColumnType.SYMBOL)
                             .col("size", ColumnType.DOUBLE)
                             .timestamp()) {
-                        CairoTestUtils.create(model);
+                        CairoTestUtils.create(model, engine);
                     }
 
                     // warm writer up
-                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing")) {
+                    try (TableWriter w = getWriter(engine, tableName)) {
                         w.warmUp();
                     }
 
@@ -257,12 +257,12 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
                     try (LineUdpSender sender = new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
-                            sender.metric("tab").tag("colour", "blue").tag("shape", "x square").field("size", 3.4).$(100000000000L);
+                            sender.metric(tableName).tag("colour", "blue").tag("shape", "x square").field("size", 3.4).$(100000000000L);
                         }
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), "tab", null)) {
+                    try (TableReader reader = new TableReader(configuration, engine.getTableToken(tableName))) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {

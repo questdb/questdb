@@ -191,7 +191,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardCursorTimeout() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 1;
@@ -226,7 +226,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderConstructorBadSequence() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 1;
@@ -241,7 +241,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderConstructorBadSig() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 1;
@@ -258,7 +258,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderConstructorFileTooSmall() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 1;
@@ -295,7 +295,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             final CountingFacade facade = new CountingFacade();
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return facade;
@@ -328,7 +328,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderKeyUpdateFail() {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 4;
@@ -711,7 +711,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));
@@ -744,7 +744,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     rows.setPos(rows.getCapacity());
                     GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
-                    try (TableReader tableReader = new TableReader(configuration, "x")) {
+                    try (TableReader tableReader = newTableReader(configuration, "x")) {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
@@ -829,7 +829,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testForwardCursorTimeout() throws Exception {
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 1;
@@ -889,7 +889,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             final CountingFacade facade = new CountingFacade();
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return facade;
@@ -923,7 +923,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testForwardReaderKeyUpdateFail() {
 
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
                 return 3;
@@ -1436,7 +1436,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             // Memory impl will round truncate size to the OS page size.
             // Therefore, truncate file manually to below the expected file size
 
-            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
                 path.of(configuration.getRoot()).concat("x").put(".k").$();
                 int fd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());

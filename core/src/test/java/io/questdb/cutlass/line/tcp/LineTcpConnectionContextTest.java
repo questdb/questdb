@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -59,7 +58,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
-            try (TableReader reader = new TableReader(configuration, tableName)) {
+            try (TableReader reader = newTableReader(configuration, tableName)) {
                 TableReaderMetadata meta = reader.getMetadata();
                 assertCursorTwoPass(expected, reader.getCursor(), meta);
                 Assert.assertEquals(5, meta.getColumnCount());
@@ -434,7 +433,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testCairoExceptionOnAddColumn() throws Exception {
         String table = "columnEx";
         runInContext(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "broken.d.1")) {
@@ -474,7 +473,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         configOverrideMaxUncommittedRows(1);
         netMsgBufferSize.set(60);
         runInContext(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
@@ -510,7 +509,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testCairoExceptionOnCreateTable() throws Exception {
         String table = "cairoEx";
         runInContext(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "broken.d")) {
@@ -1638,12 +1637,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             Assert.assertTrue(disconnected);
         });
 
-        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
-                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
-        );
-
-        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
-            Assert.fail();
+        try {
+            engine.getTableToken(table);
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
         }
@@ -1693,12 +1688,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             Assert.assertTrue(disconnected);
         });
 
-        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
-                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
-        );
-
-        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
-            Assert.fail();
+        try {
+            engine.getTableToken(table);
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
         }
@@ -1926,7 +1917,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             closeContext();
 
             // with this line we are testing that mmap size is calculated correctly even in case of fileSize=pageSize
-            (new TableReader(configuration, table)).close();
+            (new TableReader(configuration, engine.getTableToken(table))).close();
         });
     }
 
@@ -1979,7 +1970,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             } catch (SqlException ex) {
                 throw new RuntimeException(ex);
             }
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+            try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
             }
@@ -2005,7 +1996,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
             assertTable(expected, table);
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+
+            try (TableReader reader = getReader(table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
                 Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
             }
@@ -2052,7 +2044,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+        try (TableReader reader = newTableReader(configuration, tableName)) {
             Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
             int timestampColIndex = reader.getMetadata().getTimestampIndex();
             TableReaderRecordCursor recordCursor = reader.getCursor();
@@ -2094,7 +2086,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
-            try (TableReader reader = new TableReader(configuration, table)) {
+            try (TableReader reader = newTableReader(configuration, table)) {
                 assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
                 Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
             }

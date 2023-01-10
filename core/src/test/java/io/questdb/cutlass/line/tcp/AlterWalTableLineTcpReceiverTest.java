@@ -177,15 +177,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
+            TableToken tt;
             try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
                 tm.col("room", ColumnType.SYMBOL);
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
                 tm.wal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, tm.getMem(), tm.getPath(), tm);
+                tt = CairoTestUtils.create(engine, tm);
             }
 
-            try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
+            try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);
                 row.putSym(0, "6A");
                 row.putLong(1, 100L);
@@ -372,13 +373,105 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             );
 
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+            try (TableReader reader = getReader("plug")) {
                 TableReaderMetadata meta = reader.getMetadata();
                 Assert.assertEquals(1, meta.getMaxUncommittedRows());
                 Assert.assertEquals(20 * 1_000_000L, meta.getO3MaxLag());
                 Assert.assertFalse(reader.getSymbolMapReader(meta.getColumnIndex("label")).isCached());
             }
         });
+    }
+
+    @Test
+    public void testAlterCommandTruncateTable() throws Exception {
+        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
+        runInContext((server) -> {
+            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
+            final AtomicBoolean keepSending = new AtomicBoolean(true);
+            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
+            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
+
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null
+                         )
+            ) {
+
+                compiler.compile("CREATE TABLE plug as " +
+                        " (select cast(x as symbol) room, rnd_long() as watts, timestamp_sequence('2023-02-27', 1000) timestamp from long_sequence(100)) " +
+                        "timestamp(timestamp) partition by DAY WAL ", sqlExecutionContext);
+
+                drainWalQueue();
+                engine.releaseInactive();
+
+                final Thread ilpProducer = new Thread(() -> {
+                    String lineTpt = "plug,room=%d watts=%di %d%n";
+                    try {
+                        while (keepSending.get()) {
+                            try {
+                                long watts = ilpProducerWatts.getAndIncrement();
+                                long day = (watts + 1) % 4 == 0 ? day1 : day2;
+                                long room = watts % 20;
+                                String lineData = String.format(lineTpt, room, watts, day);
+                                send(lineData);
+                                LOG.info().$("sent: ").$(lineData).$();
+                            } catch (Throwable unexpected) {
+                                ilpProducerProblem.set(unexpected);
+                                keepSending.set(false);
+                                break;
+                            }
+                        }
+                    } finally {
+                        LOG.info().$("sender finished").$();
+                        Path.clearThreadLocals();
+                        ilpProducerHalted.countDown();
+                    }
+                }, "ilp-producer");
+                ilpProducer.start();
+
+
+                final Thread partitionDropper = new Thread(() -> {
+                    while (ilpProducerWatts.get() < 20) {
+                        Os.pause();
+                    }
+                    LOG.info().$("ABOUT TO TRUNCATE TABLE").$();
+                    try {
+                        CompiledQuery cc = compiler.compile("TRUNCATE TABLE plug", sqlExecutionContext);
+                        try (OperationFuture result = cc.execute(scSequence)) {
+                            result.await();
+                            Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
+                        }
+                        Os.sleep(100);
+                    } catch (SqlException e) {
+                        partitionDropperProblem.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                        // a few rows may have made it into the active partition,
+                        // as dropping it is concurrent with inserting
+                        keepSending.set(false);
+                    }
+
+                }, "partition-dropper");
+                partitionDropper.start();
+
+                ilpProducerHalted.await();
+                drainWalQueue();
+
+                Assert.assertNull(ilpProducerProblem.get());
+                Assert.assertNull(partitionDropperProblem.get());
+
+                // Check can read data without exceptions.
+                // Data can be random, no invariant to check.
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from plug", sink);
+            }
+        }, true, 50L);
     }
 
     @Test
@@ -399,7 +492,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected);
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+            try (TableReader rdr = getReader("plug")) {
                 TableReaderMetadata metadata = rdr.getMetadata();
                 Assert.assertTrue(
                         "Alter makes column indexed",
@@ -667,7 +760,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch getFirstLatch = new SOCountDownLatch(1);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc("plug", name)) {
+            if (Chars.equalsNc("plug", name.getTableName())) {
                 if (factoryType == PoolListener.SRC_WRITER) {
                     if (event == PoolListener.EV_GET) {
                         LOG.info().$("EV_GET ").$(name).$();
@@ -744,13 +837,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc("plug", name)) {
-                if (factoryType == PoolListener.SRC_WRITER) {
-                    if (event == PoolListener.EV_RETURN) {
-                        LOG.info().$("EV_RETURN ").$(name).$();
-                        releaseLatch.countDown();
-                    }
-                }
+            if (factoryType == PoolListener.SRC_WRITER
+                    && (event == PoolListener.EV_RETURN)
+                    && Chars.equalsNc("plug", name.getTableName())) {
+                LOG.info().$("EV_RETURN ").$(name).$();
+                releaseLatch.countDown();
             }
         });
 
@@ -783,7 +874,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     }
 
     protected void assertTableSize() {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+        try (TableReader reader = getReader("plug")) {
             Assert.assertEquals(10001, reader.getCursor().size());
         }
     }

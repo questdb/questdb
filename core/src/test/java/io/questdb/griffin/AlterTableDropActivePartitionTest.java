@@ -25,15 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -53,7 +52,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotDropActivePartitionWhenO3HasARowFromTheFuture() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     createTableX(tableName,
@@ -108,7 +107,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotDropWhenThereIsAWriter() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
@@ -124,7 +123,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
-                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    try (TableWriter ignore = getWriter(tableName)) {
                         dropPartition(tableName, LastPartitionTs);
                         Assert.fail();
                     } catch (EntryUnavailableException ex) {
@@ -137,7 +136,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionCreateItAgainAndDoItAgain() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
@@ -162,7 +161,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionDetach() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     createTableX(tableName,
@@ -205,7 +204,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
-        FilesFacade myFf = new FilesFacadeImpl() {
+        FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override
             public long readNonNegativeLong(int fd, long offset) {
                 return 17;
@@ -237,7 +236,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionFailsBecauseWeCannotReadPrevMaxPartition() throws Exception {
-        FilesFacade myFf = new FilesFacadeImpl() {
+        FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override
             public long readNonNegativeLong(int fd, long offset) {
                 return -1;
@@ -268,7 +267,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionNoReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
@@ -299,7 +298,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionWithReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     final String expectedTable = TableHeader +
@@ -343,8 +342,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
                     try (
-                            TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
+                            TableReader reader0 = getReader(tableName);
+                            TableReader reader1 = getReader(tableName)
                     ) {
                         assertSql(tableName, expectedTable);
                         Assert.assertEquals(6, reader0.size());
@@ -374,7 +373,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionWithUncommittedO3RowsWithReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     final String expectedTable = TableHeader +
@@ -403,9 +402,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "50\t2023-10-12T00:00:03.000000Z\n";
 
                     try (
-                            TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")
+                            TableReader reader0 = getReader(tableName);
+                            TableReader reader1 = getReader(tableName);
+                            TableWriter writer = getWriter(tableName)
                     ) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
@@ -447,7 +446,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionWithUncommittedRowsNoReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
@@ -463,7 +462,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    try (TableWriter writer = getWriter(tableName)) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
                         TableWriter.Row row = writer.newRow(lastTs); // expected to be lost
@@ -496,7 +495,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropActivePartitionWithUncommittedRowsWithReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     final String expectedTable = TableHeader +
@@ -525,9 +524,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "50\t2023-10-12T00:00:03.000000Z\n";
 
                     try (
-                            TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")
+                            TableReader reader0 = getReader(tableName);
+                            TableReader reader1 = getReader(tableName);
+                            TableWriter writer = getWriter(tableName)
                     ) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
@@ -569,7 +568,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropAllPartitions() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
 
                     createTableX(tableName,
@@ -612,7 +611,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropLastPartitionNoReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +
@@ -626,7 +625,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropLastPartitionWithReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
@@ -644,9 +643,9 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     final String expectedTableAfterDrop = TableHeader + "777\t2023-10-13T00:10:00.000000Z\n";
 
-                    try (TableReader reader0 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    try (TableReader reader0 = getReader(tableName)) {
                         insert("insert into " + tableName + " values(888, '2023-10-15T00:00:00.000000Z');");
-                        try (TableReader reader1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                        try (TableReader reader1 = getReader(tableName)) {
                             insert("insert into " + tableName + " values(777, '2023-10-13T00:10:00.000000Z');"); // o3
 
                             Assert.assertEquals(2, reader0.size());
@@ -677,10 +676,10 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropLastPartitionWithUncommittedO3RowsNoReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName, TableHeader); // empty table
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    try (TableWriter writer = getWriter(tableName)) {
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
                         long o3Ts = TimestampFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // o3 previous day
 
@@ -705,10 +704,10 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropLastPartitionWithUncommittedRowsNoReaders() throws Exception {
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
                     createTableX(tableName, TableHeader); // empty table
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    try (TableWriter writer = getWriter(tableName)) {
                         long prevTs = TimestampFormatUtils.parseTimestamp("2023-10-14T23:59:59.999999Z"); // previous day
                         long lastTs = TimestampFormatUtils.parseTimestamp(LastPartitionTs + "T00:00:00.000000Z");
 
