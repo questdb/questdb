@@ -26,29 +26,24 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
+/**
+ * Unlike {@link CharSequenceHashSet} doesn't keep an additional list for faster iteration and index-based access
+ * and also has a slightly higher load factor. One more difference is that this set doesn't support {@code null} keys.
+ */
+public class CompactCharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final ObjList<CharSequence> list;
-    private boolean hasNull = false;
 
-    public CharSequenceHashSet() {
+    public CompactCharSequenceHashSet() {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    @SuppressWarnings("CopyConstructorMissesField")
-    public CharSequenceHashSet(CharSequenceHashSet that) {
-        this(that.capacity, that.loadFactor);
-        addAll(that);
+    private CompactCharSequenceHashSet(int initialCapacity) {
+        this(initialCapacity, 0.6);
     }
 
-    private CharSequenceHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4);
-    }
-
-    private CharSequenceHashSet(int initialCapacity, double loadFactor) {
+    private CompactCharSequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
-        list = new ObjList<>(free);
         clear();
     }
 
@@ -59,10 +54,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(CharSequence key) {
-        if (key == null) {
-            return addNull();
-        }
-
         int index = keyIndex(key);
         if (index < 0) {
             return false;
@@ -72,62 +63,20 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return true;
     }
 
-    public final void addAll(CharSequenceHashSet that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
-        }
-    }
-
     public void addAt(int index, CharSequence key) {
         final String s = Chars.toString(key);
         keys[index] = s;
-        list.add(s);
         if (--free < 1) {
             rehash();
         }
     }
 
-    public boolean addNull() {
-        if (hasNull) {
-            return false;
-        }
-        --free;
-        hasNull = true;
-        list.add(null);
-        return true;
-    }
-
-    @Override
-    public final void clear() {
-        free = capacity;
-        Arrays.fill(keys, null);
-        list.clear();
-        hasNull = false;
-    }
-
     public boolean contains(CharSequence key) {
-        return key == null ? hasNull : keyIndex(key) < 0;
+        return keyIndex(key) < 0;
     }
 
     public boolean excludes(CharSequence key) {
-        return key == null ? !hasNull : keyIndex(key) > -1;
-    }
-
-    public CharSequence get(int index) {
-        return list.getQuick(index);
-    }
-
-    public CharSequence getLast() {
-        return list.getLast();
-    }
-
-    public int getListIndexAt(int keyIndex) {
-        int index = -keyIndex - 1;
-        return list.indexOf(keys[index]);
-    }
-
-    public int getListIndexOf(CharSequence cs) {
-        return getListIndexAt(keyIndex(cs));
+        return keyIndex(key) > -1;
     }
 
     public CharSequence keyAt(int index) {
@@ -137,10 +86,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     @Override
     public int remove(CharSequence key) {
-        if (key == null) {
-            return removeNull();
-        }
-
         int keyIndex = keyIndex(key);
         if (keyIndex < 0) {
             removeAt(keyIndex);
@@ -150,41 +95,23 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
     }
 
     @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    public int removeNull() {
-        if (hasNull) {
-            hasNull = false;
-            int index = list.remove(null);
-            free++;
-            return index;
-        }
-        return -1;
-    }
-
-    @Override
     public String toString() {
-        return list.toString();
+        return Arrays.toString(keys);
     }
 
     private void rehash() {
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-        this.keys = new CharSequence[len];
+        CharSequence[] oldKeys = keys;
+        keys = new CharSequence[len];
         mask = len - 1;
-        int n = list.size();
-        free -= n;
-        for (int i = 0; i < n; i++) {
-            final CharSequence key = list.getQuick(i);
-            keys[keyIndex(key)] = key;
+        for (int i = 0, n = oldKeys.length; i < n; i++) {
+            CharSequence key = oldKeys[i];
+            if (key != noEntryKey) {
+                keys[keyIndex(key)] = key;
+                free--;
+            }
         }
     }
 
