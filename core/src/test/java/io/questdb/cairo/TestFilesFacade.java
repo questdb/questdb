@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 
-public abstract class TestFilesFacade extends FilesFacadeImpl {
+public abstract class TestFilesFacade extends TestFilesFacadeImpl {
     public abstract boolean wasCalled();
 }

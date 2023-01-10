@@ -68,9 +68,10 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         indexBuilder = Misc.free(indexBuilder);
     }
 
-    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws ReaderOutOfDateException {
+    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
 
-        LOG.info().$("updating [table=").utf8(tableWriter.getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
+        TableToken tableToken = tableWriter.getTableToken();
+        LOG.info().$("updating [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
 
         try {
             final int tableId = op.getTableId();
@@ -79,9 +80,8 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
             cleanupColumnVersions.clear();
 
-            final String tableName = tableWriter.getTableName();
             if (tableWriter.inTransaction()) {
-                LOG.info().$("committing current transaction before UPDATE execution [table=").utf8(tableName).$(" instance=").$(op.getCorrelationId()).I$();
+                LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
                 tableWriter.commit();
             }
 
@@ -89,7 +89,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
             if (tableMetadata.getTableId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
-                throw ReaderOutOfDateException.of(tableName, tableId, tableMetadata.getTableId(),
+                throw TableReferenceOutOfDateException.of(tableToken, tableId, tableMetadata.getTableId(),
                         tableVersion, tableWriter.getStructureVersion());
             }
 
@@ -229,14 +229,14 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                 purgeOldColumnVersions();
             }
 
-            LOG.info().$("update finished [table=").$(tableName)
+            LOG.info().$("update finished [table=").$(tableToken)
                     .$(", instance=").$(op.getCorrelationId())
                     .$(", updated=").$(rowsUpdated)
                     .$(", txn=").$(tableWriter.getTxn())
                     .I$();
 
             return rowsUpdated;
-        } catch (ReaderOutOfDateException e) {
+        } catch (TableReferenceOutOfDateException e) {
             throw e;
         } catch (SqlException e) {
             throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');

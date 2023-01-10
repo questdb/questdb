@@ -74,10 +74,6 @@ public class Bootstrap {
         this(BANNER, System.getenv(), args);
     }
 
-    public Bootstrap(String banner, String... args) {
-        this(banner, System.getenv(), args);
-    }
-
     public Bootstrap(String banner, @Nullable Map<String, String> env, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
@@ -327,6 +323,9 @@ public class Bootstrap {
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
         log.advisoryW().$(" - attach partition suffix: ").$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();
         log.advisoryW().$(" - open database [id=").$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();
+        if (cairoConfig.isReadOnlyInstance()) {
+            log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
+        }
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db");
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup");

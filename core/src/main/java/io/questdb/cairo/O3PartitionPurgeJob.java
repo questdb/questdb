@@ -241,14 +241,14 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
-            CharSequence tableName,
+            TableToken tableToken,
             TxnScoreboard txnScoreboard,
             TxReader txReader,
-            int partitionBy
-    ) {
-        LOG.info().$("processing [table=").$(tableName).I$();
-        Path path = Path.getThreadLocal(root);
-        path.concat(tableName).slash$();
+            int partitionBy) {
+
+        LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
+        Path path = Path.getThreadLocal(root).concat(tableToken).slash$();
+
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
@@ -275,7 +275,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int lo = 0;
         int n = (int) partitionList.size();
 
-        path.of(root).concat(tableName);
+        path.of(root).concat(tableToken);
+
         int tableRootLen = path.length();
         try {
             txnScoreboard.ofRO(path);
@@ -323,7 +324,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // It is possible that table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
-                    .$("could not purge partition open [table=`").utf8(tableName)
+                    .$("could not purge partition open [table=`").utf8(tableToken.getDirName())
                     .$("`, ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
@@ -332,7 +333,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txReader.clear();
             txnScoreboard.clear();
         }
-        LOG.info().$("processed [table=").$(tableName).I$();
+        LOG.info().$("processed [table=").$(tableToken).I$();
     }
 
     @Override
@@ -343,7 +344,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 fileNameSinks[workerId],
                 partitionList.get(workerId),
                 configuration.getRoot(),
-                task.getTableName(),
+                task.getTableToken(),
                 txnScoreboards.get(workerId),
                 txnReaders.get(workerId),
                 task.getPartitionBy()

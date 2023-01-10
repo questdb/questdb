@@ -24,9 +24,11 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.cairo.TableToken;
+
 import java.io.Closeable;
 
 @FunctionalInterface
 public interface ResourcePool<T extends Closeable> {
-    T get(CharSequence name);
+    T get(TableToken name);
 }

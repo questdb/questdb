@@ -85,6 +85,8 @@ public interface CompiledQuery {
 
     RecordCursorFactory getRecordCursorFactory();
 
+    String getSqlStatement();
+
     /**
      * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
      */
@@ -98,5 +100,5 @@ public interface CompiledQuery {
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    void withSqlStatement(CharSequence sqlStatement);
+    void withSqlStatement(String sqlStatement);
 }

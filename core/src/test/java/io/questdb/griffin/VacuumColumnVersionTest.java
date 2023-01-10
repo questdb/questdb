@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -72,7 +73,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 );
                 compile("alter table testPurge drop column x");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
@@ -108,7 +109,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
                 String[] files = {"sym2.d", "sym2.k", "sym2.v"};
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET x = 100, sym2='EE' WHERE ts >= '1970-01-02'");
                     runPurgeJob(purgeJob);
 
@@ -161,7 +162,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                         sqlExecutionContext
                 );
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
@@ -210,8 +211,8 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 );
 
                 try (
-                        TableReader rdr1 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge1");
-                        TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge2")
+                        TableReader rdr1 = getReader("testPurge1");
+                        TableReader rdr2 = getReader("testPurge2")
                 ) {
                     executeUpdate("UPDATE testPurge1 SET x = 100, str = 'abc' WHERE ts >= '1970-01-02'");
                     executeUpdate("UPDATE testPurge2 SET x = 100, str = 'dcf' WHERE ts >= '1970-01-02'");
@@ -247,7 +248,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+            try (TableReader rdr = getReader("testPurge")) {
                 executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                 rdr.openPartition(0);
 
@@ -289,7 +290,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 compile("alter table testPurge add column x int");
                 compile("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                try (TableReader rdr = getReader("testPurge")) {
                     executeUpdate("UPDATE testPurge SET str='abcd', sym2='EE',x=1 WHERE ts >= '1970-01-02'");
                     rdr.openPartition(0);
                 }
@@ -314,10 +315,11 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
-                path.concat(tableName).concat(partitions[0]).concat("invalid_file.d");
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.touch(path.$());
-                path.of(configuration.getRoot()).concat(tableName).concat(partitions[0]).concat("x.d.abcd");
+                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
                 ff.touch(path.$());
 
                 String[] files = {"x.d"};
@@ -327,10 +329,10 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 assertFilesExist(partitions, tableName, files, ".2", false);
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
 
-                path.of(configuration.getRoot()).concat(tableName).concat(partitions[0]).concat("x.d.abcd");
+                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(tableName).concat(partitions[0]).concat("invalid_file.d");
+                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });
@@ -344,11 +346,12 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
-                path.concat(tableName).concat("abcd").put(Files.SEPARATOR);
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.mkdirs(path.$(), configuration.getMkDirMode());
 
-                path.of(configuration.getRoot()).concat(tableName).concat("2020-01-04.abcd").put(Files.SEPARATOR);
+                path.of(configuration.getRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
                 ff.mkdirs(path.$(), configuration.getMkDirMode());
 
                 String[] files = {"x.d"};
@@ -359,10 +362,10 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
 
                 path = Path.getThreadLocal(configuration.getRoot());
-                path.concat(tableName).concat("abcd").put(Files.SEPARATOR);
+                path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(tableName).concat("2020-01-04.abcd").put(Files.SEPARATOR);
+                path.of(configuration.getRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });
@@ -377,11 +380,12 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
 
     private void assertFilesExist(String tableName, String partition, String[] files, String colSuffix, boolean exist) {
         Path path = Path.getThreadLocal(configuration.getRoot());
+        TableToken tableToken = engine.getTableToken(tableName);
 
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];
-            path.of(configuration.getRoot()).concat(tableName).concat(partition).concat(file).put(colSuffix).$();
-            Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+            path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
+            Assert.assertEquals(Chars.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -399,9 +403,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
-        if (Os.isWindows()) {
-            engine.releaseInactive();
-        }
+        engine.releaseInactive();
         currentMicros += 10L * iteration++;
         purgeJob.run(0);
         currentMicros += 10L * iteration++;
@@ -428,7 +430,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         );
         compile("alter table " + tableName + " drop column x");
         compile("alter table " + tableName + " add column x int");
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        try (TableReader rdr = getReader(tableName)) {
             compile("insert into " + tableName + "(ts, x, str,sym1,sym2) " +
                     "select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                     " x," +

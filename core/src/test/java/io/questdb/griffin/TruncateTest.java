@@ -25,11 +25,10 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -218,7 +217,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             new Thread(() -> {
                 // lock table and wait until main thread uses it
-                try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+                try (TableWriter ignore = getWriter("y")) {
                     useBarrier.await();
                     releaseBarrier.await();
                 } catch (Exception e) {
@@ -571,7 +570,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
-                } catch (ReaderOutOfDateException e) {
+                } catch (TableReferenceOutOfDateException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
@@ -610,7 +609,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
-                } catch (ReaderOutOfDateException e) {
+                } catch (TableReferenceOutOfDateException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }

@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,6 +47,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class DatabaseSnapshotAgent implements Closeable {
@@ -246,6 +247,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
             // Delete snapshot directory to avoid recovery on next restart.
             srcPath.trimTo(snapshotRootLen).$();
+            memFile.close();
             if (ff.rmdir(srcPath) != 0) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove snapshot dir [dir=").put(srcPath)
@@ -338,9 +340,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                 throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
             }
 
-            try (
-                    TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
-            ) {
+            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
                 final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
@@ -358,19 +358,19 @@ public class DatabaseSnapshotAgent implements Closeable {
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             path.of(configuration.getRoot());
-                            int rootPathLength = path.length();
+                            TableToken tableToken = engine.getTableToken(tableName);
                             if (
                                     TableUtils.isValidTableName(tableName, tableName.length())
-                                            && ff.exists(path.concat(tableName).concat(TableUtils.META_FILE_NAME).$())
+                                            && ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())
                             ) {
-                                boolean isWalTable = TableSequencerAPI.isWalTable(tableName, path.trimTo(rootPathLength), ff);
+                                boolean isWalTable = engine.isWalTable(tableToken);
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                                 LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
-                                TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableName);
+                                TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableToken);
                                 snapshotReaders.add(reader);
 
-                                path.trimTo(snapshotLen).concat(tableName);
+                                path.trimTo(snapshotLen).concat(tableToken);
                                 int rootLen = path.length();
 
                                 if (isWalTable) {
@@ -398,7 +398,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                                 if (isWalTable) {
                                     metadata.clear();
-                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
+                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                                     path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                     metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
                                     metadata.close(Vm.TRUNCATE_TO_POINTER);

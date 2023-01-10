@@ -26,8 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -53,7 +53,7 @@ public class MimeTypesCacheTest {
             try (Path path = new Path()) {
                 path.of("/tmp/sdrqwhlkkhlkhasdlkahdoiquweoiuweoiqwe.ok").$();
                 try {
-                    new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+                    new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path);
                     Assert.fail();
                 } catch (HttpException e) {
                     Assert.assertTrue(Chars.startsWith(e.getMessage(), "could not open"));
@@ -65,7 +65,7 @@ public class MimeTypesCacheTest {
     @Test()
     public void testCannotRead1() throws Exception {
         AtomicInteger closeCount = new AtomicInteger(0);
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
                 closeCount.incrementAndGet();
@@ -94,7 +94,7 @@ public class MimeTypesCacheTest {
     @Test()
     public void testCannotRead2() throws Exception {
         AtomicInteger closeCount = new AtomicInteger(0);
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
 
             @Override
             public boolean close(int fd) {
@@ -135,7 +135,7 @@ public class MimeTypesCacheTest {
                         filePath = this.getClass().getResource("/mime.types").getFile();
                     }
                     path.of(filePath).$();
-                    MimeTypesCache mimeTypes = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+                    MimeTypesCache mimeTypes = new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path);
                     Assert.assertEquals(980, mimeTypes.size());
                     TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
                     TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
@@ -151,7 +151,7 @@ public class MimeTypesCacheTest {
     @Test()
     public void testWrongFileSize() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
                 closeCount.incrementAndGet();
@@ -175,7 +175,7 @@ public class MimeTypesCacheTest {
     @Test()
     public void testWrongFileSize2() throws Exception {
         AtomicInteger closeCount = new AtomicInteger(0);
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
                 closeCount.incrementAndGet();
@@ -199,7 +199,7 @@ public class MimeTypesCacheTest {
     @Test()
     public void testWrongFileSize4() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
             public boolean close(int fd) {
                 closeCount.incrementAndGet();

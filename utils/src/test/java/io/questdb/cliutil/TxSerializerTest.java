@@ -60,7 +60,7 @@ public class TxSerializerTest {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Assert.assertEquals(0, Files.rmdir(path.slash$()));
     }
 
     public static void setCairoStatic() {
@@ -103,12 +103,15 @@ public class TxSerializerTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.reloadTableNames();
     }
 
     @After
     public void tearDown() {
         engine.getTableIdGenerator().close();
         engine.clear();
+        engine.getTableSequencerAPI().releaseInactive();
+        engine.closeNameRegistry();
         removeTestPath(root);
     }
 

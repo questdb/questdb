@@ -37,13 +37,13 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     private IntervalBwdDataFrameCursor bwdCursor;
 
     public IntervalFwdDataFrameCursorFactory(
-            String tableName,
+            TableToken tableToken,
             int tableId,
             long tableVersion,
             RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex
     ) {
-        super(tableName, tableId, tableVersion);
+        super(tableToken, tableVersion);
         this.cursor = new IntervalFwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }

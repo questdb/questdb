@@ -68,7 +68,7 @@ public class HashJoinTest extends AbstractGriffinTest {
             //allocate readers eagerly (at least one for each join) so that final getMem() doesn't report them as diff
             TableReader[] readers = new TableReader[10];
             for (int i = 0; i < readers.length; i++) {
-                readers[i] = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "weather_data_historical");
+                readers[i] = getReader("weather_data_historical");
             }
             for (int i = 0; i < readers.length; i++) {
                 readers[i].close();

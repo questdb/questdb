@@ -536,7 +536,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
-            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "testing")) {
+            try (TableWriter ignore = getWriter("test")) {
                 try {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
@@ -952,7 +952,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
@@ -1225,7 +1225,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
@@ -1332,7 +1332,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
@@ -1393,7 +1393,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
@@ -1432,7 +1432,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 true
                         );
 
-                        try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+                        try (TableReader r = getReader("test")) {
                             Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
                         }
                     }
@@ -1482,7 +1482,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
@@ -2056,7 +2056,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
@@ -2115,7 +2115,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             try (Path path = new Path()) {
-                path.of(configuration.getRoot()).concat("test").$();
+                CharSequence dirName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+                path.of(configuration.getRoot()).concat(dirName).$();
                 Files.touch(path);
             }
 
@@ -2999,6 +3000,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private static void assertTable(String expected) throws SqlException {
+        refreshTablesInBaseEngine();
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
@@ -3038,7 +3040,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertTable(expected);
         textLoader.clear();
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "testing")) {
+        try (TableWriter writer = getWriter(engine, "test")) {
             writer.truncate();
         }
 
@@ -3136,7 +3138,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
@@ -3256,7 +3258,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                 }
         );
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+        try (TableReader reader = getReader("test")) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(1, reader.size());
@@ -3297,7 +3299,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return false;
             }
         };
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -3360,7 +3362,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             );
             Assert.assertEquals(expectedPartitionNames.size(), rmdirCallCount.get());
             Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
+            try (TableReader reader = getReader("test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
                 Assert.assertEquals(6, reader.size());

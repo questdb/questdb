@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -98,7 +97,10 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
+                if (walEnabled) {
+                    model.wal();
+                }
+                CairoTestUtils.create(engine, model);
             }
             if (walEnabled) {
                 Assert.assertTrue(isWalTable(tableName));
@@ -110,7 +112,7 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
             mayDrainWalQueue();
             assertTable(expected, tableName);
             if (expectedExtraStringColumns != null) {
-                try (TableReader reader = new TableReader(configuration, tableName)) {
+                try (TableReader reader = newTableReader(configuration, tableName)) {
                     TableReaderMetadata meta = reader.getMetadata();
                     Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
                     for (String colName : expectedExtraStringColumns) {

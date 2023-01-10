@@ -155,10 +155,9 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
 
             Thread tick = new Thread(() -> {
                 while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                    try (TableWriter tableWriter = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            "up",
-                            "test")) {
+                    try (TableWriter tableWriter = getWriter(
+                            "up"
+                    )) {
                         tableWriter.tick();
                     } catch (EntryUnavailableException e) {
                         // ignore and re-try
@@ -229,7 +228,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     try {
                         final SqlCompiler readerCompiler = new SqlCompiler(engine, null, snapshotAgent);
                         barrier.await();
-                        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                        try (TableReader rdr = getReader("up")) {
                             while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
                                 rdr.reload();
                                 assertReader(rdr, expectedValues, validators);

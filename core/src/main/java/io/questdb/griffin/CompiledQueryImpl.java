@@ -48,7 +48,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private InsertOperation insertOperation;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
-    private CharSequence sqlStatement;
+    private String sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
     private TextLoader textLoader;
@@ -113,6 +113,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
+    public String getSqlStatement() {
+        return sqlStatement;
+    }
+
+    @Override
     public CharSequence getStatementName() {
         return statementName;
     }
@@ -162,7 +167,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public void withSqlStatement(CharSequence sqlStatement) {
+    public void withSqlStatement(String sqlStatement) {
         this.sqlStatement = sqlStatement;
     }
 

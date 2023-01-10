@@ -31,12 +31,8 @@ import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
@@ -44,7 +40,6 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 public abstract class AbstractPgClassFunctionFactory implements FunctionFactory {
     private static final int INDEX_OID = 0;
     private static final int INDEX_RELNAME = 1;
-    private static final Log LOG = LogFactory.getLog(AbstractPgClassFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String[] relNames = {"pg_class"};
     private static final int fixedClassLen = relNames.length;
@@ -120,11 +115,12 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new PgClassRecordCursor(configuration, path, tempMem);
+            this.cursor = new PgClassRecordCursor(configuration);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.of(executionContext.getCairoEngine());
             cursor.toTop();
             return cursor;
         }
@@ -143,22 +139,16 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
     private static class PgClassRecordCursor implements NoRandomAccessRecordCursor {
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final FilesFacade ff;
         private final int[] intValues = new int[28];
-        private final Path path;
-        private final int plimit;
         private final DelegatingRecord record = new DelegatingRecord();
-        private final StringSink sink = new StringSink();
         private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
-        private final long tempMem;
-        private long findFileStruct = 0;
+        private final ObjList<TableToken> tableBucket = new ObjList<>();
+        private CairoEngine engine;
         private int fixedRelPos = -1;
+        private int tableIndex = -1;
+        private String tableName;
 
-        public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
-            this.ff = configuration.getFilesFacade();
-            this.path = path;
-            this.path.of(configuration.getRoot()).$();
-            this.plimit = this.path.length();
+        public PgClassRecordCursor(CairoConfiguration configuration) {
             this.record.of(staticReadingRecord);
             // oid
             this.intValues[0] = 0; // OID
@@ -182,12 +172,10 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             this.intValues[12] = 0;
             // relrewrite
             this.intValues[27] = 0;
-            this.tempMem = tempMem;
         }
 
         @Override
         public void close() {
-            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -202,20 +190,22 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             record.of(diskReadingRecord);
-            if (findFileStruct == 0) {
-                findFileStruct = ff.findFirst(path.trimTo(plimit).$());
-                if (findFileStruct > 0) {
-                    return next0();
-                }
+            if (tableIndex < 0) {
+                engine.getTableTokens(tableBucket, false);
+                tableIndex = 0;
+            }
 
-                findFileStruct = 0;
+            if (tableIndex == tableBucket.size()) {
                 return false;
             }
+            TableToken token = tableBucket.get(tableIndex++);
+            tableName = token.getTableName();
+            intValues[INDEX_OID] = token.getTableId();
+            return true;
+        }
 
-            if (ff.findNext(findFileStruct) > 0) {
-                return next0();
-            }
-            return false;
+        public void of(CairoEngine engine) {
+            this.engine = engine;
         }
 
         @Override
@@ -225,46 +215,12 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
         @Override
         public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
             fixedRelPos = -1;
             record.of(staticReadingRecord);
-        }
-
-        private boolean next0() {
-            do {
-                final long pUtf8NameZ = ff.findName(findFileStruct);
-                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct), sink)) {
-                    try {
-                        if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                            // open metadata file and read id
-                            int fd = ff.openRO(path);
-                            if (fd > -1) {
-                                if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                    intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
-                                    ff.close(fd);
-                                    return true;
-                                }
-                                LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
-                                ff.close(fd);
-                            } else {
-                                LOG.error().$("could not read metadata [file=").utf8(path).I$();
-                            }
-                            intValues[INDEX_OID] = -1;
-                            return true;
-                        }
-                    } finally {
-                        path.trimTo(plimit).$();
-                    }
-                }
-            } while (ff.findNext(findFileStruct) > 0);
-
-            findFileStruct = ff.findClose(findFileStruct);
-            return false;
+            tableIndex = -1;
         }
 
         private class DiskReadingRecord implements Record {
-            private final StringSink utf8SinkB = new StringSink();
-
             @Override
             public boolean getBool(int col) {
                 // most 'bool' fields are false, except 'relispopulated'
@@ -311,7 +267,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public CharSequence getStr(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return sink;
+                    return tableName;
                 }
                 return null;
             }
@@ -320,7 +276,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public CharSequence getStrB(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return getName(utf8SinkB);
+                    return tableName;
                 }
                 return null;
             }
@@ -329,19 +285,9 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public int getStrLen(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return sink.length();
+                    return tableName.length();
                 }
                 return -1;
-            }
-
-            @Nullable
-            private CharSequence getName(StringSink sink) {
-                sink.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
-                    return sink;
-                } else {
-                    return null;
-                }
             }
         }
 

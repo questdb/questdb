@@ -89,7 +89,7 @@ public class FilesTest {
         // for that reason (until we understood the problem better) we won't run this test
         // on OSX
         Assume.assumeTrue(Os.type != Os.OSX_ARM64 && Os.type != Os.OSX_AMD64);
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         String tmpFolder = temporaryFolder.newFolder("allocate").getAbsolutePath();
         AtomicInteger errors = new AtomicInteger();
@@ -198,7 +198,7 @@ public class FilesTest {
                         Path p2 = new Path().of(dst).slash$()
                 ) {
                     try {
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
+                        Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
                         dst.concat("file");
                         src.concat("file");
                         TestUtils.assertFileContentsEquals(src, dst);
@@ -314,7 +314,7 @@ public class FilesTest {
                         Path p2 = new Path().of(dst).slash$()
                 ) {
                     try {
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
+                        Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
 
                         dst.concat("file");
                         src.concat("file");

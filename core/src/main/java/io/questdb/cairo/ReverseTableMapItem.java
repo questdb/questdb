@@ -22,12 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool;
+package io.questdb.cairo;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.wal.WalWriter;
+class ReverseTableMapItem {
+    private final boolean isDropped;
+    private final TableToken tableToken;
 
-@FunctionalInterface
-public interface WalWriterSource {
-    WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName);
+    private ReverseTableMapItem(TableToken tableToken, boolean isDropped) {
+        this.tableToken = tableToken;
+        this.isDropped = isDropped;
+    }
+
+    public static ReverseTableMapItem of(TableToken tableToken) {
+        return new ReverseTableMapItem(tableToken, false);
+    }
+
+    public static ReverseTableMapItem ofDropped(TableToken tableToken) {
+        return new ReverseTableMapItem(tableToken, true);
+    }
+
+    public TableToken getToken() {
+        return tableToken;
+    }
+
+    public boolean isDropped() {
+        return isDropped;
+    }
 }

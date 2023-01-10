@@ -24,15 +24,17 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableToken;
+
 public interface QueryFutureUpdateListener {
     QueryFutureUpdateListener EMPTY = (commandId, status) -> {
     };
 
-    default void reportBusyWaitExpired(CharSequence tableName, long commandId) {
+    default void reportBusyWaitExpired(TableToken tableToken, long commandId) {
     }
 
     void reportProgress(long commandId, int status);
 
-    default void reportStart(CharSequence tableName, long commandId) {
+    default void reportStart(TableToken tableToken, long commandId) {
     }
 }

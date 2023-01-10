@@ -227,6 +227,19 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }
 
+    public void removeAllPartitions() {
+        maxTimestamp = Long.MIN_VALUE;
+        minTimestamp = Long.MAX_VALUE;
+        prevTransientRowCount = 0;
+        transientRowCount = 0;
+        fixedRowCount = 0;
+        attachedPartitions.clear();
+        recordStructureVersion++;
+        truncateVersion++;
+        partitionTableVersion++;
+        dataVersion++;
+    }
+
     public void removeAttachedPartitions(long timestamp) {
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
@@ -327,14 +340,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void truncate(long columnVersion) {
-        recordStructureVersion++;
-        maxTimestamp = Long.MIN_VALUE;
-        minTimestamp = Long.MAX_VALUE;
-        prevTransientRowCount = 0;
-        transientRowCount = 0;
-        fixedRowCount = 0;
-        txPartitionCount = 1;
-        attachedPartitions.clear();
+        removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, columnVersion);
@@ -348,11 +354,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 getSymbolColumnCount(),
                 ++txn,
                 seqTxn,
-                ++dataVersion,
-                ++partitionTableVersion,
+                dataVersion,
+                partitionTableVersion,
                 structureVersion.get(),
                 columnVersion,
-                ++truncateVersion
+                truncateVersion
         );
         finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, 0, CommitMode.NOSYNC);
     }
@@ -521,11 +527,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
+        final int size = attachedPartitions.size();
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
+        putInt(partitionTableOffset, size * Long.BYTES);
         // change partition count only when we have something to save to the partition table
         if (maxTimestamp != Long.MIN_VALUE) {
-            final int size = attachedPartitions.size();
-            final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
-            putInt(partitionTableOffset, size * Long.BYTES);
             for (int i = 0; i < size; i++) {
                 putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
             }

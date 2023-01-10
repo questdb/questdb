@@ -54,7 +54,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         for (int i = 0; i < len; i++) {
             char c = pattern.charAt(i);
             if (c == '_')
-                sink.put(".");
+                sink.put('.');
             else if (c == '%')
                 sink.put(".*?");
             else if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {

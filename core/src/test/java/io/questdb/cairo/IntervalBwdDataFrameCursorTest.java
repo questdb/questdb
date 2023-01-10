@@ -166,7 +166,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            TableReader reader = new TableReader(configuration, "x");
+            TableReader reader = newTableReader(configuration, "x");
             IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
                     new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
             cursor.of(reader, null);
@@ -342,25 +342,26 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
     public void testReload(int partitionBy, long increment, LongList intervals, int rowCount, CharSequence expected1, CharSequence expected2) throws Exception {
         assertMemoryLeak(() -> {
 
+            TableToken tableToken;
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
                     timestamp()
             ) {
-                CairoTestUtils.create(model);
+                tableToken = CairoTestUtils.create(model);
             }
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
 
             final int timestampIndex;
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
             }
             final TableReaderRecord record = new TableReaderRecord();
             try (
                     final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
-                            "x",
+                            tableToken,
                             -1,
                             0,
                             new RuntimeIntervalModel(intervals),
@@ -373,7 +374,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
                 assertEquals("", record, cursor);
 
-                try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+                try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);
                         row.putSym(0, rnd.nextChars(4));
@@ -407,14 +408,14 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.reload());
                 }
 
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing")) {
                     writer.removeColumn("b");
                 }
 
                 try {
                     factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC);
                     Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                } catch (TableReferenceOutOfDateException ignored) {
                 }
             }
         });
@@ -576,7 +577,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
                     row.putSym(0, rnd.nextChars(4));
@@ -599,7 +600,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             }
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
                 IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
                         new RuntimeIntervalModel(IntervalBwdDataFrameCursorTest.intervals),
