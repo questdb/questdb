@@ -26,3 +26,6 @@ core/CMakeCache.txt
 **/CMakeFiles
 .envrc
 .vscode
+
+# Rust
+core/src/main/rust/**/target

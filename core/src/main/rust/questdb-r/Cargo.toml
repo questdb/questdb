@@ -1,0 +1,11 @@
+[package]
+name = "questdb-r"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.66"
+
+[lib]
+crate_type = ["cdylib"]
+
+[dependencies]
+jni = "0.20.0"
