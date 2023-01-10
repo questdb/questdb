@@ -30,7 +30,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -2675,7 +2675,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testExpressionSyntaxError() throws Exception {
         assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
 
-        // when AST cache is not cleared below query will pickup "garbage" and will misrepresent error
+        // when AST cache is not cleared below query will pick up "garbage" and will misrepresent error
         assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
@@ -7170,7 +7170,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTableNameCannotOpen() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
@@ -7180,7 +7180,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -7199,11 +7199,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             ) {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
                 try {
-                    try {
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            CairoTestUtils.create(tableModels[i]);
+                            CairoTestUtils.create(tableModels[i], engine);
                         }
-                        compiler.compile("select * from tab", sqlExecutionContext);
+                        compiler.compile("select * from tab", ctx);
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());
@@ -7212,7 +7212,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableModel.getName()).slash$();
+                        TableToken tableToken = engine.getTableToken(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
                         Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
                         tableModel.close();
                     }
@@ -7233,7 +7234,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing");
+            String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            TableToken tableToken = new TableToken("tab", dirName, 1, false);
+            CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, tableToken, "testing");
             Assert.assertNull(lockedReason);
             try {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
@@ -7251,13 +7254,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } finally {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
-                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableModel.getName()).slash$();
-                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                        TableToken tableToken1 = engine.getTableToken(tableModel.getName());
+                        Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
+                        configuration.getFilesFacade().rmdir(path);
                         tableModel.close();
                     }
                 }
             } finally {
-                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null, false);
+                engine.unlock(AllowAllCairoSecurityContext.INSTANCE, tableToken, null, false);
             }
         });
     }
@@ -7265,13 +7269,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
-            configuration.getFilesFacade().touch(path.of(root).concat("tab").$());
+            String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            configuration.getFilesFacade().touch(path.of(root).concat(dirName).$());
         }
 
         assertSyntaxError(
                 "select * from tab",
                 14,
-                "table directory is of unknown format"
+                "table does not exist [table=tab]" // creating folder does not reserve table name anymore
         );
     }
 

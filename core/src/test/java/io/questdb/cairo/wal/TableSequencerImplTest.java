@@ -27,8 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -58,13 +56,14 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         int initialColumnCount = 2;
 
         runAddColumnRace(
-                barrier, tableName, iterations, 1,
+                barrier, tableName, iterations, 1, exception,
                 () -> {
                     try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata()) {
                         TestUtils.await(barrier);
 
+                        TableToken tableToken = engine.getTableToken(tableName);
                         do {
-                            engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
+                            engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {
@@ -86,22 +85,23 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         AtomicInteger threadId = new AtomicInteger();
 
         runAddColumnRace(
-                barrier, tableName, iterations, readerCount,
+                barrier, tableName, iterations, readerCount, exception,
                 () -> {
                     try {
                         TestUtils.await(barrier);
                         int threadIdValue = threadId.getAndIncrement();
                         long sv = 0;
+                        TableToken tableToken = engine.getTableToken(tableName);
                         do {
-                            long sv2 = engine.getTableSequencerAPI().lastTxn(tableName);
+                            long sv2 = engine.getTableSequencerAPI().lastTxn(tableToken);
                             if (threadIdValue != 0) {
-                                engine.getTableSequencerAPI().setDistressed(tableName);
+                                engine.getTableSequencerAPI().setDistressed(tableToken);
                                 if (sv != sv2) {
                                     sv = sv2;
                                     LOG.info().$("destroyed sv ").$(sv).$();
                                 }
                             } else {
-                                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, 0)) {
+                                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
                                     long transactions = 0;
                                     while (cursor.hasNext()) {
                                         transactions++;
@@ -109,7 +109,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                                     MatcherAssert.assertThat(transactions, OrderingComparison.greaterThanOrEqualTo(sv2));
                                 }
                             }
-                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
@@ -126,13 +126,14 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         int iterations = 100;
 
         runAddColumnRace(
-                barrier, tableName, iterations, 1,
+                barrier, tableName, iterations, 1, exception,
                 () -> {
                     try {
                         TestUtils.await(barrier);
+                        TableToken tableToken = engine.getTableToken(tableName);
                         do {
-                            engine.getTableSequencerAPI().lastTxn(tableName);
-                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
+                            engine.getTableSequencerAPI().lastTxn(tableToken);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
@@ -150,18 +151,19 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         int iterations = 100;
 
         runAddColumnRace(
-                barrier, tableName, iterations, readers,
+                barrier, tableName, iterations, readers, exception,
                 () -> {
                     try {
                         TestUtils.await(barrier);
+                        TableToken tableToken = engine.getTableToken(tableName);
                         long lastTxn = 0;
                         do {
-                            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, lastTxn)) {
+                            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, lastTxn)) {
                                 while (cursor.hasNext()) {
                                     lastTxn = cursor.getTxn();
                                 }
                             }
-                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableToken) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     } finally {
@@ -170,20 +172,21 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 });
     }
 
-    private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, Runnable runnable) throws Exception {
+    private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, AtomicReference<Throwable> exception, Runnable runnable) throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                     .col("int", ColumnType.INT)
                     .timestamp("ts")
                     .wal()) {
-                engine.createTableUnsafe(
+                engine.createTable(
                         AllowAllCairoSecurityContext.INSTANCE,
                         model.getMem(),
                         model.getPath(),
-                        model
+                        false,
+                        model,
+                        false
                 );
             }
-            AtomicReference<Throwable> exception = new AtomicReference<>();
             ObjList<Thread> readerThreadList = new ObjList<>();
             for (int i = 0; i < readerThreads; i++) {
                 Thread t = new Thread(runnable);
@@ -204,11 +207,11 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
-        try (WalWriter ww = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (WalWriter ww = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName))) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {
-                addColumn(ww, "newCol" + i);
+                addColumn(ww, "newCol" + i, ColumnType.INT);
                 if (exception.get() != null) {
                     break;
                 }
@@ -216,11 +219,5 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         } catch (Throwable e) {
             exception.set(e);
         }
-    }
-
-    static void addColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, 11, ColumnType.INT, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
     }
 }

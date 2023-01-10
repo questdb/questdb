@@ -54,7 +54,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
 
     public IntHashSet(int initialCapacity, double loadFactor, int noKeyValue) {
         super(initialCapacity, loadFactor, noKeyValue);
-        this.list = new IntList(free);
+        list = new IntList(free);
         clear();
     }
 
@@ -131,7 +131,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     public int hashCode() {
         int hashCode = 0;
         for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
+            if (keys[i] != noEntryKeyValue) {
                 hashCode += keys[i];
             }
         }
@@ -150,6 +150,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         return it;
     }
 
+    @Override
     public int remove(int key) {
         int keyIndex = keyIndex(key);
         if (keyIndex < 0) {
@@ -159,6 +160,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         return -1;
     }
 
+    @Override
     public void removeAt(int index) {
         if (index < 0) {
             int index1 = -index - 1;
@@ -182,7 +184,7 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-        this.keys = new int[len];
+        keys = new int[len];
         Arrays.fill(keys, noEntryKeyValue);
         mask = len - 1;
         int n = list.size();

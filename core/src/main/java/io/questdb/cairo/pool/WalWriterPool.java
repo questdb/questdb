@@ -25,16 +25,18 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
 
-    private final TableSequencerAPI tableSequencerAPI;
+    private final CairoEngine engine;
 
-    public WalWriterPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
         super(configuration);
-        this.tableSequencerAPI = tableSequencerAPI;
+        this.engine = engine;
     }
 
     @Override
@@ -43,8 +45,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     }
 
     @Override
-    protected WalWriterTenant newTenant(String tableName, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(this, entry, index, tableName, tableSequencerAPI);
+    protected WalWriterTenant newTenant(TableToken tableToken, Entry<WalWriterTenant> entry, int index) {
+        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant {
@@ -56,10 +58,10 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 AbstractMultiTenantPool<WalWriterTenant> pool,
                 Entry<WalWriterTenant> entry,
                 int index,
-                String tableName,
+                TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI
         ) {
-            super(pool.getConfiguration(), tableName, tableSequencerAPI);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -69,8 +71,14 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         public void close() {
             if (isOpen()) {
                 final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
-                if (pool != null && entry != null && !isDistressed()) {
-                    if (pool.returnToPool(this)) {
+                if (pool != null && entry != null) {
+                    if (!isDistressed()) {
+                        if (pool.returnToPool(this)) {
+                            return;
+                        }
+                    } else {
+                        super.close();
+                        pool.expelFromPool(this);
                         return;
                     }
                 }

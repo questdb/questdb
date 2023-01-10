@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -225,7 +224,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
 
                 assertTableSizeEventually(engine, "mytable", 1);
-                try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                try (TableReader reader = getReader("mytable")) {
                     TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
                             "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
                 }
@@ -301,7 +300,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 }
             });
             // make sure the 2nd unfinished row was not inserted by the server
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 assertEquals(1, reader.getCursor().size());
             }
         });
@@ -415,7 +414,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+            try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
                         "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }

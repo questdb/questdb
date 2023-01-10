@@ -1822,7 +1822,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             QueryModel model,
             @Transient TableReader reader,
             RecordMetadata metadata,
-            String tableName,
+            TableToken tableToken,
             IntrinsicModel intrinsicModel,
             Function filter,
             SqlExecutionContext executionContext,
@@ -1834,7 +1834,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
             dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(
-                    tableName,
+                    tableToken,
                     model.getTableId(),
                     model.getTableVersion(),
                     intrinsicModel.buildIntervalModel(),
@@ -1843,7 +1843,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(
-                    tableName,
+                    tableToken,
                     model.getTableId(),
                     model.getTableVersion(),
                     GenericRecordMetadata.deepCopyOf(reader.getMetadata())
@@ -3021,7 +3021,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && twoDeepNested.getWhereClause() == null
         ) {
             CharSequence tableName = tableNameEn.token;
-            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+            TableToken tableToken = executionContext.getTableToken(tableName);
+            try (TableReader reader = executionContext.getReader(tableToken)) {
                 CharSequence columnName = model.getBottomUpColumnNames().get(0);
                 TableReaderMetadata readerMetadata = reader.getMetadata();
                 int columnIndex = readerMetadata.getColumnIndex(columnName);
@@ -3621,15 +3622,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = true;
         }
 
+        final TableToken tableToken = executionContext.getTableToken(tab);
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             try (
-                    TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tab);
-                    TableRecordMetadata metadata = engine.getMetadata(executionContext.getCairoSecurityContext(), tab, model.getTableVersion())
+                    TableReader reader = executionContext.getReader(tableToken);
+                    TableRecordMetadata metadata = executionContext.getMetadata(tableToken, model.getTableVersion())
             ) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, metadata);
             }
         } else {
-            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tab, model.getTableId(), model.getTableVersion())) {
+            try (TableReader reader = executionContext.getReader(
+                    tableToken,
+                    model.getTableVersion())) {
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
@@ -3711,7 +3715,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.deepCopyOf(reader.getMetadata());
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
-        final String tableName = metadata.getTableName();
+        // Reader TableToken can have out of date table name in getLoggingName().
+        // We need to resolve it from the engine to get correct value.
+        final TableToken tableToken = reader.getTableToken();
 
         final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
                 model,
@@ -3780,7 +3786,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         model,
                         reader,
                         myMeta,
-                        tableName,
+                        tableToken,
                         intrinsicModel,
                         f,
                         executionContext,
@@ -3795,10 +3801,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                dfcFactory = new IntervalFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
+                dfcFactory = new IntervalFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                dfcFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                dfcFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 intervalHitsOnlyOnePartition = false;
             }
 
@@ -4019,7 +4025,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
                 Misc.free(dfcFactory);
-                dfcFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                dfcFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 rowFactory = new BwdDataFrameRowCursorFactory();
             } else {
                 rowFactory = new DataFrameRowCursorFactory();
@@ -4049,10 +4055,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RowCursorFactory rowCursorFactory;
 
             if (isOrderDescendingByDesignatedTimestampOnly(model)) {
-                cursorFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                cursorFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdDataFrameRowCursorFactory();
             } else {
-                cursorFactory = new FullFwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                cursorFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
                 rowCursorFactory = new DataFrameRowCursorFactory();
             }
 
@@ -4080,7 +4086,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByAllIndexedRecordCursorFactory(
                         myMeta,
                         configuration,
-                        new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                        new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
                         prefixes
@@ -4093,7 +4099,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                        new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                         latestByColumnIndex,
                         null,
                         columnIndexes
@@ -4113,7 +4119,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
                     myMeta,
                     configuration,
-                    new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                    new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     partitionByColumnIndexes,
@@ -4126,7 +4132,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByAllFilteredRecordCursorFactory(
                 myMeta,
                 configuration,
-                new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
+                new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta),
                 RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                 keyTypes,
                 null,

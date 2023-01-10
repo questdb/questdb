@@ -28,18 +28,15 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final GenericRecordMetadata metadata;
-    private final int tableId;
-    private final String tableName;
+    private final TableToken tableToken;
     private final long tableVersion;
 
-    public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion, GenericRecordMetadata metadata) {
-        this.tableName = tableName;
-        this.tableId = tableId;
+    public AbstractDataFrameCursorFactory(TableToken tableToken, long tableVersion, GenericRecordMetadata metadata) {
+        this.tableToken = tableToken;
         this.tableVersion = tableVersion;
         this.metadata = metadata;
     }
@@ -53,27 +50,24 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     @Override
-    public boolean supportTableRowId(CharSequence tableName) {
-        return Chars.equalsIgnoreCaseNc(this.tableName, tableName);
+    public boolean supportTableRowId(TableToken tableToken) {
+        return this.tableToken.equals(tableToken);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.meta("on").val(tableName);
+        sink.meta("on").val(tableToken);
     }
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableName).put("\"}");
+        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableToken).put("\"}");
     }
 
     protected TableReader getReader(SqlExecutionContext executionContext) {
-        return executionContext.getCairoEngine()
-                .getReader(
-                        executionContext.getCairoSecurityContext(),
-                        tableName,
-                        tableId,
-                        tableVersion
-                );
+        return executionContext.getReader(
+                tableToken,
+                tableVersion
+        );
     }
 }

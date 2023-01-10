@@ -25,7 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -57,8 +61,8 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return dataFrameCursorFactory.supportTableRowId(tableToken);
     }
 
     @Override

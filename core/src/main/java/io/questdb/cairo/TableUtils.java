@@ -57,7 +57,6 @@ public final class TableUtils {
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
-    public static final String EVENT_FILE_NAME = "_event";
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
     public static final int INITIAL_TXN = 0;
@@ -73,17 +72,16 @@ public final class TableUtils {
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
-    public static final long META_OFFSET_WAL_ENABLED = 40; // INT
+    public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final int NULL_LEN = -1;
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
+    public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
-    public static final String TXNLOG_FILE_NAME = "_txnlog";
-    public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
-    public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
@@ -206,9 +204,10 @@ public final class TableUtils {
             MemoryMARW memory,
             Path path,
             TableStructure structure,
-            int tableId
+            int tableId,
+            CharSequence dirName
     ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
+        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, dirName);
     }
 
     public static void createTable(
@@ -217,12 +216,13 @@ public final class TableUtils {
             Path path,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            CharSequence dirName
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }
 
     public static void createTable(
@@ -233,9 +233,10 @@ public final class TableUtils {
             Path path,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            CharSequence dirName
     ) {
-        createTable(ff, root, mkDirMode, memory, path, structure.getTableName(), structure, tableVersion, tableId);
+        createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
     }
 
     public static void createTable(
@@ -244,13 +245,13 @@ public final class TableUtils {
             int mkDirMode,
             MemoryMARW memory,
             Path path,
-            CharSequence tableName,
+            CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(tableName).$(']').$();
-        path.of(root).concat(tableName);
+        LOG.debug().$("create table [name=").$(tableDir).$(']').$();
+        path.of(root).concat(tableDir);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
@@ -327,6 +328,9 @@ public final class TableUtils {
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+            createTableNameFile(mem, getTableNameFromDirName(tableDir));
         } finally {
             if (dirFd > 0) {
                 if (ff.fsync(dirFd) != 0) {
@@ -510,6 +514,26 @@ public final class TableUtils {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
+    @NotNull
+    public static String getTableDir(boolean mangleDirNames, @NotNull String tableName, int tableId, boolean isWal) {
+        String dirName = tableName;
+        if (isWal) {
+            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            dirName += tableId;
+        } else if (mangleDirNames) {
+            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        }
+        return dirName;
+    }
+
+    public static CharSequence getTableNameFromDirName(CharSequence privateName) {
+        int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            return privateName;
+        }
+        return Chars.toString(privateName).substring(0, suffixIndex);
+    }
+
     public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
@@ -520,11 +544,11 @@ public final class TableUtils {
 
     public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (isMetaFileMissingFileSystemError(ex)) {
+        if (ex.errnoReadPathDoesNotExist()) {
             if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableName)
+                LOG.info().$("error reloading metadata [table=").utf8(tableName)
                         .$(", errno=").$(ex.getErrno())
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                        .$(", error=").utf8(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
                 LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
@@ -672,6 +696,7 @@ public final class TableUtils {
             return -1;
         }
 
+        LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
         return fd;
     }
 
@@ -843,6 +868,17 @@ public final class TableUtils {
         }
     }
 
+    public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
+        // Update name in _name file.
+        // This is potentially racy but the file only read on startup when the tables.d file is missing 
+        // so very limited circumstances.
+        Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();
+        memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
+        memory.jumpTo(0);
+        createTableNameFile(memory, newTableToken.getTableName());
+        memory.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
@@ -869,8 +905,8 @@ public final class TableUtils {
         return Unsafe.getUnsafe().getLong(tempMem8b);
     }
 
-    public static void removeOrException(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path) && !ff.remove(path)) {
+    public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
+        if (ff.exists(path) && !ff.closeRemove(fd, path)) {
             throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
         }
     }
@@ -959,7 +995,7 @@ public final class TableUtils {
         }
     }
 
-    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
+    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, TableToken tableName, int partitionBy) {
         final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
         while (true) {
             long cursor = seq.next();
@@ -1198,6 +1234,12 @@ public final class TableUtils {
         }
     }
 
+    private static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+        mem.putStr(charSequence);
+        mem.putByte((byte) 0);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
         if (strLength < 1 || strLength > 255) {
             // EXT4 and many others do not allow file name length > 255 bytes
@@ -1215,11 +1257,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
-    }
-
-    private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

@@ -24,18 +24,16 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DynamicTableReaderMetadata;
-import io.questdb.cairo.GenericTableRecordMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataTenant> {
-    private final TableSequencerAPI tableSequencerAPI;
+    private final CairoEngine engine;
 
-    public MetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public MetadataPool(CairoConfiguration configuration, CairoEngine engine) {
         super(configuration);
-        this.tableSequencerAPI = tableSequencerAPI;
+        this.engine = engine;
     }
 
     @Override
@@ -44,11 +42,11 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     }
 
     @Override
-    protected MetadataTenant newTenant(String tableName, Entry<MetadataTenant> entry, int index) {
-        if (tableSequencerAPI.hasSequencer(tableName)) {
-            return new SequencerMetadataTenant(this, entry, index, tableName, tableSequencerAPI);
+    protected MetadataTenant newTenant(TableToken tableToken, Entry<MetadataTenant> entry, int index) {
+        if (engine.isWalTable(tableToken)) {
+            return new SequencerMetadataTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());
         }
-        return new TableReaderMetadataTenant(this, entry, index, tableName);
+        return new TableReaderMetadataTenant(this, entry, index, tableToken);
     }
 
     public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
@@ -57,6 +55,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
         private final int index;
         private final TableSequencerAPI tableSequencerAPI;
+        private final TableToken tableToken;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
         private AbstractMultiTenantPool<MetadataTenant> pool;
 
@@ -64,14 +63,15 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 AbstractMultiTenantPool<MetadataTenant> pool,
                 Entry<MetadataTenant> entry,
                 int index,
-                CharSequence tableName,
+                TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI
         ) {
             this.pool = pool;
             this.entry = entry;
             this.index = index;
             this.tableSequencerAPI = tableSequencerAPI;
-            tableSequencerAPI.getTableMetadata(tableName, this);
+            this.tableToken = tableToken;
+            tableSequencerAPI.getTableMetadata(tableToken, this);
         }
 
         @Override
@@ -102,7 +102,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
         @Override
         public void refresh() {
-            tableSequencerAPI.reloadMetadataConditionally(getTableName(), getStructureVersion(), this);
+            tableSequencerAPI.reloadMetadataConditionally(tableToken, getStructureVersion(), this);
         }
     }
 
@@ -115,9 +115,9 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 AbstractMultiTenantPool<MetadataTenant> pool,
                 AbstractMultiTenantPool.Entry<MetadataTenant> entry,
                 int index,
-                CharSequence name
+                TableToken tableToken
         ) {
-            super(pool.getConfiguration(), name);
+            super(pool.getConfiguration(), tableToken);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

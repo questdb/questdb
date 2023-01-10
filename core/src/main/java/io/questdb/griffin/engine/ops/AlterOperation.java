@@ -123,14 +123,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
-                            .$(" ,table=").$(tableWriter.getTableName())
+                            .$(" ,table=").$(tableWriter.getTableToken())
                             .I$();
                     throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableName())
+            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableToken())
                     .$(", command=").$(command)
                     .$(", errno=").$(e.getErrno())
                     .$(", message=`").$(e.getFlyweightMessage()).$('`')
@@ -155,7 +155,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public AlterOperation deserialize(TableWriterTask event) {
         clear();
 
-        tableName = event.getTableName();
+        tableToken = event.getTableToken();
         long readPtr = event.getData();
         long length = event.getDataSize();
         final long hi = readPtr + length;
@@ -217,11 +217,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     public AlterOperation of(
             short command,
-            String tableName,
+            TableToken tableToken,
             int tableId,
             int tableNamePosition
     ) {
-        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableName, tableId, -1, tableNamePosition);
+        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableToken, tableId, -1, tableNamePosition);
         this.command = command;
         this.charSequenceList = this.objCharList;
         return this;
@@ -304,7 +304,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableName)
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", detachStatus=").put(attachDetachStatus.name())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
@@ -319,7 +319,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableName)
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", detachStatus=").put(attachDetachStatus.name())
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
@@ -352,7 +352,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = longList.getQuick(i * 2);
             if (!tableWriter.removePartition(partitionTimestamp)) {
                 throw CairoException.nonCritical()
-                        .put("could not remove partition [table=").put(tableName)
+                        .put("could not remove partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
                         .put(']')
@@ -366,7 +366,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             tableWriter.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").$(tableName)
+            LOG.error().$("could not change o3MaxLag [table=").utf8(tableToken != null ? tableToken.getTableName() : "<null>")
                     .$(", errno=").$(e.getErrno())
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();

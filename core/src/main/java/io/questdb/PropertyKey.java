@@ -385,7 +385,9 @@ public enum PropertyKey {
     CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
     CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
-    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl");
+    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
+    READ_ONLY_INSTANCE("readonly"),
+    CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

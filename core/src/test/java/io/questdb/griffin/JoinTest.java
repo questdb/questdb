@@ -27,13 +27,12 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
@@ -115,8 +114,8 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
+                    TableWriter orders = getWriter("orders");
+                    TableWriter quotes = getWriter("quotes")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;
@@ -4000,8 +3999,8 @@ public class JoinTest extends AbstractGriffinTest {
                     "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)", sqlExecutionContext);
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
+                    TableWriter orders = getWriter("orders");
+                    TableWriter quotes = getWriter("quotes")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;
@@ -4715,13 +4714,13 @@ public class JoinTest extends AbstractGriffinTest {
     private void testJoinForCursorLeaks(String sql) throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger counter = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRO(LPSZ name) {
                     if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 

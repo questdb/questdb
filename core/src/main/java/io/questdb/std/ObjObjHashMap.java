@@ -45,7 +45,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         this(8);
     }
 
-    private ObjObjHashMap(int initialCapacity) {
+    public ObjObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 
