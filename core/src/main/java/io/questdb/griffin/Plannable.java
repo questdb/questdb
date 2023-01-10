@@ -28,6 +28,8 @@ public interface Plannable {
 
     /**
      * adds this object's data to plan
+     *
+     * @param sink sink to send the plan to
      */
     void toPlan(PlanSink sink);
 }

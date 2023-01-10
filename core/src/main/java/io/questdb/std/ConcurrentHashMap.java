@@ -907,9 +907,11 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * and must not attempt to update any other mappings of this map.
      *
      * @param key             key with which the specified value is to be associated
+     * @param token           token to pass to the mapping function
      * @param mappingFunction the function to compute a value
      * @return the current (existing or computed) value associated with
      * the specified key, or null if the computed value is null
+     *
      * @throws NullPointerException  if the specified key or mappingFunction
      *                               is null
      * @throws IllegalStateException if the computation detectably

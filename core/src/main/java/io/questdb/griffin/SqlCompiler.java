@@ -276,8 +276,13 @@ public class SqlCompiler implements Closeable {
      * <p>
      * Useful PG doc link :
      *
-     * @param query         - block of queries to process
-     * @param batchCallback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
+     * @param query            - block of queries to process
+     * @param executionContext - SQL execution context
+     * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
+     * @throws SqlException              - in case of syntax error
+     * @throws PeerDisconnectedException - when peer is disconnected
+     * @throws PeerIsSlowToReadException - when peer is too slow
+     * @throws QueryPausedException      - when query is paused
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
     public void compileBatch(
