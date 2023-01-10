@@ -1499,14 +1499,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final RecordMetadata masterMetadata = master.getMetadata();
                         final RecordMetadata slaveMetadata = slave.getMetadata();
                         Function filter = null;
-                        JoinRecordMetadata joinMetadata = null;
+                        JoinRecordMetadata joinMetadata;
 
                         switch (joinType) {
                             case JOIN_CROSS_LEFT:
+                                assert slaveModel.getOuterJoinExpressionClause() != null;
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
-                                if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                    filter = functionParser.parseFunction(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                }
+                                filter = functionParser.parseFunction(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
 
                                 master = new NestedLoopLeftJoinRecordCursorFactory(
                                         joinMetadata,

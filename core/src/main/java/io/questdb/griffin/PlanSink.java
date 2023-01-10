@@ -17,15 +17,21 @@ public interface PlanSink {
 
     PlanSink child(CharSequence outer, Plannable inner);
 
+    PlanSink child(Plannable p, int order);
+
     PlanSink child(Plannable p);
 
     void clear();
 
     void end();
 
+    SqlExecutionContext getExecutionContext();
+
     CharSequence getLine(int idx);
 
     int getLineCount();
+
+    int getOrder();
 
     @TestOnly
     StringSink getSink();
@@ -80,5 +86,6 @@ public interface PlanSink {
     PlanSink val(long long0, long long1, long long2, long long3);
 
     PlanSink val(long hash, int geoHashBits);
+
 
 }

@@ -38,6 +38,7 @@ public abstract class BasePlanSink implements PlanSink {
     protected final EscapingStringSink textSink;
     protected int depth;
     protected SqlExecutionContext executionContext;
+    protected int order;
     protected EscapingStringSink sink;
     protected boolean useBaseMetadata;
 
@@ -47,6 +48,15 @@ public abstract class BasePlanSink implements PlanSink {
         this.sink = textSink;
         this.depth = 0;
         this.factoryStack = new ObjStack<>();
+        this.order = -1;
+    }
+
+    public PlanSink child(Plannable p, int order) {
+        this.order = order;
+        child(p);
+        this.order = -1;
+
+        return this;
     }
 
     public void clear() {
@@ -54,6 +64,17 @@ public abstract class BasePlanSink implements PlanSink {
         this.depth = 0;
         this.factoryStack.clear();
         this.executionContext = null;
+        this.order = -1;
+    }
+
+    @Override
+    public SqlExecutionContext getExecutionContext() {
+        return executionContext;
+    }
+
+    @Override
+    public int getOrder() {
+        return order;
     }
 
     @TestOnly

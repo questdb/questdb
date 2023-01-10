@@ -30,9 +30,4 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
  * Marker interface to indicate that constant is actually a TYPE and not a VALUE.
  */
 public interface TypeConstant extends ConstantFunction {
-
-    @Override
-    default void toPlan(PlanSink sink) {
-        sink.val(getClass().getSimpleName());
-    }
 }

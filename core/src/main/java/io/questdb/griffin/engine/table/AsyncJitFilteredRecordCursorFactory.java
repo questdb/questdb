@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
@@ -183,7 +182,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         int order;
         if (limitLoFunction != null) {
             try {
-                limitLoFunction.init(frameSequence.getSymbolTableSource(), null);
+                limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
                 rowsRemaining = limitLoFunction.getLong(null);
             } catch (Exception e) {
                 rowsRemaining = Long.MAX_VALUE;
@@ -201,12 +200,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
         }
-        if (order != ORDER_ASC) {
-            sink.attr("pageFrameDirection").val(nameOf(order));
-        }
         sink.attr("filter").val(filterAtom);
         sink.attr("workers").val(workerCount);
-        sink.child(base);
+        sink.child(base, order);
     }
 
     @Override
@@ -288,7 +284,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         negativeLimitCursor.freeRecords();
     }
 
-    private static class AsyncJitFilterAtom extends AsyncFilterAtom implements Plannable {
+    private static class AsyncJitFilterAtom extends AsyncFilterAtom {
 
         final ObjList<Function> bindVarFunctions;
         final MemoryCARW bindVarMemory;
@@ -322,11 +318,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             super.init(symbolTableSource, executionContext);
             Function.init(bindVarFunctions, symbolTableSource, executionContext);
             prepareBindVarMemory(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            super.toPlan(sink);
         }
 
         private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {

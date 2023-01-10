@@ -2123,6 +2123,7 @@ public final class SqlParser {
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
+        explainModelPool.clear();
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {

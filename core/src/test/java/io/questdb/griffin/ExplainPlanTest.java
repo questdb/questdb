@@ -3654,7 +3654,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
-                        "      pageFrameDirection: backward\n" +
                         "      filter: (s=$0::string or s=$1::string)\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -3668,7 +3667,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
-                        "      pageFrameDirection: backward\n" +
                         "      filter: (s='S1' or s='S2')\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -4174,7 +4172,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
-                        "      pageFrameDirection: backward\n" +
                         "      filter: d=1.2\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -4188,12 +4185,26 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from tab where d = 1.2 limit -1 ",
                 "Async JIT Filter\n" +
                         "  limit: 1\n" +
-                        "  pageFrameDirection: backward\n" +
                         "  filter: d=1.2\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n");
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
+    }
+
+    @Test
+    public void testSelectWithJittedFilter24e() throws Exception {
+        bindVariableService.setInt("maxRows", -1);
+
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
+                "select * from tab where d = 1.2 limit :maxRows ",
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
     }
 
     @Test
@@ -4202,7 +4213,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
                         "    Async JIT Filter\n" +
-                        "      pageFrameDirection: backward\n" +
                         "      filter: d=1.2\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
@@ -4456,6 +4466,36 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
     }
+
+    @Test
+    public void testSelectWithNonJittedFilter18() throws Exception {
+        assertPlan("create table tab ( l long, ts timestamp);",
+                "select * from tab where (l ^ l) > 0 limit -1",
+                "Async Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: 0<l^l\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
+    }
+
+    @Test
+    public void testSelectWithNonJittedFilter19() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setLong("maxRows", -1);
+
+        assertPlan("create table tab ( l long, ts timestamp);",
+                "select * from tab where (l ^ l) > 0 limit :maxRows",
+                "Async Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: 0<l^l\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
+    }
+
 
     @Test//jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
@@ -45,6 +46,10 @@ public class DataFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Row forward scan");
+        if (sink.getOrder() == DataFrameCursorFactory.ORDER_DESC) {
+            sink.type("Row backward scan");
+        } else {
+            sink.type("Row forward scan");
+        }
     }
 }

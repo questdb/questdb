@@ -165,7 +165,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         int order;
         if (limitLoFunction != null) {
             try {
-                limitLoFunction.init(frameSequence.getSymbolTableSource(), null);
+                limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
                 rowsRemaining = limitLoFunction.getLong(null);
             } catch (Exception e) {
                 rowsRemaining = Long.MAX_VALUE;
@@ -183,12 +183,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
         }
-        if (order != ORDER_ASC) {
-            sink.attr("pageFrameDirection").val(nameOf(order));
-        }
         sink.attr("filter").val(filterAtom);
         sink.attr("workers").val(workerCount);
-        sink.child(base);
+        sink.child(base, order);
     }
 
     @Override
