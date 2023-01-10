@@ -48,11 +48,6 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return null;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

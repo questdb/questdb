@@ -30,7 +30,6 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -54,11 +53,6 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
         this.tableVersion = tableVersion;
         this.tableId = tableId;
         this.cursor = new DistinctSymbolRecordCursor(columnIndex);
-    }
-
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        throw new UnsupportedOperationException();
     }
 
     @Override
