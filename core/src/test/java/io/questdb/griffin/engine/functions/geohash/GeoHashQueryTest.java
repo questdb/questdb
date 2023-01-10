@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
@@ -215,7 +214,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(0))", sqlExecutionContext);
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t1", "test")) {
+            try (TableWriter writer = getWriter("t1")) {
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow();
                     row.putGeoStr(0, "qeustdb");
@@ -256,7 +255,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "x " +
                     "from long_sequence(0))", sqlExecutionContext);
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t1", "test")) {
+            try (TableWriter writer = getWriter("t1")) {
                 for (int i = 0; i < 2; i++) {
                     TableWriter.Row row = writer.newRow();
                     row.putGeoHash(4, i);

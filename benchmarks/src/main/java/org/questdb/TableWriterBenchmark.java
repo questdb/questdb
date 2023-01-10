@@ -78,9 +78,13 @@ public class TableWriterBenchmark {
 
         LogFactory.haltInstance();
 
-        writer = new TableWriter(configuration, "test1", Metrics.disabled());
-        writer2 = new TableWriter(configuration, "test2", Metrics.disabled());
-        writer3 = new TableWriter(configuration, "test3", Metrics.disabled());
+        TableToken tableToken1 = new TableToken("test1", "test1", 0, false);
+        TableToken tableToken2 = new TableToken("test2", "test2", 0, false);
+        TableToken tableToken3 = new TableToken("test3", "test3", 0, false);
+
+        writer = new TableWriter(configuration, tableToken1, Metrics.disabled());
+        writer2 = new TableWriter(configuration, tableToken2, Metrics.disabled());
+        writer3 = new TableWriter(configuration, tableToken3, Metrics.disabled());
         rnd.reset();
     }
 

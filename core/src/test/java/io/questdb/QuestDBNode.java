@@ -160,7 +160,7 @@ public class QuestDBNode {
 
             configuration = new CairoTestConfiguration(root, telemetryConfiguration, overrides);
             metrics = Metrics.enabled();
-            engine = new CairoEngine(configuration, metrics, 2);
+            engine = new CairoEngine(configuration, metrics);
             snapshotAgent = new DatabaseSnapshotAgent(engine);
             messageBus = engine.getMessageBus();
         }
@@ -169,16 +169,26 @@ public class QuestDBNode {
             TestUtils.createTestPath(root);
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
+            engine.resetNameRegistryMemory();
         }
 
         public void tearDown(boolean removeDir) {
             snapshotAgent.clear();
             engine.getTableIdGenerator().close();
             engine.clear();
+            engine.closeNameRegistry();
             if (removeDir) {
                 TestUtils.removeTestPath(root);
             }
             overrides.reset();
+            clearWalQueue();
+        }
+
+        private void clearWalQueue() {
+            long seq;
+            while ((seq = engine.getMessageBus().getWalTxnNotificationSubSequence().next()) > -1) {
+                engine.getMessageBus().getWalTxnNotificationSubSequence().done(seq);
+            }
         }
 
         private void close() {

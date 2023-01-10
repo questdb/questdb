@@ -84,6 +84,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private long tableName;
+    private TableToken tableToken;
     private TableWriter writer;
     private final LineEndParser MY_LINE_END = this::appendRow;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
@@ -121,6 +122,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             writer.commit(commitMode);
         }
         for (int i = 0, n = commitList.size(); i < n; i++) {
+            //noinspection resource
             commitList.valueQuick(i).commit(commitMode);
         }
         commitList.clear();
@@ -181,7 +183,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName), WRITER_LOCK_REASON);
+        TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
@@ -224,9 +226,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         row.append();
     }
 
-    private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
+    private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
         try {
-            entry.writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+            entry.writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
+            this.tableToken = tableToken;
             this.tableName = tableName.getCacheAddress();
             createState(entry);
             LOG.info().$("cached writer [name=").$(tableName).$(']').$();
@@ -264,23 +267,26 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
-        engine.createTable(
+        tableToken = engine.createTable(
                 cairoSecurityContext,
                 ddlMem,
                 path,
-                tableStructureAdapter.of(cache)
+                true,
+                tableStructureAdapter.of(cache),
+                false
         );
         appendFirstRowAndCacheWriter(cache);
     }
 
     private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
+        TableToken tableToken = engine.getTableTokenIfExists(token);
         switch (entry.state) {
             case 0:
-                int exists = engine.getStatus(cairoSecurityContext, path, token);
+                int exists = engine.getStatus(cairoSecurityContext, path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;
-                        cacheWriter(entry, token);
+                        cacheWriter(entry, token, tableToken);
                         break;
                     case TABLE_DOES_NOT_EXIST:
                         if (!autoCreateNewTables) {
@@ -308,7 +314,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 }
                 break;
             case 1:
-                cacheWriter(entry, token);
+                cacheWriter(entry, token, tableToken);
                 break;
             default:
                 switchModeToSkipLine();
@@ -428,7 +434,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
-                LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
+                LOG.error().$("mismatched column and value types [table=").utf8(writer.getTableToken().getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
@@ -446,11 +452,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 geoHashBitsSizeByColIdx.add(0);
             } else if (!autoCreateNewColumns) {
                 throw CairoException.nonCritical()
-                        .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableName())
+                        .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableToken().getTableName())
                         .put(", columnName=").put(colNameAsChars)
                         .put(']');
             } else {
-                LOG.error().$("invalid column name [table=").$(writer.getTableName())
+                LOG.error().$("invalid column name [table=").utf8(writer.getTableToken().getTableName())
                         .$(", columnName=").$(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
@@ -493,7 +499,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
-                commitList.put(e.writer.getTableName(), e.writer);
+                if (Chars.equals(tableName, e.writer.getTableToken().getTableName())) {
+                    commitList.put(e.writer.getTableToken().getTableName(), e.writer);
+                } else {
+                    // Cannot happen except with WAL table rename and out of date TableWriter.tableToken.
+                    commitList.put(Chars.toString(tableName), e.writer);
+                }
             }
         }
 

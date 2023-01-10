@@ -27,8 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -54,7 +54,7 @@ public class ExtendedOnePageMemoryTest {
 
     @BeforeClass
     public static void beforeClass() {
-        ff = new FilesFacadeImpl() {
+        ff = new TestFilesFacadeImpl() {
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {

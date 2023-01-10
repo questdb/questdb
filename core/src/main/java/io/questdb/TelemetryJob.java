@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -92,8 +89,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             tryAddColumn(compiler, sqlExecutionContext, "package symbol");
 
             if (enabled) {
+                TableToken tableToken = engine.getTableToken(tableName);
                 try {
-                    this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WRITER_LOCK_REASON);
+                    this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
                 } catch (CairoException ex) {
                     LOG.error()
                             .$("could not open [table=`").utf8(tableName)
@@ -111,7 +109,8 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             // modifying the table.
             // Once we have a permission system, we can use that instead.
             try {
-                this.configWriter = updateTelemetryConfig(compiler, sqlExecutionContext, enabled);
+                TableToken configTableToken = engine.getTableToken(configTableName);
+                this.configWriter = updateTelemetryConfig(compiler, sqlExecutionContext, enabled, configTableToken);
             } catch (CairoException ex) {
                 this.writer = Misc.free(writer);
                 LOG.error()
@@ -222,9 +221,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private TableWriter updateTelemetryConfig(
             SqlCompiler compiler,
             SqlExecutionContextImpl sqlExecutionContext,
-            boolean enabled
+            boolean enabled,
+            TableToken tableToken
     ) throws SqlException {
-        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName, WRITER_LOCK_REASON);
+        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, WRITER_LOCK_REASON);
         final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
         try (
                 final RecordCursorFactory factory = cc.getRecordCursorFactory();

@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -105,7 +104,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -281,7 +280,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertThat("bin\ttimestamp\n",
                 "x bin=b10101010101\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
@@ -308,7 +307,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -320,7 +319,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         // open writer so that pool cannot have it
-        try (TableWriter ignored = new TableWriter(configuration, "x", metrics)) {
+        try (TableWriter ignored = newTableWriter(configuration, "x", metrics)) {
             assertThat(expected, lines, "x", configuration);
         }
     }
@@ -363,12 +362,13 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testCannotCreateTable() throws Exception {
+        CharSequence dirName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         TestFilesFacade ff = new TestFilesFacade() {
             boolean called = false;
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.endsWith(path, "x" + Files.SEPARATOR)) {
+                if (Chars.endsWith(path, Chars.toString(dirName) + Files.SEPARATOR)) {
                     called = true;
                     return -1;
                 }
@@ -388,7 +388,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
                 "y,sym=zzz double=1.3,int=11i,bool=false,str=\"nice\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -424,7 +424,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
@@ -443,7 +443,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\"\"\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
@@ -462,7 +462,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "c\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\"c\"\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
@@ -480,7 +480,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertThat("char\ttimestamp\n",
                 "x char=''\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
@@ -499,7 +499,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "c\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\"coconut\"\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
@@ -510,7 +510,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     @Test
     public void testColumnConversion1() throws Exception {
         try (
-                @SuppressWarnings("resource")
                 TableModel model = new TableModel(configuration, "t_ilp21",
                         PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT)
                         .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
@@ -582,7 +581,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         .timestamp()) {
             CairoTestUtils.create(model);
         }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+        try (TableWriter writer = getWriter("t_ilp21")) {
             writer.removeColumn("event");
         }
         engine.releaseInactive();
@@ -610,7 +609,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         .timestamp()) {
             CairoTestUtils.create(model);
         }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+        try (TableWriter writer = getWriter("t_ilp21")) {
             writer.removeColumn("event");
             writer.addColumn("event", ColumnType.SHORT);
         }
@@ -766,7 +765,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
                 "y,sym=ok double=2.1,int=11i,bool=false,str=\"done\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -778,9 +777,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            Files.mkdirs(path.of(root).concat("x").slash$(), configuration.getMkDirMode());
+            CharSequence dirName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            Files.mkdirs(path.of(root).concat(dirName).slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
-            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
+            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, dirName));
         }
     }
 
@@ -899,7 +899,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -915,7 +915,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+        refreshTablesInBaseEngine();
+        try (TableReader reader = newTableReader(configuration, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
@@ -967,7 +968,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             }
         });
 
-        try (TableReader reader = new TableReader(configuration, "tab")) {
+        try (TableReader reader = newTableReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
     }
@@ -991,7 +992,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             }
         });
 
-        try (TableReader reader = new TableReader(configuration, "tab")) {
+        refreshTablesInBaseEngine();
+        try (TableReader reader = newTableReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
     }

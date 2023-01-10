@@ -22,12 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.wal.WalWriter;
+import org.junit.Assert;
+import org.junit.Test;
 
-@FunctionalInterface
-public interface WalWriterSource {
-    WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName);
+public class ExpressionNodeTest {
+
+    @Test
+    public void testEmptyLiteral() {
+        ExpressionNode node = ExpressionNode.FACTORY.newInstance();
+        node.of(ExpressionNode.LITERAL, "", 0, 0);
+        Assert.assertEquals(ExpressionNode.LITERAL, node.type);
+    }
+
 }

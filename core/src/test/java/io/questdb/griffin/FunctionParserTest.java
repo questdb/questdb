@@ -1106,7 +1106,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SysdateFunctionFactory());
         functions.add(new ToStrDateFunctionFactory());
         FunctionParser functionParser = new FunctionParser(
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MillisecondClock getMillisecondClock() {
                         return () -> {

@@ -33,7 +33,7 @@ import io.questdb.std.WeakMutableObjectPool;
 import java.io.Closeable;
 
 public class MutableIOContextFactory<C extends MutableIOContext<C>>
-    implements IOContextFactory<C>, Closeable, EagerThreadSetup {
+        implements IOContextFactory<C>, Closeable, EagerThreadSetup {
 
     private final ThreadLocal<WeakMutableObjectPool<C>> contextPool;
     private volatile boolean closed = false;

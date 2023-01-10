@@ -129,10 +129,9 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     create.close();
                 }
 
-                TableWriter lockedWriter = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        "testUpdateTimeout",
-                        "test");
+                TableWriter lockedWriter = getWriter(
+                        "testUpdateTimeout"
+                );
 
                 try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? WHERE x != 4");
@@ -181,10 +180,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     create.close();
                 }
 
-                TableWriter lockedWriter = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        "testUpdateTimeout",
-                        "test");
+                TableWriter lockedWriter = getWriter("testUpdateTimeout");
 
                 // Non-simple connection
                 try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
@@ -211,10 +207,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     }
                 }
 
-                lockedWriter = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        "testUpdateTimeout",
-                        "test");
+                lockedWriter = getWriter("testUpdateTimeout");
 
                 // Simple connection
                 try (final Connection connection = getConnection(server1.getPort(), true, true, 1L)) {
@@ -308,10 +301,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                 Thread tick = new Thread(() -> {
                     while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                        try (TableWriter tableWriter = engine.getWriter(
-                                sqlExecutionContext.getCairoSecurityContext(),
-                                "up",
-                                "test")) {
+                        try (TableWriter tableWriter = getWriter("up")) {
                             tableWriter.tick();
                         } catch (EntryUnavailableException ignored) {
                         }
@@ -367,7 +357,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                         try {
                             barrier.await();
-                            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                            try (TableReader rdr = getReader("up")) {
                                 while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
                                     rdr.reload();
                                     assertReader(rdr, expectedValues, validators);

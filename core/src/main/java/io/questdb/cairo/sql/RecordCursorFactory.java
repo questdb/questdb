@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -132,7 +133,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean supportsUpdateRowId(CharSequence tableName) {
+    default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
 

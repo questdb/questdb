@@ -79,12 +79,12 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, tableName, metrics)) {
             TableWriter.Row row = writer.newRow(0L);
             row.append();
             writer.commit();
 
-            try (TableReader reader = new TableReader(configuration, tableName)) {
+            try (TableReader reader = newTableReader(configuration, tableName)) {
                 TestUtils.printSql(compiler, sqlExecutionContext, tableName, sink);
 
                 for (int i = 0; i < 64; i++) {
@@ -211,8 +211,8 @@ public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
 
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor) {
         createTable();
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
-            try (TableReader reader = new TableReader(configuration, "all")) {
+        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
+            try (TableReader reader = newTableReader(configuration, "all")) {
                 for (int i = 0; i < numOfReloads; i++) {
                     ingest(writer);
                     changeTableStructure(addFactor, removeFactor, renameFactor, writer);

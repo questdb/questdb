@@ -26,10 +26,11 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -59,8 +60,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     private SCSequence eventSubSeq;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int status;
-    private String tableName;
     private int tableNamePositionInSql;
+    private TableToken tableToken;
 
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
@@ -91,7 +92,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             eventSubSeq.clear();
             eventSubSeq = null;
             correlationId = -1;
-            tableName = null;
+            tableToken = null;
         }
         asyncWriterCommand = Misc.free(asyncWriterCommand);
 
@@ -140,19 +141,19 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         try {
             // Publish new command and get published command correlation id.
             final CharSequence cmdName = asyncWriterCommand.getCommandName();
-            tableName = asyncWriterCommand.getTableName();
+            tableToken = asyncWriterCommand.getTableToken();
             correlationId = engine.getCommandCorrelationId();
             asyncWriterCommand.setCommandCorrelationId(correlationId);
 
             try (TableWriter writer = engine.getWriterOrPublishCommand(
                     executionContext.getCairoSecurityContext(),
-                    tableName,
+                    asyncWriterCommand.getTableToken(),
                     asyncWriterCommand
             )) {
                 if (writer != null) {
                     LOG.info()
                             .$("published SYNC writer command [name=").$(cmdName)
-                            .$(",tableName=").$(tableName)
+                            .$(",tableName=").$(tableToken)
                             .$(",instance=").$(correlationId)
                             .I$();
                     affectedRowsCount = asyncWriterCommand.apply(writer, true);
@@ -160,7 +161,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                 } else {
                     LOG.info()
                             .$("published ASYNC writer command [name=").$(cmdName)
-                            .$(",tableName=").$(tableName)
+                            .$(",tableName=").$(tableToken)
                             .$(",instance=").$(correlationId)
                             .I$();
                     // No need to call asyncWriterCommand.startAsync() method here since
@@ -170,7 +171,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                 }
             }
 
-            queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), correlationId);
+            queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableToken(), correlationId);
         } catch (Throwable ex) {
             close();
             throw ex;
@@ -201,7 +202,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                 if (seq == -1) {
                     // Queue is empty, check if the execution blocked for too long.
                     if (clock.getTicks() - start > timeout) {
-                        queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
+                        queryFutureUpdateListener.reportBusyWaitExpired(tableToken, correlationId);
                         return status;
                     }
                 } else {
@@ -229,7 +230,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                             queryFutureUpdateListener.reportProgress(correlationId, QUERY_COMPLETE);
                             return QUERY_COMPLETE;
                         case READER_OUT_OF_DATE:
-                            throw ReaderOutOfDateException.of(tableName);
+                            throw TableReferenceOutOfDateException.of(tableToken);
                         default:
                             LOG.error().$("error writer command response [instance=").$(correlationId)
                                     .$(", errorCode=").$(code).I$();

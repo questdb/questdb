@@ -84,7 +84,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     public void testCountAggregations() throws Exception {
         try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
             tt1.col("tts", ColumnType.LONG);
-            CairoTestUtils.createTable(tt1);
+            CairoTestUtils.create(tt1);
         }
 
         String expected = "max\tcount\n" +
@@ -382,7 +382,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, true);
             }
         });
     }
@@ -897,7 +897,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, true);
             }
 
             /// test key on overlap
@@ -950,7 +950,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, true);
             }
         });
     }
@@ -1041,7 +1041,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                             }
                         },
                 };
-                assertCursorRawRecords(expected, factory, false, true);
+                assertCursorRawRecords(expected, factory, true);
             }
         });
     }
@@ -1577,7 +1577,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "sum(l256), count(i), count(l) from tab group by i )", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1589,7 +1589,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+            assertCursor("cnt\n1000000\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1666,7 +1666,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     }
                 });
 
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public RostiAllocFacade getRostiAllocFacade() {
                         return rostiAllocFacade;
@@ -1685,7 +1685,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
                 execute(pool, runnable, configuration1);
             } else {
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root);
+                final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root);
                 execute(null, runnable, configuration1);
             }
         });
@@ -1702,7 +1702,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 tt1.col(colType.colName, colType.columnType);
             }
 
-            CairoTestUtils.createTable(tt1);
+            CairoTestUtils.create(tt1);
         }
 
         for (TypeVal colType : aggregateColTypes) {
