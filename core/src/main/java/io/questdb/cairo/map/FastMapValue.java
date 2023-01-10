@@ -32,8 +32,8 @@ import io.questdb.std.Unsafe;
 final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final int[] valueOffsets;
-    private boolean _new;
     private long address;
+    private boolean newValue;
     private FastMapRecord record; // double-linked
 
     public FastMapValue(int[] valueOffsets) {
@@ -176,7 +176,7 @@ final class FastMapValue implements MapValue {
 
     @Override
     public boolean isNew() {
-        return _new;
+        return newValue;
     }
 
     @Override
@@ -251,9 +251,9 @@ final class FastMapValue implements MapValue {
         this.record = record;
     }
 
-    FastMapValue of(long address, boolean _new) {
+    FastMapValue of(long address, boolean newValue) {
         this.address = address;
-        this._new = _new;
+        this.newValue = newValue;
         return this;
     }
 }

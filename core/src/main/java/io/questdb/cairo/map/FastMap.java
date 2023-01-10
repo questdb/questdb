@@ -42,8 +42,7 @@ public class FastMap implements Map, Reopenable {
     private final int initialKeyCapacity;
     private final int initialPageSize;
     private final BaseKey key;
-    private final int keyBlockOffset;
-    private final int keyDataOffset;
+    private final int keyOffset;
     // Set to -1 when key is var-size.
     private final int keySize;
     private final int listMemoryTag;
@@ -149,26 +148,16 @@ public class FastMap implements Map, Reopenable {
         }
         this.keySize = keySize;
 
-        int[] columnOffsets = null;
-        int offset;
-        int columnSplit;
-        if (keySize != -1) {
-            offset = 0;
-            columnSplit = keyColumnCount;
-        } else {
-            // Reserve 4 bytes for key length.
-            offset = 4;
-            columnSplit = 0;
-        }
-
+        // Reserve 4 bytes for key length in case of var-size keys.
+        int offset = keySize != -1 ? 0 : 4;
+        int[] valueOffsets = null;
         int valueSize = 0;
         if (valueTypes != null) {
             valueColumnCount = valueTypes.getColumnCount();
-            columnSplit += valueColumnCount;
-            columnOffsets = new int[columnSplit];
+            valueOffsets = new int[valueColumnCount];
 
             for (int i = 0; i < valueColumnCount; i++) {
-                columnOffsets[i] = offset;
+                valueOffsets[i] = offset;
                 final int columnType = valueTypes.getColumnType(i);
                 final int size = ColumnType.sizeOf(columnType);
                 if (size <= 0) {
@@ -180,33 +169,17 @@ public class FastMap implements Map, Reopenable {
             }
         } else {
             valueColumnCount = 0;
-            if (keySize != -1) {
-                columnOffsets = new int[keyColumnCount];
-            }
         }
         this.valueSize = valueSize;
+        keyOffset = offset;
 
-        if (keySize != -1) {
-            keyBlockOffset = keyDataOffset = offset;
-            for (int i = 0; i < keyColumnCount; i++) {
-                columnOffsets[i + valueColumnCount] = offset;
-                final int columnType = keyTypes.getColumnType(i);
-                final int size = ColumnType.sizeOf(columnType);
-                assert size > 0;
-                offset += size;
-            }
-        } else {
-            keyBlockOffset = offset;
-            keyDataOffset = keyBlockOffset + 4 * keyTypes.getColumnCount();
-        }
+        value = new FastMapValue(valueOffsets);
+        value2 = new FastMapValue(valueOffsets);
+        value3 = new FastMapValue(valueOffsets);
 
-        value = new FastMapValue(columnOffsets);
-        value2 = new FastMapValue(columnOffsets);
-        value3 = new FastMapValue(columnOffsets);
+        record = new FastMapRecord(valueOffsets, keyOffset, value, keyTypes, valueTypes);
 
-        record = new FastMapRecord(columnOffsets, keyDataOffset, keyBlockOffset, value, keyTypes, valueTypes);
-
-        assert keyBlockOffset < kLimit - kStart : "page size is too small for number of columns";
+        assert keySize + valueSize < kLimit - kStart : "page size is too small for to fit a single key";
         cursor = new FastMapCursor(record, this);
         key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }
@@ -386,15 +359,12 @@ public class FastMap implements Map, Reopenable {
             this.capacity = kCapacity;
             long d = kAddress - this.kStart;
             kPos += d;
-            long colOffsetDelta = key.nextColOffset - key.startAddress;
             key.startAddress += d;
             key.appendAddress += d;
-            key.nextColOffset = key.startAddress + colOffsetDelta;
 
             assert kPos > 0;
             assert key.startAddress > 0;
             assert key.appendAddress > 0;
-            assert key.nextColOffset > 0;
 
             this.kStart = kAddress;
             this.kLimit = kAddress + kCapacity;
@@ -433,7 +403,6 @@ public class FastMap implements Map, Reopenable {
 
     private abstract class BaseKey implements MapKey {
         protected long appendAddress;
-        protected long nextColOffset;
         protected long startAddress;
 
         @Override
@@ -468,9 +437,98 @@ public class FastMap implements Map, Reopenable {
 
         public BaseKey init() {
             startAddress = kPos;
-            appendAddress = kPos + keyDataOffset;
-            nextColOffset = kPos + keyBlockOffset;
+            appendAddress = kPos + keyOffset;
             return this;
+        }
+
+        @Override
+        public void put(Record record, RecordSink sink) {
+            sink.copy(record, this);
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
+            appendAddress += 1;
+        }
+
+        @Override
+        public void putByte(byte value) {
+            Unsafe.getUnsafe().putByte(appendAddress, value);
+            appendAddress += 1;
+        }
+
+        @Override
+        public void putChar(char value) {
+            Unsafe.getUnsafe().putChar(appendAddress, value);
+            appendAddress += Character.BYTES;
+        }
+
+        @Override
+        public void putDate(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putDouble(double value) {
+            Unsafe.getUnsafe().putDouble(appendAddress, value);
+            appendAddress += Double.BYTES;
+        }
+
+        @Override
+        public void putFloat(float value) {
+            Unsafe.getUnsafe().putFloat(appendAddress, value);
+            appendAddress += Float.BYTES;
+        }
+
+        @Override
+        public void putInt(int value) {
+            Unsafe.getUnsafe().putInt(appendAddress, value);
+            appendAddress += Integer.BYTES;
+        }
+
+        @Override
+        public void putLong(long value) {
+            Unsafe.getUnsafe().putLong(appendAddress, value);
+            appendAddress += Long.BYTES;
+        }
+
+        @Override
+        public void putLong128LittleEndian(long hi, long lo) {
+            Unsafe.getUnsafe().putLong(appendAddress, lo);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
+            appendAddress += 16;
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
+            appendAddress += Long256.BYTES;
+        }
+
+        @Override
+        public void putRecord(Record value) {
+            // no-op
+        }
+
+        @Override
+        public void putShort(short value) {
+            Unsafe.getUnsafe().putShort(appendAddress, value);
+            appendAddress += 2;
+        }
+
+        @Override
+        @SuppressWarnings("unused")
+        public void putTimestamp(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void skip(int bytes) {
+            appendAddress += bytes;
         }
 
         private MapValue createValue(FastMapValue value) {
@@ -529,87 +587,8 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void put(Record record, RecordSink sink) {
-            sink.copy(record, this);
-        }
-
-        @Override
         public void putBin(BinarySequence value) {
             throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putBool(boolean value) {
-            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
-            appendAddress += 1;
-        }
-
-        @Override
-        public void putByte(byte value) {
-            Unsafe.getUnsafe().putByte(appendAddress, value);
-            appendAddress += 1;
-        }
-
-        @Override
-        public void putChar(char value) {
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += Character.BYTES;
-        }
-
-        @Override
-        public void putDate(long value) {
-            putLong(value);
-        }
-
-        @Override
-        public void putDouble(double value) {
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += Double.BYTES;
-        }
-
-        @Override
-        public void putFloat(float value) {
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += Float.BYTES;
-        }
-
-        @Override
-        public void putInt(int value) {
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += Integer.BYTES;
-        }
-
-        @Override
-        public void putLong(long value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += Long.BYTES;
-        }
-
-        @Override
-        public void putLong128LittleEndian(long hi, long lo) {
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += 16;
-        }
-
-        @Override
-        public void putLong256(Long256 value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
-            appendAddress += Long256.BYTES;
-        }
-
-        @Override
-        public void putRecord(Record value) {
-            // no-op
-        }
-
-        @Override
-        public void putShort(short value) {
-            Unsafe.getUnsafe().putShort(appendAddress, value);
-            appendAddress += 2;
         }
 
         @Override
@@ -633,20 +612,9 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        @SuppressWarnings("unused")
-        public void putTimestamp(long value) {
-            putLong(value);
-        }
-
-        @Override
-        public void skip(int bytes) {
-            appendAddress += bytes;
-        }
-
-        @Override
         protected boolean eq(long offset) {
-            long a = kStart + offset + keyDataOffset;
-            long b = startAddress + keyDataOffset;
+            long a = kStart + offset + keyOffset;
+            long b = startAddress + keyOffset;
 
             int len = keySize;
             int i = 0;
@@ -670,17 +638,12 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         protected int hash() {
-            return Hash.hashMem32(startAddress + keyDataOffset, keySize);
+            return Hash.hashMem32(startAddress + keyOffset, keySize);
         }
     }
 
     private class VarSizeKey extends BaseKey {
         private int len;
-
-        @Override
-        public void put(Record record, RecordSink sink) {
-            sink.copy(record, this);
-        }
 
         @Override
         public void putBin(BinarySequence value) {
@@ -697,102 +660,67 @@ public class FastMap implements Map, Reopenable {
                 Unsafe.getUnsafe().putInt(appendAddress, l);
                 value.copyTo(appendAddress + 4L, 0L, l);
                 appendAddress += len;
-                writeOffset();
             }
         }
 
         @Override
         public void putBool(boolean value) {
             checkSize(1);
-            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
-            appendAddress += 1;
-            writeOffset();
+            super.putBool(value);
         }
 
         @Override
         public void putByte(byte value) {
             checkSize(1);
-            Unsafe.getUnsafe().putByte(appendAddress, value);
-            appendAddress += 1;
-            writeOffset();
+            super.putByte(value);
         }
 
         @Override
         public void putChar(char value) {
             checkSize(Character.BYTES);
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += Character.BYTES;
-            writeOffset();
-        }
-
-        @Override
-        public void putDate(long value) {
-            putLong(value);
+            super.putChar(value);
         }
 
         @Override
         public void putDouble(double value) {
             checkSize(Double.BYTES);
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += Double.BYTES;
-            writeOffset();
+            super.putDouble(value);
         }
 
         @Override
         public void putFloat(float value) {
             checkSize(Float.BYTES);
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += Float.BYTES;
-            writeOffset();
+            super.putFloat(value);
         }
 
         @Override
         public void putInt(int value) {
             checkSize(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += Integer.BYTES;
-            writeOffset();
+            super.putInt(value);
         }
 
         @Override
         public void putLong(long value) {
             checkSize(Long.BYTES);
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += Long.BYTES;
-            writeOffset();
+            super.putLong(value);
         }
 
         @Override
         public void putLong128LittleEndian(long hi, long lo) {
             checkSize(16);
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += 16;
-            writeOffset();
+            super.putLong128LittleEndian(hi, lo);
         }
 
         @Override
         public void putLong256(Long256 value) {
             checkSize(Long256.BYTES);
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
-            appendAddress += Long256.BYTES;
-            writeOffset();
-        }
-
-        @Override
-        public void putRecord(Record value) {
-            // no-op
+            super.putLong256(value);
         }
 
         @Override
         public void putShort(short value) {
             checkSize(2);
-            Unsafe.getUnsafe().putShort(appendAddress, value);
-            appendAddress += 2;
-            writeOffset();
+            super.putShort(value);
         }
 
         @Override
@@ -810,7 +738,6 @@ public class FastMap implements Map, Reopenable {
                 Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), value.charAt(i));
             }
             appendAddress += (long) len << 1;
-            writeOffset();
         }
 
         @Override
@@ -823,7 +750,6 @@ public class FastMap implements Map, Reopenable {
                 Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), value.charAt(i));
             }
             appendAddress += (long) len << 1;
-            writeOffset();
         }
 
         @Override
@@ -841,7 +767,6 @@ public class FastMap implements Map, Reopenable {
                 Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), Character.toLowerCase(value.charAt(i)));
             }
             appendAddress += (long) len << 1;
-            writeOffset();
         }
 
         @Override
@@ -854,36 +779,18 @@ public class FastMap implements Map, Reopenable {
                 Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), Character.toLowerCase(value.charAt(i)));
             }
             appendAddress += (long) len << 1;
-            writeOffset();
-        }
-
-        @Override
-        @SuppressWarnings("unused")
-        public void putTimestamp(long value) {
-            putLong(value);
         }
 
         @Override
         public void skip(int bytes) {
             checkSize(bytes);
-            appendAddress += bytes;
-            writeOffset();
+            super.skip(bytes);
         }
 
         private void putNull() {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
             appendAddress += 4;
-            writeOffset();
-        }
-
-        private void writeOffset() {
-            long len = appendAddress - startAddress;
-            if (len > Integer.MAX_VALUE) {
-                throw CairoException.critical(0).put("row data is too large");
-            }
-            Unsafe.getUnsafe().putInt(nextColOffset, (int) len);
-            nextColOffset += 4;
         }
 
         @Override
@@ -902,10 +809,10 @@ public class FastMap implements Map, Reopenable {
             }
 
             // skip to the data
-            a += keyDataOffset;
-            b += keyDataOffset;
+            a += keyOffset;
+            b += keyOffset;
 
-            int len = this.len - keyDataOffset;
+            int len = this.len - keyOffset;
             int i = 0;
             for (; i + 7 < len; i += 8) {
                 if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
@@ -927,7 +834,7 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         protected int hash() {
-            return Hash.hashMem32(startAddress + keyDataOffset, len - keyDataOffset);
+            return Hash.hashMem32(startAddress + keyOffset, len - keyOffset);
         }
     }
 }
