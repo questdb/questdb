@@ -645,6 +645,18 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
+    @Override
+    public void setUuid(CharSequence name, long lo, long hi) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final UuidBindVariable function;
+            namedVariables.putAt(index, name, function = uuidVarPool.next());
+            function.set(lo, hi);
+        } else {
+            setUuid(namedVariables.valueAtQuick(index), lo, hi, -1, name);
+        }
+    }
+
     public void setUuid(int index) throws SqlException {
         setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
     }
