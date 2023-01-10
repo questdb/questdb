@@ -1488,7 +1488,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "2\t1\t1\t1\t1\t1\t1\t1\n" +
                     "3\t2\t2\t0\t0\t0\t0\t0\n" +
                     "4\t2\t2\t1\t1\t1\t1\t1\n" +
-                    "5\t1\t1\t0\t0\t0\t0\t0\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+                    "5\t1\t1\t0\t0\t0\t0\t0\n", query.getRecordCursorFactory(), true, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1507,7 +1507,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     "1\t2\t2\t0\t0\n" +
                     "2\t2\t2\t0\t0\n" +
                     "3\t3\t3\t1\t1\n" +
-                    "4\t2\t2\t1\t1\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+                    "4\t2\t2\t1\t1\n", query.getRecordCursorFactory(), true, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1531,7 +1531,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         try {
             assertCursor("k\tc1\tcstar\tci\tcl\n" +
                     "NaN\t5\t5\t1\t1\n" +
-                    "6\t1\t1\t0\t0\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+                    "6\t1\t1\t0\t0\n", query.getRecordCursorFactory(), true, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1551,7 +1551,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             assertCursor("hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts\n" +
                     "0\t2\t2\t0\t0\t0\t0\t0\n" +
                     "1\t2\t2\t0\t0\t0\t0\t0\n" +
-                    "2\t2\t2\t1\t1\t1\t1\t1\n", query.getRecordCursorFactory(), true, true, true, false, sqlExecutionContext);
+                    "2\t2\t2\t1\t1\t1\t1\t1\n", query.getRecordCursorFactory(), true, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
@@ -1615,7 +1615,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 "sum(l256), count(i), count(l) from tab )", sqlExecutionContext);
 
         try {
-            assertCursor("cnt\n1\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+            assertCursor("cnt\n1\n", query.getRecordCursorFactory(), false, true, false, sqlExecutionContext);
         } finally {
             Misc.free(query.getRecordCursorFactory());
         }
