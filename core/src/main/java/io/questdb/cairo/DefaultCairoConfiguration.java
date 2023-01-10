@@ -562,7 +562,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getSqlFastMapLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override

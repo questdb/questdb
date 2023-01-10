@@ -52,8 +52,8 @@ public class QMapWriteLongBenchmark {
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(QMapWriteLongBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(3)
+                .measurementIterations(3)
                 .forks(1)
                 .build();
 
