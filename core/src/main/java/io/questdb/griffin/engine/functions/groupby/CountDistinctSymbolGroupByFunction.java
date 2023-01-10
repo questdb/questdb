@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntList;
+import io.questdb.std.CompactIntHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -40,7 +40,7 @@ import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<IntList> lists = new ObjList<>();
+    private final ObjList<CompactIntHashSet> sets = new ObjList<>();
     private int setIndex;
     private int valueIndex;
 
@@ -50,44 +50,40 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void clear() {
-        lists.clear();
+        sets.clear();
         setIndex = 0;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final IntList list;
-        if (lists.size() <= setIndex) {
-            lists.extendAndSet(setIndex, list = new IntList());
+        final CompactIntHashSet set;
+        if (sets.size() <= setIndex) {
+            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
         } else {
-            list = lists.getQuick(setIndex);
+            set = sets.getQuick(setIndex);
         }
-        list.clear(0);
-        mapValue.putInt(valueIndex + 1, setIndex);
-        setIndex++;
+        set.clear();
 
-        int val = arg.getInt(record);
+        final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
-            list.extendAndSet(val, 1);
+            set.add(val);
             mapValue.putLong(valueIndex, 1L);
         } else {
             mapValue.putLong(valueIndex, 0L);
         }
+        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final IntList set = lists.getQuick(mapValue.getInt(valueIndex + 1));
+        final CompactIntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
-            if (val < set.size()) {
-                if (set.getQuick(val) == 1) {
-                    return;
-                }
-                set.setQuick(val, 1);
-            } else {
-                set.extendAndSet(val, 1);
+            final int index = set.keyIndex(val);
+            if (index < 0) {
+                return;
             }
+            set.addAt(index, val);
             mapValue.addLong(valueIndex, 1);
         }
     }
