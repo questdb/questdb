@@ -210,7 +210,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 private boolean switchTo(final TableToken tableToken) {
                     tableName = tableToken.getTableName();
                     int rootLen = rootPath.length();
-                    rootPath.concat(tableToken.getDirName()).concat(SEQ_DIR);
+                    rootPath.concat(tableToken).concat(SEQ_DIR);
                     int metaFd = -1;
                     int txnFd = -1;
                     try {
