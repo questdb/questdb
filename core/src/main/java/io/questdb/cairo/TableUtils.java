@@ -291,6 +291,9 @@ public final class TableUtils {
         path.concat(tableName);
         final int rootLen = path.length();
 
+        if (ff.isDirOrSoftLinkDir(path.$())) {
+            throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(path).put(']');
+        }
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
         }

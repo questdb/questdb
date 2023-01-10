@@ -26,9 +26,14 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
@@ -65,26 +70,25 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             "2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\n" +
             "2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\n";
 
-    private static String OTHER_VOLUME;
+    private String OTHER_VOLUME;
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        OTHER_VOLUME = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
-        try {
+
+    @Before
+    public void setUp() throws IOException {
+        try (Path path = new Path().of(root).concat("db")) {
+            int plen = path.length();
+            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
+            OTHER_VOLUME = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
             createDummyConfiguration(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + OTHER_VOLUME);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    @Before
-    public void setUp() {
-        try (Path path = new Path().of(root).concat("db")) {
-            int plen = path.length();
-            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
-            Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
-        }
+    @After
+    public void tearDown() throws IOException {
+        deleteFolder(OTHER_VOLUME);
     }
 
     @Test
@@ -92,7 +96,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
         Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
 
-        String tableName = "patrons_table";
+        String tableName = "evil_see";
         String firstPartitionName = "2023-01-01";
         int partitionCount = 11;
 
@@ -106,16 +110,20 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             ) {
                 qdb.start();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                try (
-                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                                .col("investmentMill", ColumnType.LONG)
-                                .col("ticketThous", ColumnType.INT)
-                                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                                .timestamp("ts");
-                        MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(OTHER_VOLUME).concat(tableName).$()
-                ) {
-                    createTable(cairoConfig, mem, path, true, tableModel, 1);
+
+                compiler.compile("CREATE TABLE " + tableName + '(' +
+                                " investmentMill LONG," +
+                                " ticketThous INT," +
+                                " broker SYMBOL INDEX CAPACITY 32," +
+                                " ts TIMESTAMP"
+                                + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
+                        context).execute(null).await();
+
+                try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("investmentMill", ColumnType.LONG)
+                        .col("ticketThous", ColumnType.INT)
+                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts")) {
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
                 }
                 StringSink sink = Misc.getThreadLocalBuilder();
@@ -125,7 +133,61 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         sink,
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts1\tpatrons_table\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", sink, "ts3\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInAllowedVolumeThenDrop() throws Exception {
+
+        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+
+        String tableName = "evil_hear";
+        String firstPartitionName = "2023-01-01";
+        int partitionCount = 11;
+
+        assertMemoryLeak(() -> {
+
+            // create table with some data
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                int tsIdx = 4;
+                for (int i = 0; i < 5; i++) {
+                    compiler.compile("CREATE TABLE " + tableName + '(' +
+                                    " investmentMill LONG," +
+                                    " ticketThous INT," +
+                                    " broker SYMBOL INDEX CAPACITY 32," +
+                                    " ts TIMESTAMP"
+                                    + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
+                            context).execute(null).await();
+
+                    try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                            .col("investmentMill", ColumnType.LONG)
+                            .col("ticketThous", ColumnType.INT)
+                            .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                            .timestamp("ts")) {
+                        compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
+                    }
+                    StringSink sink = Misc.getThreadLocalBuilder();
+                    assertSql(
+                            compiler,
+                            context,
+                            "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                            sink,
+                            TABLE_START_CONTENT);
+                    assertSql(compiler, context, "tables()", sink, "ts" + (tsIdx + i) + "\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+
+                    assertTables(compiler, context, sink);
+
+                    compiler.compile("DROP TABLE " + tableName, context).execute(null).await(); // it simply unlinks
+                    deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete tha table's folder in the other volume
+                }
             }
         });
     }
@@ -211,7 +273,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         sink,
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", sink, "ts1\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
             }
         });
     }
@@ -244,6 +306,24 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 null,
                 -1,
                 null);
+    }
+
+    private void assertTables(SqlCompiler compiler, SqlExecutionContext context, StringSink sink) throws SqlException {
+        try (
+                RecordCursorFactory factory = compiler.compile("tables()", context).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            RecordMetadata metadata = factory.getMetadata();
+            int cols = metadata.getColumnCount();
+            Record record = cursor.getRecord();
+            sink.clear();
+            while (cursor.hasNext()) {
+                for (int col = 0; col < cols; col++) {
+                    TestUtils.printColumn(record, metadata, col, sink, false);
+                }
+            }
+            System.out.printf("tables: %s%n", sink);
+        }
     }
 
     static {

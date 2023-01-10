@@ -372,7 +372,7 @@ public class FilesFacadeImpl implements FilesFacade {
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
             if (unlink(path) == 0) {
-                LOG.info().$("purged by unlink [path=").utf8(path).I$();
+                LOG.info().$("removed by unlink [path=").utf8(path).I$();
                 return 0;
             } else {
                 LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
