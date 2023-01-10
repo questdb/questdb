@@ -246,10 +246,24 @@ public class TableNameRegistryFileStore implements Closeable {
                         && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
                     String dirName = sink.toString();
-                    int tableId = readTableId(path, dirName, ff);
-                    boolean isWal = tableId < 0;
-                    tableId = Math.abs(tableId);
-                    String tableName = readTableName(path, dirName, ff);
+                    int tableId;
+                    boolean isWal;
+                    String tableName;
+
+                    try {
+                        tableId = readTableId(path, dirName, ff);
+                        isWal = tableId < 0;
+                        tableId = Math.abs(tableId);
+                        tableName = readTableName(path, dirName, ff);
+                    } catch (CairoException e) {
+                        if (e.errnoReadPathDoesNotExist()) {
+                            // table is being removed.
+                            continue;
+                        } else {
+                            throw e;
+                        }
+                    }
+
                     if (tableName == null) {
                         if (isWal) {
                             LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();

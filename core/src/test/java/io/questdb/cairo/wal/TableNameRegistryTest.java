@@ -246,7 +246,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             // Add / remove tables
             engine.closeNameRegistry();
-            Rnd rnd = TestUtils.generateRandom(LOG);
+            Rnd rnd = new Rnd(940303792693L, 1673348707058L);
             try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
                 rw.reloadTableNameCache();
                 barrier.await();
@@ -268,7 +268,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         TableToken tableToken = rw.getTableToken(tableName);
                         rw.dropTable(tableToken);
                         addedTables.remove(tableId);
-                        configuration.getFilesFacade().rmdir(rmPath.trimTo(configuration.getRoot().length()).concat(tableName).$());
+
+                        // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
+                        for (int i = 0;
+                             i < 1000 && configuration.getFilesFacade().rmdir(rmPath.trimTo(configuration.getRoot().length()).concat(tableName).$()) != 0; i++) {
+                            Os.pause();
+                        }
                     }
 
                     if (rnd.nextBoolean()) {
