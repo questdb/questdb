@@ -948,12 +948,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     dst -> {
                     },
                     s -> {
-                        // .d file
                         engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("u.d").$();
-                        int fd = Files.openRW(path);
+                        TableToken tableToken = engine.getTableToken(s.getName());
+                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("u.d").$();
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Column file is too small"
             );
