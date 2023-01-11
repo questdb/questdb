@@ -40,7 +40,7 @@ public interface ExecutionModel {
         return null;
     }
 
-    default CharSequence getTargetTableName() {
+    default Object getTableName() {
         return null;
     }
 

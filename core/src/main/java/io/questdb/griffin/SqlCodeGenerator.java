@@ -4511,8 +4511,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {
-        final RecordCursorFactory factory;
         final ExecutionModel model;
+        RecordCursorFactory factory;
 
         protected RecordCursorFactoryStub(ExecutionModel model, RecordCursorFactory factory) {
             this.model = model;
@@ -4521,9 +4521,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         @Override
         public void close() {
-            if (factory != null) {
-                factory.close();
-            }
+            factory = Misc.free(factory);
         }
 
         @Override
@@ -4548,7 +4546,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         @Override
         public void toPlan(PlanSink sink) {
             sink.type(model.getTypeName());
-            sink.meta("table").val(model.getTargetTableName());
+
+            CharSequence tableName;
+            Object obj = model.getTableName();
+            if (obj instanceof ExpressionNode) {
+                tableName = ((ExpressionNode) obj).token;
+            } else {
+                tableName = (CharSequence) obj;
+            }
+            if (tableName != null) {
+                sink.meta("table").val(tableName);
+            }
             if (factory != null) {
                 sink.child(factory);
             }

@@ -126,11 +126,6 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return tableName;
     }
 
-    @Override
-    public CharSequence getTargetTableName() {
-        return tableName.token;
-    }
-
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
     }

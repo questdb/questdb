@@ -808,11 +808,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableVersion;
     }
 
-    @Override
-    public CharSequence getTargetTableName() {
-        return tableName.token;
-    }
-
     public ExpressionNode getTimestamp() {
         return timestamp;
     }

@@ -97,11 +97,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    public String getBaseColumnName(int idx) {
-        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -204,7 +199,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
         }
-        //potentially changes factory order so explain will show plan  different from actual  
+        //sorting here can produce order of cursorFactories different from one shown by explain command       
         if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {

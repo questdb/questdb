@@ -38,9 +38,12 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private BooleanSupplier next;
-    private RowCursor rowCursor;
+
     private final BooleanSupplier nextRow = this::nextRow;
+
     private final BooleanSupplier nextFrame = this::nextFrame;
+
+    private RowCursor rowCursor;    
 
     public DataFrameRecordCursor(
             RowCursorFactory rowCursorFactory,

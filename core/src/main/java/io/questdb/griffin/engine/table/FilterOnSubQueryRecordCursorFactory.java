@@ -83,10 +83,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         sink.optAttr("filter", filter);
         sink.child(recordCursorFactory);
         sink.child(dataFrameCursorFactory);
-        //cursorFactories is empty until getCursorInstance() call 
-//        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
-//            sink.child(cursorFactories.get(i));
-//        }
     }
 
     @Override

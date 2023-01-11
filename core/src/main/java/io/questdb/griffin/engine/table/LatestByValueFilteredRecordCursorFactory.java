@@ -57,11 +57,6 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    public String getBaseColumnName(int idx) {
-        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
