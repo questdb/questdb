@@ -35,6 +35,13 @@ import io.questdb.std.str.DirectCharSequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Provides Record access interface for FastMap key-value pairs.
+ * <p>
+ * Uses an offsets array to speed up value column look-ups.
+ * Key column offsets are calculated dynamically since keys may be var-size.
+ * The last accessed key column offset is cached to speed up sequential access.
+ */
 final class FastMapRecord implements MapRecord {
     private final DirectBinarySequence[] bs;
     private final DirectCharSequence[] csA;

@@ -33,6 +33,38 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+/**
+ * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
+ * group by, sample by queries, but not only. It provides {@link MapKey} and {@link MapValue},
+ * as well as  {@link RecordCursor} interfaces for data access and modification.
+ * The preferred way to create a FastMap is {@link MapFactory}.
+ * <p>
+ * Key and value structure must match the one provided via lists of columns ({@link ColumnTypes})
+ * to the map constructor. Keys may be var-size, i.e. a key may contain string or binary columns,
+ * while values are expected to be fixed-size. Only insertions and updates operations are supported
+ * meaning that a key can't be removed from the map once it was inserted.
+ * <p>
+ * The hash table is organized into two main parts:
+ * <ul>
+ * <li>1. Off-heap int list for heap offsets</li>
+ * <li>2. Off-heap memory for key-value pairs a.k.a. "key memory"</li>
+ * </ul>
+ * The offset list contains [compressed_offset, hash_code] pairs. An offset value contains an offset to
+ * the address of a key-value pair in the key memory compressed to an int. Key-value pair addresses are
+ * 8 byte aligned, so a FastMap is capable of holding up to 16GB of data.
+ * <p>
+ * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
+ * offset list and copies offsets there while the key memory stays as is.
+ * <p>
+ * Key-value pairs stored in the key memory may have the following layout:
+ * <pre>
+ * |       length         | Value columns 0..V | Key columns 0..K |
+ * +----------------------+--------------------+------------------+
+ * |      4 bytes         |         -          |        -         |
+ * +----------------------+--------------------+------------------+
+ * </pre>
+ * Length field is present for var-size keys only. It stores full key-value pair length in bytes.
+ */
 public class FastMap implements Map, Reopenable {
 
     private static final long MAX_HEAP_SIZE = ((long) (Integer.MAX_VALUE - 1)) << 3;
@@ -57,14 +89,13 @@ public class FastMap implements Map, Reopenable {
     private final int valueSize;
     private long capacity;
     private int free;
-    private long kLimit; // Heap limit pointer.
-    private long kPos;   // Current heap pointer.
-    private long kStart; // Heap start pointer.
+    private long kLimit; // Key memory limit pointer.
+    private long kPos;   // Current key memory pointer.
+    private long kStart; // Key memory start pointer.
     private int keyCapacity;
     private int mask;
     private int nResizes;
     // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
-    // Each offset slot contains a [offset, hash code] pair.
     private DirectIntList offsets;
     private int size = 0;
 
