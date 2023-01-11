@@ -2169,7 +2169,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadByWeek() throws Exception {
-        CairoTestUtils.createAllTable(configuration, PartitionBy.WEEK);
+        CairoTestUtils.createAllTable(engine, PartitionBy.WEEK);
         TestUtils.assertMemoryLeak(() -> testTableCursor(7 * 60 * 60000L));
     }
 
