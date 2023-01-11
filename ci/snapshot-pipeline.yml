@@ -26,8 +26,9 @@ stages:
             displayName: "Build binaries with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
+              goals: "package"
               options:
-                "clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false"
+                "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false"
               jdkVersionOption: 1.11
           - bash: |
               cd "$(Build.SourcesDirectory)"/core
