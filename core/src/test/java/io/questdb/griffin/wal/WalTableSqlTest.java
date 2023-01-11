@@ -1042,6 +1042,89 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStableO3InsertWithLag() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String tableNameLag = tableName + "_lag";
+
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24T01', 2 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(24)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            compile("create table insertMid as (" +
+                    "select x + 100, " +
+                    " cast('2022-02-24T13' as timestamp) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY"
+            );
+
+            compile("create table insertEnd as (" +
+                    "select x + 200, " +
+                    " cast('2022-02-26T13-" +
+                    "`++" +
+                    ".--+" +
+                    "-**********************" +
+                    ".' as timestamp) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY"
+            );
+
+            drainWalQueue();
+            compile("insert into " + tableName + " select * from insertMid");
+            drainWalQueue();
+            compile("insert into " + tableName + " select * from insertEnd");
+            drainWalQueue();
+
+            compile("create table " + tableNameLag + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24T01', 2 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(24)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            compile("insert into " + tableNameLag + " select * from insertMid");
+            compile("insert into " + tableNameLag + " select * from insertEnd");
+            drainWalQueue();
+
+            String expected = "x\tts\n" +
+                    "1\t2022-02-24T01:00:00.000000Z\n" +
+                    "2\t2022-02-24T03:00:00.000000Z\n" +
+                    "3\t2022-02-24T05:00:00.000000Z\n" +
+                    "4\t2022-02-24T07:00:00.000000Z\n" +
+                    "5\t2022-02-24T09:00:00.000000Z\n" +
+                    "6\t2022-02-24T11:00:00.000000Z\n" +
+                    "7\t2022-02-24T13:00:00.000000Z\n" +
+                    "101\t2022-02-24T13:00:00.000000Z\n" +
+                    "102\t2022-02-24T13:00:00.000000Z\n" +
+                    "8\t2022-02-24T15:00:00.000000Z\n" +
+                    "9\t2022-02-24T17:00:00.000000Z\n" +
+                    "10\t2022-02-24T19:00:00.000000Z\n" +
+                    "11\t2022-02-24T21:00:00.000000Z\n" +
+                    "12\t2022-02-24T23:00:00.000000Z\n" +
+                    "13\t2022-02-25T01:00:00.000000Z\n" +
+                    "14\t2022-02-25T03:00:00.000000Z\n" +
+                    "15\t2022-02-25T05:00:00.000000Z\n" +
+                    "16\t2022-02-25T07:00:00.000000Z\n" +
+                    "17\t2022-02-25T09:00:00.000000Z\n" +
+                    "18\t2022-02-25T11:00:00.000000Z\n" +
+                    "19\t2022-02-25T13:00:00.000000Z\n" +
+                    "20\t2022-02-25T15:00:00.000000Z\n" +
+                    "21\t2022-02-25T17:00:00.000000Z\n" +
+                    "22\t2022-02-25T19:00:00.000000Z\n" +
+                    "23\t2022-02-25T21:00:00.000000Z\n" +
+                    "24\t2022-02-25T23:00:00.000000Z\n" +
+                    "101\t2022-02-26T01:00:00.000000Z\n" +
+                    "102\t2022-02-26T01:00:00.000000Z\n";
+
+            assertSql(tableNameLag, expected);
+            assertSql(tableName, expected);
+
+        });
+    }
+
+    @Test
     public void testVarSizeColumnBeforeInsertCommit() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
