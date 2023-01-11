@@ -229,15 +229,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    public void createTableUnsafe(
-            CairoSecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            TableStructure struct
-    ) {
-        createTableUnsafe(securityContext, mem, path, false, struct);
-    }
-
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
@@ -815,14 +806,14 @@ public class CairoEngine implements Closeable, WriterSource {
             if (dstTableToken != null) {
                 tableNameRegistry.unlockTableName(dstTableToken);
             }
-            LOG.error().$("rename target exists [from='").utf8(tableName).$("', to='").utf8(otherPath.chop$()).I$();
+            LOG.error().$("rename target exists [from='").utf8(tableName).$("', to='").utf8(otherPath.$()).I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }
 
         try {
             if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
                 int error = ff.errno();
-                LOG.error().$("could not rename [from='").$(path).$("', to='").utf8(otherPath).$("', error=").$(error).I$();
+                LOG.error().$("could not rename [from='").utf8(path).$("', to='").utf8(otherPath).$("', error=").$(error).I$();
                 throw CairoException.critical(error)
                         .put("could not rename [from='").put(path)
                         .put("', to='").put(otherPath)

@@ -52,26 +52,20 @@ import static io.questdb.cairo.AttachDetachStatus.*;
 import static io.questdb.cairo.TableUtils.*;
 
 
-public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
+public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachPartitionTest {
 
-    private static Path otherPath;
-    private static Path path;
     private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
     public static void setUpStatic() {
-        AbstractGriffinTest.setUpStatic();
-        otherPath = new Path();
-        path = new Path();
+        AbstractAlterTableAttachPartitionTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass
     public static void tearDownStatic() {
         purgeJob = Misc.free(purgeJob);
-        otherPath = Misc.free(otherPath);
-        path = Misc.free(path);
-        AbstractGriffinTest.tearDownStatic();
+        AbstractAlterTableAttachPartitionTest.tearDownStatic();
     }
 
     @Test
@@ -807,9 +801,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 TableToken tableToken1 = engine.getTableToken(tableName);
 
                 path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                otherPath.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
-                Assert.assertTrue(Files.rename(path, otherPath) > -1);
+                Assert.assertTrue(Files.rename(path, other) > -1);
 
                 // attempt to reattach
                 assertFailure(
@@ -1202,9 +1196,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 TableToken tableToken1 = engine.getTableToken(tableName);
 
                 path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                otherPath.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
-                Assert.assertTrue(Files.rename(path, otherPath) > -1);
+                Assert.assertTrue(Files.rename(path, other) > -1);
 
                 try (TableWriter writer = getWriter(tableName)) {
                     writer.attachPartition(timestamp);
@@ -1281,9 +1275,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 TableToken tableToken1 = engine.getTableToken(tableName);
 
                 path.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                otherPath.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                other.of(configuration.getRoot()).concat(tableToken1).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
 
-                Assert.assertTrue(Files.rename(path, otherPath) > -1);
+                Assert.assertTrue(Files.rename(path, other) > -1);
 
                 try (TableWriter writer = getWriter(tableName)) {
                     writer.attachPartition(timestamp);
@@ -1379,13 +1373,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 TableToken brokenTableToken = engine.getTableToken(brokenTableName);
 
                 path.of(configuration.getRoot()).concat(brokenTableToken).concat(timestampDay).put(DETACHED_DIR_MARKER).$();
-                otherPath.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
-                Assert.assertTrue(Files.rename(path, otherPath) > -1);
+                other.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).$();
+                Assert.assertTrue(Files.rename(path, other) > -1);
 
                 // Change table id in the metadata file in the partition
-                otherPath.chop$().concat(META_FILE_NAME).$();
+                other.concat(META_FILE_NAME).$();
                 try (MemoryCMARW mem2 = Vm.getCMARWInstance()) {
-                    mem2.smallFile(configuration.getFilesFacade(), otherPath, MemoryTag.NATIVE_DEFAULT);
+                    mem2.smallFile(configuration.getFilesFacade(), other, MemoryTag.NATIVE_DEFAULT);
                     mem2.putInt(META_OFFSET_TABLE_ID, tableToken.getTableId());
                 }
 
@@ -1393,8 +1387,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.attachPartition(timestamp);
                 }
 
-                Assert.assertFalse(Files.exists(otherPath.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).concat("s.k").$()));
-                Assert.assertFalse(Files.exists(otherPath.parent().concat("s.v").$()));
+                Assert.assertFalse(Files.exists(other.of(configuration.getRoot()).concat(tableToken).concat(timestampDay).concat("s.k").$()));
+                Assert.assertFalse(Files.exists(other.parent().concat("s.v").$()));
 
                 assertContent(expected, tableName);
             }
@@ -2134,13 +2128,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .concat(META_FILE_NAME)
                         .$();
                 Assert.assertTrue(Files.remove(path));
-                otherPath.of(configuration.getRoot())
+                other.of(configuration.getRoot())
                         .concat(engine.getTableToken(brokenTableName))
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
                         .$();
-                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(otherPath, path));
+                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
 
                 renameDetachedToAttachable(tableName, "2022-06-02");
 
@@ -2213,13 +2207,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         // hide the detached partition
         TableToken tableToken = engine.getTableToken(tableName);
         path.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached").$();
-        otherPath.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached.hide").$();
+        other.of(configuration.getRoot()).concat(tableToken).concat(partitionName + ".detached.hide").$();
 
-        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, otherPath));
+        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, other));
         // drop the latest version of the partition
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
-        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(otherPath, path));
+        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
     }
 
     private void renameDetachedToAttachable(String tableName, long... partitions) {
@@ -2233,13 +2227,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             );
             path.put(DETACHED_DIR_MARKER).$();
             PartitionBy.setSinkForPartition(
-                    otherPath.of(configuration.getRoot()).concat(tableToken),
+                    other.of(configuration.getRoot()).concat(tableToken),
                     PartitionBy.DAY,
                     partition,
                     false
             );
-            otherPath.put(configuration.getAttachPartitionSuffix()).$();
-            Assert.assertTrue(Files.rename(path, otherPath) > -1);
+            other.put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path, other) > -1);
         }
     }
 
@@ -2247,8 +2241,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         TableToken tableToken = engine.getTableToken(tableName);
         for (String partition : partitions) {
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
-            otherPath.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
-            Assert.assertTrue(Files.rename(path, otherPath) > -1);
+            other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path, other) > -1);
         }
     }
 

@@ -198,6 +198,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                TableToken tableToken;
                 try (
                         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                                 .col("l", ColumnType.LONG)
@@ -205,15 +206,18 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                 .col("s", ColumnType.SYMBOL).symbolCapacity(32)
                                 .timestamp("ts");
                         MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(cairoConfig.getRoot()).concat(tableName)
+                        Path path = new Path().of(cairoConfig.getRoot())
                 ) {
-                    createTable(cairoConfig, mem, path, tableModel, 1);
+                    tableToken = engine.lockTableName(tableName, 1, false);
+                    engine.registerTableToken(tableToken);
+                    createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
+                    engine.unlockTableName(tableToken);
                 }
 
                 // set partition read-only state
                 final long[] partitionSizes = new long[partitionIsReadOnly.length];
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-state")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-state")) {
                     TxWriter txWriter = writer.getTxWriter();
                     int partitionCount = txWriter.getPartitionCount();
                     Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
@@ -226,7 +230,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 }
 
                 // check read only state
-                checkPartitionReadOnlyState(engine, tableName, partitionIsReadOnly);
+                checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
 
                 assertSql(
                         compiler,
@@ -243,7 +247,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 if (expectedNewEvents > 0) {
                     long start = System.currentTimeMillis();
                     while (System.currentTimeMillis() - start < 2000L) {
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                             if (1111 + expectedNewEvents <= reader.size()) {
                                 break;
                             }
@@ -251,7 +255,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Os.sleep(1L);
                     }
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                         int partitionCount = reader.getPartitionCount();
                         Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);
                         for (int i = 0; i < partitionCount; i++) {
@@ -266,7 +270,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 }
 
                 // check read only state, no changes
-                checkPartitionReadOnlyState(engine, tableName, partitionIsReadOnly);
+                checkPartitionReadOnlyState(engine, tableToken, partitionIsReadOnly);
 
                 if (finallyExpected != null) {
                     assertSql(
@@ -276,6 +280,8 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                             Misc.getThreadLocalBuilder(),
                             finallyExpected);
                 }
+
+                engine.unlockTableName(tableToken);
             }
         });
     }

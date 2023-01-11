@@ -1463,7 +1463,7 @@ public class SqlCompiler implements Closeable {
                     circuitBreaker
             );
         } catch (CairoException e) {
-            LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
             // Close writer, directory will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
@@ -1554,7 +1554,7 @@ public class SqlCompiler implements Closeable {
                 throw CairoException.critical(0).put("volume path is not allowed [path=").put(path).put(']');
             }
         }
-        
+
         if (createTableModel.getQueryModel() == null) {
             executionContext.getCairoSecurityContext().checkWritePermission();
             try {

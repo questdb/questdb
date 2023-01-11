@@ -1214,13 +1214,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return tempMem16b != 0;
     }
 
+    public boolean isPartitionReadOnly(int partitionIndex) {
+        return txWriter.isPartitionReadOnly(partitionIndex);
+    }
+
     public void markSeqTxnCommitted(long seqTxn) {
         setSeqTxn(seqTxn);
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-    }
-
-    public boolean isPartitionReadOnly(int partitionIndex) {
-        return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
     @Override
@@ -4195,6 +4195,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private void openFirstPartition(long timestamp) {
         final long ts = repairDataGaps(timestamp);
         openPartition(ts);
+        populateDenseIndexerList();
         setAppendPosition(txWriter.getTransientRowCount(), false);
         if (performRecovery) {
             performRecovery();
@@ -4526,7 +4527,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     if (partitionIsReadOnly) {
                         // move over read-only partitions
                         LOG.critical()
-                                .$("o3 ignoring write on read-only partition [table=").utf8(tableName)
+                                .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
                                 .$(", timestamp=").$ts(partitionTimestamp)
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
@@ -4738,26 +4739,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
-                    if (ff.isSoftLink(other)) {
-                        // in windows ^ ^ will return false, but that is ok as the behaviour
-                        // is to delete the link, not the contents of the target. in *nix
-                        // systems we can simply unlink, which deletes the link and leaves
-                        // the contents of the target intact
-                        if (ff.unlink(other) == 0) {
-                            LOG.info().$("purged by unlink [path=").$(other).I$();
-                            return;
-                        } else {
-                            LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
-                        }
-                    }
-                    long errno = ff.rmdir(other);
-                    if (errno == 0 || errno == -1) {
-                        // Successfully deleted or async purge has already swept it up
-                        LOG.info().$("purged [path=").$(other).I$();
-                    } else {
+                    int errno = ff.unlinkOrRemove(other, LOG);
+                    if (!(errno == 0 || errno == -1)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=")
-                                .$(other)
+                                .utf8(other)
                                 .$(", errno=").$(errno).I$();
                         scheduleAsyncPurge = true;
                     }
@@ -5164,7 +5150,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             path.trimTo(rootLen);
         } else {
             LOG.critical()
-                    .$("o3 ignoring removal of column in read-only partition [table=").utf8(tableName)
+                    .$("o3 ignoring removal of column in read-only partition [table=").utf8(tableToken.getTableName())
                     .$(", columnName=").utf8(columnName)
                     .$(", timestamp=").$ts(partitionTimestamp)
                     .$();
@@ -5978,7 +5964,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         for (int partitionOffset = 0, n = (int) o3ColumnTopSink.size(); partitionOffset < n; partitionOffset += increment) {
             long partitionTimestamp = o3ColumnTopSink.get(partitionOffset);
-            if (partitionTimestamp != -1L) {
+            if (partitionTimestamp > -1) {
                 for (int column = 0; column < columnCount; column++) {
                     long colTop = o3ColumnTopSink.get(partitionOffset + column + 1);
                     if (colTop > -1L) {

@@ -208,7 +208,6 @@ public final class TableUtils {
             CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
-            boolean pathIsOtherVolume,
             TableStructure structure,
             int tableId,
             CharSequence dirName
@@ -220,17 +219,6 @@ public final class TableUtils {
             CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
-            TableStructure structure,
-            int tableId
-    ) {
-        createTable(configuration, memory, path, false, structure, ColumnType.VERSION, tableId);
-    }
-
-    public static void createTable(
-            CairoConfiguration configuration,
-            MemoryMARW memory,
-            Path path,
-            boolean pathIsOtherVolume,
             TableStructure structure,
             int tableVersion,
             int tableId,
@@ -248,7 +236,6 @@ public final class TableUtils {
             int mkDirMode,
             MemoryMARW memory,
             Path path,
-            boolean pathIsOtherVolume,
             TableStructure structure,
             int tableVersion,
             int tableId,
@@ -271,23 +258,11 @@ public final class TableUtils {
         LOG.debug().$("create table [name=").$(tableDir).$(']').$();
         path.of(root).concat(tableDir);
 
-//        // path may have been set by CREATE TABLE ... [IN VOLUME 'path'].
-//        // if so, it is a valid folder or link to folder
-//        if (!pathIsOtherVolume) {
-//            path.of(root);
-//        }
-//        path.concat(tableName);
-//        final int rootLen = path.length();
-//
-//        if (ff.isDirOrSoftLinkDir(path.$())) {
-//            throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(path).put(']');
-//        }
-//        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-//            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
-//        }
-//        if (pathIsOtherVolume && ff.softLink(path.trimTo(rootLen).$(), Path.getThreadLocal2(root).concat(tableName).$()) != 0) {
-//            throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path).put(", tableName=").put(tableName).put(']');
-//        }
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+        }
+
+        final int rootLen = path.length();
 
         final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -474,7 +449,6 @@ public final class TableUtils {
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
         path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
-            // prepare to replace trailing \0
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {

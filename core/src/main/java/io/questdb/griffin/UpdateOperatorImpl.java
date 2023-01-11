@@ -144,7 +144,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     if (rowPartitionIndex != partitionIndex) {
                         if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
                             throw CairoException.critical(0)
-                                    .put("cannot update read-only partition [table=").put(tableName)
+                                    .put("cannot update read-only partition [table=").put(tableToken.getTableName())
                                     .put(", partitionTimestamp=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
                                     .put(']');
                         }

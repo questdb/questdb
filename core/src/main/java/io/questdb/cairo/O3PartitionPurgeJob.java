@@ -247,18 +247,16 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int partitionBy) {
 
         LOG.info().$("processing [table=").utf8(tableToken.getDirName()).I$();
-        Path path = Path.getThreadLocal(root).concat(tableToken).slash$();
-
+        Path path = Path.getThreadLocal(root).concat(tableToken);
+        int plimit = path.length();
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-
-        int plimit = path.length();
-        long p = ff.findFirst(path);
+        long p = ff.findFirst(path.$());
         if (p > 0) {
             try {
                 do {
                     if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(p), ff.findType(p), fileNameSink)) {
-                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
+                        parsePartitionDateVersion(fileNameSink, partitionList, tableToken.getDirName(), partitionByFormat);
                         path.trimTo(plimit).$();
                     }
                 } while (ff.findNext(p) > 0);

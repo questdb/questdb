@@ -37,8 +37,8 @@ abstract class AbstractAlterTableAttachPartitionTest extends AbstractGriffinTest
     final static StringSink partitions = new StringSink();
     @Rule
     public TestName testName = new TestName();
-    Path other;
-    Path path;
+    protected Path other;
+    protected Path path;
 
     @Override
     @Before
@@ -58,7 +58,7 @@ abstract class AbstractAlterTableAttachPartitionTest extends AbstractGriffinTest
 
     void copyPartitionAndMetadata(
             CharSequence srcRoot,
-            String srcTableName,
+            TableToken srcTableToken,
             String srcPartitionName,
             CharSequence dstRoot,
             String dstTableName,
@@ -66,7 +66,7 @@ abstract class AbstractAlterTableAttachPartitionTest extends AbstractGriffinTest
             String dstPartitionNameSuffix
     ) {
         path.of(srcRoot)
-                .concat(srcTableName)
+                .concat(srcTableToken)
                 .concat(srcPartitionName)
                 .slash$();
         other.of(dstRoot)

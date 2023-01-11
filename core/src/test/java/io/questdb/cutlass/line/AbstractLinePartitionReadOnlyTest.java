@@ -74,10 +74,10 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
         }
     }
 
-    protected static void checkPartitionReadOnlyState(CairoEngine engine, String tableName, boolean... partitionIsReadOnly) {
+    protected static void checkPartitionReadOnlyState(CairoEngine engine, TableToken tableToken, boolean... partitionIsReadOnly) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
             TxReader txFile = reader.getTxFile();
             int partitionCount = txFile.getPartitionCount();
             Assert.assertTrue(partitionCount <= partitionIsReadOnly.length);

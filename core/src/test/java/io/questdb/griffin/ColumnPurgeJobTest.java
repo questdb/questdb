@@ -28,10 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
-import io.questdb.std.Chars;
-import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
-import io.questdb.std.TestFilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -172,7 +169,6 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeCannotAllocateFailure() throws Exception {
-        int deadline = Os.isWindows() ? 92 : 105;
         assertMemoryLeak(() -> {
             currentMicros = 0;
             ff = new TestFilesFacadeImpl() {

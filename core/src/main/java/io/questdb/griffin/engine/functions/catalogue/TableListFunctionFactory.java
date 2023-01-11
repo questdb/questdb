@@ -239,6 +239,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return false;
                     }
 
+                    int pathLen = path.length();
                     try {
                         path.concat(tableToken).concat(META_FILE_NAME).$();
                         tableReaderMetadata.load(path.$());

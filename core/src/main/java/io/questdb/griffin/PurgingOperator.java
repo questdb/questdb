@@ -175,7 +175,7 @@ public abstract class PurgingOperator {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").utf8(tableName)
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").utf8(tableName.getTableName())
                         .$("\"' [columnName=").utf8(columnName)
                         .$(", updateTxn=").$(updateTxn)
                         .I$();

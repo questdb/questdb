@@ -26,14 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
@@ -51,7 +44,6 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 
-import static io.questdb.cairo.TableUtils.createTable;
 import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertSql;
 
@@ -69,6 +61,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             "2023-01-09T00:00:00.482326Z\t2023-01-09T23:59:59.354618Z\t90909\n" +
             "2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\n" +
             "2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\n";
+
+    private static final String firstPartitionName = "2023-01-01";
+    private static final int partitionCount = 11;
 
     private String OTHER_VOLUME;
 
@@ -93,16 +88,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableInAllowedVolume() throws Exception {
-
         Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
-
         String tableName = "evil_see";
-        String firstPartitionName = "2023-01-01";
-        int partitionCount = 11;
-
         assertMemoryLeak(() -> {
-
-            // create table with some data
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
@@ -110,7 +98,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             ) {
                 qdb.start();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-
                 compiler.compile("CREATE TABLE " + tableName + '(' +
                                 " investmentMill LONG," +
                                 " ticketThous INT," +
@@ -118,7 +105,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                                 " ts TIMESTAMP"
                                 + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
                         context).execute(null).await();
-
                 try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                         .col("investmentMill", ColumnType.LONG)
                         .col("ticketThous", ColumnType.INT)
@@ -126,30 +112,23 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         .timestamp("ts")) {
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
                 }
-                StringSink sink = Misc.getThreadLocalBuilder();
+
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        sink,
+                        Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts3\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts3\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
             }
         });
     }
 
     @Test
     public void testServerMainCreateTableInAllowedVolumeThenDrop() throws Exception {
-
         Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
-
         String tableName = "evil_hear";
-        String firstPartitionName = "2023-01-01";
-        int partitionCount = 11;
-
         assertMemoryLeak(() -> {
-
-            // create table with some data
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
@@ -166,7 +145,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                                     " ts TIMESTAMP"
                                     + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
                             context).execute(null).await();
-
                     try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                             .col("investmentMill", ColumnType.LONG)
                             .col("ticketThous", ColumnType.INT)
@@ -179,12 +157,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             compiler,
                             context,
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                            sink,
+                            Misc.getThreadLocalBuilder(),
                             TABLE_START_CONTENT);
-                    assertSql(compiler, context, "tables()", sink, "ts" + (tsIdx + i) + "\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
-
-                    assertTables(compiler, context, sink);
-
+                    assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts" + (tsIdx + i) + "\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
                     compiler.compile("DROP TABLE " + tableName, context).execute(null).await(); // it simply unlinks
                     deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete tha table's folder in the other volume
                 }
@@ -194,15 +169,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableMoveItsFolderAwayAndSoftLinkIt() throws Exception {
-
         Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
-
         String tableName = "sponsors";
-        String firstPartitionName = "2023-01-01";
-        int partitionCount = 11;
-
         assertMemoryLeak(() -> {
-
             // create table with some data
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -211,26 +180,27 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             ) {
                 qdb.start();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                try (
-                        TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                                .col("investmentMill", ColumnType.LONG)
-                                .col("ticketThous", ColumnType.INT)
-                                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                                .timestamp("ts");
-                        MemoryMARW mem = Vm.getMARWInstance();
-                        Path path = new Path().of(cairoConfig.getRoot()).concat(tableName)
-                ) {
-                    createTable(cairoConfig, mem, path, tableModel, 1);
+                compiler.compile("CREATE TABLE " + tableName + '(' +
+                                " investmentMill LONG," +
+                                " ticketThous INT," +
+                                " broker SYMBOL INDEX CAPACITY 32," +
+                                " ts TIMESTAMP"
+                                + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
+                        context).execute(null).await();
+                try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("investmentMill", ColumnType.LONG)
+                        .col("ticketThous", ColumnType.INT)
+                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts")) {
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
                 }
-                StringSink sink = Misc.getThreadLocalBuilder();
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        sink,
+                        Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n");
             }
 
             // copy the table to a foreign location, remove it, then symlink it
@@ -266,14 +236,13 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                StringSink sink = Misc.getThreadLocalBuilder();
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        sink,
+                        Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", sink, "ts1\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts1\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
             }
         });
     }
@@ -308,23 +277,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 null);
     }
 
-    private void assertTables(SqlCompiler compiler, SqlExecutionContext context, StringSink sink) throws SqlException {
-        try (
-                RecordCursorFactory factory = compiler.compile("tables()", context).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(context)
-        ) {
-            RecordMetadata metadata = factory.getMetadata();
-            int cols = metadata.getColumnCount();
-            Record record = cursor.getRecord();
-            sink.clear();
-            while (cursor.hasNext()) {
-                for (int col = 0; col < cols; col++) {
-                    TestUtils.printColumn(record, metadata, col, sink, false);
-                }
-            }
-            System.out.printf("tables: %s%n", sink);
-        }
-    }
 
     static {
         // log is needed to greedily allocate logger infra and
