@@ -201,7 +201,7 @@
 
     <profiles>
         <profile>
-            <id>maven-central-release</id>
+            <id>javadoc</id>
             <build>
                 <plugins>
                     <plugin>
