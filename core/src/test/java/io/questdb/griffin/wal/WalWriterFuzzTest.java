@@ -170,7 +170,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
-        try (TableWriterAPI writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test")) {
+        try (TableWriterAPI writer = getWriter(tableName)) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
             for (int i = 0; i < transactionSize; i++) {
@@ -204,8 +204,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             String tableName = tableNameBase + "_" + i + "_wal_parallel";
             AtomicLong structureVersion = new AtomicLong();
             AtomicInteger nextOperation = new AtomicInteger(-1);
+            TableToken token = engine.getTableToken(tableName);
             final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(
-                    sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test");
+                    sqlExecutionContext.getCairoSecurityContext(), token, "apply trans test");
             writers.add(walWriter);
             ObjList<FuzzTransaction> transactions = fuzzTransactions.get(i);
 
@@ -294,7 +295,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test"));
+            TableToken token = engine.getTableToken(tableName);
+            writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), token, "apply trans test"));
         }
 
         Rnd writerRnd = new Rnd();
@@ -330,7 +332,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         AtomicInteger done = new AtomicInteger();
 
         for (int i = 0; i < walWriterCount; i++) {
-            final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test");
+            TableToken tableToken = engine.getTableToken(tableName);
+            final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "apply trans test");
             writers.add(walWriter);
 
             Thread thread = new Thread(() -> {
@@ -433,7 +436,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         createInitialTable(tableNameWal, true, initialRowCount);
 
         ObjList<FuzzTransaction> transactions;
-        try (TableReader reader = new TableReader(configuration, tableNameNoWal)) {
+        try (TableReader reader = newTableReader(configuration, tableNameNoWal)) {
             TableReaderMetadata metadata = reader.getMetadata();
 
             long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
@@ -496,7 +499,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
 
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), baseSymbolTableName)) {
+        try (TableReader reader = getReader(baseSymbolTableName)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
@@ -556,7 +559,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             createInitialTable(tableNameNoWal, false, initialRowCount);
 
             ObjList<FuzzTransaction> transactions;
-            try (TableReader reader = new TableReader(configuration, tableNameWal)) {
+            try (TableReader reader = newTableReader(configuration, tableNameWal)) {
                 TableReaderMetadata metadata = reader.getMetadata();
 
                 long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");

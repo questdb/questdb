@@ -39,11 +39,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_SYMBOL_CAPACITY_COL = 5;
     private static final int N_TYPE_COL = 1;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
-    private final CharSequence tableName;
+    private final TableToken tableToken;
 
-    public ShowColumnsRecordCursorFactory(CharSequence tableName) {
+    public ShowColumnsRecordCursorFactory(TableToken tableToken) {
         super(METADATA);
-        this.tableName = tableName.toString();
+        this.tableToken = tableToken;
     }
 
     @Override
@@ -105,7 +105,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {
-            reader = executionContext.getCairoEngine().getReader(executionContext.getCairoSecurityContext(), tableName);
+            reader = executionContext.getReader(tableToken);
             toTop();
             return this;
         }

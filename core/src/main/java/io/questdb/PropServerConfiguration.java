@@ -54,6 +54,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -88,6 +89,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
+    private final long cairoTableRegistryAutoReloadFrequency;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final long circuitBreakerTimeout;
@@ -127,6 +129,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean ioURingEnabled;
+    private final boolean isReadOnlyInstance;
     private final boolean isWalSupported;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final int latestByQueueCapacity;
@@ -440,6 +443,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
+        this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
+        this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -1485,6 +1490,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getAllowTableRegistrySharedWrite() {
+            return false;
+        }
+
+        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }
@@ -2144,6 +2154,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return systemTableNamePrefix;
         }
 
+        @Override
+        public long getTableRegistryAutoReloadFrequency() {
+            return cairoTableRegistryAutoReloadFrequency;
+        }
+
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -2244,6 +2259,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isReadOnlyInstance() {
+            return isReadOnlyInstance;
+        }
+
+        @Override
         public boolean isSnapshotRecoveryEnabled() {
             return snapshotRecoveryEnabled;
         }
@@ -2265,6 +2285,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public boolean isWalSupported() {
             return isWalSupported;
+        }
+
+        @Override
+        public boolean mangleTableDirNames() {
+            return false;
         }
     }
 
@@ -2337,7 +2362,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return httpReadOnlySecurityContext;
+            return httpReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -3290,7 +3315,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return pgReadOnlySecurityContext;
+            return pgReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -3394,11 +3419,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        @NotNull
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
         }
 
         @Override
+        @NotNull
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }

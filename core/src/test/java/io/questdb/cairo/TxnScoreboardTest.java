@@ -44,7 +44,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testCheckNoLocksBeforeTxn() {
         final long lastCommittedTxn = 2;
-        ff = new FilesFacadeImpl();
+        ff = new TestFilesFacadeImpl();
         try (
                 final Path shmPath = new Path();
                 TxnScoreboard txnScoreboard = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))
@@ -70,7 +70,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testCleanFailsNoResourceLeakRO() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openCleanRW(LPSZ name, long size) {
                     return -1;
@@ -92,7 +92,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testCleanFailsNoResourceLeakRW() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openCleanRW(LPSZ name, long size) {
                     return -1;
@@ -116,7 +116,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
                 try (
-                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                        final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                 ) {
                     for (int i = 0; i < 1500; i++) {
                         scoreboard.acquireTxn(i);
@@ -127,7 +127,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 // second open is exclusive, file should be truncated
                 try (
-                        final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
+                        final TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                 ) {
                     Assert.assertEquals(0, scoreboard2.getMin());
                 }
@@ -139,7 +139,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testCleanOnExclusiveOpenLocksFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                 try (
                         final TxnScoreboard scoreboard = new TxnScoreboard(ff, 1024).ofRW(shmPath.of(root))
                 ) {
@@ -178,7 +178,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
                 try (
-                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                        final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                 ) {
                     for (int i = 0; i < 1024; i++) {
                         Assert.assertTrue(scoreboard.acquireTxn(i));
@@ -192,7 +192,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                     // increase scoreboard size
                     try (
-                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
+                            final TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                     ) {
                         Assert.assertEquals(1499, scoreboard2.getMin());
                         for (int i = 1500; i < 3000; i++) {
@@ -212,10 +212,10 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
                 try (
-                        final TxnScoreboard rootBoard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
+                        final TxnScoreboard rootBoard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                 ) {
                     try (
-                            final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                            final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                     ) {
                         for (int i = 0; i < 1500; i++) {
                             scoreboard.acquireTxn(i);
@@ -225,7 +225,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     }
 
                     try (
-                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
+                            final TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                     ) {
                         Assert.assertEquals(1499, scoreboard2.getMin());
                         for (int i = 1500; i < 3000; i++) {
@@ -246,7 +246,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                    final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
             ) {
                 Assert.assertEquals(0, scoreboard.getMin());
                 Assert.assertTrue(scoreboard.acquireTxn(2048));
@@ -274,8 +274,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int expect = 2048;
             try (final Path shmPath = new Path()) {
-                try (TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
-                    try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
+                try (TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
+                    try (TxnScoreboard scoreboard1 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
                         // we should successfully acquire expected number of entries
                         for (int i = 0; i < expect; i++) {
                             scoreboard1.acquireTxn(i + 134);
@@ -337,7 +337,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testMapFailsNoResourceLeakRO() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     return -1;
@@ -359,7 +359,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testMapFailsNoResourceLeakRW() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                     return -1;
@@ -385,7 +385,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         try (
                 final Path shmPath = new Path();
-                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+                final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
         ) {
             final CyclicBarrier barrier = new CyclicBarrier(readers);
             final CountDownLatch latch = new CountDownLatch(readers);
@@ -430,7 +430,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             int size = 64;
             int start = 134;
             try (final Path shmPath = new Path()) {
-                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, size).ofRW(shmPath.of(root))) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, size).ofRW(shmPath.of(root))) {
                     // first 2 go out of order
                     scoreboard1.acquireTxn(1 + start);
                     Assert.assertFalse(scoreboard1.acquireTxn(start));
@@ -447,7 +447,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         try (
                 final Path shmPath = new Path();
-                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+                final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
         ) {
             final CyclicBarrier barrier = new CyclicBarrier(readers);
             final CountDownLatch latch = new CountDownLatch(readers);
@@ -507,7 +507,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     try (final Path shmPath = new Path()) {
                         for (int j = 0; j < iterations; j++) {
                             //noinspection EmptyTryBlock
-                            try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))) {
+                            try (TxnScoreboard ignored = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))) {
                                 // empty body because we need to close this
                             } catch (Exception ex) {
                                 ex.printStackTrace();
@@ -530,9 +530,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                    final TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
             ) {
-                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))) {
                     scoreboard1.acquireTxn(67);
                     scoreboard1.acquireTxn(68);
                     scoreboard1.acquireTxn(68);
@@ -575,7 +575,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                    final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
             ) {
                 scoreboard.acquireTxn(15);
                 scoreboard.releaseTxn(15);
@@ -589,7 +589,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         try (
                 final Path shmPath = new Path();
-                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+                final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
         ) {
             final CyclicBarrier barrier = new CyclicBarrier(readers + 1);
             final CountDownLatch latch = new CountDownLatch(readers + 1);

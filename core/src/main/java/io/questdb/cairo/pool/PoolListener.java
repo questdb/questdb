@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.cairo.TableToken;
+
 @FunctionalInterface
 public interface PoolListener {
     short EV_CREATE = 10;
@@ -47,5 +49,5 @@ public interface PoolListener {
     byte SRC_READER = 2;
     byte SRC_WRITER = 1;
 
-    void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position);
+    void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position);
 }

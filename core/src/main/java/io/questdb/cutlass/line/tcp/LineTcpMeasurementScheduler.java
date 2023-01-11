@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -66,7 +65,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
-    private final FilesFacade ff;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
     private final long[] loadByWriterThread;
     private final NetworkIOJob[] netIoJobs;
@@ -75,7 +73,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
     private final CairoSecurityContext securityContext;
     private final StringSink[] tableNameSinks;
-    private final LowerCaseCharSequenceHashSet tableNamesUtf16;
+    private final LowerCaseCharSequenceObjHashMap<TableToken> tableNamesUtf16;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
@@ -93,7 +91,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
-        this.ff = configuration.getFilesFacade();
         MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
         this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
         int n = ioWorkerPool.getWorkerCount();
@@ -111,7 +108,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         // in worker threads.
         tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-        tableNamesUtf16 = new LowerCaseCharSequenceHashSet();
+        tableNamesUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
         autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
@@ -183,6 +180,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             Misc.freeObjList(assignedTables[i]);
             assignedTables[i].clear();
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
@@ -243,7 +241,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             pubSeq[writerWorkerId].done(seq);
                             if (listener != null) {
                                 // table going idle
-                                listener.onEvent(tableNameUtf16, 1);
+                                listener.onEvent(tud.getTableToken(), 1);
                             }
                             LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
                         }
@@ -256,7 +254,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         if (tud.getWriterThreadId() == -1) {
                             if (listener != null) {
                                 // table going idle
-                                listener.onEvent(tud.getTableNameUtf16(), 1);
+                                listener.onEvent(tud.getTableToken(), 1);
                             }
                             tud.releaseWriter(true);
                             tud.close();
@@ -648,9 +646,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // we should not have "shared" WAL tables
                 tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
-                // if table doesn't exist, we might need to create it
-                // this could end up being WAL table, but we do not know yet
-                int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
+                TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
+                int status = engine.getStatus(securityContext, path, tableToken);
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
                         throw CairoException.nonCritical()
@@ -670,7 +667,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    engine.createTable(securityContext, ddlMem, path, tsa);
+                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
                 // by the time we get here, definitely exists on disk
@@ -695,22 +692,23 @@ class LineTcpMeasurementScheduler implements Closeable {
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
                     final int keyIndex = tableNamesUtf16.keyIndex(tableNameUtf16);
-                    final CharSequence tableName = keyIndex < 0 ? tableNamesUtf16.keyAt(keyIndex) : tableNameUtf16;
-                    if (TableSequencerAPI.isWalTable(tableName, path, ff)) {
+                    tableToken = keyIndex < 0 ? tableNamesUtf16.valueAt(keyIndex) : tableToken;
+                    final CharSequence tableName = keyIndex < 0 ? tableToken.getTableName() : tableNameUtf16;
+                    if (engine.isWalTable(tableToken)) {
                         // create WAL-oriented TUD and NOT add it to the global cache
                         tud = new TableUpdateDetails(
                                 configuration,
                                 engine,
                                 engine.getWalWriter(
                                         securityContext,
-                                        tableName
+                                        tableToken
                                 ),
                                 -1,
                                 netIoJobs,
                                 defaultColumnTypes
                         );
                         if (keyIndex > -1) {
-                            tableNamesUtf16.addAt(keyIndex, tableName.toString());
+                            tableNamesUtf16.putAt(keyIndex, tableName.toString(), tableToken);
                         }
                     } else {
                         tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
@@ -747,20 +745,20 @@ class LineTcpMeasurementScheduler implements Closeable {
                 threadId = i;
             }
         }
-
+        TableToken tableToken = engine.getTableToken(tableNameUtf16);
         final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails
-                engine.getTableWriterAPI(securityContext, tableNameUtf16, "tcpIlp"),
+                engine.getTableWriterAPI(securityContext, tableToken, "tcpIlp"),
                 threadId,
                 netIoJobs,
                 defaultColumnTypes
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").$(tableToken).$(" to thread ").$(threadId).$();
         return tud;
     }
 

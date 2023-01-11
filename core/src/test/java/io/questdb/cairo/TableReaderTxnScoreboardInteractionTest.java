@@ -34,19 +34,19 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
     public void testVanilla() throws Exception {
         assertMemoryLeak(() -> {
 
-            createTable();
+            TableToken tt = createTable();
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                 TxnScoreboard txnScoreboard = reader.getTxnScoreboard();
                 // when table is empty the "min" is set to max long
                 Assert.assertEquals(0, txnScoreboard.getMin());
                 Assert.assertEquals(0, reader.getTxn());
             }
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+            try (TableWriter w = getWriter(tt)) {
                 addRow(w);
                 final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
@@ -58,18 +58,18 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
                 }
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                     Assert.assertEquals(2, reader.getTxn());
                     Assert.assertEquals(2, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(2));
 
-                    try (TableReader reader2 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                    try (TableReader reader2 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                         Assert.assertEquals(2, reader2.getTxn());
                         Assert.assertEquals(2, txnScoreboard.getMin());
                         Assert.assertEquals(2, txnScoreboard.getActiveReaderCount(2));
 
                         addRow(w);
-                        try (TableReader reader3 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                        try (TableReader reader3 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                             Assert.assertEquals(3, reader3.getTxn());
                             Assert.assertEquals(2, txnScoreboard.getMin());
                             Assert.assertEquals(2, txnScoreboard.getActiveReaderCount(2));
@@ -87,7 +87,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
 
                 w.addColumn("z", ColumnType.LONG);
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                     Assert.assertEquals(4, reader.getTxn());
                     Assert.assertEquals(4, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(4));
@@ -97,7 +97,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 Assert.assertEquals(4, txnScoreboard.getMin());
                 Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(4));
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tt)) {
                     Assert.assertEquals(4, reader.getTxn());
                     Assert.assertEquals(4, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(4));
@@ -112,19 +112,19 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 TxnScoreboard txnScoreboard = reader.getTxnScoreboard();
                 // when table is empty the "min" is set to max long
                 Assert.assertEquals(0, txnScoreboard.getMin());
                 Assert.assertEquals(0, reader.getTxn());
             }
 
-            try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter w = newTableWriter(configuration, "x", metrics)) {
                 addRow(w);
 
                 final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = newTableReader(configuration, "x")) {
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
@@ -156,12 +156,12 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
         w.commit();
     }
 
-    private static void createTable() {
+    private static TableToken createTable() {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model
                     .col("a", ColumnType.BYTE)
                     .col("b", ColumnType.SHORT);
-            CairoTestUtils.create(model);
+            return CairoTestUtils.create(model);
         }
     }
 }

@@ -918,6 +918,108 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * @throws RuntimeException      or Error if the mappingFunction does so,
      *                               in which case the mapping is left unestablished
      */
+    public V computeIfAbsent(CharSequence key, Object token, BiFunction<CharSequence, Object, ? extends V> mappingFunction) {
+        if (key == null || mappingFunction == null)
+            throw new NullPointerException();
+        int h = spread(key.hashCode());
+        V val = null;
+        int binCount = 0;
+        for (Node<V>[] tab = table; ; ) {
+            Node<V> f;
+            int n, i, fh;
+            if (tab == null || (n = tab.length) == 0)
+                tab = initTable();
+            else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
+                Node<V> r = new ReservationNode<V>();
+                synchronized (r) {
+                    if (casTabAt(tab, i, r)) {
+                        binCount = 1;
+                        Node<V> node = null;
+                        try {
+                            if ((val = mappingFunction.apply(key, token)) != null)
+                                node = new Node<V>(h, key, val, null);
+                        } finally {
+                            setTabAt(tab, i, node);
+                        }
+                    }
+                }
+                if (binCount != 0)
+                    break;
+            } else if ((fh = f.hash) == MOVED)
+                tab = helpTransfer(tab, f);
+            else {
+                boolean added = false;
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        if (fh >= 0) {
+                            binCount = 1;
+                            for (Node<V> e = f; ; ++binCount) {
+                                CharSequence ek;
+                                V ev;
+                                if (e.hash == h &&
+                                        ((ek = e.key) == key || (key.equals(ek)))) {
+                                    val = e.val;
+                                    break;
+                                }
+                                Node<V> pred = e;
+                                if ((e = e.next) == null) {
+                                    if ((val = mappingFunction.apply(key, token)) != null) {
+                                        added = true;
+                                        pred.next = new Node<V>(h, key, val, null);
+                                    }
+                                    break;
+                                }
+                            }
+                        } else if (f instanceof TreeBin) {
+                            binCount = 2;
+                            TreeBin<V> t = (TreeBin<V>) f;
+                            TreeNode<V> r, p;
+                            if ((r = t.root) != null &&
+                                    (p = r.findTreeNode(h, key, null)) != null)
+                                val = p.val;
+                            else if ((val = mappingFunction.apply(key, token)) != null) {
+                                added = true;
+                                t.putTreeVal(h, key, val);
+                            }
+                        }
+                    }
+                }
+                if (binCount != 0) {
+                    if (binCount >= TREEIFY_THRESHOLD)
+                        treeifyBin(tab, i);
+                    if (!added)
+                        return val;
+                    break;
+                }
+            }
+        }
+        if (val != null)
+            addCount(1L, binCount);
+        return val;
+    }
+
+    /**
+     * If the specified key is not already associated with a value,
+     * attempts to compute its value using the given mapping function
+     * and enters it into this map unless {@code null}.  The entire
+     * method invocation is performed atomically, so the function is
+     * applied at most once per key.  Some attempted update operations
+     * on this map by other threads may be blocked while computation
+     * is in progress, so the computation should be short and simple,
+     * and must not attempt to update any other mappings of this map.
+     *
+     * @param key             key with which the specified value is to be associated
+     * @param mappingFunction the function to compute a value
+     * @return the current (existing or computed) value associated with
+     * the specified key, or null if the computed value is null
+     * @throws NullPointerException  if the specified key or mappingFunction
+     *                               is null
+     * @throws IllegalStateException if the computation detectably
+     *                               attempts a recursive update to this map that would
+     *                               otherwise never complete
+     * @throws RuntimeException      or Error if the mappingFunction does so,
+     *                               in which case the mapping is left unestablished
+     */
     public V computeIfAbsent(CharSequence key, Function<CharSequence, ? extends V> mappingFunction) {
         if (key == null || mappingFunction == null)
             throw new NullPointerException();

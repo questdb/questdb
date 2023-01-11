@@ -25,7 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.log.*;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
@@ -101,7 +101,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
     public void testReportCrashFiles() throws IOException {
         final File x = temp.newFile();
         final String logFileName = x.getAbsolutePath();
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
@@ -134,7 +134,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
-            int fd = Files.openRO(path);
+            int fd = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertTrue(fd > -1);
             try {
                 while (true) {
@@ -170,7 +170,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
                     }
                 }
             } finally {
-                Files.close(fd);
+                TestFilesFacadeImpl.INSTANCE.close(fd);
                 Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
             }
         }

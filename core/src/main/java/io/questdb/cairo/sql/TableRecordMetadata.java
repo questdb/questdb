@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
 
 public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
@@ -40,7 +41,7 @@ public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
 
     int getTableId();
 
-    String getTableName();
+    TableToken getTableToken();
 
     boolean isWalEnabled();
 }

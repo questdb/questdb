@@ -24,32 +24,42 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 
-public class ReaderOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
+public class TableReferenceOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
     public static final int MAX_RETRY_ATTEMPS = 10;
     private static final String prefix = "cached query plan cannot be used because table schema has changed [table='";
-    private static final ThreadLocal<ReaderOutOfDateException> tlException = new ThreadLocal<>(ReaderOutOfDateException::new);
+    private static final ThreadLocal<TableReferenceOutOfDateException> tlException = new ThreadLocal<>(TableReferenceOutOfDateException::new);
     private final StringSink message = (StringSink) new StringSink().put(prefix);
 
-    public static ReaderOutOfDateException of(CharSequence tableName) {
-        ReaderOutOfDateException ex = tlException.get();
+    public static TableReferenceOutOfDateException of(CharSequence outdatedTableName) {
+        TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new ReaderOutOfDateException()) != null;
+        assert (ex = new TableReferenceOutOfDateException()) != null;
         ex.message.clear(prefix.length());
-        ex.message.put(tableName).put("']");
+        ex.message.put(outdatedTableName).put("']");
         return ex;
     }
 
-    public static ReaderOutOfDateException of(CharSequence tableName, int expectedTableId, int actualTableId,
-                                              long expectedTableVersion, long actualTableVersion) {
-        ReaderOutOfDateException ex = tlException.get();
+    public static TableReferenceOutOfDateException of(TableToken tableToken) {
+        TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new ReaderOutOfDateException()) != null;
+        assert (ex = new TableReferenceOutOfDateException()) != null;
         ex.message.clear(prefix.length());
-        ex.message.put(tableName)
+        ex.message.put(tableToken).put("']");
+        return ex;
+    }
+
+    public static TableReferenceOutOfDateException of(TableToken tableToken, int expectedTableId, int actualTableId,
+                                                      long expectedTableVersion, long actualTableVersion) {
+        TableReferenceOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new TableReferenceOutOfDateException()) != null;
+        ex.message.clear(prefix.length());
+        ex.message.put(tableToken)
                 .put("', expectedTableId=").put(expectedTableId)
                 .put(", actualTableId=").put(actualTableId)
                 .put(", expectedTableVersion=").put(expectedTableVersion)

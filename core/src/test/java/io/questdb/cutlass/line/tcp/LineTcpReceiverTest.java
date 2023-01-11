@@ -28,10 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
@@ -138,14 +138,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
             m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
-            CairoTestUtils.createTable(m);
+            CairoTestUtils.create(m);
         }
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (name.equals(tableName)) {
+                    if (Chars.equalsNc(name.getTableName(), tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -169,7 +170,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             });
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 final int expectedNumOfRows = numOfRows / 2;
                 // usually the data will be in the table by the time we get here but
                 // if it is not we will wait for it in a loop
@@ -198,7 +199,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
                 m.timestamp("ts").wal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(engine, m);
             }
 
             // Send non-partitioned table rows before the partitioned table ones.
@@ -251,7 +252,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         });
         mayDrainWalQueue();
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
             Assert.assertEquals(count * writeIterations, reader.size());
         }
@@ -267,7 +268,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 m.timestamp("ts").col("dt", ColumnType.DATE).noWal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(m);
             }
 
             final String lineData = tableName + " dt=631150000000000t 631150000000000000\n" +
@@ -316,7 +317,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
+            CairoTestUtils.create(m);
         }
 
         String lineData =
@@ -469,7 +470,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (name.equals(tableName)) {
+                    if (Chars.equalsNc(name.getTableName(), tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
                     }
                 }
@@ -490,7 +492,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }, false, 1000);
 
         mayDrainWalQueue();
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
             Assert.assertEquals(numOfColumns + 1, reader.getMetadata().getColumnCount());
         }
@@ -584,107 +586,30 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testSomeWritersReleased() throws Exception {
+    public void testNoAutoCreateNewColumns() throws Exception {
+        autoCreateNewColumns = false;
         runInContext((receiver) -> {
-            String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
-
-            int iterations = 8;
-            int threadCount = 8;
-            CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex = new CharSequenceObjHashMap<>();
-            tableIndex.put("weather", new SOUnboundedCountDownLatch());
-            for (int i = 1; i < threadCount; i++) {
-                tableIndex.put("weather" + i, new SOUnboundedCountDownLatch());
+            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
+            try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
+                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+                engine.createTable(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), false, m, false);
             }
 
-            // One engine hook for all writers
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    tableIndex.get(name).countDown();
-                }
-            });
+            String lineData =
+                    "up out=1.0 631150000000000000\n" +
+                            "up out=2.0 631152000000000000\n" +
+                            "up out=3.0 631160000000000000\n" +
+                            "up out=4.0 631170000000000000\n";
+            sendLinger(receiver, lineData, "up");
 
-            try {
-                sendAndWait(receiver, lineData, tableIndex, 1);
-                SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount - 1);
-                for (int i = 1; i < threadCount; i++) {
-                    final String threadTable = "weather" + i;
-                    final String lineDataThread = lineData.replace("weather", threadTable);
-                    sendNoWait(receiver, lineDataThread, threadTable);
-                    new Thread(() -> {
-                        try {
-                            for (int n = 0; n < iterations; n++) {
-                                Os.sleep(minIdleMsBeforeWriterRelease - 50);
-                                send(receiver, lineDataThread, threadTable, WAIT_NO_WAIT);
-                            }
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        } finally {
-                            threadPushFinished.countDown();
-                        }
-                    }).start();
-                }
-
-                sendAndWait(receiver, lineData, tableIndex, 2);
-                mayDrainWalQueue();
-                try (TableWriterAPI w = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
-                    w.truncate();
-                }
-                // drainWalQueue() call opens TableWriter one more time
-                int expectedReleases = walEnabled ? 5 : 4;
-                sendAndWait(receiver, lineData, tableIndex, expectedReleases);
-                mayDrainWalQueue();
-
-                String header = "location\ttemperature\ttimestamp\n";
-                String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
-                        "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n",
-                        "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"};
-                String expected = header + lines[0] + lines[1] + lines[2];
-                assertTable(expected, "weather");
-                if (walEnabled) {
-                    Assert.assertTrue(isWalTable("weather"));
-                }
-
-                // Concatenate iterations + 1 of identical insert results
-                // to assert against weather 1-8 tables
-                StringBuilder expectedSB = new StringBuilder(header);
-                for (String line : lines) {
-                    expectedSB.append(Chars.repeat(line, iterations + 1));
-                }
-
-                // Wait async ILP send threads to finish.
-                threadPushFinished.await();
-                for (int i = 1; i < threadCount; i++) {
-                    // Wait writer to be released and check.
-                    String tableName = "weather" + i;
-                    try {
-                        try {
-                            assertTable(expectedSB, tableName);
-                            if (walEnabled) {
-                                Assert.assertTrue(isWalTable(tableName));
-                            }
-                        } catch (AssertionError e) {
-                            int releasedCount = -tableIndex.get(tableName).getCount();
-                            // Wait one more writer release before re-trying to compare
-                            wait(tableIndex.get(tableName), releasedCount + 3, minIdleMsBeforeWriterRelease);
-                            mayDrainWalQueue();
-                            assertTable(expectedSB, tableName);
-                            if (walEnabled) {
-                                Assert.assertTrue(isWalTable(tableName));
-                            }
-                        }
-                    } catch (Throwable err) {
-                        LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").$(tableName).$();
-                        throw err;
-                    }
-                }
-            } finally {
-                // Clean engine hook
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("up"));
             }
+            String expected = "ts\tsym\n";
+            assertTable(expected, "up");
         });
+        autoCreateNewColumns = true;
     }
 
     @Test
@@ -780,6 +705,110 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testSomeWritersReleased() throws Exception {
+        runInContext((receiver) -> {
+            String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+
+            int iterations = 8;
+            int threadCount = 8;
+            CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex = new CharSequenceObjHashMap<>();
+            tableIndex.put("weather", new SOUnboundedCountDownLatch());
+            for (int i = 1; i < threadCount; i++) {
+                tableIndex.put("weather" + i, new SOUnboundedCountDownLatch());
+            }
+
+            // One engine hook for all writers
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    tableIndex.get(token.getTableName()).countDown();
+                }
+            });
+
+            try {
+                sendAndWait(receiver, lineData, tableIndex, 1);
+                SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount - 1);
+                for (int i = 1; i < threadCount; i++) {
+                    final String threadTable = "weather" + i;
+                    final String lineDataThread = lineData.replace("weather", threadTable);
+                    sendNoWait(receiver, lineDataThread, threadTable);
+                    new Thread(() -> {
+                        try {
+                            for (int n = 0; n < iterations; n++) {
+                                Os.sleep(minIdleMsBeforeWriterRelease - 50);
+                                send(receiver, lineDataThread, threadTable, WAIT_NO_WAIT);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            threadPushFinished.countDown();
+                        }
+                    }).start();
+                }
+
+                sendAndWait(receiver, lineData, tableIndex, 2);
+                mayDrainWalQueue();
+                try (TableWriterAPI w = getTableWriterAPI("weather")) {
+                    w.truncate();
+                }
+                // drainWalQueue() call opens TableWriter one more time
+                int expectedReleases = walEnabled ? 5 : 4;
+                sendAndWait(receiver, lineData, tableIndex, expectedReleases);
+                mayDrainWalQueue();
+
+                String header = "location\ttemperature\ttimestamp\n";
+                String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
+                        "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n",
+                        "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"};
+                String expected = header + lines[0] + lines[1] + lines[2];
+                assertTable(expected, "weather");
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("weather"));
+                }
+
+                // Concatenate iterations + 1 of identical insert results
+                // to assert against weather 1-8 tables
+                StringBuilder expectedSB = new StringBuilder(header);
+                for (String line : lines) {
+                    expectedSB.append(Chars.repeat(line, iterations + 1));
+                }
+
+                // Wait async ILP send threads to finish.
+                threadPushFinished.await();
+                for (int i = 1; i < threadCount; i++) {
+                    // Wait writer to be released and check.
+                    String tableName = "weather" + i;
+                    try {
+                        try {
+                            assertTable(expectedSB, tableName);
+                            if (walEnabled) {
+                                Assert.assertTrue(isWalTable(tableName));
+                            }
+                        } catch (AssertionError e) {
+                            int releasedCount = -tableIndex.get(tableName).getCount();
+                            // Wait one more writer release before re-trying to compare
+                            wait(tableIndex.get(tableName), releasedCount + 3, minIdleMsBeforeWriterRelease);
+                            mayDrainWalQueue();
+                            assertTable(expectedSB, tableName);
+                            if (walEnabled) {
+                                Assert.assertTrue(isWalTable(tableName));
+                            }
+                        }
+                    } catch (Throwable err) {
+                        LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").$(tableName).$();
+                        throw err;
+                    }
+                }
+            } finally {
+                // Clean engine hook
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                });
+            }
+        });
+    }
+
+    @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = new SqlCompiler(engine);
@@ -823,36 +852,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
                         TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
                         Assert.fail();
-                    } catch (ReaderOutOfDateException ignored) {
+                    } catch (TableReferenceOutOfDateException ignored) {
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
-        int rowCount = 100;
-        maxMeasurementSize = 100;
-        runInContext((receiver) -> {
-            String tableName = "table";
-            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
-                    for (int i = 0; i < rowCount; i++) {
-                        lineTcpSender
-                                .metric(tableName)
-                                .tag("tag1", "value 1")
-                                .field("tag2", Chars.repeat("value 2", 10))
-                                .$(0);
-                    }
-                    lineTcpSender.flush();
-                }
-            });
-
-            mayDrainWalQueue();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
-                Assert.assertEquals(rowCount, reader.size());
             }
         });
     }
@@ -889,34 +891,29 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testUnicodeTableName() throws Exception {
-        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
-        Assert.assertEquals(3, utf8Bytes.length);
-
+    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
+        int rowCount = 100;
+        maxMeasurementSize = 100;
         runInContext((receiver) -> {
-            try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
-                m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("поле", ColumnType.STRING)
-                        .timestamp("время");
-                if (walEnabled) {
-                    m.wal();
+            String tableName = "table";
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        lineTcpSender
+                                .metric(tableName)
+                                .tag("tag1", "value 1")
+                                .field("tag2", Chars.repeat("value 2", 10))
+                                .$(0);
+                    }
+                    lineTcpSender.flush();
                 }
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
-            }
-
-            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
-            sendLinger(receiver, lineData, "लаблअца");
-
-            String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
-            sendLinger(receiver, lineData2, "लаблअца");
+            });
 
             mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("लаблअца"));
+            try (TableReader reader = getReader(tableName)) {
+                Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
+                Assert.assertEquals(rowCount, reader.size());
             }
-            assertTable("символ\tполе\tвремя\n" +
-                    "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
-                    "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
         });
     }
 
@@ -941,6 +938,39 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testUnicodeTableName() throws Exception {
+        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
+        Assert.assertEquals(3, utf8Bytes.length);
+
+        try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
+            m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("поле", ColumnType.STRING)
+                    .timestamp("время");
+            if (walEnabled) {
+                m.wal();
+            }
+            CairoTestUtils.create(engine, m);
+        }
+
+        engine.releaseInactive();
+        runInContext((receiver) -> {
+            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
+            sendLinger(receiver, lineData, "लаблअца");
+
+            String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
+            sendLinger(receiver, lineData2, "लаблअца");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("लаблअца"));
+            }
+            assertTable("символ\tполе\tвремя\n" +
+                    "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
+                    "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
+        });
+    }
+
+    @Test
     public void testWindowsAccessDenied() throws Exception {
         String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
 
@@ -953,7 +983,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(engine, m);
             }
 
             sendLinger(receiver, lineData, "table_a");
@@ -966,33 +996,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
             assertTable(expected, "table_a");
         });
-    }
-
-    @Test
-    public void testNoAutoCreateNewColumns() throws Exception {
-        autoCreateNewColumns = false;
-        runInContext((receiver) -> {
-            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
-            try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
-                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
-            }
-
-            String lineData =
-                    "up out=1.0 631150000000000000\n" +
-                            "up out=2.0 631152000000000000\n" +
-                            "up out=3.0 631160000000000000\n" +
-                            "up out=4.0 631170000000000000\n";
-            sendLinger(receiver, lineData, "up");
-
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("up"));
-            }
-            String expected = "ts\tsym\n";
-            assertTable(expected, "up");
-        });
-        autoCreateNewColumns = true;
     }
 
     @Test
@@ -1139,7 +1142,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(engine, m);
             }
 
             send(receiver, lineData, "messages");
@@ -1160,7 +1163,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeFalse(walEnabled);
 
         runInContext((receiver) -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int rmdir(Path path) {
                     return 5;
@@ -1172,7 +1175,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                         .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                         .col("Length", ColumnType.INT);
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(m);
             }
 
             String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
@@ -1196,14 +1199,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
             try (TableModel m = new TableModel(configuration, tableName, PartitionBy.MONTH)) {
                 m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+                CairoTestUtils.create(m);
             }
 
             // Next, start inserting symbols on a background thread.
             final CountDownLatch halfDoneLatch = new CountDownLatch(1);
             final CountDownLatch doneLatch = new CountDownLatch(1);
             new Thread(() -> {
-                try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                try (TableWriterAPI writer = getTableWriterAPI(tableName)) {
                     for (int i = 0; i < symbols; i++) {
                         TableWriter.Row row = writer.newRow();
                         row.putSym(1, "sym" + i);
@@ -1238,7 +1241,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 mayDrainWalQueue();
 
                 CharSequenceIntHashMap symbolCounts = new CharSequenceIntHashMap();
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                try (TableReader reader = getReader(tableName)) {
                     Assert.assertEquals(2 * symbols, reader.size());
                     RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
@@ -1293,7 +1296,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(receiver, lineData, "weather");
 
             mayDrainWalQueue();
-            try (TableWriterAPI w = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
+            try (TableWriterAPI w = getTableWriterAPI("weather")) {
                 w.truncate();
             }
 
@@ -1325,7 +1328,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(receiver, lineData, "weather");
 
             mayDrainWalQueue();
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            dropWeatherTable();
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
@@ -1354,7 +1357,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(receiver, lineData, "weather");
 
             mayDrainWalQueue();
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            dropWeatherTable();
 
             lineData = "weather,loc=us-midwest temp=85 1465839830102300200\n" +
                     "weather,loc=us-eastcoast temp=89 1465839830102400200\n" +
@@ -1383,7 +1386,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(receiver, lineData, "weather");
 
             mayDrainWalQueue();
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            dropWeatherTable();
 
             lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
@@ -1416,6 +1419,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "0.0\t1.23E-10\t0.00123\t1.23E10\t12.3\t1.23E10\t12.3\tNaN\tNaN\tInfinity\t-Infinity\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "doubles");
         });
+    }
+
+    private void dropWeatherTable() {
+        TableToken tt = engine.getTableToken("weather");
+        engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
     }
 
     private void mayDrainWalQueue() {
@@ -1549,9 +1557,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final Rnd rand = new Rnd();
             final StringBuilder[] expectedSbs = new StringBuilder[tables.size()];
 
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    if (tables.contains(name)) {
+                    if (tables.contains(token.getTableName())) {
                         tablesCreated.countDown();
                     }
                 }
@@ -1625,7 +1633,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         for (int n = 0; n < tables.size(); n++) {
                             CharSequence tableName = tables.get(n);
                             while (true) {
-                                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                                try (TableReader reader = getReader(tableName)) {
                                     TableReaderRecordCursor cursor = reader.getCursor();
                                     while (cursor.hasNext()) {
                                         nRowsWritten++;

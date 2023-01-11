@@ -24,15 +24,16 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 
 public class SequencerMetadataService implements MetadataServiceStub {
     private final SequencerMetadata metadata;
-    private final CharSequence tableName;
+    private final TableToken tableToken;
 
-    public SequencerMetadataService(SequencerMetadata metadata, CharSequence tableName) {
+    public SequencerMetadataService(SequencerMetadata metadata, TableToken tableToken) {
         this.metadata = metadata;
-        this.tableName = tableName;
+        this.tableToken = tableToken;
     }
 
     @Override
@@ -53,8 +54,8 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public CharSequence getTableName() {
-        return tableName;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override

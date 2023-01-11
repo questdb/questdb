@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -70,7 +69,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -101,12 +100,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n"); // 2022-10-17 is gone
 
             // attach partition via soft link
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "S3");
+            TableToken tableToken = engine.getTableToken(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, tableToken, partitionName, "S3");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
 
             // verify that the link has been renamed to what we expect
-            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
+            path.of(configuration.getRoot()).concat(tableToken).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
 
@@ -143,7 +143,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // in windows the handle is held and cannot be deleted
             Assert.assertFalse(Files.exists(path));
             // verify that a new partition folder has been created in the table data space (hot)
-            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
+            path.of(configuration.getRoot()).concat(tableToken).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
             // verify cold storage folder exists
@@ -185,7 +185,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -203,7 +203,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "SNOW");
+            TableToken tableToken = engine.getTableToken(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, tableToken, partitionName, "SNOW");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -252,7 +253,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenDropIt() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -270,7 +271,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "IGLU");
+            TableToken tableToken = engine.getTableToken(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, tableToken, partitionName, "IGLU");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -300,7 +302,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenDropItWhileThereIsAReader() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = "table101";
             final String partitionName = "2022-11-04";
@@ -318,18 +320,19 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "FINLAND");
+            TableToken tableToken = engine.getTableToken(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, tableToken, partitionName, "FINLAND");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-11-04T00:00:17.279900Z\t2022-11-05T23:59:59.000000Z\t10000\n");
 
-            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader ignore = getReader(tableName)) {
                 // drop the partition which was attached via soft link
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
                 // there is a reader, cannot unlink, thus the link will still exist
                 path.of(configuration.getRoot()) // <-- soft link path
-                        .concat(tableName)
+                        .concat(tableToken)
                         .concat(partitionName)
                         .put(".2")
                         .$();
@@ -360,7 +363,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -384,7 +387,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "LEGEND");
+            TableToken tableToken = engine.getTableToken(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, tableToken, partitionName, "LEGEND");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
 
@@ -429,7 +433,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify that no new partition folder has been created in the table data space (hot)
             // but rather the files in cold storage have been modified
             path.of(configuration.getRoot())
-                    .concat(tableName)
+                    .concat(tableToken)
                     .concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
@@ -770,10 +774,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     },
                     s -> {
                         engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.i").$();
-                        int fd = Files.openRW(path);
+                        TableToken tableToken = engine.getTableToken(s.getName());
+                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 4);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Column file is too small"
             );
@@ -836,10 +841,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     s -> {
                         // .v file
                         engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.v").$();
-                        int fd = Files.openRW(path);
+                        TableToken tableToken = engine.getTableToken(s.getName());
+                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 2);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Symbol file does not match symbol column"
             );
@@ -914,10 +920,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     s -> {
                         // .d file
                         engine.clear();
-                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("sh.d").$();
-                        int fd = Files.openRW(path);
+                        TableToken tableToken = engine.getTableToken(s.getName());
+                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.d").$();
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
-                        Files.close(fd);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
                     "Column file is too small"
             );
@@ -940,7 +947,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         8,
                         "2022-08-01",
                         4);
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, src.getName(), "testing")) {
+                try (TableWriter writer = getWriter(src.getName())) {
                     writer.removeColumn("s");
                     writer.removeColumn("str");
                     writer.removeColumn("i");
@@ -997,11 +1004,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
                 long txn;
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                try (TableWriter writer = getWriter(dst.getName())) {
                     txn = writer.getTxn();
                     writer.attachPartition(timestamp);
                 }
-                path.of(configuration.getRoot()).concat(dst.getName()).concat("2022-08-01");
+                TableToken tableToken = engine.getTableToken(dst.getName());
+                path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01");
                 TableUtils.txnPartitionConditionally(path, txn);
                 int pathLen = path.length();
 
@@ -1080,7 +1088,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 // Add 1 row without commit
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-08-01T00:00:00.000z");
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+                try (TableWriter writer = getWriter(dst.getName())) {
                     long insertTs = TimestampFormatUtils.parseTimestamp("2022-08-01T23:59:59.999z");
                     TableWriter.Row row = writer.newRow(insertTs + 1000L);
                     row.putLong(0, 1L);
@@ -1270,10 +1278,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 // remove .k
                 engine.clear();
-                Assert.assertTrue(Files.remove(
-                        path.of(configuration.getRoot()).concat(src.getName()).concat("2022-08-09").concat("s.k").$()
-                ));
-
+                TableToken tableToken = engine.getTableToken(src.getName());
+                path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
+                Assert.assertTrue(Files.remove(path));
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
@@ -1320,7 +1327,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             private int tsdFd;
 
             @Override
@@ -1348,7 +1355,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotReadTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
@@ -1364,7 +1371,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
@@ -1380,7 +1387,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotRenameDetachedFolderOnAttach() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (Chars.contains(to, "2020-01-01") && counter.decrementAndGet() == 0) {
@@ -1396,7 +1403,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotSwitchPartition() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "dst" + testName.getMethodName()) && Chars.contains(name, "2020-01-01") && counter.decrementAndGet() == 0) {
@@ -1411,7 +1418,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachDifferentPartitionTableReaderReload() throws Exception {
-        if (FilesFacadeImpl.INSTANCE.isRestrictedFileSystem()) {
+        if (TestFilesFacadeImpl.INSTANCE.isRestrictedFileSystem()) {
             // cannot remove opened files on Windows, test  not relevant
             return;
         }
@@ -1441,14 +1448,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                try (TableReader dstReader = new TableReader(configuration, dst.getTableName())) {
+                try (TableReader dstReader = newTableReader(configuration, dst.getTableName())) {
                     dstReader.openPartition(0);
                     dstReader.openPartition(1);
                     dstReader.goPassive();
 
                     long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
 
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getTableName(), "testing")) {
+                    try (TableWriter writer = getWriter(dst.getTableName())) {
                         writer.removePartition(timestamp);
                         copyPartitionToAttachable(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
                         Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestamp));
@@ -1456,7 +1463,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     // Go active
                     Assert.assertTrue(dstReader.reload());
-                    try (TableReader srcReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getTableName())) {
+                    try (TableReader srcReader = getReader(src.getTableName())) {
                         String expected =
                                 "l\ti\tstr\tts\n" +
                                         "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
@@ -1559,7 +1566,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
+            TableToken tableToken = engine.getTableToken(dstTableName);
+            Files.rmdir(path.of(root).concat(tableToken).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
         }
     }
 
@@ -1576,10 +1584,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         engine.clear();
-        path.of(configuration.getRoot()).concat(src.getName());
+
+        TableToken tableToken = engine.getTableToken(src.getName());
+        path.of(configuration.getRoot()).concat(tableToken);
         int pathLen = path.length();
-        otherPath.of(configuration.getRoot()).concat(dst.getName());
+
+        TableToken tableToken0 = engine.getTableToken(dst.getName());
+        otherPath.of(configuration.getRoot()).concat(tableToken0);
         int otherLen = otherPath.length();
+
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             path.trimTo(pathLen).concat(partition).$();
@@ -1606,7 +1619,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         // Check table is writable after partition attach
         engine.clear();
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
+        try (TableWriter writer = getWriter(dst.getName())) {
             TableWriter.Row row = writer.newRow(timestamp);
             row.putInt(1, 1);
             row.append();
@@ -1623,12 +1636,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             String dstPartitionName,
             String dstPartitionNameSuffix
     ) {
+        TableToken tableToken = engine.getTableToken(srcTableName);
         path.of(srcRoot)
-                .concat(srcTableName)
+                .concat(tableToken)
                 .concat(srcPartitionName)
                 .slash$();
+        TableToken tableToken1 = engine.getTableToken(dstTableName);
         otherPath.of(dstRoot)
-                .concat(dstTableName)
+                .concat(tableToken1)
                 .concat(dstPartitionName);
 
         if (!Chars.isBlank(dstPartitionNameSuffix)) {
@@ -1672,7 +1687,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         );
     }
 
-    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, CharSequence partitionName, String otherLocation) throws IOException {
+    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, TableToken tableToken, CharSequence partitionName, String otherLocation) throws IOException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
@@ -1698,11 +1713,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         // create the .attachable link in the table's data folder
         // with target the .detached folder in the different location
         otherPath.of(s3Buckets) // <-- the copy of the now lost .detached folder
-                .concat(tableName)
+                .concat(tableToken)
                 .concat(detachedPartitionName)
                 .$();
         path.of(configuration.getRoot()) // <-- soft link path
-                .concat(tableName)
+                .concat(tableToken)
                 .concat(partitionName)
                 .put(configuration.getAttachPartitionSuffix())
                 .$();
@@ -1713,7 +1728,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     private int readAllRows(String tableName) {
         try (FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()) {
-            cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName));
+            cursor.of(getReader(tableName));
             DataFrame frame;
             int count = 0;
             while ((frame = cursor.next()) != null) {
@@ -1777,13 +1792,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         int fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             // .i file
             engine.clear();
-            path.of(configuration.getRoot()).concat(src.getName()).concat(partition).concat(columnFileName).$();
+            TableToken tableToken = engine.getTableToken(src.getName());
+            path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);

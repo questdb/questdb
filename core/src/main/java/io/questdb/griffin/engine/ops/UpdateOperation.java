@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -49,22 +50,22 @@ public class UpdateOperation extends AbstractOperation {
     private volatile boolean requesterTimeout;
 
     public UpdateOperation(
-            String tableName,
+            TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition
     ) {
-        this(tableName, tableId, tableVersion, tableNamePosition, null);
+        this(tableToken, tableId, tableVersion, tableNamePosition, null);
     }
 
     public UpdateOperation(
-            String tableName,
+            TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition,
             RecordCursorFactory factory
     ) {
-        init(TableWriterTask.CMD_UPDATE_TABLE, CMD_NAME, tableName, tableId, tableVersion, tableNamePosition);
+        init(TableWriterTask.CMD_UPDATE_TABLE, CMD_NAME, tableToken, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
     }
 

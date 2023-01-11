@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,12 +42,12 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
-    private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
+    private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
 
     @Test
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TelemetryConfiguration getTelemetryConfiguration() {
                 return new DefaultTelemetryConfiguration() {
@@ -117,9 +117,12 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final TelemetryJob telemetryJob = new TelemetryJob(engine, null);
+
                 try (Path path = new Path()) {
-                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry"));
-                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, "telemetry_config"));
+                    TableToken telemetry = engine.getTableToken("telemetry");
+                    TableToken telemetry_config = engine.getTableToken("telemetry_config");
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry.getDirName()));
+                    Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config.getDirName()));
                 }
 
                 Misc.free(telemetryJob);
@@ -143,6 +146,7 @@ public class TelemetryTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
 
                 final String expectedEvent = "100\n" +
                         "101\n";
@@ -174,7 +178,7 @@ public class TelemetryTest extends AbstractCairoTest {
                 return refVersion.get();
             }
         };
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public BuildInformation getBuildInformation() {
                 return buildInformation;
@@ -215,7 +219,7 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     protected void assertColumn(CharSequence expected, int index) {
-        try (TableReader reader = new TableReader(configuration, "telemetry")) {
+        try (TableReader reader = newTableReader(configuration, "telemetry")) {
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);

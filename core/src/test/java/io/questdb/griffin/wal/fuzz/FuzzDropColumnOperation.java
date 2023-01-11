@@ -38,7 +38,11 @@ public class FuzzDropColumnOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(0, wApi.getTableName(), wApi.getMetadata().getTableId()).ofDropColumn(columnName).build();
+        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
+                0,
+                wApi.getTableToken(),
+                wApi.getMetadata().getTableId()
+        ).ofDropColumn(columnName).build();
         wApi.apply(alterOp, true);
         return true;
     }

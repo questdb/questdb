@@ -175,10 +175,10 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
 
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, tm.getMem(), tm.getPath(), tm);
+                CairoTestUtils.create(tm);
             }
 
-            try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
+            try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);
                 row.putSym(0, "6A");
                 row.putLong(1, 100L);
@@ -348,7 +348,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
 
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+            try (TableReader reader = getReader("plug")) {
                 TableReaderMetadata meta = reader.getMetadata();
                 Assert.assertEquals(1, meta.getMaxUncommittedRows());
                 Assert.assertEquals(20 * 1_000_000L, meta.getO3MaxLag());
@@ -372,7 +372,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected);
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+            try (TableReader rdr = getReader("plug")) {
                 TableReaderMetadata metadata = rdr.getMetadata();
                 Assert.assertTrue("Alter makes column indexed",
                         metadata.isColumnIndexed(
@@ -392,7 +392,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+            try (TableWriter tableWriter = getWriter("plug")) {
                 tableWriter.removeColumn("watts");
             }
 
@@ -422,7 +422,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineData
             );
 
-            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+            try (TableWriter tableWriter = getWriter("plug")) {
                 tableWriter.removeColumn("watts");
             }
 
@@ -483,7 +483,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     send(server, lineData);
                     columnsAdded.add(isSymbol ? i : -i);
                 } else {
-                    try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+                    try (TableWriter tableWriter = getWriter("plug")) {
                         int dropCol = columnsAdded.get(rnd.nextPositiveInt() % columnsAdded.size());
                         tableWriter.removeColumn("column_" + Math.abs(dropCol));
                         columnsAdded.remove((Object) dropCol);
@@ -523,7 +523,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+            try (TableWriter tableWriter = getWriter("plug")) {
                 tableWriter.removeColumn("room");
             }
 
@@ -612,7 +612,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         if (wait != WAIT_NO_WAIT) {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (Chars.equalsNc("plug", name)) {
+                if (Chars.equalsNc(name.getTableName(), "plug")) {
                     if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 || (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
                         if (factoryType == PoolListener.SRC_WRITER) {
                             switch (event) {

@@ -25,7 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.*;
@@ -41,7 +41,7 @@ import java.io.Closeable;
 public class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
     private final SqlCompiler sqlCompiler;
-    private final SqlExecutionContext sqlExecutionContext;
+    private final WalSqlExecutionContextImpl sqlExecutionContext;
     private final Rnd rnd;
 
     public OperationCompiler(
@@ -52,18 +52,18 @@ public class OperationCompiler implements Closeable {
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(
+        sqlExecutionContext = new WalSqlExecutionContextImpl(
                 engine,
                 workerCount,
                 sharedWorkerCount
-        ).with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        rnd,
-                        -1,
-                        null
-                )
-                .withWalApplication();
+        );
+        sqlExecutionContext.with(
+                AllowAllCairoSecurityContext.INSTANCE,
+                bindVariableService,
+                rnd,
+                -1,
+                null
+        );
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
     }
 
@@ -81,34 +81,20 @@ public class OperationCompiler implements Closeable {
         sqlExecutionContext.setNowAndFixClock(now);
     }
 
-    public AlterOperation compileAlterSql(CharSequence alterSql) {
-        try {
-            final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, sqlExecutionContext);
-            final AlterOperation alterOp = compiledQuery.getAlterOperation();
-            alterOp.withContext(sqlExecutionContext);
-            return alterOp;
-        } catch (SqlException e) {
-            // we could not compile SQL query, but this should not stop us from
-            // processing other operations.
-            throw CairoException.nonCritical()
-                    .put(e.getFlyweightMessage())
-                    .position(e.getPosition());
-        }
+    public AlterOperation compileAlterSql(CharSequence alterSql, TableToken tableToken) throws SqlException {
+        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
+        final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, sqlExecutionContext);
+        final AlterOperation alterOp = compiledQuery.getAlterOperation();
+        alterOp.withContext(sqlExecutionContext);
+        return alterOp;
     }
 
-    public UpdateOperation compileUpdateSql(CharSequence updateSql) {
-        try {
-            final CompiledQuery compiledQuery = sqlCompiler.compile(updateSql, sqlExecutionContext);
-            final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-            updateOperation.withContext(sqlExecutionContext);
-            return updateOperation;
-        } catch (SqlException e) {
-            // we could not compile SQL query, but this should not stop us from
-            // processing other operations.
-            throw CairoException.nonCritical()
-                    .put(e.getFlyweightMessage())
-                    .position(e.getPosition());
-        }
+    public UpdateOperation compileUpdateSql(CharSequence updateSql, TableToken tableToken) throws SqlException {
+        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
+        final CompiledQuery compiledQuery = sqlCompiler.compile(updateSql, sqlExecutionContext);
+        final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+        updateOperation.withContext(sqlExecutionContext);
+        return updateOperation;
     }
 
     public BindVariableService getBindVariableService() {

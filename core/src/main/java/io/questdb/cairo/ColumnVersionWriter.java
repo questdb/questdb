@@ -132,12 +132,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
-    @Override
-    long readUnsafe() {
-        this.hasChanges = false;
-        return this.version = super.readUnsafe();
-    }
-
     public void truncate(boolean isPartitioned) {
         if (cachedList.size() > 0) {
             if (isPartitioned) {
@@ -308,6 +302,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private void updateB(long bOffset, long bSize) {
         mem.putLong(OFFSET_OFFSET_B_64, bOffset);
         mem.putLong(OFFSET_SIZE_B_64, bSize);
+    }
+
+    @Override
+    long readUnsafe() {
+        this.hasChanges = false;
+        return this.version = super.readUnsafe();
     }
 
     static {

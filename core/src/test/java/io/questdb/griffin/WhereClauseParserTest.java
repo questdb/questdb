@@ -130,7 +130,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "v", Metrics.disabled())) {
+        try (TableWriter writer = newTableWriter(configuration, "v", Metrics.disabled())) {
             TableWriter.Row row = writer.newRow(0);
             row.putSym(0, "sym1");
             row.putSym(5, "mode1");
@@ -144,19 +144,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        reader = new TableReader(configuration, "x");
+        reader = newTableReader(configuration, "x");
         metadata = reader.getMetadata();
 
-        noTimestampReader = new TableReader(configuration, "y");
+        noTimestampReader = newTableReader(configuration, "y");
         noTimestampMetadata = noTimestampReader.getMetadata();
 
-        unindexedReader = new TableReader(configuration, "z");
+        unindexedReader = newTableReader(configuration, "z");
         unindexedMetadata = unindexedReader.getMetadata();
 
-        noDesignatedTimestampNorIdxReader = new TableReader(configuration, "w");
+        noDesignatedTimestampNorIdxReader = newTableReader(configuration, "w");
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
 
-        nonEmptyReader = new TableReader(configuration, "v");
+        nonEmptyReader = newTableReader(configuration, "v");
         nonEmptyMetadata = nonEmptyReader.getMetadata();
 
         bindVariableService = new BindVariableServiceImpl(configuration);

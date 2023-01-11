@@ -100,7 +100,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
-                try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), "users", "testing")) {
+                try (TableWriter writer = getWriter("users")) {
                     // time can go backwards if asked too quickly, add I to offset the chance (on mac M1 at least)
                     long baseTimestamp = Os.currentTimeMicros(); // call_j can yield a lower value than call_i thus resulting in an unordered
                     for (int i = 0; i < n; i++) {                // table, so we add i to make sure the timestamps are ordered

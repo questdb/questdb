@@ -275,7 +275,7 @@ class LineTcpMeasurementEvent implements Closeable {
             throw commitFailedException;
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableNameUtf16())
+                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();
