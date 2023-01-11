@@ -85,11 +85,6 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         return rmi != null && rmi.isDropped();
     }
 
-    public TableToken refreshTableToken(TableToken tableToken) {
-        ReverseTableMapItem rmi = reverseNameTokenMap.get(tableToken.getDirName());
-        return rmi != null ? nameTokenMap.get(rmi.getToken().getTableName()) : null;
-    }
-
     @Override
     public void resetMemory() {
         nameStore.resetMemory();

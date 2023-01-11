@@ -130,6 +130,8 @@ public final class Files {
     /**
      * close(fd) should be used instead of this method in most cases
      * unless you don't need close sys call to happen.
+     *
+     * @param fd file descriptor
      */
     public static void decrementFileCount(int fd) {
         assert auditClose(fd);

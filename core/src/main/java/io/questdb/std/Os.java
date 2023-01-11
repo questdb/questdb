@@ -118,6 +118,8 @@ public final class Os {
 
     /**
      * Returns physical memory used by this process (Resident Set Size/Working Set Size).
+     *
+     * @return used RSS memory in bytes
      */
     public static native long getRss();
 
