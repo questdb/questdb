@@ -86,9 +86,9 @@ public interface TableWriterAPI extends Closeable {
     TableRecordMetadata getMetadata();
 
     /**
-     * Returns table structure version.
-     * <p>
-     * Implementations must be thread-safe.
+     * Returns table structure version. Implementations must be thread-safe.
+     *
+     * @return table structure version
      */
     long getStructureVersion();
 
@@ -99,8 +99,11 @@ public interface TableWriterAPI extends Closeable {
      * <p>
      * If the implementation doesn't require symbol count watermarks (e.g.
      * TableWriter), it should return <code>-1</code>.
-     * <p>
+     * </p>
      * Implementations must be thread-safe.
+     *
+     * @param columnIndex column index
+     * @return watermark for the symbol count
      */
     int getSymbolCountWatermark(int columnIndex);
 

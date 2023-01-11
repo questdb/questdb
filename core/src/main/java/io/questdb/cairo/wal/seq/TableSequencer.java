@@ -41,6 +41,9 @@ public interface TableSequencer extends QuietCloseable {
     int getTableId();
 
     /**
+     * Copies table metadata to provided sink.
+     *
+     * @param sink metadata sink
      * @return current transaction number
      */
     long getTableMetadata(TableRecordMetadataSink sink);
