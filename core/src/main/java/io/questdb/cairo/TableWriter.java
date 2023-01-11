@@ -2394,6 +2394,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         case ColumnType.CHAR:
                         case ColumnType.SHORT:
                         case ColumnType.FLOAT:
+                        case ColumnType.LONG128:
                         case ColumnType.LONG256:
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:

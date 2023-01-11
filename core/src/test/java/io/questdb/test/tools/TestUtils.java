@@ -1045,6 +1045,9 @@ public final class TestUtils {
                 case ColumnType.UUID:
                     insertFromSelect.append("rnd_uuid4() ").append(colName);
                     break;
+                case ColumnType.LONG128:
+                    insertFromSelect.append("to_long128(x, 0) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }

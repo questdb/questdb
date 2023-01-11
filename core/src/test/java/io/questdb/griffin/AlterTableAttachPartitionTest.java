@@ -906,58 +906,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachPartitionWrongFixedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            AddColumn src = s -> s.col("l", ColumnType.LONG)
-                    .col("i", ColumnType.INT)
-                    .timestamp("ts")
-                    .col("sh", ColumnType.SHORT);
-
-            assertSchemaMismatch(
-                    "src34",
-                    src,
-                    "dst34",
-                    dst -> {
-                    },
-                    s -> {
-                        // .d file
-                        engine.clear();
-                        TableToken tableToken = engine.getTableToken(s.getName());
-                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.d").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
-                        Files.truncate(fd, Files.length(fd) / 10);
-                        TestFilesFacadeImpl.INSTANCE.close(fd);
-                    },
-                    "Column file is too small"
-            );
-        });
-    }
-
-    @Test
-    public void testAttachPartitionWrongFixedUuidColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            AddColumn src = s -> s.col("l", ColumnType.LONG)
-                    .col("i", ColumnType.INT)
-                    .timestamp("ts")
-                    .col("u", ColumnType.UUID);
-
-            assertSchemaMismatch(
-                    "src34",
-                    src,
-                    "dst34",
-                    dst -> {
-                    },
-                    s -> {
-                        engine.clear();
-                        TableToken tableToken = engine.getTableToken(s.getName());
-                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("u.d").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
-                        Files.truncate(fd, Files.length(fd) / 10);
-                        TestFilesFacadeImpl.INSTANCE.close(fd);
-                    },
-                    "Column file is too small"
-            );
-        });
+    public void testAttachPartitionWrongUuidColumn() throws Exception {
+        testAttachPartitionWrongFixedColumn(ColumnType.UUID);
+        testAttachPartitionWrongFixedColumn(ColumnType.LONG128);
+        testAttachPartitionWrongFixedColumn(ColumnType.SHORT);
     }
 
     @Test
@@ -1769,6 +1721,32 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         } catch (CairoException err) {
             return 0;
         }
+    }
+
+    private void testAttachPartitionWrongFixedColumn(int columnType) throws Exception {
+        assertMemoryLeak(() -> {
+            AddColumn src = s -> s.col("l", ColumnType.LONG)
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts")
+                    .col("t", columnType);
+
+            assertSchemaMismatch(
+                    "src34" + ColumnType.nameOf(columnType),
+                    src,
+                    "dst34" + ColumnType.nameOf(columnType),
+                    dst -> {
+                    },
+                    s -> {
+                        engine.clear();
+                        TableToken tableToken = engine.getTableToken(s.getName());
+                        path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("t.d").$();
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
+                        Files.truncate(fd, Files.length(fd) / 10);
+                        TestFilesFacadeImpl.INSTANCE.close(fd);
+                    },
+                    "Column file is too small"
+            );
+        });
     }
 
     private void testSqlFailedOnFsOperation(
