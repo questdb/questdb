@@ -10,6 +10,8 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           includeTests: "griffin.**.*?"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-cairo:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
@@ -17,6 +19,8 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           includeTests: "cairo.**.*?"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
@@ -24,6 +28,8 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           excludeTests: "**/griffin/**,**/cairo/**"
+          javadoc_step: ""
+          javadoc_profile: ""
     pool:
       vmImage: $(imageName)
       name: $(poolName)
