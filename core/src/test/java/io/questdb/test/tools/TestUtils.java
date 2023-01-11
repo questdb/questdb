@@ -56,7 +56,6 @@ import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.sql.Timestamp;
-import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1126,14 +1125,7 @@ public final class TestUtils {
                 r.getLong256(i, sink);
                 break;
             case ColumnType.LONG128:
-                long long128Loc = r.getLong128Location(i);
-                long long128Hi = r.getLong128Hi(i, long128Loc);
-                long long128Lo = r.getLong128Lo(i, long128Loc);
-                if (!Long128Util.isNull(long128Hi, long128Lo)) {
-                    UUID guid = new UUID(long128Hi, long128Lo);
-                    sink.put(guid.toString());
-                }
-                break;
+                // fall through
             case ColumnType.UUID:
                 long loc = r.getLong128Location(i);
                 long hi = r.getLong128Hi(i, loc);

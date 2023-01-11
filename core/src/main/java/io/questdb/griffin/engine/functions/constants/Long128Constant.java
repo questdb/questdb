@@ -35,14 +35,14 @@ public class Long128Constant extends Long128Function implements ConstantFunction
     private final long hi;
     private final long lo;
 
-    public Long128Constant(long hi, long lo) {
-        this.hi = hi;
+    public Long128Constant(long lo, long hi) {
         this.lo = lo;
+        this.hi = hi;
     }
 
     @Override
     public long getLong128Hi(Record rec, long location) {
-        return lo;
+        return hi;
     }
 
     @Override

@@ -3764,8 +3764,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
             for (long n = 0; n < transientRowsAdded; n++) {
                 long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
-                // putLong128(hi, lo)
-                // written in memory as lo then hi
                 o3TimestampMem.putLong128(ts, o3RowCount + n);
             }
 
@@ -4138,8 +4136,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void o3TimestampSetter(long timestamp) {
-        // putLong128(hi, lo)
-        // written in memory as lo then hi
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
     }

@@ -22,29 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.constants;
 
-public class Long128Util {
+import org.junit.Test;
 
-    // this method is used by byte-code generator
-    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
-    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
-    // instead as A, B records.
-    // See special cases for Long128 in RecordComparatorCompiler
-    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+import static org.junit.Assert.assertEquals;
 
-        if (aHi < bHi) {
-            return -1;
+public class Long128ConstantTest {
+
+    @Test
+    public void testReadWrite() {
+        try (Long128Constant l = new Long128Constant(1, 2)) {
+            long loc = l.getLong128Location(null);
+            assertEquals(1, l.getLong128Lo(null, loc));
+            assertEquals(2, l.getLong128Hi(null, loc));
         }
-
-        if (aHi > bHi) {
-            return 1;
-        }
-
-        return Long.compareUnsigned(aLo, bLo);
     }
 
-    public static boolean isNull(long lo, long hi) {
-        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
-    }
 }
