@@ -27,6 +27,9 @@ package io.questdb.mp;
 public interface Job {
     /**
      * Runs and returns true if it should be rescheduled ASAP.
+     *
+     * @param workerId worker id
+     * @return true if job should be rescheduled ASAP
      */
     boolean run(int workerId);
 }
