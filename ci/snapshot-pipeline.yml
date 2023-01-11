@@ -25,7 +25,7 @@ stages:
           - task: Maven@3
             displayName: "Build binaries with Maven"
             inputs:
-              mavenPomFile: "pom.xml"
+              mavenPomFile: "core/pom.xml"
               options:
                 "clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false"
               jdkVersionOption: 1.11
