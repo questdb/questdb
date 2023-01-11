@@ -289,12 +289,12 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        if (week < 0 || week > 53) {
+        if ((week <= 0 && week != -1) || week > Timestamps.getWeeks(year)) {
             throw NumericException.INSTANCE;
         }
 
         // calculate year, month, and day of ISO week
-        if (week != 0) {
+        if (week != -1) {
             long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, Timestamps.isLeapYear(year)) +
                     (week - 1) * Timestamps.WEEK_MICROS +
                     Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
