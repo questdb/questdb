@@ -52,13 +52,13 @@ public interface ExecutionModel {
         private static final String[] typeNameMap = new String[ExecutionModel.MAX];
 
         static {
-            typeNameMap[ExecutionModel.QUERY] = "QUERY";
-            typeNameMap[ExecutionModel.CREATE_TABLE] = "CREATE_TABLE";
-            typeNameMap[ExecutionModel.RENAME_TABLE] = "RENAME_TABLE";
-            typeNameMap[ExecutionModel.INSERT] = "INSERT";
-            typeNameMap[ExecutionModel.COPY] = "COPY";
-            typeNameMap[ExecutionModel.UPDATE] = "UPDATE";
-            typeNameMap[ExecutionModel.EXPLAIN] = "EXPLAIN";
+            typeNameMap[ExecutionModel.QUERY] = "Query";
+            typeNameMap[ExecutionModel.CREATE_TABLE] = "Create";
+            typeNameMap[ExecutionModel.RENAME_TABLE] = "Rename";
+            typeNameMap[ExecutionModel.INSERT] = "Insert into";
+            typeNameMap[ExecutionModel.COPY] = "Copy";
+            typeNameMap[ExecutionModel.UPDATE] = "Update";
+            typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
         }
     }
 }

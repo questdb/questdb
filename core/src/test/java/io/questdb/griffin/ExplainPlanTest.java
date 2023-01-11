@@ -586,14 +586,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testExplainCreateTable() throws Exception {
         assertSql("explain create table a ( l long, d double)",
                 "QUERY PLAN\n" +
-                        "CREATE_TABLE table: a\n");
+                        "Create table: a\n");
     }
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
         assertSql("explain create table a as (select x, 1 from long_sequence(10))",
                 "QUERY PLAN\n" +
-                        "CREATE_TABLE table: a\n" +
+                        "Create table: a\n" +
                         "    VirtualRecord\n" +
                         "      functions: [x,1]\n" +
                         "        long_sequence count: 10\n");
@@ -605,7 +605,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( l long, d double)");
             assertSql("explain insert into a values (1, 2.0)",
                     "QUERY PLAN\n" +
-                            "INSERT table: a\n");
+                            "Insert into table: a\n");
         });
     }
 
@@ -615,7 +615,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( l long, d double)");
             assertSql("explain insert into a select x, 1 from long_sequence(10)",
                     "QUERY PLAN\n" +
-                            "INSERT table: a\n" +
+                            "Insert into table: a\n" +
                             "    VirtualRecord\n" +
                             "      functions: [x,1]\n" +
                             "        long_sequence count: 10\n");
@@ -702,7 +702,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table a ( l long, d double)");
             assertSql("explain update a set l = 1, d=10.1;",
                     "QUERY PLAN\n" +
-                            "UPDATE table: a\n" +
+                            "Update table: a\n" +
                             "    VirtualRecord\n" +
                             "      functions: [1,10.1]\n" +
                             "        DataFrame\n" +
@@ -718,7 +718,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
             compile("create table b ( l2 long, d2 double)");
             assertSql("explain update a set l1 = 1, d1=d2 from b where l1=l2;",
                     "QUERY PLAN\n" +
-                            "UPDATE table: a\n" +
+                            "Update table: a\n" +
                             "    VirtualRecord\n" +
                             "      functions: [1,d1]\n" +
                             "        SelectedRecord\n" +
@@ -739,7 +739,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)",
                 "update a set l = 20, d = d+rnd_double() " +
                         "where d < 100.0d and ts > dateadd('d', -1, now());",
-                "UPDATE table: a\n" +
+                "Update table: a\n" +
                         "    VirtualRecord\n" +
                         "      functions: [20,d+rnd_double()]\n" +
                         "        Async Filter\n" +
