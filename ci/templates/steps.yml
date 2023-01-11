@@ -17,7 +17,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile  javadoc:javadoc -DskipTests -P build-web-console,maven-central-release  -Dhttp.keepAlive=false"
+        "compile $(javadoc_step) -DskipTests -P build-web-console,maven-central-release  -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],

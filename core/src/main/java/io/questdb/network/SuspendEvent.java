@@ -43,7 +43,10 @@ public abstract class SuspendEvent implements Closeable {
     private static final long REF_COUNT_OFFSET;
 
     private long deadline = Long.MAX_VALUE;
-    private final int refCount = 2;
+
+    // set by using Unsafe, see REF_COUNT_OFFSET, close().
+    @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
+    private volatile int refCount = 2;
 
     public abstract void _close();
 
