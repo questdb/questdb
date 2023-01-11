@@ -29,13 +29,11 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -111,7 +109,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     @Before
     public void setUp2() {
-        random = TestUtils.generateRandom(getLog());
+        long s0 = System.currentTimeMillis();
+        long s1 = System.nanoTime();
+        random = new Rnd(s0, s1);
+        getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -165,7 +166,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (tableName == null) {
             throw new RuntimeException("Table name is missing");
         }
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
@@ -292,7 +293,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             getLog().info().$(table.getName()).$(" has not been created yet").$();
             return false;
         }
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             return table.size() <= reader.size();
@@ -395,15 +396,27 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void runTest() throws Exception {
-        runTest((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
-                handleWriterUnlockEvent(name);
-            }
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                handleWriterGetEvent(name);
-            }
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                handleWriterReturnEvent(name);
+        runTest((factoryType, thread, token, event, segment, position) -> {
+            String tableName = token.getTableName();
+            if (walEnabled) {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(tableName);
+                }
+                // There is no locking as such in WAL, so we treat writer return as an unlock event.
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    handleWriterUnlockEvent(tableName);
+                    handleWriterReturnEvent(tableName);
+                }
+            } else {
+                if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
+                    handleWriterUnlockEvent(tableName);
+                }
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(tableName);
+                }
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    handleWriterReturnEvent(tableName);
+                }
             }
         }, 250);
     }
@@ -475,6 +488,21 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 threadPushFinished.countDown();
             }
         }).start();
+    }
+
+    void waiForTable(TableData table) {
+        // if CI is very slow the table could be released before ingestion stops
+        // then acquired again for further data ingestion
+        // because of the above we will wait in a loop with a timeout for the data to appear in the table
+        // in most cases we should not hit the sleep() below
+        table.await();
+        for (int i = 0; i < 180; i++) {
+            if (checkTable(table)) {
+                return;
+            }
+            Os.sleep(1000);
+        }
+        throw new RuntimeException("Timed out on waiting for the data, table=" + table.getName());
     }
 
     protected void waitDone() {

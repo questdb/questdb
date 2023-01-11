@@ -28,14 +28,13 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -226,13 +225,13 @@ public class UpdateTest extends AbstractGriffinTest {
     @Test
     public void testSymbolIndexRebuiltOnAffectedPartitionsOnly() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (Chars.contains(name, "1970-01-01")) {
                         return false;
                     }
-                    return Files.remove(name);
+                    return super.remove(name);
                 }
             };
             compiler.compile("create table up as" +
@@ -348,13 +347,13 @@ public class UpdateTest extends AbstractGriffinTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "s1.d.1") && Chars.contains(name, "1970-01-03")) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
             compiler.compile(
@@ -366,7 +365,7 @@ public class UpdateTest extends AbstractGriffinTest {
                             " from long_sequence(5))" +
                             " ,index(s1) timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "up", "test")) {
+            try (TableWriter writer = getWriter("up")) {
                 try {
                     CompiledQuery cq = compiler.compile("UPDATE up SET s1 = '11', s2 = '22'", sqlExecutionContext);
                     Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
@@ -379,13 +378,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
                 }
 
-                try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                try (TableReader reader = getReader("up")) {
                     Assert.assertEquals(1, reader.getSymbolMapReader(2).getSymbolCount());
                     Assert.assertEquals(1, reader.getSymbolMapReader(3).getSymbolCount());
                 }
 
                 try (TxReader txReader = new TxReader(ff)) {
-                    txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat("up").concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                    TableToken tableToken = engine.getTableToken("up");
+                    txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
                     txReader.unsafeLoadAll();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
@@ -1167,7 +1167,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
                 applyUpdate(updateOperation);
                 Assert.fail();
-            } catch (ReaderOutOfDateException ex) {
+            } catch (TableReferenceOutOfDateException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table='up'");
             }
         });
@@ -2115,7 +2115,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
     private void applyUpdate(UpdateOperation updateOperation) {
         updateOperation.withContext(sqlExecutionContext);
-        try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableName(), "UPDATE")) {
+        try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableToken(), "UPDATE")) {
             updateOperation.apply(tableWriter, false);
         }
     }
@@ -2165,13 +2165,13 @@ public class UpdateTest extends AbstractGriffinTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "x.d.1") && Chars.contains(name, "1970-01-03")) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
             compiler.compile(
@@ -2347,7 +2347,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             final Thread th = new Thread(() -> {
                 try {
-                    TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "up", "test");
+                    TableWriter tableWriter = getWriter("up");
                     barrier.await(); // table is locked
                     barrier.await(); // update is on writer async cmd queue
                     writerConsumer.accept(tableWriter);
@@ -2375,7 +2375,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     try {
                         fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
                         Assert.fail("Expected exception missing");
-                    } catch (ReaderOutOfDateException | SqlException e) {
+                    } catch (TableReferenceOutOfDateException | SqlException e) {
                         Assert.assertEquals(errorMsg, e.getMessage());
                         Assert.assertEquals(0, fut.getAffectedRowsCount());
                     }

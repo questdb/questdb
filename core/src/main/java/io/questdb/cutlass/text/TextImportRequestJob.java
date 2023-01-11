@@ -56,7 +56,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final LongList partitionsToRemove = new LongList();
     private final RingQueue<TextImportRequestTask> requestQueue;
     private final Sequence requestSubSeq;
-    private final CharSequence statusTableName;
+    private final TableToken statusTableToken;
     private final StringSink stringSink = new StringSink();
     private final TextImportExecutionContext textImportExecutionContext;
     private ParallelCsvFileImporter parallelImporter;
@@ -80,11 +80,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
-        this.statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
 
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+        final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
@@ -100,7 +100,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         ") timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+        this.statusTableToken = engine.getTableToken(statusTableName);
+        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
         this.path = new Path();
@@ -145,7 +146,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             } catch (Throwable th) {
                 LOG.error()
                         .$("could not update status table [importId=").$hexPadded(task.getImportId())
-                        .$(", statusTableName=").$(statusTableName)
+                        .$(", statusTableName=").$(statusTableToken)
                         .$(", tableName=").$(task.getTableName())
                         .$(", fileName=").$(task.getFileName())
                         .$(", phase=").$(getPhaseName(phase))
@@ -162,10 +163,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             // if we closed the writer, we need to reopen it again
             if (writer == null) {
                 try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
                 } catch (Throwable e) {
                     LOG.error()
-                            .$("could not re-open writer [table=").$(statusTableName)
+                            .$("could not re-open writer [table=").$(statusTableToken)
                             .$(", error=`").$(e).$('`')
                             .I$();
                 }
@@ -174,10 +175,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean useParallelImport() {
-        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
+        TableToken tableToken = engine.getTableTokenIfExists(task.getTableName());
+        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tableToken) != TableUtils.TABLE_EXISTS) {
             return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
         }
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
             return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
     }

@@ -29,6 +29,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -71,7 +72,6 @@ class SqlOptimiser {
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
-    private final CairoEngine engine;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final ObjList<Function> functionsInFlight = new ObjList<>();
@@ -105,7 +105,6 @@ class SqlOptimiser {
 
     SqlOptimiser(
             CairoConfiguration configuration,
-            CairoEngine engine,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
@@ -114,7 +113,6 @@ class SqlOptimiser {
             FunctionParser functionParser,
             Path path
     ) {
-        this.engine = engine;
         this.expressionNodePool = expressionNodePool;
         this.characterStore = characterStore;
         this.traversalAlgo = traversalAlgo;
@@ -2078,7 +2076,8 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "come on, where is table name?");
         }
 
-        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, lo, hi);
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
+        int status = executionContext.getStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
@@ -2096,16 +2095,16 @@ class SqlOptimiser {
 
         if (model.isUpdate() && !executionContext.isWalApplication()) {
             assert lo == 0;
-            try (TableRecordMetadata metadata = engine.getMetadata(executionContext.getCairoSecurityContext(), tableName)) {
+            try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
                 enumerateColumns(model, metadata);
             } catch (CairoException e) {
                 throw SqlException.position(tableNamePosition).put(e);
             }
         } else {
-            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableLookupSequence.of(tableName, lo, hi - lo))) {
+            try (TableReader reader = executionContext.getReader(tableToken)) {
                 enumerateColumns(model, reader.getMetadata());
             } catch (EntryLockedException e) {
-                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
+                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
             } catch (CairoException e) {
                 throw SqlException.position(tableNamePosition).put(e);
             }
@@ -3647,10 +3646,10 @@ class SqlOptimiser {
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel
-        validateUpdateColumns(updateQueryModel, metadata);
+        validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
-    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata) throws SqlException {
+    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try {
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());
@@ -3691,8 +3690,12 @@ class SqlOptimiser {
                 }
             }
 
-            // Save update table name as a String to not re-create string later on from CharSequence
-            updateQueryModel.setUpdateTableName(metadata.getTableName());
+            TableToken tableToken = metadata.getTableToken();
+            if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName().token)) {
+                // Table renamed
+                throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName().token);
+            }
+            updateQueryModel.setUpdateTableToken(tableToken);
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

@@ -54,6 +54,14 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         return valueAt(keyIndex(key));
     }
 
+    public int[] getKeys() {
+        return keys;
+    }
+
+    public int getNoEntryKey() {
+        return noEntryKey;
+    }
+
     public V[] getValues() {
         return values;
     }

@@ -33,7 +33,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class CairoTestConfiguration extends DefaultCairoConfiguration {
+public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
 
@@ -111,6 +111,11 @@ public class CairoTestConfiguration extends DefaultCairoConfiguration {
     @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
+    }
+
+    @Override
+    public int getMaxFileNameLength() {
+        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
     }
 
     @Override
@@ -310,7 +315,7 @@ public class CairoTestConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public int getMaxFileNameLength() {
-        return overrides.getMaxFileNameLength() > 0 ? overrides.getMaxFileNameLength() : super.getMaxFileNameLength();
+    public boolean mangleTableDirNames() {
+        return overrides.mangleTableDirNames();
     }
 }

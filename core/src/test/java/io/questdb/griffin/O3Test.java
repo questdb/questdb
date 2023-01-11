@@ -24,9 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,6 +38,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.number.OrderingComparison;
@@ -89,23 +88,26 @@ public class O3Test extends AbstractO3Test {
     @Test
     // test case is contributed by Zhongwei Yao
     public void testAddColumnO3Fuzz() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-        final String tableName = "ABC";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                .col("productId", ColumnType.INT)
-                .col("productName", ColumnType.STRING)
-                .col("category", ColumnType.SYMBOL)
-                .col("price", ColumnType.DOUBLE)
-                .timestamp()
-                .col("supplier", ColumnType.SYMBOL)
-        ) {
-            CairoTestUtils.create(model);
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            final String tableName = "ABC";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("productId", ColumnType.INT)
+                    .col("productName", ColumnType.STRING)
+                    .col("category", ColumnType.SYMBOL)
+                    .col("price", ColumnType.DOUBLE)
+                    .timestamp()
+                    .col("supplier", ColumnType.SYMBOL)
+            ) {
+
+                CairoTestUtils.create(model, engine);
+            }
 
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
 
-            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
+            try (TableWriter writer = getWriter(sqlExecutionContext, tableName, "test")) {
                 Thread writerT = new Thread(() -> {
                     try {
                         int i = 0;
@@ -136,6 +138,7 @@ public class O3Test extends AbstractO3Test {
                     } catch (Exception e) {
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         LOG.info().$("write is done").$();
                     }
                 });
@@ -143,7 +146,7 @@ public class O3Test extends AbstractO3Test {
                 writerT.start();
                 writerT.join();
             }
-        }
+        });
     }
 
     @Test
@@ -935,7 +938,7 @@ public class O3Test extends AbstractO3Test {
                             strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
                             "abcd\t2022-02-24T00:51:34.359000Z\n" +
                             strColVal + "\t2022-02-24T00:51:34.360000Z\n");
-                }, new FilesFacadeImpl() {
+                }, new TestFilesFacadeImpl() {
                     @Override
                     public long write(int fd, long address, long len, long offset) {
                         writeLen.add(len);
@@ -1614,7 +1617,7 @@ public class O3Test extends AbstractO3Test {
                 "500\t8068645982235546347\t1970-01-07T08:45:00.000000Z\tNaN\n" +
                 "10\t3500000\t1970-01-07T08:45:00.000000Z\t10.2\n";
 
-        try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+        try (TableWriter w = getWriter(executionContext, "x", "test")) {
 
             TableWriter.Row row;
             // lets add column
@@ -1668,7 +1671,7 @@ public class O3Test extends AbstractO3Test {
 
         // insert some records in order
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+        try (TableWriter w = getWriter(sqlExecutionContext, "x", "testing")) {
             long t = 0;
             for (int i = 0; i < 1000; i++) {
                 TableWriter.Row r = w.newRow(t++);
@@ -1737,7 +1740,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+        try (TableWriter w = getWriter(sqlExecutionContext, "x", "testing")) {
             long ts = 1000000 * 1000L;
             long step = 1000000;
             TxnScoreboard txnScoreboard = w.getTxnScoreboard();
@@ -3690,8 +3693,8 @@ public class O3Test extends AbstractO3Test {
         TestUtils.assertEquals(sink2, sink);
 
         try (
-                final TableWriter w = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
+                final TableWriter w = getWriter(
+                        sqlExecutionContext,
                         "привет от штиблет",
                         "test"
                 )
@@ -6358,7 +6361,7 @@ public class O3Test extends AbstractO3Test {
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
             throws SqlException, NumericException {
         compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+        try (TableWriter w = getWriter(sqlExecutionContext, "x", "testing")) {
             TableWriter.Row r;
 
             r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
@@ -6398,7 +6401,7 @@ public class O3Test extends AbstractO3Test {
         final int commits = 4;
         final int rows = 1_000;
         compiler.compile("create table x (s string, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+        try (TableWriter w = getWriter(sqlExecutionContext, "x", "testing")) {
             TableWriter.Row r;
 
             // Here we're trying to make sure that null setters write to the currently active O3 memory.
@@ -6823,7 +6826,7 @@ public class O3Test extends AbstractO3Test {
         long expectedMaxTimestamp = Long.MIN_VALUE;
         int step = 100;
         int rowCount = 10;
-        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+        try (TableWriter w = getWriter(sqlExecutionContext, "x", "testing")) {
             for (int i = 0; i < 20; i++) {
                 for (int j = 0; j < rowCount; j++) {
                     long t = ts + (rowCount - j) * step;
@@ -7536,7 +7539,7 @@ public class O3Test extends AbstractO3Test {
 
             // Add 2 batches
             int iterations = 2;
-            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+            try (TableWriter o3 = getWriter(sqlExecutionContext, "x", "testing")) {
                 for (int i = 0; i < iterations; i++) {
                     for (int id = 0; id < idBatchSize; id++) {
                         // We leave start + idBatchSize out to insert it O3 later
@@ -7569,7 +7572,7 @@ public class O3Test extends AbstractO3Test {
                     "count\n" + (2 * idBatchSize + 1) + "\n"
             );
             engine.releaseAllReaders();
-            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+            try (TableWriter o3 = getWriter(sqlExecutionContext, "x", "testing")) {
                 o3.truncate();
             }
         }

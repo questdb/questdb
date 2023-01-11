@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -276,19 +275,21 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics, 2)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                    if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         waitForData.countDown();
                     }
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
-                                .col(targetColumnName, columnType)
-                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
-                                .timestamp());
+                                        .col(targetColumnName, columnType)
+                                        .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
+                                        .timestamp(),
+                                engine);
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {

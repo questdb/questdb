@@ -88,13 +88,13 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                     "select sym from x order by sym"
             );
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            try (TableReader reader = getReader("x")) {
                 //check cursor before altering symbol column
                 sink.clear();
                 printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                try (TableWriter writer = getWriter("x")) {
                     writer.changeCacheFlag(1, false);
                 }
                 //reload reader
@@ -104,7 +104,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
-                try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                try (TableReader reader2 = getReader("x")) {
                     sink.clear();
                     printer.print(reader2.getCursor(), reader2.getMetadata(), true, sink);
                     Assert.assertEquals(expectedChronological, sink.toString());
@@ -162,13 +162,13 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                     "select sym from x order by sym"
             );
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            try (TableReader reader = getReader("x")) {
                 //check cursor before altering symbol column
                 sink.clear();
                 printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                try (TableWriter writer = getWriter("x")) {
                     writer.changeCacheFlag(1, true);
                 }
                 //reload reader
@@ -178,7 +178,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 Assert.assertEquals(expectedChronological, sink.toString());
 
-                try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                try (TableReader reader2 = getReader("x")) {
                     sink.clear();
                     printer.print(reader2.getCursor(), reader2.getMetadata(), true, sink);
                     Assert.assertEquals(expectedChronological, sink.toString());

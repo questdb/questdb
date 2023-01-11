@@ -178,7 +178,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             throws SqlException {
         TableReader reader = dataFrameCursor.getTableReader();
         if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
-            throw ReaderOutOfDateException.of(reader.getTableName());
+            throw TableReferenceOutOfDateException.of(reader.getTableToken().getTableName());
         }
         Function.init(keyExcludedValueFunctions, reader, executionContext);
         this.recalculateIncludedValues(reader);

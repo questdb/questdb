@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 
 public interface UpdateOperator {
-    long executeUpdate(SqlExecutionContext executionContext, UpdateOperation op) throws ReaderOutOfDateException;
+    long executeUpdate(SqlExecutionContext executionContext, UpdateOperation op) throws TableReferenceOutOfDateException;
 }

@@ -119,7 +119,7 @@ class LineTcpWriterJob implements Job, Closeable {
                     }
                 } catch (Throwable ex) {
                     LOG.critical()
-                            .$("commit failed [table=").$(assignedTables.getQuick(n).getTableNameUtf16())
+                            .$("commit failed [table=").$(assignedTables.getQuick(n).getTableToken())
                             .$(",ex=").$(ex)
                             .I$();
                     metrics.health().incrementUnhandledErrors();
@@ -159,7 +159,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 tab.setAssignedToJob(true);
                                 nextCommitTime = millisecondClock.getTicks();
                                 LOG.info()
-                                        .$("assigned table to writer thread [tableName=").$(tab.getTableNameUtf16())
+                                        .$("assigned table to writer thread [tableName=").$(tab.getTableToken())
                                         .$(", threadId=").$(workerId)
                                         .I$();
                             }
@@ -168,7 +168,7 @@ class LineTcpWriterJob implements Job, Closeable {
                     } catch (Throwable ex) {
                         tab.setWriterInError();
                         LOG.critical()
-                                .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
+                                .$("closing writer because of error [table=").$(tab.getTableToken())
                                 .$(",ex=").$(ex)
                                 .I$();
                         metrics.health().incrementUnhandledErrors();

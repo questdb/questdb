@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -35,9 +35,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -270,7 +270,7 @@ public class LatestByParallelTest {
     }
 
     protected static void executeVanilla(LatestByRunnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
+        executeVanilla(() -> execute(null, code, new DefaultTestCairoConfiguration(root)));
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
@@ -287,20 +287,20 @@ public class LatestByParallelTest {
 
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
+                        return TestFilesFacadeImpl.INSTANCE;
                     }
                 };
 
                 execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
+                        return TestFilesFacadeImpl.INSTANCE;
                     }
 
                     @Override

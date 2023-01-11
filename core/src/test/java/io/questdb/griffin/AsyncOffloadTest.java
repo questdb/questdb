@@ -307,7 +307,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     assertCursor(
                             expected,
                             true,
-                            true,
                             false,
                             true,
                             cursor,

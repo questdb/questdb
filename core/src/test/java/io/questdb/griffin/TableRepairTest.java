@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
@@ -44,13 +45,14 @@ public class TableRepairTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
             engine.releaseAllWriters();
-            try (TableReader reader = new TableReader(configuration, "tst")) {
+            try (TableReader reader = newTableReader(configuration, "tst")) {
 
                 Assert.assertEquals(100000, reader.size());
 
                 // last and "active" partition is "1970-01-12"
                 try (Path path = new Path()) {
-                    path.of(configuration.getRoot()).concat("tst").concat("1970-01-12").$();
+                    TableToken tableToken = engine.getTableToken("tst");
+                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-12").$();
                     Assert.assertEquals(0, Files.rmdir(path));
                 }
 
@@ -58,7 +60,7 @@ public class TableRepairTest extends AbstractGriffinTest {
 
                 // repair by opening and closing writer
 
-                try (TableWriter w = new TableWriter(configuration, "tst", metrics)) {
+                try (TableWriter w = newTableWriter(configuration, "tst", metrics)) {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
                     Assert.assertEquals(950390000000L, w.getMaxTimestamp());
@@ -84,12 +86,13 @@ public class TableRepairTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
             engine.releaseAllWriters();
-            try (TableReader reader = new TableReader(configuration, "tst")) {
+            try (TableReader reader = newTableReader(configuration, "tst")) {
 
                 Assert.assertEquals(100000, reader.size());
 
                 try (Path path = new Path()) {
-                    path.of(configuration.getRoot()).concat("tst").concat("1970-01-09").$();
+                    TableToken tableToken = engine.getTableToken("tst");
+                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-09").$();
                     Assert.assertEquals(0, Files.rmdir(path));
                 }
 
@@ -97,7 +100,7 @@ public class TableRepairTest extends AbstractGriffinTest {
 
                 // repair by opening and closing writer
 
-                new TableWriter(configuration, "tst", metrics).close();
+                newTableWriter(configuration, "tst", metrics).close();
 
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(91360, reader.size());

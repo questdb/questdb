@@ -25,17 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -156,7 +153,7 @@ public class AbstractO3Test {
         try (
                 final TableWriter w = engine.getWriter(
                         executionContext.getCairoSecurityContext(),
-                        "x",
+                        engine.getTableToken("x"),
                         "test"
                 )
         ) {
@@ -289,11 +286,11 @@ public class AbstractO3Test {
     }
 
     protected static void executeVanilla(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), LOG));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), LOG));
     }
 
     protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled(), LOG));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), Metrics.enabled(), LOG));
     }
 
     protected static void executeWithPool(
@@ -303,7 +300,7 @@ public class AbstractO3Test {
         executeWithPool(
                 workerCount,
                 runnable,
-                FilesFacadeImpl.INSTANCE
+                TestFilesFacadeImpl.INSTANCE
         );
     }
 
@@ -316,7 +313,7 @@ public class AbstractO3Test {
             if (workerCount > 0) {
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
@@ -336,7 +333,7 @@ public class AbstractO3Test {
                 TestUtils.execute(pool, runnable, configuration, LOG);
             } else {
                 // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
@@ -380,6 +377,11 @@ public class AbstractO3Test {
                 TestUtils.execute(null, runnable, configuration, LOG);
             }
         });
+    }
+
+    protected static TableWriter getWriter(SqlExecutionContext sqlExecutionContext, String tableName, String test) {
+        CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        return engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName), test);
     }
 
     protected static void printSqlResult(

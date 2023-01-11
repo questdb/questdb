@@ -44,17 +44,17 @@ import static org.junit.Assert.assertTrue;
 public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testCursor() throws Exception {
+    public void testCursor() {
         try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, true, false, cursor, factory.getMetadata(), false);
+            assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, false, cursor, factory.getMetadata(), false);
         }
     }
 
     @Test
     public void testDisabled() throws Exception {
         assertMemoryLeak(() -> {
-            try (CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled(), 2);
+            try (CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
                  SqlCompiler localCompiler = new SqlCompiler(localEngine, null, snapshotAgent);
                  SqlExecutionContextImpl localSqlExecutionContext = new SqlExecutionContextImpl(localEngine, 1)
                          .with(AllowAllCairoSecurityContext.INSTANCE,
@@ -90,7 +90,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
             try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory()) {
                 for (int i = 0; i < cursorCount; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, true, false, cursor, factory.getMetadata(), false);
+                        assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, false, cursor, factory.getMetadata(), false);
                     }
                 }
             }
@@ -131,7 +131,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
                 "physically_written_rows" + '\t' + metricsSnapshot.physicallyWrittenRows + '\n';
     }
 
-    private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {
+    private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) {
         try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             assertCursor(toExpectedTableContent(metricsSnapshot), cursor, factory.getMetadata(), true);

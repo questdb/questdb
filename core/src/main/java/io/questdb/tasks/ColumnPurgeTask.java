@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 
@@ -38,7 +39,7 @@ public class ColumnPurgeTask implements Mutable {
     private int columnType;
     private int partitionBy;
     private int tableId;
-    private String tableName;
+    private TableToken tableName;
     private long truncateVersion;
     private long updateTxn;
 
@@ -83,7 +84,7 @@ public class ColumnPurgeTask implements Mutable {
         return tableId;
     }
 
-    public String getTableName() {
+    public TableToken getTableName() {
         return tableName;
     }
 
@@ -100,7 +101,7 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public void of(
-            String tableName,
+            TableToken tableName,
             CharSequence columnName,
             int tableId,
             long truncateVersion,
@@ -119,7 +120,7 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public void of(
-            String tableName,
+            TableToken tableName,
             CharSequence columnName,
             int tableId,
             int truncateVersion,

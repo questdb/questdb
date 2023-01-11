@@ -51,8 +51,14 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), executionContext);
-        return cursor;
+        RecordCursor cursor1 = base.getCursor(executionContext);
+        try {
+            cursor.of(cursor1, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            cursor1.close();
+            throw th;
+        }
     }
 
     @Override

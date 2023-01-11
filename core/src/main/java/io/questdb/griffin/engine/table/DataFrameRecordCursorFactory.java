@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -109,8 +110,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return dataFrameCursorFactory.supportTableRowId(tableToken);
     }
 
     @Override

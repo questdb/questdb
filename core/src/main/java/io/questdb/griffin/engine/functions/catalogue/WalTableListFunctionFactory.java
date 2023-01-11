@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,9 +38,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
@@ -80,10 +78,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     }
 
     private static class WalTableListCursorFactory extends AbstractRecordCursorFactory {
+        private final TableListRecordCursor cursor;
         private final FilesFacade ff;
         private final SqlExecutionContext sqlExecutionContext;
-        private final TableListRecordCursor cursor;
         private Path rootPath;
+        private CairoEngine engine;
 
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
@@ -95,6 +94,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
         }
@@ -111,13 +111,12 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final StringSink tableNameSink = new StringSink();
             private final TxReader txReader = new TxReader(ff);
-            private long findPtr = 0;
+            private final ObjList<TableToken> tableBucket = new ObjList<>();
+            private int tableIndex = -1;
 
             @Override
             public void close() {
-                findPtr = ff.findClose(findPtr);
                 txReader.close();
             }
 
@@ -133,30 +132,21 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                int rootLen = rootPath.length();
-                while (true) {
-                    if (findPtr == 0) {
-                        findPtr = ff.findFirst(rootPath.$());
-                        rootPath.trimTo(rootLen);
-                        if (findPtr <= 0) {
-                            return false;
-                        }
-                    } else {
-                        if (ff.findNext(findPtr) <= 0) {
-                            return false;
-                        }
-                    }
-                    boolean isDir = Files.isDir(ff.findName(findPtr), ff.findType(findPtr), tableNameSink);
-                    if (isDir) {
-                        boolean isWalTable = TableSequencerAPI.isWalTable(tableNameSink, rootPath, ff);
-                        rootPath.trimTo(rootLen);
-                        if (isWalTable) {
-                            if (record.switchTo(tableNameSink)) {
-                                return true;
-                            }
-                        }
+                if (tableIndex < 0) {
+                    engine.getTableTokens(tableBucket, false);
+                    tableIndex = -1;
+                }
+
+                tableIndex++;
+                int n = tableBucket.size();
+                for (; tableIndex < n; tableIndex++) {
+                    TableToken tableToken = tableBucket.get(tableIndex);
+                    if (engine.isWalTable(tableToken) && record.switchTo(tableToken)) {
+                        break;
                     }
                 }
+
+                return tableIndex < n;
             }
 
             @Override
@@ -177,6 +167,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             public class TableListRecord implements Record {
                 private long sequencerTxn;
                 private boolean suspendedFlag;
+                private String tableName;
                 private long writerTxn;
 
                 @Override
@@ -201,7 +192,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return tableNameSink;
+                        return tableName;
                     }
                     return null;
                 }
@@ -216,9 +207,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean switchTo(final CharSequence tableName) {
+                private boolean switchTo(final TableToken tableToken) {
+                    tableName = tableToken.getTableName();
                     int rootLen = rootPath.length();
-                    rootPath.concat(tableName).concat(SEQ_DIR);
+                    rootPath.concat(tableToken).concat(SEQ_DIR);
                     int metaFd = -1;
                     int txnFd = -1;
                     try {
@@ -232,7 +224,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         ff.closeChecked(txnFd);
                     }
 
-                    rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+                    rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                     txReader.ofRO(rootPath, PartitionBy.NONE);
                     rootPath.trimTo(rootLen);
 

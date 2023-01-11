@@ -76,7 +76,7 @@ public class PerformanceTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, "quote", Metrics.disabled())) {
+            try (TableWriter w = newTableWriter(configuration, "quote", Metrics.disabled())) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
@@ -103,7 +103,7 @@ public class PerformanceTest extends AbstractCairoTest {
             }
             long appendDuration = result / count;
 
-            try (TableReader reader = new TableReader(configuration, "quote")) {
+            try (TableReader reader = newTableReader(configuration, "quote")) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
@@ -164,8 +164,8 @@ public class PerformanceTest extends AbstractCairoTest {
 
         CountDownLatch stopLatch = new CountDownLatch(2);
         CountDownLatch startLatch = new CountDownLatch(2);
-        try (TableWriter w = new TableWriter(configuration, "quote", Metrics.disabled());
-             TableReader reader = new TableReader(configuration, "quote")) {
+        try (TableWriter w = newTableWriter(configuration, "quote", Metrics.disabled());
+             TableReader reader = newTableReader(configuration, "quote")) {
             // Writing
             new Thread(() -> {
                 try {

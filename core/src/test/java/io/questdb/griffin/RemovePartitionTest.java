@@ -41,8 +41,8 @@ public class RemovePartitionTest extends AbstractGriffinTest {
             compiler.compile("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 1000000000l) t from long_sequence(1000)) timestamp (t)) timestamp(t) partition by DAY", sqlExecutionContext);
 
             try (
-                    TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tst");
-                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tst", "testing")
+                    TableReader reader = getReader("tst");
+                    TableWriter writer = getWriter("tst")
             ) {
                 // utilise reader fully
                 RecordCursor cursor = reader.getCursor();
