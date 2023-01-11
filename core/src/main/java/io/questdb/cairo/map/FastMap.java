@@ -208,7 +208,7 @@ public class FastMap implements Map, Reopenable {
 
         record = new FastMapRecord(valueOffsets, keyOffset, value, keyTypes, valueTypes);
 
-        assert keySize + valueSize < kLimit - kStart : "page size is too small for to fit a single key";
+        assert keySize + valueSize < kLimit - kStart : "page size is too small to fit a single key";
         cursor = new FastMapCursor(record, this);
         key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();
     }

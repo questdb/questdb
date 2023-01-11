@@ -44,19 +44,19 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class QMapReadSequentialKeyBenchmark {
+public class FastMapReadSequentialKeyBenchmark {
 
     private static final int N = 300_000;
-    private static final double loadFactor = 0.5;
+    private static final double loadFactor = 0.7;
     private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
-    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
     private static final StringSink sink = new StringSink();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(QMapReadSequentialKeyBenchmark.class.getSimpleName())
+                .include(FastMapReadSequentialKeyBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -72,12 +72,21 @@ public class QMapReadSequentialKeyBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
+        System.out.print(" [q=" + qmap.size() + ", l=" + fmap.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
     }
 
     @Benchmark
-    public MapValue testDirectMap() {
-        MapKey key = map.withKey();
+    public MapValue testCompactMap() {
+        MapKey key = qmap.withKey();
+        sink.clear();
+        sink.put(rnd.nextInt(N));
+        key.putStr(sink);
+        return key.findValue();
+    }
+
+    @Benchmark
+    public MapValue testFastMap() {
+        MapKey key = fmap.withKey();
         sink.clear();
         sink.put(rnd.nextInt(N));
         key.putStr(sink);
@@ -89,15 +98,6 @@ public class QMapReadSequentialKeyBenchmark {
         return hmap.get(String.valueOf(rnd.nextInt(N)));
     }
 
-    @Benchmark
-    public MapValue testQMap() {
-        MapKey key = qmap.withKey();
-        sink.clear();
-        sink.put(rnd.nextInt(N));
-        key.putStr(sink);
-        return key.findValue();
-    }
-
     static {
         for (int i = 0; i < N; i++) {
             MapKey key = qmap.withKey();
@@ -107,7 +107,7 @@ public class QMapReadSequentialKeyBenchmark {
         }
 
         for (int i = 0; i < N; i++) {
-            MapKey key = map.withKey();
+            MapKey key = fmap.withKey();
             key.putStr(String.valueOf(i));
             MapValue values = key.createValue();
             values.putLong(0, i);
