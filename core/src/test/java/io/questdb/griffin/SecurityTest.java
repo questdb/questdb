@@ -418,7 +418,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "",
+                        "TOO MUCH",
                         "select sym2, d from tb1 order by sym2",
                         null,
                         true, readOnlyExecutionContext);
@@ -434,21 +434,25 @@ public class SecurityTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(20,4,4,20000) sym1," +
-                    " rnd_symbol(20,4,4,20000) sym2," +
+                    " rnd_symbol(40,4,4,20000) sym1," +
+                    " rnd_symbol(40,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(20)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(40)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
                     memoryRestrictedCompiler,
-                    "sym1\tsym2\nDEYY\tCXZO\nDEYY\tDSWU\nSXUX\tZSRY\n",
+                    "sym1\tsym2\n" +
+                            "OOZZ\tHNZH\n" +
+                            "GPGW\tQSRL\n" +
+                            "FJGE\tQCEH\n" +
+                            "PEHN\tIPHZ\n",
                     "select distinct sym1, sym2 from tb1 where d < 0.07",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nHYRX\tGPGW\nVTJW\tIBBT\nVTJW\tGPGW\n",
+                        "TOO MUCH",
                         "select distinct sym1, sym2 from tb1",
                         null,
                         true, readOnlyExecutionContext);
@@ -483,7 +487,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 try {
                     assertQuery(
                             memoryRestrictedCompiler,
-                            "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                            "TOO MUCH",
                             "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
                             false, readOnlyExecutionContext);
@@ -521,7 +525,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 try {
                     assertQuery(
                             memoryRestrictedCompiler,
-                            "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                            "TOO MUCH",
                             "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
                             false, readOnlyExecutionContext);
@@ -557,7 +561,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
@@ -624,7 +628,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
@@ -653,7 +657,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\nPEHN\t0.3288176907679504\n",
+                        "TOO MUCH",
                         "select sym, d from tb1 where d < 0.5 ORDER BY d",
                         null,
                         true, readOnlyExecutionContext);
@@ -807,7 +811,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\td1\tts1\nVTJW\t0.1985581797355932\t1970-01-01T01:06:40.000000Z\nVTJW\t0.21583224269349388\t1970-01-01T01:40:00.000000Z\nRQQ\t0.5522494170511608\t1970-01-01T02:46:40.000000Z\n",
+                        "TOO MUCH",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
                         null,
                         false, readOnlyExecutionContext);
@@ -841,7 +845,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\nPEHN\tRQQ\n",
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
                         null,
                         true, readOnlyExecutionContext);
@@ -894,7 +898,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
+                        "TOO MUCH",
                         "select sym1, count() from tb1 order by sym1",
                         null,
                         readOnlyExecutionContext, true,
@@ -936,7 +940,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "",
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);

@@ -115,7 +115,6 @@ public class FastMap implements Map, Reopenable {
     ) {
         assert pageSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
-        assert keyTypes.getColumnCount() > 0;
 
         this.mapMemoryTag = mapMemoryTag;
         this.listMemoryTag = listMemoryTag;
@@ -353,6 +352,9 @@ public class FastMap implements Map, Reopenable {
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
             }
+            if (kCapacity > MAX_HEAP_SIZE) {
+                System.out.println("boom");
+            }
             assert kCapacity <= MAX_HEAP_SIZE : "Max FastMap heap size reached: " + kCapacity;
             long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, mapMemoryTag);
 
@@ -521,7 +523,6 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        @SuppressWarnings("unused")
         public void putTimestamp(long value) {
             putLong(value);
         }
@@ -581,8 +582,8 @@ public class FastMap implements Map, Reopenable {
     private class FixedSizeKey extends BaseKey {
 
         public FixedSizeKey init() {
-            checkSize(keySize + valueSize);
             super.init();
+            checkSize(keySize + valueSize);
             return this;
         }
 
