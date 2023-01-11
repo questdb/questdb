@@ -83,6 +83,10 @@ public final class Unsafe {
 
     /**
      * This call has Atomic*#lazySet / memory_order_release semantics.
+     *
+     * @param array array to put into
+     * @param index index
+     * @param value value to put
      */
     public static void arrayPutOrdered(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
@@ -91,6 +95,10 @@ public final class Unsafe {
 
     /**
      * This call has Atomic*#lazySet / memory_order_release semantics.
+     *
+     * @param array array to put into
+     * @param index index
+     * @param value value to put
      */
     public static void arrayPutOrdered(int[] array, int index, int value) {
         assert index > -1 && index < array.length;

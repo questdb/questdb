@@ -40,7 +40,7 @@ public class TableWriterInteractionTest extends AbstractGriffinTest {
             }
 
             long ts = TimestampFormatUtils.parseTimestamp("2019-04-29T12:00:04.877721Z");
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "test")) {
+            try (TableWriter w = getWriter("xyz")) {
                 TableWriter.Row r = w.newRow(ts);
 
                 // this used to caused dense indexer list to be freed

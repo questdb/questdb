@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -45,12 +44,12 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
     private TxReader txFile;
     private long txn = TableUtils.INITIAL_TXN;
 
-    public DynamicTableReaderMetadata(CairoConfiguration configuration, CharSequence tableName) {
-        super(configuration, Chars.toString(tableName));
+    public DynamicTableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
+        super(configuration, tableToken);
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(getTableName());
+            path.of(configuration.getRoot()).concat(tableToken);
             this.txFile = new TxReader(configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(), getPartitionBy());
             load();
         } catch (Throwable e) {
@@ -63,10 +62,6 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
     public void close() {
         this.txFile = Misc.free(txFile);
         super.close();
-    }
-
-    public long getDataVersion() {
-        return this.txFile.getDataVersion();
     }
 
     public long getMaxTimestamp() {
@@ -83,10 +78,6 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
 
     public long getTxn() {
         return txn;
-    }
-
-    public long getTxnStructureVersion() {
-        return txFile.getStructureVersion();
     }
 
     public long getVersion() {
@@ -171,7 +162,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                TableUtils.handleMetadataLoadException(getTableToken().getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
 

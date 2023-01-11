@@ -58,19 +58,19 @@ public class WalReader implements Closeable {
     private final String tableName;
     private final String walName;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, int segmentId, long rowCount) {
-        this.tableName = Chars.toString(tableName);
+    public WalReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
+        this.tableName = tableToken.getTableName();
         this.walName = Chars.toString(walName);
         this.rowCount = rowCount;
 
         ff = configuration.getFilesFacade();
         path = new Path();
-        path.of(configuration.getRoot()).concat(tableName).concat(walName);
+        path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(walName);
         rootLen = path.length();
 
         try {
             metadata = new SequencerMetadata(ff, true);
-            metadata.open(Chars.toString(tableName), path.slash().put(segmentId), rootLen);
+            metadata.open(path.slash().put(segmentId), rootLen);
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();

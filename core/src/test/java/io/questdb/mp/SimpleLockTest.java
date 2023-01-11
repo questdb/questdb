@@ -32,8 +32,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
-import static junit.framework.Assert.assertFalse;
-
 public class SimpleLockTest {
     @Test
     public void testLock1() {
@@ -180,7 +178,7 @@ public class SimpleLockTest {
 
         // thread2 should block
         Thread.sleep(500);
-        assertFalse(holdsLock.get());
+        Assert.assertFalse(holdsLock.get());
 
         // unpark thread1
         unparkFlag.set(true);

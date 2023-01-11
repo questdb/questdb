@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -74,7 +75,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * True if record cursor factory followed order by advice and doesn't require sorting .
+     * True if record cursor factory followed order by advice and doesn't require sorting.
+     *
+     * @return true if record cursor factory followed order by advice and doesn't require sorting
      */
     default boolean followedOrderByAdvice() {
         return false;
@@ -132,7 +135,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean supportsUpdateRowId(CharSequence tableName) {
+    default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
 

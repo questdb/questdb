@@ -30,7 +30,7 @@ import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 public class GenericTableRecordMetadata extends GenericRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
     private long structureVersion;
     private int tableId;
-    private String tableName;
+    private TableToken tableToken;
 
     @Override
     public void addColumn(
@@ -71,8 +71,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override
@@ -82,12 +82,16 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.tableName = tableName;
+    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = compressedTimestampIndex;
         // todo: suspended
         this.structureVersion = structureVersion;
         // todo: maxUncommittedRows where from ?
+    }
+
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 }

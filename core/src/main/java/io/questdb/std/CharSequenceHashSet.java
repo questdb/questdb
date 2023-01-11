@@ -48,7 +48,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     private CharSequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
-        this.list = new ObjList<>(free);
+        list = new ObjList<>(free);
         clear();
     }
 
@@ -97,6 +97,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return true;
     }
 
+    @Override
     public final void clear() {
         free = capacity;
         Arrays.fill(keys, null);
@@ -134,6 +135,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return keys[index1];
     }
 
+    @Override
     public int remove(CharSequence key) {
         if (key == null) {
             return removeNull();
@@ -147,6 +149,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return -1;
     }
 
+    @Override
     public void removeAt(int index) {
         if (index < 0) {
             int index1 = -index - 1;

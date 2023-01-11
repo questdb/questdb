@@ -28,8 +28,8 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -141,8 +141,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         try {
                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             runQuery = false;
-                        } catch (ReaderOutOfDateException e) {
-                            if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {
                                 throw e;
                             }
                             info(state).$(e.getFlyweightMessage()).$();

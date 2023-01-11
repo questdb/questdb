@@ -63,7 +63,7 @@ Our demo is running on `c5.metal` instance and using 24 cores out of 96.
 
 ### Install QuestDB
 
-To run QuestDB, Docker can be used to get started quickly:
+To run QuestDB, [Docker](https://www.docker.com/) can be used to get started quickly:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
@@ -97,7 +97,7 @@ You can interact with QuestDB using the following interfaces:
 
 ### Insert data
 
-Below are our official InfluxDB line protocol clients for popular programming
+Below are our official questdb clients for popular programming
 languages:
 
 - [.NET](https://github.com/questdb/net-questdb-client)

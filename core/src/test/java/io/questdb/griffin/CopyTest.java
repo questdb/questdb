@@ -198,9 +198,6 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
-        // todo: import "cancel" tries to remove WAL table, which does not work correctly on this branch
-        Assume.assumeTrue(!walEnabled || Os.type != Os.WINDOWS);
-
         String importId = runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -1028,23 +1025,19 @@ public class CopyTest extends AbstractGriffinTest {
         }
     }
 
-    @Test
-    public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
-        String inputWorkRootTmp = inputWorkRoot;
-        inputWorkRoot = temp.getRoot().getAbsolutePath();
-
-        CopyRunnable stmt = () -> runAndFetchImportId("copy dbRoot from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
-
-        CopyRunnable test = () -> assertQuery("message\ncould not remove import work directory because it points to one of main directories\n",
-                "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
-                null,
-                true
-        );
-
-        testCopy(stmt, test);
-
-        inputWorkRoot = inputWorkRootTmp;
+    private static Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
+        return new Thread(() -> {
+            try {
+                while (latch.getCount() > 0) {
+                    if (job.run(0)) {
+                        latch.countDown();
+                    }
+                    Os.sleep(1);
+                }
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
     }
 
     private void assertQuotesTableContent() throws SqlException {
@@ -1083,48 +1076,6 @@ public class CopyTest extends AbstractGriffinTest {
         assertQuotesTableContent0(true);
     }
 
-    private Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
-        return new Thread(() -> {
-            try {
-                while (latch.getCount() > 0) {
-                    if (job.run(0)) {
-                        latch.countDown();
-                    }
-                    Os.sleep(1);
-                }
-            } finally {
-                Path.clearThreadLocals();
-            }
-        });
-    }
-
-    private String runAndFetchImportId(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
-        try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-            Assert.assertTrue(cursor.hasNext());
-            return cursor.getRecord().getStr(0).toString();
-        }
-    }
-
-    private void testCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
-        assertMemoryLeak(() -> {
-            CountDownLatch processed = new CountDownLatch(1);
-
-            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log", sqlExecutionContext);
-            try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-
-                Thread processingThread = createJobThread(processingJob, processed);
-
-                processingThread.start();
-                statement.run();
-                processed.await();
-                test.run();
-                processingThread.join();
-            }
-            TestUtils.drainTextImportJobQueue(engine);
-        });
-    }
-
     private void testCopyWithAtomicity(boolean parallel, String atomicity, int expectedCount) throws Exception {
         CopyRunnable stmt = () -> {
             compiler.compile("create table alltypes (\n" +
@@ -1154,6 +1105,33 @@ public class CopyTest extends AbstractGriffinTest {
         );
 
         testCopy(stmt, test);
+    }
+
+    protected static String runAndFetchImportId(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CompiledQuery cq = compiler.compile(copySql, sqlExecutionContext);
+        try (RecordCursor cursor = cq.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getStr(0).toString();
+        }
+    }
+
+    protected static void testCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
+        assertMemoryLeak(() -> {
+            CountDownLatch processed = new CountDownLatch(1);
+
+            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log", sqlExecutionContext);
+            try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+
+                Thread processingThread = createJobThread(processingJob, processed);
+
+                processingThread.start();
+                statement.run();
+                processed.await();
+                test.run();
+                processingThread.join();
+            }
+            TestUtils.drainTextImportJobQueue(engine);
+        });
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {

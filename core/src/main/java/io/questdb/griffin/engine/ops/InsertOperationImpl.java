@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
@@ -34,6 +35,7 @@ import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -43,15 +45,15 @@ public class InsertOperationImpl implements InsertOperation {
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final long structureVersion;
-    private final String tableName;
+    private final TableToken tableToken;
 
     public InsertOperationImpl(
             CairoEngine engine,
-            String tableName,
+            TableToken tableToken,
             long structureVersion
     ) {
         this.engine = engine;
-        this.tableName = tableName;
+        this.tableToken = tableToken;
         this.structureVersion = structureVersion;
     }
 
@@ -64,8 +66,9 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableName, "insert");
-            if (writer.getStructureVersion() != structureVersion) {
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, "insert");
+            if (writer.getStructureVersion() != structureVersion ||
+                    !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }
@@ -86,11 +89,6 @@ public class InsertOperationImpl implements InsertOperation {
             insertMethod.commit();
             return doneFuture;
         }
-    }
-
-    @Override
-    public String getTableName() {
-        return tableName;
     }
 
     private void initContext(SqlExecutionContext executionContext) throws SqlException {

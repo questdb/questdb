@@ -45,7 +45,7 @@ public class TestInterop {
 
     @Test
     public void testInterop() throws Exception {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         URL testCasesUrl = TestInterop.class.getResource("/io/questdb/cutlass/line/interop/ilp-client-interop-test.json");
         Assert.assertNotNull("interop test cases missing", testCasesUrl);
         String pp = testCasesUrl.getFile();

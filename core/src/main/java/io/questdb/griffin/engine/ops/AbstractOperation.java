@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.QuietCloseable;
@@ -33,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
-    protected @Nullable String tableName;
+    protected @Nullable TableToken tableToken;
     @Nullable SqlExecutionContext sqlExecutionContext;
     @Nullable CharSequence sqlStatement;
     int tableNamePosition;
@@ -81,13 +82,13 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
-    public @Nullable String getTableName() {
-        return tableName;
+    public int getTableNamePosition() {
+        return tableNamePosition;
     }
 
     @Override
-    public int getTableNamePosition() {
-        return tableNamePosition;
+    public @Nullable TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override
@@ -97,7 +98,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     @Override
     public void serialize(TableWriterTask task) {
-        task.of(cmdType, tableId, tableName);
+        task.of(cmdType, tableId, tableToken);
         task.setInstance(correlationId);
     }
 
@@ -110,21 +111,21 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlExecutionContext = sqlExecutionContext;
     }
 
-    public void withSqlStatement(CharSequence sqlStatement) {
+    public void withSqlStatement(String sqlStatement) {
         this.sqlStatement = sqlStatement;
     }
 
     void init(
             int cmdType,
             String cmdName,
-            String tableName,
+            TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition
     ) {
         this.cmdType = cmdType;
         this.cmdName = cmdName;
-        this.tableName = tableName;
+        this.tableToken = tableToken;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;

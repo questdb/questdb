@@ -51,6 +51,7 @@ public interface MemoryOM extends MemoryM {
      * @param lo        mapped memory low limit (inclusive)
      * @param hi        mapped memory high limit (exclusive)
      * @param memoryTag memory tag for diagnostics
+     * @param opts      file options
      */
     void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts);
 }

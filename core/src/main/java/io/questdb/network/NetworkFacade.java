@@ -126,6 +126,11 @@ public interface NetworkFacade {
 
     /**
      * Returns true if a disconnect happened, false otherwise.
+     *
+     * @param fd         file descriptor
+     * @param buffer     test buffer
+     * @param bufferSize test buffer size
+     * @return true if a disconnect happened, false otherwise
      */
     boolean testConnection(int fd, long buffer, int bufferSize);
 }

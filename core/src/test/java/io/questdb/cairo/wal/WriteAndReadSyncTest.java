@@ -56,7 +56,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                 final File file = temp.newFile();
                 try (Path path = new Path()) {
                     path.of(file.getAbsolutePath()).$();
-                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
                     // barrier to make sure both threads kick in at the same time;
                     final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -76,7 +76,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                             readLatch.countDown();
                             ff.munmap(mem, (size) * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                             ff.truncate(fd1, longCount * 8);
-                            FilesFacadeImpl.INSTANCE.close(fd1);
+                            TestFilesFacadeImpl.INSTANCE.close(fd1);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
                             e.printStackTrace();

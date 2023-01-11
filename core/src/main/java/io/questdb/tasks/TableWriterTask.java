@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
@@ -47,7 +48,7 @@ public class TableWriterTask implements Closeable {
     private long instance;
     private long ip;
     private long tableId;
-    private String tableName;
+    private TableToken tableToken;
     private int type;
 
     public TableWriterTask(long data, long dataSize) {
@@ -86,8 +87,8 @@ public class TableWriterTask implements Closeable {
         return tableId;
     }
 
-    public String getTableName() {
-        return tableName;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     public int getType() {
@@ -97,10 +98,10 @@ public class TableWriterTask implements Closeable {
     public void of(
             int type,
             long tableId,
-            String tableName
+            TableToken tableToken
     ) {
         this.tableId = tableId;
-        this.tableName = tableName;
+        this.tableToken = tableToken;
         this.type = type;
         this.appendPtr = data;
         this.ip = 0L;

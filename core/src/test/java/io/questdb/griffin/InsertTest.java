@@ -35,10 +35,51 @@ import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class InsertTest extends AbstractGriffinTest {
+
+    private final boolean walEnabled;
+
+    public InsertTest(boolean walEnabled) {
+        this.walEnabled = walEnabled;
+    }
+
+    @Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {false}, {true}
+        });
+    }
+
+    public void assertReaderCheckWal(String expected, CharSequence tableName) {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+        assertReader(expected, tableName);
+    }
+
+    @Before
+    public void setUp() {
+        configOverrideDefaultTableWriteMode(walEnabled ? 1 : 0);
+        super.setUp();
+    }
+
+    @After
+    public void tearDown() {
+        super.tearDown();
+        configOverrideDefaultTableWriteMode(-1);
+    }
 
     @Test
     public void testGeoHash() throws Exception {
@@ -53,7 +94,7 @@ public class InsertTest extends AbstractGriffinTest {
 
         assertMemoryLeak(() -> {
             try (TableModel model = CairoTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
-                CairoTestUtils.createTable(model);
+                CairoTestUtils.create(model, engine);
             }
             Rnd rnd = new Rnd();
 
@@ -83,7 +124,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             rnd.reset();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "allgeo")) {
+            try (TableReader reader = getReader("allgeo")) {
                 final TableReaderRecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -355,11 +396,9 @@ public class InsertTest extends AbstractGriffinTest {
                 method.commit();
             }
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertOperation.getTableName())) {
-                TestUtils.assertReader("cust_id\tccy\tbalance\n" +
-                        "1\tGBP\t150.4\n" +
-                        "1\tGBP\t56.4\n", reader, sink);
-            }
+            assertReaderCheckWal("cust_id\tccy\tbalance\n" +
+                    "1\tGBP\t150.4\n" +
+                    "1\tGBP\t56.4\n", "balances");
         });
     }
 
@@ -418,7 +457,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReaderCheckWal(expected, "TS");
         });
     }
 
@@ -525,7 +564,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReaderCheckWal(expected, "TS");
         });
     }
 
@@ -607,7 +646,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\n";
 
-            assertReader(expected, "trades");
+            assertReaderCheckWal(expected, "trades");
         });
     }
 
@@ -628,7 +667,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "ts\tsym\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\n";
-            assertReader(expected, "trades");
+            assertReaderCheckWal(expected, "trades");
         });
     }
 
@@ -642,7 +681,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "1\tUSD\n" +
                     "2\tFJD\n";
 
-            assertReader(expected, "trades");
+            assertReaderCheckWal(expected, "trades");
         });
     }
 
@@ -654,7 +693,6 @@ public class InsertTest extends AbstractGriffinTest {
             // No comma delimiter between rows
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(39, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "',' expected");
@@ -663,7 +701,6 @@ public class InsertTest extends AbstractGriffinTest {
             // Empty row
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), ();", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(42, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
@@ -672,7 +709,6 @@ public class InsertTest extends AbstractGriffinTest {
             // Empty row with comma delimiter inside
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(57, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
@@ -681,7 +717,6 @@ public class InsertTest extends AbstractGriffinTest {
             // Empty row column
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(59, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
@@ -690,7 +725,6 @@ public class InsertTest extends AbstractGriffinTest {
             // Multi row insert can't end in comma token
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(55, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "'(' expected");
@@ -704,7 +738,6 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table trades (i int, sym symbol)", sqlExecutionContext);
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(50, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=2, actual=1, tuple=2]");
@@ -718,7 +751,6 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table trades (sym symbol)", sqlExecutionContext);
             try {
                 compiler.compile("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(39, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
@@ -742,7 +774,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "ts\ti\n" +
                     "2010-01-04T10:00:00.000000Z\t1\n" +
                     "2073-05-21T13:35:00.000000Z\tNaN\n";
-            assertReader(expected, "t");
+            assertReaderCheckWal(expected, "t");
         });
     }
 
@@ -787,7 +819,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "cust_id\tccy\tbalance\n" +
                     "1\tUSD\t356.12\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReaderCheckWal(expected, "balances");
         });
     }
 
@@ -876,7 +908,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "id\tsym\n" +
                     "2\tA\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReaderCheckWal(expected, "ww");
         });
     }
 
@@ -891,7 +923,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "USDJPY\tfalse\n" +
                     "USDFJD\ttrue\n";
 
-            assertReader(expected, "symbols");
+            assertReaderCheckWal(expected, "symbols");
         });
     }
 
@@ -906,7 +938,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
                     "2010-01-04T10:01:40.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            assertReader(expected, "trades");
+            assertReaderCheckWal(expected, "trades");
         });
     }
 
@@ -919,9 +951,9 @@ public class InsertTest extends AbstractGriffinTest {
             String expected1 = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
 
-            assertReader(expected1, "trades");
+            assertReaderCheckWal(expected1, "trades");
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "trades", "testing")) {
+            try (TableWriter w = getWriter("trades")) {
                 w.truncate();
             }
 
@@ -930,7 +962,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected2 = "ts\tsym\tbid\task\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            assertReader(expected2, "trades");
+            assertReaderCheckWal(expected2, "trades");
         });
     }
 
@@ -945,7 +977,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
 
-            assertReader(expected, "trades");
+            assertReaderCheckWal(expected, "trades");
         });
     }
 
@@ -958,18 +990,17 @@ public class InsertTest extends AbstractGriffinTest {
             String expected1 = "timestamp\n" +
                     "2020-12-31T15:15:51.663000Z\n";
 
-            assertReader(expected1, "t");
+            assertReaderCheckWal(expected1, "t");
 
             executeInsert("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
 
             String expected2 = expected1 +
                     "2021-12-31T15:15:51.663000Z\n";
 
-            assertReader(expected2, "t");
+            assertReaderCheckWal(expected2, "t");
 
             try {
                 compiler.compile("insert into t values  (timestamp with time zone)", sqlExecutionContext);
-                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(47, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
@@ -1042,6 +1073,9 @@ public class InsertTest extends AbstractGriffinTest {
                 "9\t1970-01-01T00:00:00.000036Z\n" +
                 "10\t1970-01-01T00:00:00.000045Z\n";
 
+        if (walEnabled) {
+            drainWalQueue();
+        }
         assertQuery(
                 "seq\tts\n",
                 "tab",
@@ -1146,6 +1180,20 @@ public class InsertTest extends AbstractGriffinTest {
         }
     }
 
+    private void assertQueryCheckWal(String expected) throws SqlException {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+
+        assertQuery(
+                expected,
+                "dest",
+                "ts",
+                true,
+                true
+        );
+    }
+
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction,
@@ -1153,7 +1201,7 @@ public class InsertTest extends AbstractGriffinTest {
             boolean columnSet
     ) throws Exception {
         assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithNewTypes(configuration, partitionBy);
+            CairoTestUtils.createAllTableWithNewTypes(engine, partitionBy);
             // this is BLOB
             byte[] blob = new byte[500];
             TestBinarySequence bs = new TestBinarySequence();
@@ -1255,7 +1303,7 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             rnd.reset();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "all2")) {
+            try (TableReader reader = getReader("all2")) {
                 final TableReaderRecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
@@ -1296,6 +1344,7 @@ public class InsertTest extends AbstractGriffinTest {
             executeInsert("insert into src values (40000, 4);");
 
             compiler.compile("create table dest (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
+            drainWalQueue();
 
             compiler.compile("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";", sqlExecutionContext);
 
@@ -1304,13 +1353,7 @@ public class InsertTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:00.020000Z\t2\n" +
                     "1970-01-01T00:00:00.040000Z\t4\n";
 
-            assertQuery(
-                    expected,
-                    "dest",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQueryCheckWal(expected);
         });
     }
 

@@ -63,7 +63,7 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        reader = new TableReader(configuration, "x");
+        reader = newTableReader(configuration, "x");
         metadata = reader.getMetadata();
 
         bindVariableService = new BindVariableServiceImpl(configuration);

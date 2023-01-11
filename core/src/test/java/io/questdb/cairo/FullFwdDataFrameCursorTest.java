@@ -61,7 +61,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            TableReader reader = new TableReader(configuration, "x", null);
+            TableReader reader = newTableReader(configuration, "x");
             FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
             cursor.of(reader);
             cursor.close();
@@ -84,7 +84,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             long timestamp;
             final Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 timestamp = TimestampFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
@@ -93,7 +93,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 // create partition on disk but do not commit transaction nor row
 
-                try (TableReader reader = new TableReader(configuration, "x", null)) {
+                try (TableReader reader = newTableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
 
                     int frameCount = 0;
@@ -883,7 +883,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }, null)) {
 
                 long timestamp = 0;
-                try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {
+                try (TableWriter writer = newTableWriter(configuration, "ABC", workScheduler, metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow(timestamp);
                         r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
@@ -1132,7 +1132,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     private TableReader createTableReader(CairoConfiguration configuration, String name) {
-        return new TableReader(configuration, name, null);
+        return newTableReader(configuration, name);
     }
 
     private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment, int count) {
@@ -1156,6 +1156,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 boolean invoked = false;
 
                 @Override
+                public boolean closeRemove(int fd, LPSZ name) {
+                    if (Chars.endsWith(name, ".lock")) {
+                        invoked = true;
+                        super.close(fd);
+                        return false;
+                    }
+                    return super.closeRemove(fd, name);
+                }
+
+                @Override
                 public boolean remove(LPSZ name) {
                     if (Chars.endsWith(name, ".lock")) {
                         invoked = true;
@@ -1170,7 +1180,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -1184,8 +1194,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             eRnd.syncWith(rnd);
 
             long timestamp = 0;
-            boolean closeFailed = false;
-            try (TableWriter writer = new TableWriter(configuration, "ABC", metrics)) {
+            boolean closedFailed = false;
+            try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
                 for (int i = 0; i < (long) N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
@@ -1195,14 +1205,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     r.append();
                 }
                 writer.commit();
-                // closing should fail
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "remove");
-                closeFailed = true;
+                closedFailed = true;
             }
-            Assert.assertTrue(closeFailed);
+            Assert.assertTrue("closing writer should have failed", closedFailed);
 
-            new TableWriter(AbstractCairoTest.configuration, "ABC", metrics).close();
+            newTableWriter(AbstractCairoTest.configuration, "ABC", metrics).close();
 
             Assert.assertTrue(ff.wasCalled());
 
@@ -1238,7 +1247,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             Rnd eRnd = new Rnd();
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 private int fd = -1;
                 private int mapCount = 0;
 
@@ -1275,7 +1284,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
@@ -1302,7 +1311,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             if (!empty) {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
-            try (TableWriter writer = new TableWriter(configuration, "ABC", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
                 // first batch without problems
                 try {
                     for (int i = 0; i < (long) N; i++) {
@@ -1341,7 +1350,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // ft table is empty constructor should only attempt to recover non-partitioned ones
             if (empty && partitionBy == PartitionBy.NONE) {
                 try {
-                    new TableWriter(configuration, "ABC", metrics);
+                    newTableWriter(configuration, "ABC", metrics);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
@@ -1398,7 +1407,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             int S = 512;
             Rnd rnd = new Rnd();
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 private int fd = -1;
 
                 @Override
@@ -1431,7 +1440,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -1446,7 +1455,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try {
-                new TableWriter(configuration, "ABC", metrics);
+                newTableWriter(configuration, "ABC", metrics);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -1510,7 +1519,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     throw new RuntimeException("Unsupported test");
             }
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public int getParallelIndexThreshold() {
                     return 1;
@@ -1528,7 +1537,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 long timestamp = 0;
-                try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {
+                try (TableWriter writer = newTableWriter(configuration, "ABC", workScheduler, metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = writer.newRow(timestamp += increment);
                         r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
@@ -1571,7 +1580,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             Rnd eRnd = new Rnd();
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 private int fd = -1;
                 private int mapCount = 0;
 
@@ -1609,7 +1618,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
@@ -1646,7 +1655,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 WorkerPool workerPool = new TestWorkerPool(2, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
-                try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {
+                try (TableWriter writer = newTableWriter(configuration, "ABC", workScheduler, metrics)) {
                     try {
                         for (int i = 0; i < (long) N; i++) {
                             TableWriter.Row r = writer.newRow(timestamp += increment);
@@ -1683,7 +1692,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 // constructor must attempt to recover non-partitioned empty table
                 if (empty && partitionBy == PartitionBy.NONE) {
                     try {
-                        new TableWriter(configuration, "ABC", metrics);
+                        newTableWriter(configuration, "ABC", metrics);
                         Assert.fail();
                     } catch (CairoException ignore) {
                     }
@@ -1762,7 +1771,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -1838,7 +1847,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -1909,7 +1918,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -1986,7 +1995,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2063,7 +2072,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2166,7 +2175,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2244,7 +2253,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -2319,7 +2328,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
             }
@@ -2368,7 +2377,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
 
                 writer.addIndex("a", configuration.getIndexValueBlockSize());
@@ -2423,7 +2432,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // prepare the data, make sure rollback does the job
             long timestamp = 0;
 
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
                 writer.commit();
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M);
@@ -2473,7 +2482,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
 
                 for (int i = 0; i < M / 2; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2599,7 +2608,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         long appendABC(CairoConfiguration configuration, Rnd rnd, long N, long timestamp, long increment) {
-            try (TableWriter writer = new TableWriter(configuration, "ABC", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
                 // first batch without problems
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);

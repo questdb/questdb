@@ -292,7 +292,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testForcedExtend() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
             final int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
@@ -358,7 +358,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testJumpToSetAppendPosition() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp3").$()) {
             ff.touch(path);
             try {
@@ -563,7 +563,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testPageCountAPI() throws Exception {
-        withMem(FilesFacadeImpl.INSTANCE.getMapPageSize(), 0, (rwMem, roMem) -> {
+        withMem(TestFilesFacadeImpl.INSTANCE.getMapPageSize(), 0, (rwMem, roMem) -> {
 
             Assert.assertEquals(0, roMem.getPageCount());
             // read-write memory will always have one page unless it is closed
@@ -589,7 +589,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testPageCountIsZeroAfterClose() throws Exception {
         assertMemoryLeak(() -> {
-            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
                 rnd.reset();
                 MemoryMARW rwMem = Vm.getMARWInstance(
@@ -657,7 +657,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testTruncate() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
             try {
@@ -685,7 +685,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateRemapFailed() {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             int counter = 1;
             boolean failTruncate = false;
 
@@ -924,7 +924,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             rnd.reset();
             try (
                     MemoryCMARW rwMem = Vm.getCMARWInstance(
-                            FilesFacadeImpl.INSTANCE,
+                            TestFilesFacadeImpl.INSTANCE,
                             path,
                             appendSz,
                             -1,
@@ -933,7 +933,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                     );
 
                     MemoryCMR roMem = new MemoryCMRImpl(
-                            FilesFacadeImpl.INSTANCE,
+                            TestFilesFacadeImpl.INSTANCE,
                             path,
                             sz,
                             MemoryTag.MMAP_DEFAULT)

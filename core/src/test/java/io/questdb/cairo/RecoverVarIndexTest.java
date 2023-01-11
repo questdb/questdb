@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -293,7 +293,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRecoverVarIndex(createTableSql,
-                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
+                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"), "test lock"),
                         rebuildIndex -> {
                             try {
                                 rebuildIndex.reindexColumn("str1");
@@ -321,13 +321,13 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     ") timestamp(ts) PARTITION BY DAY";
 
             AtomicInteger count = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Chars.contains(name, "str2.i") && count.incrementAndGet() == 14) {
                         return -1;
                     }
-                    return Files.openRW(name, opts);
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -375,7 +375,8 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + "xxx";
+            TableToken xxx = engine.getTableToken("xxx");
+            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();

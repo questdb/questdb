@@ -533,7 +533,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
         } catch (Throwable e) {
-            LOG.error().$("append fix error [table=").$(tableWriter.getTableName())
+            LOG.error().$("append fix error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.unmapAndClose(ff, dstFixFd, 0, 0);
@@ -642,7 +642,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
                 }
             } catch (Throwable e) {
-                LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableName())
+                LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
                 freeTs(
@@ -671,7 +671,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
                     dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
-                    LOG.error().$("append mid partition error 2 [table=").$(tableWriter.getTableName())
+                    LOG.error().$("append mid partition error 2 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     O3Utils.close(ff, dstFixFd);
@@ -743,7 +743,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
                     dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
-                    LOG.error().$("append mid partition error 3 [table=").$(tableWriter.getTableName())
+                    LOG.error().$("append mid partition error 3 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     O3Utils.close(ff, dstFixFd);
@@ -847,7 +847,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 }
             }
         } catch (Throwable e) {
-            LOG.error().$("append new partition error [table=").$(tableWriter.getTableName())
+            LOG.error().$("append new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount();
@@ -958,7 +958,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixSize = -dstFixSize;
             }
         } catch (Throwable e) {
-            LOG.error().$("append ts error [table=").$(tableWriter.getTableName())
+            LOG.error().$("append ts error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.close(ff, dstFixFd);
@@ -1095,7 +1095,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarAdjust = dstVarMem.getAppendOffset();
             }
         } catch (Throwable e) {
-            LOG.error().$("append var error [table=").$(tableWriter.getTableName())
+            LOG.error().$("append var error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.unmapAndClose(ff, activeFixFd, dstFixAddr, dstFixSize);
@@ -1330,7 +1330,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partCount++;
             }
         } catch (Throwable e) {
-            LOG.error().$("merge fix error [table=").$(tableWriter.getTableName())
+            LOG.error().$("merge fix error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
@@ -1592,7 +1592,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             try {
                 srcDataTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, srcDataMax);
             } catch (Throwable e) {
-                LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableName())
+                LOG.error().$("merge mid partition error 1 [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
                 freeTs(
@@ -1620,7 +1620,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dFile(pathToPartition.trimTo(plen), columnName, columnNameTxn);
                     srcDataVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
-                    LOG.error().$("merge mid partition error 2 [table=").$(tableWriter.getTableName())
+                    LOG.error().$("merge mid partition error 2 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     O3Utils.close(ff, srcDataFixFd);
@@ -1691,7 +1691,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     }
                 } catch (Throwable e) {
-                    LOG.error().$("merge mid partition error 3 [table=").$(tableWriter.getTableName())
+                    LOG.error().$("merge mid partition error 3 [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
                     freeTs(
@@ -2014,7 +2014,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partCount++;
             }
         } catch (Throwable e) {
-            LOG.error().$("merge var error [table=").$(tableWriter.getTableName())
+            LOG.error().$("merge var error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount();

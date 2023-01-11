@@ -29,7 +29,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ReaderPool;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
@@ -246,7 +245,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
                 createPopulateTable(tm, 20, "2020-01-01", 1);
             }
 
-            try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab1");
+            try (TableReader ignored = getReader("tab1");
                  RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
                  RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
                 // scroll cursor ignoring its contents
@@ -336,7 +335,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
         if (depth == 0) {
             return callable.call();
         }
-        try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader ignored = getReader(tableName)) {
             return acquireReaderAndRun(tableName, depth - 1, callable);
         }
     }
