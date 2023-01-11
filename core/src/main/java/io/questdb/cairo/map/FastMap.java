@@ -63,8 +63,7 @@ public class FastMap implements Map, Reopenable {
     private int keyCapacity;
     private int mask;
     private int nResizes;
-    // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory
-    // with 0 instead of -1 when clearing/rehashing.
+    // Offsets are shifted by +1 (0 -> 1, 1 -> 2, etc.), so that we fill the memory with 0.
     // Each offset slot contains a [offset, hash code] pair.
     private DirectIntList offsets;
     private int size = 0;
@@ -351,9 +350,6 @@ public class FastMap implements Map, Reopenable {
             long target = key.appendAddress + size - kStart;
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
-            }
-            if (kCapacity > MAX_HEAP_SIZE) {
-                System.out.println("boom");
             }
             assert kCapacity <= MAX_HEAP_SIZE : "Max FastMap heap size reached: " + kCapacity;
             long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, mapMemoryTag);
