@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
@@ -96,7 +97,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 assertSql(
                         compiler,
                         context,
@@ -121,7 +122,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 qdb.start();
                 int tsIdx = 5;
                 for (int i = 0; i < 5; i++) {
-                    createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                     assertSql(
                             compiler,
                             context,
@@ -131,6 +132,28 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts" + (tsIdx + i) + "\tevil_hear\tts\tDAY\t500000\t600000000\tfalse\tevil_hear\n");
                     compiler.compile("DROP TABLE " + tableName, context).execute(null).await(); // it simply unlinks
                     deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete tha table's folder in the other volume
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInAllowedVolumeWithComplication() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+        String tableName = "evil_see";
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                try {
+                    createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
             }
         });
@@ -148,7 +171,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 assertSql(
                         compiler,
                         context,
@@ -233,6 +256,23 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     private void createTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        compiler.compile("CREATE TABLE " + tableName + '(' +
+                        " investmentMill LONG," +
+                        " ticketThous INT," +
+                        " broker SYMBOL INDEX CAPACITY 32," +
+                        " ts TIMESTAMP"
+                        + ") TIMESTAMP(ts) PARTITION BY DAY",
+                context).execute(null).await();
+        try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                .col("investmentMill", ColumnType.LONG)
+                .col("ticketThous", ColumnType.INT)
+                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                .timestamp("ts")) {
+            compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
+        }
+    }
+
+    private void createTableInVolume(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
         compiler.compile("CREATE TABLE " + tableName + '(' +
                         " investmentMill LONG," +
                         " ticketThous INT," +

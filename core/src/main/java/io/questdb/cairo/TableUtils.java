@@ -48,6 +48,8 @@ import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.nio.file.Paths;
+
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 
 public final class TableUtils {
@@ -270,15 +272,20 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(tableDir).$();
+        LOG.debug().$("create table [name=").utf8(tableDir).$();
 
-        // path may have been set by CREATE TABLE ... [IN VOLUME 'path'].
-        // if so, it is a valid folder or link to folder
         if (!pathIsLoadedWithVolume) {
             path.of(root).concat(tableDir).$();
+        } else {
+            // path has been set by CREATE TABLE ... [IN VOLUME 'path'].
+            // it is a valid folder, or link to folder, checked at bootstrap
+            Path tmpPath = Path.getThreadLocal2(root).concat(tableDir).$();
+            if (ff.isDirOrSoftLinkDir(Path.getThreadLocal2(root).concat(tableDir).$())) {
+                throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(tmpPath).put(']');
+            }
         }
-        final int rootLen = path.length();
 
+        final int rootLen = path.length();
         if (ff.isDirOrSoftLinkDir(path)) {
             throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(path).put(']');
         }
