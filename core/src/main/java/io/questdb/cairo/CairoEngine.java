@@ -174,6 +174,18 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
+        return createTable(securityContext, mem, path, false, ifNotExists, struct, keepLock);
+    }
+
+    public TableToken createTable(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean pathIsLoadedWithVolume,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock
+    ) {
         securityContext.checkWritePermission();
         CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
@@ -192,7 +204,12 @@ public class CairoEngine implements Closeable, WriterSource {
             if (null == lockedReason) {
                 boolean tableCreated = false;
                 try {
-                    int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
+                    int status;
+                    if (!pathIsLoadedWithVolume) {
+                        status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
+                    } else {
+                        status = TableUtils.exists(configuration.getFilesFacade(), path, tableToken.getDirName());
+                    }
                     if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
                         throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
                     }
@@ -200,6 +217,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             securityContext,
                             mem,
                             path,
+                            pathIsLoadedWithVolume,
                             struct,
                             tableToken,
                             tableId
@@ -238,6 +256,19 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken tableToken,
             int tableId
     ) {
+        createTableUnsafe(securityContext, mem, path, false, struct, tableToken, tableId);
+    }
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
+    public void createTableUnsafe(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean pathIsLoadedWithVolume,
+            TableStructure struct,
+            TableToken tableToken,
+            int tableId
+    ) {
         securityContext.checkWritePermission();
 
         // only create the table after it has been registered
@@ -250,6 +281,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 mkDirMode,
                 mem,
                 path,
+                pathIsLoadedWithVolume,
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
@@ -280,8 +312,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
                     int errno;
-                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                        LOG.error().$("drop failed [tableName='").$(tableToken).$("', error=").$(errno).$(']').$();
+                    if ((errno = configuration.getFilesFacade().unlinkOrRemove(path, LOG)) != 0) {
                         throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }

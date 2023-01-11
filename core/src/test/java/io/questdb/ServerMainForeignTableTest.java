@@ -34,7 +34,6 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -97,29 +96,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                compiler.compile("CREATE TABLE " + tableName + '(' +
-                                " investmentMill LONG," +
-                                " ticketThous INT," +
-                                " broker SYMBOL INDEX CAPACITY 32," +
-                                " ts TIMESTAMP"
-                                + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
-                        context).execute(null).await();
-                try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                        .col("investmentMill", ColumnType.LONG)
-                        .col("ticketThous", ColumnType.INT)
-                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts")) {
-                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
-                }
-
+                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts3\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts3\tevil_see\tts\tDAY\t500000\t600000000\tfalse\tevil_see\n");
             }
         });
     }
@@ -135,31 +119,16 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                int tsIdx = 4;
+                int tsIdx = 5;
                 for (int i = 0; i < 5; i++) {
-                    compiler.compile("CREATE TABLE " + tableName + '(' +
-                                    " investmentMill LONG," +
-                                    " ticketThous INT," +
-                                    " broker SYMBOL INDEX CAPACITY 32," +
-                                    " ts TIMESTAMP"
-                                    + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
-                            context).execute(null).await();
-                    try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                            .col("investmentMill", ColumnType.LONG)
-                            .col("ticketThous", ColumnType.INT)
-                            .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                            .timestamp("ts")) {
-                        compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
-                    }
-                    StringSink sink = Misc.getThreadLocalBuilder();
+                    createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                     assertSql(
                             compiler,
                             context,
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                             Misc.getThreadLocalBuilder(),
                             TABLE_START_CONTENT);
-                    assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts" + (tsIdx + i) + "\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+                    assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts" + (tsIdx + i) + "\tevil_hear\tts\tDAY\t500000\t600000000\tfalse\tevil_hear\n");
                     compiler.compile("DROP TABLE " + tableName, context).execute(null).await(); // it simply unlinks
                     deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete tha table's folder in the other volume
                 }
@@ -179,28 +148,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                compiler.compile("CREATE TABLE " + tableName + '(' +
-                                " investmentMill LONG," +
-                                " ticketThous INT," +
-                                " broker SYMBOL INDEX CAPACITY 32," +
-                                " ts TIMESTAMP"
-                                + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
-                        context).execute(null).await();
-                try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                        .col("investmentMill", ColumnType.LONG)
-                        .col("ticketThous", ColumnType.INT)
-                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts")) {
-                    compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
-                }
+                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 assertSql(
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts1\tsponsors\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts4\tsponsors\tts\tDAY\t500000\t600000000\tfalse\tsponsors\n");
             }
 
             // copy the table to a foreign location, remove it, then symlink it
@@ -242,7 +197,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts1\t" + tableName + "\tts\tDAY\t500000\t600000000\tfalse\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts4\tsponsors\tts\tDAY\t500000\t600000000\tfalse\tsponsors\n");
             }
         });
     }
@@ -277,6 +232,22 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 null);
     }
 
+    private void createTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        compiler.compile("CREATE TABLE " + tableName + '(' +
+                        " investmentMill LONG," +
+                        " ticketThous INT," +
+                        " broker SYMBOL INDEX CAPACITY 32," +
+                        " ts TIMESTAMP"
+                        + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
+                context).execute(null).await();
+        try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                .col("investmentMill", ColumnType.LONG)
+                .col("ticketThous", ColumnType.INT)
+                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                .timestamp("ts")) {
+            compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
+        }
+    }
 
     static {
         // log is needed to greedily allocate logger infra and

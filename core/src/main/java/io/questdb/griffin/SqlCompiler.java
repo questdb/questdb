@@ -1561,7 +1561,14 @@ public class SqlCompiler implements Closeable {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
-                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel.isIgnoreIfExists(), createTableModel, false);
+                engine.createTable(
+                        executionContext.getCairoSecurityContext(),
+                        mem,
+                        path,
+                        volumePath != null,
+                        createTableModel.isIgnoreIfExists(),
+                        createTableModel,
+                        false);
             } catch (EntryUnavailableException e) {
                 throw SqlException.$(name.position, "table already exists");
             } catch (CairoException e) {
@@ -1572,7 +1579,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            createTableFromCursor(createTableModel, executionContext, name.position);
+            createTableFromCursor(createTableModel, executionContext, name.position, volumePath != null);
         }
 
         if (createTableModel.getQueryModel() == null) {
@@ -1582,8 +1589,12 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext, int position) throws
-            SqlException {
+    private void createTableFromCursor(
+            CreateTableModel model,
+            SqlExecutionContext executionContext,
+            int position,
+            boolean pathIsLoadedWithVolume
+    ) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -1597,6 +1608,7 @@ public class SqlCompiler implements Closeable {
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,
+                    pathIsLoadedWithVolume,
                     false,
                     tableStructureAdapter.of(model, metadata, typeCast),
                     keepLock
