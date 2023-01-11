@@ -145,6 +145,30 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public long getLong128Hi(int col, long location) {
+        if (useA) {
+            return recordA.getLong128Hi(col, location);
+        }
+        return recordB.getLong128Hi(col, location);
+    }
+
+    @Override
+    public long getLong128Lo(int col, long location) {
+        if (useA) {
+            return recordA.getLong128Lo(col, location);
+        }
+        return recordB.getLong128Lo(col, location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        if (useA) {
+            return recordA.getLong128Location(col);
+        }
+        return recordB.getLong128Location(col);
+    }
+
+    @Override
     public void getLong256(int col, CharSink sink) {
         if (useA) {
             recordA.getLong256(col, sink);
@@ -216,29 +240,5 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        if (useA) {
-            return recordA.getUuidHi(col, location);
-        }
-        return recordB.getUuidHi(col, location);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        if (useA) {
-            return recordA.getUuidLo(col, location);
-        }
-        return recordB.getUuidLo(col, location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        if (useA) {
-            return recordA.getUuidLocation(col);
-        }
-        return recordB.getUuidLocation(col);
     }
 }

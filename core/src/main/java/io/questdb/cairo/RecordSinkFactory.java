@@ -53,8 +53,8 @@ public class RecordSinkFactory {
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
-        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
+        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(IJ)J");
+        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(IJ)J");
         final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
@@ -69,9 +69,7 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
-        final int rGetUuidLoc = asm.poolInterfaceMethod(Record.class, "getUuidLocation", "(I)J");
-        final int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(IJ)J");
-        final int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(IJ)J");
+        final int rGetLong128Loc = asm.poolInterfaceMethod(Record.class, "getLong128Location", "(I)J");
 
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
@@ -214,18 +212,6 @@ public class RecordSinkFactory {
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeInterface(wPutLong256, 1);
                     break;
-                case ColumnType.LONG128:
-                    asm.aload(2);
-                    asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128Lo, 1);
-
-                    asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128Hi, 1);
-
-                    asm.invokeInterface(wPutLong128, 4);
-                    break;
                 case ColumnType.RECORD:
                     asm.aload(2);
                     asm.aload(1);
@@ -271,23 +257,25 @@ public class RecordSinkFactory {
                     asm.invokeInterface(rGetGeoLong, 1);
                     asm.invokeInterface(wPutLong, 2);
                     break;
+                case ColumnType.LONG128:
+                    // fall though
                 case ColumnType.UUID:
                     int skewedIndex = getSkewedIndex(index, skewIndex);
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(skewedIndex);
-                    asm.invokeInterface(rGetUuidLoc, 1);
+                    asm.invokeInterface(rGetLong128Loc, 1);
                     asm.lstore(3);
 
                     asm.aload(1);
                     asm.iconst(skewedIndex);
                     asm.lload(3);
-                    asm.invokeInterface(rGetUuidLo, 3);
+                    asm.invokeInterface(rGetLong128Lo, 3);
 
                     asm.aload(1);
                     asm.iconst(skewedIndex);
                     asm.lload(3);
-                    asm.invokeInterface(rGetUuidHi, 3);
+                    asm.invokeInterface(rGetLong128Hi, 3);
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;

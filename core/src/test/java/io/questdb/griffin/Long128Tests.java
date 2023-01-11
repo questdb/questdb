@@ -32,7 +32,7 @@ public class Long128Tests extends AbstractGriffinTest {
         compile(
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(6 * x, 3 * x) ts, " +
+                        " to_long128(3 * x, 6 * x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -52,7 +52,7 @@ public class Long128Tests extends AbstractGriffinTest {
                     "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
                     "create table tab2 as " +
                             "(select" +
-                            " to_long128(2 * x, x) ts, " +
+                            " to_long128(x, 2 * x) ts, " +
                             " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                             " cast(x as int) i" +
                             " from long_sequence(20)" +
@@ -82,7 +82,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select ts, count() from tab1",
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(x / 2, x / 4) ts, " +
+                        " to_long128(x / 4, x / 2) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -111,7 +111,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select ts, count() from tab1",
                 "create table tab1 as " +
                         "(select" +
-                        " case when x % 2 = 0 then to_long128(2 * x, x) else NULL end ts, " +
+                        " case when x % 2 = 0 then to_long128(x, 2 * x) else NULL end ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -128,7 +128,7 @@ public class Long128Tests extends AbstractGriffinTest {
         compile(
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(6 * x, 3 * x) ts, " +
+                        " to_long128(3 * x, 6 * x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -146,7 +146,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
                 "create table tab2 as " +
                         "(select" +
-                        " to_long128(2 * x, x) ts, " +
+                        " to_long128(x, 2 * x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -161,7 +161,7 @@ public class Long128Tests extends AbstractGriffinTest {
         compile(
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(6 * x, 3 * x) ts, " +
+                        " to_long128(3 * x, 6 * x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -180,7 +180,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
                 "create table tab2 as " +
                         "(select" +
-                        " to_long128(2 * x, x) ts, " +
+                        " to_long128(x, 2 * x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -217,7 +217,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts1 = tab2.ts1",
                 "create table tab2 as " +
                         "(select" +
-                        " to_long128(2 * x, x) ts, " +
+                        " to_long128(x, 2 * x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(10)" +
@@ -244,7 +244,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select ts, count() from tab1",
                 "create table tab1 as " +
                         "(select" +
-                        " case when x % 2 = 0 then to_long128(2 * x, x) else NULL end ts, " +
+                        " case when x % 2 = 0 then to_long128(x, 2 * x) else NULL end ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(20)" +
@@ -285,7 +285,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select * from tab1 order by ts desc",
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(x / 2, -x) ts, " +
+                        " to_long128(-x, x / 2) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(10)" +
@@ -313,7 +313,7 @@ public class Long128Tests extends AbstractGriffinTest {
                 "select * from tab1 order by i, ts desc, ts1 asc",
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(x / 2, -x) ts, " +
+                        " to_long128(-x, x / 2) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x / 2 as int) i" +
                         " from long_sequence(10)" +
@@ -340,7 +340,7 @@ public class Long128Tests extends AbstractGriffinTest {
                         "00000000-0000-0009-0005-d8b843e1b200\t2022-02-24T00:00:08.000000Z\t9\n" +
                         "00000000-0000-000a-0005-d8b843f0f440\t2022-02-24T00:00:09.000000Z\t10\n",
                 "select" +
-                        " to_long128(x, timestamp_sequence('2022-02-24', 1000000L)) ts," +
+                        " to_long128(timestamp_sequence('2022-02-24', 1000000L), x) ts," +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(10)",
@@ -355,7 +355,7 @@ public class Long128Tests extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compile("create table testUpdateLong128ColumnToNull as " +
                     "(select" +
-                    " to_long128(x / 2, -x) uuid, " +
+                    " to_long128(-x, x / 2) uuid, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                     " cast(x as int) i" +
                     " from long_sequence(10)" +
@@ -385,9 +385,9 @@ public class Long128Tests extends AbstractGriffinTest {
         assertQuery(
                 "uuid\tts1\ti\n" +
                         "00000000-0000-0009-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n",
-                "testWhereEquals where uuid = to_long128(9, -9)",
+                "testWhereEquals where uuid = to_long128(-9, 9)",
                 "create table testWhereEquals as (" +
-                        " select to_long128(x, -x) uuid," +
+                        " select to_long128(-x, x) uuid," +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
                         " from long_sequence(10)" +

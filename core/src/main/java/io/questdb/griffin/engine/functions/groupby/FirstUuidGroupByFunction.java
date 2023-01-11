@@ -45,8 +45,8 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        long loc = arg.getUuidLocation(record);
-        mapValue.putUuid(valueIndex, arg.getUuidLo(record, loc), arg.getUuidHi(record, loc));
+        long loc = arg.getLong128Location(record);
+        mapValue.putLong128(valueIndex, arg.getLong128Lo(record, loc), arg.getLong128Hi(record, loc));
     }
 
     @Override
@@ -60,18 +60,18 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public long getUuidHi(Record rec, long location) {
-        return rec.getUuidHi(valueIndex, location);
+    public long getLong128Hi(Record rec, long location) {
+        return rec.getLong128Hi(valueIndex, location);
     }
 
     @Override
-    public long getUuidLo(Record rec, long location) {
-        return rec.getUuidLo(valueIndex, location);
+    public long getLong128Lo(Record rec, long location) {
+        return rec.getLong128Lo(valueIndex, location);
     }
 
     @Override
-    public long getUuidLocation(Record rec) {
-        return rec.getUuidLocation(valueIndex);
+    public long getLong128Location(Record rec) {
+        return rec.getLong128Location(valueIndex);
     }
 
     @Override
@@ -82,6 +82,6 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putUuid(valueIndex, Numbers.LONG_NaN, Numbers.LONG_NaN);
+        mapValue.putLong128(valueIndex, Numbers.LONG_NaN, Numbers.LONG_NaN);
     }
 }

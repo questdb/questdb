@@ -97,7 +97,7 @@ public class FastMapTest extends AbstractCairoTest {
                 value.putBool(6, rnd.nextBoolean());
                 value.putDate(7, rnd.nextLong());
                 value.putInt(8, rnd.nextInt());
-                value.putUuid(9, rnd.nextLong(), rnd.nextLong());
+                value.putLong128(9, rnd.nextLong(), rnd.nextLong());
             }
 
             rnd.reset();
@@ -133,9 +133,9 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(8));
-                long loc = value.getUuidLocation(9);
-                Assert.assertEquals(rnd.nextLong(), value.getUuidLo(9, loc));
-                Assert.assertEquals(rnd.nextLong(), value.getUuidHi(9, loc));
+                long loc = value.getLong128Location(9);
+                Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(9, loc));
+                Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(9, loc));
             }
 
             try (RecordCursor cursor = map.getCursor()) {
@@ -357,9 +357,9 @@ public class FastMapTest extends AbstractCairoTest {
                             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
                             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
                             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-                            long loc = record.getUuidLocation(9);
-                            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9, loc));
-                            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9, loc));
+                            long loc = record.getLong128Location(9);
+                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9, loc));
+                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9, loc));
                         }
                     }
                 }
@@ -817,9 +817,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
-            long loc = record.getUuidLocation(col);
-            Assert.assertEquals(rnd.nextLong(), record.getUuidLo(col, loc));
-            Assert.assertEquals(rnd.nextLong(), record.getUuidHi(col, loc));
+            long loc = record.getLong128Location(col);
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col, loc));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col, loc));
 
             // value part, it comes first in record
             col = 0;
@@ -832,9 +832,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            loc = record.getUuidLocation(col);
-            Assert.assertEquals(rnd.nextLong(), record.getUuidLo(col, loc));
-            Assert.assertEquals(rnd.nextLong(), record.getUuidHi(col, loc));
+            loc = record.getLong128Location(col);
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col, loc));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col, loc));
         }
     }
 
@@ -854,9 +854,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-            long loc = record.getUuidLocation(9);
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9, loc));
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9, loc));
+            long loc = record.getLong128Location(9);
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9, loc));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9, loc));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -930,13 +930,13 @@ public class FastMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
-            loc = record.getUuidLocation(keyColumnOffset + 12);
+            loc = record.getLong128Location(keyColumnOffset + 12);
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getUuidHi(keyColumnOffset + 12, loc));
-                Assert.assertEquals(Numbers.LONG_NaN, record.getUuidLo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12, loc));
             } else {
-                Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12, loc));
-                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12, loc));
             }
         }
         Assert.assertEquals(5000, c);
@@ -1104,7 +1104,7 @@ public class FastMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
-            value.putUuid(9, rnd2.nextLong(), rnd2.nextLong());
+            value.putLong128(9, rnd2.nextLong(), rnd2.nextLong());
         }
     }
 

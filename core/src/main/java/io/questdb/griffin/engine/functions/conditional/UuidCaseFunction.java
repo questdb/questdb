@@ -45,17 +45,17 @@ public final class UuidCaseFunction extends UuidFunction implements MultiArgFunc
     }
 
     @Override
-    public long getUuidHi(Record rec, long location) {
-        return picker.pick(rec).getUuidHi(rec, location);
+    public long getLong128Hi(Record rec, long location) {
+        return picker.pick(rec).getLong128Hi(rec, location);
     }
 
     @Override
-    public long getUuidLo(Record rec, long location) {
-        return picker.pick(rec).getUuidLo(rec, location);
+    public long getLong128Lo(Record rec, long location) {
+        return picker.pick(rec).getLong128Lo(rec, location);
     }
 
     @Override
-    public long getUuidLocation(Record rec) {
-        return picker.pick(rec).getUuidLocation(rec);
+    public long getLong128Location(Record rec) {
+        return picker.pick(rec).getLong128Location(rec);
     }
 }

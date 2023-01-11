@@ -41,13 +41,18 @@ public class Long128Constant extends Long128Function implements ConstantFunction
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        return hi;
+    public long getLong128Hi(Record rec, long location) {
+        return lo;
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
+    public long getLong128Lo(Record rec, long location) {
         return lo;
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return 1;
     }
 
 }

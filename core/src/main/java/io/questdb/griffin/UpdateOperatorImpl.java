@@ -402,13 +402,11 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
                     break;
                 case ColumnType.LONG128:
-                    dstFixMem.putLong(masterRecord.getLong128Lo(i));
-                    dstFixMem.putLong(masterRecord.getLong128Hi(i));
-                    break;
+                    // fall-through
                 case ColumnType.UUID:
-                    long loc = masterRecord.getUuidLocation(i);
-                    dstFixMem.putLong(masterRecord.getUuidLo(i, loc));
-                    dstFixMem.putLong(masterRecord.getUuidHi(i, loc));
+                    long loc = masterRecord.getLong128Location(i);
+                    dstFixMem.putLong(masterRecord.getLong128Lo(i, loc));
+                    dstFixMem.putLong(masterRecord.getLong128Hi(i, loc));
                     break;
                 default:
                     throw CairoException.nonCritical()

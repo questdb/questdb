@@ -121,13 +121,18 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
+    public long getLong128Hi(Record rec, long location) {
         return Numbers.LONG_NaN;
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
+    public long getLong128Lo(Record rec, long location) {
         return Numbers.LONG_NaN;
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return 0;
     }
 
     @Override
@@ -218,21 +223,6 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public int getType() {
         return type;
-    }
-
-    @Override
-    public long getUuidHi(Record rec, long location) {
-        return Numbers.LONG_NaN;
-    }
-
-    @Override
-    public long getUuidLo(Record rec, long location) {
-        return Numbers.LONG_NaN;
-    }
-
-    @Override
-    public long getUuidLocation(Record rec) {
-        return 0;
     }
 
     @Override

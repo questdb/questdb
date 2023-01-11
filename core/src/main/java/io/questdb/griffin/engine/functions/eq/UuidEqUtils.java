@@ -71,16 +71,16 @@ final class UuidEqUtils {
                 }
             }
             if (uuidFun.isConstant()) {
-                long loc = uuidFun.getUuidLocation(null);
-                return BooleanConstant.of(hi == uuidFun.getUuidHi(null, loc) && lo == uuidFun.getUuidHi(null, loc));
+                long loc = uuidFun.getLong128Location(null);
+                return BooleanConstant.of(hi == uuidFun.getLong128Hi(null, loc) && lo == uuidFun.getLong128Hi(null, loc));
             } else {
                 return new ConstStrFun(lo, hi, uuidFun);
             }
         } else {
             if (uuidFun.isConstant()) {
-                long loc = uuidFun.getUuidLocation(null);
-                long lo = uuidFun.getUuidLo(null, loc);
-                long hi = uuidFun.getUuidHi(null, loc);
+                long loc = uuidFun.getLong128Location(null);
+                long lo = uuidFun.getLong128Lo(null, loc);
+                long hi = uuidFun.getLong128Hi(null, loc);
                 if (Uuid.isNull(lo, hi)) {
                     return new EqStrFunctionFactory.NullCheckFunc(strFun);
                 } else {
@@ -113,8 +113,8 @@ final class UuidEqUtils {
 
         @Override
         public boolean getBool(Record rec) {
-            long loc = fun.getUuidLocation(rec);
-            return negated != (constStrHi == fun.getUuidHi(rec, loc) && constStrLo == fun.getUuidLo(rec, loc));
+            long loc = fun.getLong128Location(rec);
+            return negated != (constStrHi == fun.getLong128Hi(rec, loc) && constStrLo == fun.getLong128Lo(rec, loc));
         }
     }
 
@@ -168,9 +168,9 @@ final class UuidEqUtils {
         @Override
         public boolean getBool(Record rec) {
             CharSequence str = strFunction.getStr(rec);
-            long loc = uuidFunction.getUuidLocation(rec);
-            long lo = uuidFunction.getUuidLo(rec, loc);
-            long hi = uuidFunction.getUuidHi(rec, loc);
+            long loc = uuidFunction.getLong128Location(rec);
+            long lo = uuidFunction.getLong128Lo(rec, loc);
+            long hi = uuidFunction.getLong128Hi(rec, loc);
             if (str == null) {
                 return negated != Uuid.isNull(lo, hi);
             }

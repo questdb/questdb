@@ -1126,17 +1126,18 @@ public final class TestUtils {
                 r.getLong256(i, sink);
                 break;
             case ColumnType.LONG128:
-                long long128Hi = r.getLong128Hi(i);
-                long long128Lo = r.getLong128Lo(i);
+                long long128Loc = r.getLong128Location(i);
+                long long128Hi = r.getLong128Hi(i, long128Loc);
+                long long128Lo = r.getLong128Lo(i, long128Loc);
                 if (!Long128Util.isNull(long128Hi, long128Lo)) {
                     UUID guid = new UUID(long128Hi, long128Lo);
                     sink.put(guid.toString());
                 }
                 break;
             case ColumnType.UUID:
-                long loc = r.getUuidLocation(i);
-                long hi = r.getUuidHi(i, loc);
-                long lo = r.getUuidLo(i, loc);
+                long loc = r.getLong128Location(i);
+                long hi = r.getLong128Hi(i, loc);
+                long lo = r.getLong128Lo(i, loc);
                 if (!Uuid.isNull(lo, hi)) {
                     Uuid uuid = new Uuid(lo, hi);
                     uuid.toSink(sink);
@@ -1323,14 +1324,12 @@ public final class TestUtils {
                         assertEquals(rr.getLong256A(i), lr.getLong256A(i));
                         break;
                     case ColumnType.LONG128:
-                        Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
-                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
-                        break;
+                        // fall-through
                     case ColumnType.UUID:
-                        long rrLoc = rr.getUuidLocation(i);
-                        long lrLoc = lr.getUuidLocation(i);
-                        Assert.assertEquals(rr.getUuidHi(i, rrLoc), lr.getUuidHi(i, lrLoc));
-                        Assert.assertEquals(rr.getUuidLo(i, rrLoc), lr.getUuidLo(i, lrLoc));
+                        long rrLoc = rr.getLong128Location(i);
+                        long lrLoc = lr.getLong128Location(i);
+                        Assert.assertEquals(rr.getLong128Hi(i, rrLoc), lr.getLong128Hi(i, lrLoc));
+                        Assert.assertEquals(rr.getLong128Lo(i, rrLoc), lr.getLong128Lo(i, lrLoc));
                         break;
                     default:
                         // Unknown record type.

@@ -161,12 +161,17 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
+    public long getLong128Hi(Record rec, long location) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
+    public long getLong128Lo(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -262,21 +267,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public int getType() {
         return wrappedFunction.getType();
-    }
-
-    @Override
-    public long getUuidHi(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLo(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLocation(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -51,7 +51,7 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
-        public long getUuidHi(Record rec, long location) {
+        public long getLong128Hi(Record rec, long location) {
             long hi = rnd.nextLong();
             // set version to 4  
             hi &= 0xffffffffffff0fffL;
@@ -60,7 +60,7 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getUuidLo(Record rec, long location) {
+        public long getLong128Lo(Record rec, long location) {
             long lo = rnd.nextLong();
             // set variant to 1
             lo &= 0x3fffffffffffffffL;
@@ -69,7 +69,7 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getUuidLocation(Record rec) {
+        public long getLong128Location(Record rec) {
             return 1;
         }
 

@@ -105,12 +105,6 @@ public abstract class Long128Function implements ScalarFunction {
     }
 
     @Override
-    public abstract long getLong128Hi(Record rec);
-
-    @Override
-    public abstract long getLong128Lo(Record rec);
-
-    @Override
     public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
@@ -173,21 +167,6 @@ public abstract class Long128Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.LONG128;
-    }
-
-    @Override
-    public long getUuidHi(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLo(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLocation(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -104,6 +104,21 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
+    public long getLong128Hi(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -151,21 +166,6 @@ public abstract class Long256Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.LONG256;
-    }
-
-    @Override
-    public long getUuidHi(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLo(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLocation(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

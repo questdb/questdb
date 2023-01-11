@@ -144,6 +144,22 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public long getLong128Hi(int index, long location) {
+        long address0 = address0(index);
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int index, long location) {
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int index) {
+        return address0(index);
+    }
+
+    @Override
     public short getShort(int index) {
         return Unsafe.getUnsafe().getShort(address0(index));
     }
@@ -151,22 +167,6 @@ final class FastMapValue implements MapValue {
     @Override
     public long getTimestamp(int index) {
         return getLong(index);
-    }
-
-    @Override
-    public long getUuidHi(int index, long location) {
-        long address0 = address0(index);
-        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int index, long location) {
-        return Unsafe.getUnsafe().getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int index) {
-        return address0(index);
     }
 
     @Override
@@ -215,6 +215,13 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public void putLong128(int index, long lo, long hi) {
+        long address = address0(index);
+        Unsafe.getUnsafe().putLong(address, lo);
+        Unsafe.getUnsafe().putLong(address + Long.BYTES, hi);
+    }
+
+    @Override
     public void putLong256(int index, Long256 value) {
 
     }
@@ -227,13 +234,6 @@ final class FastMapValue implements MapValue {
     @Override
     public void putTimestamp(int index, long value) {
         putLong(index, value);
-    }
-
-    @Override
-    public void putUuid(int index, long lo, long hi) {
-        long address = address0(index);
-        Unsafe.getUnsafe().putLong(address, lo);
-        Unsafe.getUnsafe().putLong(address + Long.BYTES, hi);
     }
 
     @Override

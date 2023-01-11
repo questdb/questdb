@@ -105,12 +105,17 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
+    public long getLong128Hi(Record rec, long location) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
+    public long getLong128Lo(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -183,20 +188,5 @@ public abstract class StrArrayFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.STRING;
-    }
-
-    @Override
-    public long getUuidHi(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLo(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLocation(Record rec) {
-        throw new UnsupportedOperationException();
     }
 }

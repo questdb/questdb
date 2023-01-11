@@ -181,23 +181,24 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * Gets the high int64 value of a Long128 column by index
-     *
-     * @param col numeric index of the column
-     * @return high long64 of 128-bit integer
-     */
-    default long getLong128Hi(int col) {
+    default long getLong128Hi(int col, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getLong128Lo(int col, long location) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the low int64 value of a Long128 column by index
+     * Returns a location where the value of a given long128 column is stored.
+     * The location is an opaque value and callers should not access it directly,
+     * because it does not have to directly map to a memory address.
+     * It is used to pass the location to {@link #getLong128Hi(int, long)} and {@link #getLong128Lo(int, long)}.
      *
      * @param col numeric index of the column
-     * @return low long64 of 128-bit integer
+     * @return location of the UUID value
      */
-    default long getLong128Lo(int col) {
+    default long getLong128Location(int col) {
         throw new UnsupportedOperationException();
     }
 
@@ -340,27 +341,6 @@ public interface Record {
      * @return numeric ID of the current row
      */
     default long getUpdateRowId() {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getUuidHi(int col, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    default long getUuidLo(int col, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Returns a location where the value of a given UUID column is stored.
-     * The location is an opaque value and callers should not access it directly,
-     * because it does not have to directly map to a memory address.
-     * It is used to pass the location to {@link #getUuidHi(int, long)} and {@link #getUuidLo(int, long)}.
-     *
-     * @param col numeric index of the column
-     * @return location of the UUID value
-     */
-    default long getUuidLocation(int col) {
         throw new UnsupportedOperationException();
     }
 

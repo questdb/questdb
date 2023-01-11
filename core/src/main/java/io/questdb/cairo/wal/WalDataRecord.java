@@ -127,6 +127,29 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
+    public long getLong128Hi(int col, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int col, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        final long offset = recordIndex * Uuid.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).addressOf(offset);
+    }
+
+    @Override
     public void getLong256(int col, CharSink sink) {
         final long offset = recordIndex * Long256.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
@@ -202,29 +225,6 @@ public class WalDataRecord implements Record, Sinkable {
     @Override
     public long getUpdateRowId() {
         throw new UnsupportedOperationException("UPDATE is not supported in WAL");
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        if (location == 0) {
-            return Numbers.LONG_NaN;
-        }
-        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        if (location == 0) {
-            return Numbers.LONG_NaN;
-        }
-        return Unsafe.getUnsafe().getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        final long offset = recordIndex * Uuid.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).addressOf(offset);
     }
 
     public void incrementRecordIndex() {

@@ -163,6 +163,30 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public long getLong128Hi(int col, long location) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getLong128Hi(recordA, location);
+        }
+        return castFunctionsB.getQuick(col).getLong128Hi(recordB, location);
+    }
+
+    @Override
+    public long getLong128Lo(int col, long location) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getLong128Lo(recordA, location);
+        }
+        return castFunctionsB.getQuick(col).getLong128Lo(recordB, location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getLong128Location(recordA);
+        }
+        return castFunctionsB.getQuick(col).getLong128Location(recordB);
+    }
+
+    @Override
     public void getLong256(int col, CharSink sink) {
         if (useA) {
             castFunctionsA.getQuick(col).getLong256(recordA, sink);
@@ -240,29 +264,5 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getTimestamp(recordA);
         }
         return castFunctionsB.getQuick(col).getTimestamp(recordB);
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getUuidHi(recordA, location);
-        }
-        return castFunctionsB.getQuick(col).getUuidHi(recordB, location);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getUuidLo(recordA, location);
-        }
-        return castFunctionsB.getQuick(col).getUuidLo(recordB, location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getUuidLocation(recordA);
-        }
-        return castFunctionsB.getQuick(col).getUuidLocation(recordB);
     }
 }

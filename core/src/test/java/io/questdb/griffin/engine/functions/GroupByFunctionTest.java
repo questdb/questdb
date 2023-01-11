@@ -119,13 +119,18 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public long getLong128Hi(Record rec) {
-            throw new UnsupportedOperationException();
+        public long getLong128Hi(Record rec, long location) {
+            return 0;
         }
 
         @Override
-        public long getLong128Lo(Record rec) {
-            throw new UnsupportedOperationException();
+        public long getLong128Lo(Record rec, long location) {
+            return 0;
+        }
+
+        @Override
+        public long getLong128Location(Record rec) {
+            return 1;
         }
 
         @Override
@@ -213,21 +218,6 @@ public class GroupByFunctionTest {
         @Override
         public int getType() {
             return 0;
-        }
-
-        @Override
-        public long getUuidHi(Record rec, long location) {
-            return 0;
-        }
-
-        @Override
-        public long getUuidLo(Record rec, long location) {
-            return 0;
-        }
-
-        @Override
-        public long getUuidLocation(Record rec) {
-            return 1;
         }
 
         @Override

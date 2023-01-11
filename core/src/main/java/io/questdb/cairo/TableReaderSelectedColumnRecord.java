@@ -169,23 +169,29 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public long getLong128Hi(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * 16;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        MemoryR column = reader.getColumn(absoluteColumnIndex);
-        return column.getLong(offset + Long.BYTES); // Store Lo then Hi
+    public long getLong128Hi(int columnIndex, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public long getLong128Lo(int columnIndex) {
+    public long getLong128Lo(int columnIndex, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * 16;
+        final long offset = getAdjustedRecordIndex(col) * Uuid.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
-        return column.getLong(offset); // Store Lo then Hi
+        return column.addressOf(offset);
     }
 
     @Override
@@ -293,32 +299,6 @@ public class TableReaderSelectedColumnRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return getRowId();
-    }
-
-    @Override
-    public long getUuidHi(int columnIndex, long location) {
-        if (location == 0) {
-            return Numbers.LONG_NaN;
-        }
-        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int columnIndex, long location) {
-        if (location == 0) {
-            return Numbers.LONG_NaN;
-        }
-        return Unsafe.getUnsafe().getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Uuid.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        MemoryR column = reader.getColumn(absoluteColumnIndex);
-        return column.addressOf(offset);
     }
 
     public void incrementRecordIndex() {

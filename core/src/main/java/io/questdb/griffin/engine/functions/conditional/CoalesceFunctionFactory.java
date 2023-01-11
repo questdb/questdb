@@ -728,42 +728,42 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong128Hi(Record rec, long location) {
+            if (location == 0) {
+                long loc = args0.getLong128Location(rec);
+                return args0.getLong128Hi(rec, loc);
+            } else if (location == 1) {
+                long loc = args1.getLong128Location(rec);
+                return args1.getLong128Hi(rec, loc);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override
+        public long getLong128Lo(Record rec, long location) {
+            if (location == 0) {
+                long loc = args0.getLong128Location(rec);
+                return args0.getLong128Lo(rec, loc);
+            } else if (location == 1) {
+                long loc = args1.getLong128Location(rec);
+                return args1.getLong128Lo(rec, loc);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override
+        public long getLong128Location(Record rec) {
+            long loc = args0.getLong128Location(rec);
+            long lo = args0.getLong128Lo(rec, loc);
+            long hi = args0.getLong128Hi(rec, loc);
+            return Uuid.isNull(lo, hi) ? 1 : 0;
+        }
+
+        @Override
         public Function getRight() {
             return args1;
-        }
-
-        @Override
-        public long getUuidHi(Record rec, long location) {
-            if (location == 0) {
-                long loc = args0.getUuidLocation(rec);
-                return args0.getUuidHi(rec, loc);
-            } else if (location == 1) {
-                long loc = args1.getUuidLocation(rec);
-                return args1.getUuidHi(rec, loc);
-            } else {
-                throw new UnsupportedOperationException();
-            }
-        }
-
-        @Override
-        public long getUuidLo(Record rec, long location) {
-            if (location == 0) {
-                long loc = args0.getUuidLocation(rec);
-                return args0.getUuidLo(rec, loc);
-            } else if (location == 1) {
-                long loc = args1.getUuidLocation(rec);
-                return args1.getUuidLo(rec, loc);
-            } else {
-                throw new UnsupportedOperationException();
-            }
-        }
-
-        @Override
-        public long getUuidLocation(Record rec) {
-            long loc = args0.getUuidLocation(rec);
-            long lo = args0.getUuidLo(rec, loc);
-            long hi = args0.getUuidHi(rec, loc);
-            return Uuid.isNull(lo, hi) ? 1 : 0;
         }
     }
 
@@ -784,27 +784,27 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getUuidHi(Record rec, long location) {
+        public long getLong128Hi(Record rec, long location) {
             if (selectedPos == -1) {
                 return Numbers.LONG_NaN;
             }
-            return args.getQuick(selectedPos).getUuidHi(rec, location);
+            return args.getQuick(selectedPos).getLong128Hi(rec, location);
         }
 
         @Override
-        public long getUuidLo(Record rec, long location) {
+        public long getLong128Lo(Record rec, long location) {
             if (selectedPos == -1) {
                 return Numbers.LONG_NaN;
             }
-            return args.getQuick(selectedPos).getUuidLo(rec, location);
+            return args.getQuick(selectedPos).getLong128Lo(rec, location);
         }
 
         @Override
-        public long getUuidLocation(Record rec) {
+        public long getLong128Location(Record rec) {
             for (int i = 0; i < size; i++) {
-                long loc = args.getQuick(i).getUuidLocation(rec);
-                long lo = args.getQuick(i).getUuidLo(rec, loc);
-                long hi = args.getQuick(i).getUuidHi(rec, loc);
+                long loc = args.getQuick(i).getLong128Location(rec);
+                long lo = args.getQuick(i).getLong128Lo(rec, loc);
+                long hi = args.getQuick(i).getLong128Hi(rec, loc);
                 if (!Uuid.isNull(lo, hi)) {
                     selectedPos = i;
                     return loc;

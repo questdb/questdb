@@ -186,21 +186,28 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public long getLong128Hi(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (address == 0) {
-            return Numbers.LONG_NaN;
+    public long getLong128Hi(int col, long location) {
+        if (location == 0) {
+            return NullMemoryMR.INSTANCE.getLong128Hi(0);
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2 + 8);
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public long getLong128Lo(int columnIndex) {
+    public long getLong128Lo(int rec, long location) {
+        if (location == 0) {
+            return NullMemoryMR.INSTANCE.getLong128Lo(0);
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return Numbers.LONG_NaN;
+            return 0;
         }
-        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2);
+        return address + rowIndex * Uuid.BYTES;
     }
 
     @Override
@@ -294,31 +301,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     @Override
     public long getUpdateRowId() {
         return pageAddressCache.toTableRowID(frameIndex, rowIndex);
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        if (location == 0) {
-            return NullMemoryMR.INSTANCE.getUuidLo(0);
-        }
-        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int rec, long location) {
-        if (location == 0) {
-            return NullMemoryMR.INSTANCE.getUuidLo(0);
-        }
-        return Unsafe.getUnsafe().getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (address == 0) {
-            return 0;
-        }
-        return address + rowIndex * Uuid.BYTES;
     }
 
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {

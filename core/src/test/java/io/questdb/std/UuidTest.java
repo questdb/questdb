@@ -111,7 +111,7 @@ public class UuidTest {
     }
 
     @Test
-    public void testUpperCaseUuuid() throws Exception {
+    public void testUpperCaseUuid() throws Exception {
         // rfc4122 section 3 says:
         // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
 

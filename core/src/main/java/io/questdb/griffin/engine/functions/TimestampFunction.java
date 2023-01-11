@@ -110,6 +110,21 @@ public abstract class TimestampFunction implements ScalarFunction {
     }
 
     @Override
+    public long getLong128Hi(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec, long location) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
@@ -167,20 +182,5 @@ public abstract class TimestampFunction implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.TIMESTAMP;
-    }
-
-    @Override
-    public long getUuidHi(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLo(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getUuidLocation(Record rec) {
-        throw new UnsupportedOperationException();
     }
 }

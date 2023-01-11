@@ -102,6 +102,14 @@ public class NullMemoryMR implements MemoryMR {
         return Numbers.LONG_NaN;
     }
 
+    public long getLong128Hi(long offset) {
+        return Numbers.LONG_NaN;
+    }
+
+    public long getLong128Lo(long offset) {
+        return Numbers.LONG_NaN;
+    }
+
     @Override
     public void getLong256(long offset, CharSink sink) {
     }
@@ -149,14 +157,6 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
-    }
-
-    public long getUuidHi(long offset) {
-        return Numbers.LONG_NaN;
-    }
-
-    public long getUuidLo(long offset) {
-        return Numbers.LONG_NaN;
     }
 
     @Override

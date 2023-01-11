@@ -45,12 +45,17 @@ class Long128CaseFunction extends Long128Function implements MultiArgFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        return picker.pick(rec).getLong128Hi(rec);
+    public long getLong128Hi(Record rec, long location) {
+        return picker.pick(rec).getLong128Hi(rec, location);
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
-        return picker.pick(rec).getLong128Lo(rec);
+    public long getLong128Lo(Record rec, long location) {
+        return picker.pick(rec).getLong128Lo(rec, location);
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return picker.pick(rec).getLong128Location(rec);
     }
 }

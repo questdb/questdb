@@ -126,6 +126,21 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
+    public long getLong128Hi(int col, long location) {
+        return getFunction(col).getLong128Hi(base, location);
+    }
+
+    @Override
+    public long getLong128Lo(int col, long location) {
+        return getFunction(col).getLong128Lo(base, location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        return getFunction(col).getLong128Location(base);
+    }
+
+    @Override
     public Record getRecord(int col) {
         return getFunction(col).getRecord(base);
     }
@@ -173,21 +188,6 @@ public class SplitVirtualRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        return getFunction(col).getUuidHi(base, location);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        return getFunction(col).getUuidLo(base, location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        return getFunction(col).getUuidLocation(base);
     }
 
     public void setActiveA() {

@@ -147,6 +147,21 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public long getLong128Hi(int columnIndex, long location) {
+        return entries.getLong(location + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex, long location) {
+        return entries.getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
+        return getValueColumnOffset(columnIndex);
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return entries.getShort(getValueColumnOffset(columnIndex));
     }
@@ -154,21 +169,6 @@ public class CompactMapValue implements MapValue {
     @Override
     public long getTimestamp(int index) {
         return getLong(index);
-    }
-
-    @Override
-    public long getUuidHi(int columnIndex, long location) {
-        return entries.getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int columnIndex, long location) {
-        return entries.getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int columnIndex) {
-        return getValueColumnOffset(columnIndex);
     }
 
     @Override
@@ -217,6 +217,13 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void putLong128(int columnIndex, long lo, long hi) {
+        long valueColumnOffset = getValueColumnOffset(columnIndex);
+        entries.putLong(valueColumnOffset, lo);
+        entries.putLong(valueColumnOffset + Long.BYTES, hi);
+    }
+
+    @Override
     public void putLong256(int index, Long256 value) {
 
     }
@@ -229,13 +236,6 @@ public class CompactMapValue implements MapValue {
     @Override
     public void putTimestamp(int index, long value) {
         putLong(index, value);
-    }
-
-    @Override
-    public void putUuid(int columnIndex, long lo, long hi) {
-        long valueColumnOffset = getValueColumnOffset(columnIndex);
-        entries.putLong(valueColumnOffset, lo);
-        entries.putLong(valueColumnOffset + Long.BYTES, hi);
     }
 
     @Override

@@ -375,13 +375,18 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public long getLong128Hi(int col) {
-            return mem.getLong(fixedWithColumnOffset(col) + 8);
+        public long getLong128Hi(int col, long location) {
+            return mem.getLong(location + Long.BYTES);
         }
 
         @Override
-        public long getLong128Lo(int col) {
-            return mem.getLong(fixedWithColumnOffset(col));
+        public long getLong128Lo(int col, long location) {
+            return mem.getLong(location);
+        }
+
+        @Override
+        public long getLong128Location(int col) {
+            return fixedWithColumnOffset(col);
         }
 
         @Override
@@ -440,21 +445,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getSymB(int col) {
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
-        }
-
-        @Override
-        public long getUuidHi(int col, long location) {
-            return mem.getLong(location + Long.BYTES);
-        }
-
-        @Override
-        public long getUuidLo(int col, long location) {
-            return mem.getLong(location);
-        }
-
-        @Override
-        public long getUuidLocation(int col) {
-            return fixedWithColumnOffset(col);
         }
 
         private long fixedWithColumnOffset(int index) {

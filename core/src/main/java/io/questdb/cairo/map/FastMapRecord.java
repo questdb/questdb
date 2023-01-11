@@ -203,15 +203,20 @@ final class FastMapRecord implements MapRecord {
     public long getLong(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
     }
-
+    
     @Override
-    public long getLong128Hi(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
+    public long getLong128Hi(int columnIndex, long location) {
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public long getLong128Lo(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    public long getLong128Lo(int columnIndex, long location) {
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
+        return addressOfColumn(columnIndex);
     }
 
     @Override
@@ -279,21 +284,6 @@ final class FastMapRecord implements MapRecord {
     @Override
     public CharSequence getSymB(int col) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
-    }
-
-    @Override
-    public long getUuidHi(int columnIndex, long location) {
-        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int columnIndex, long location) {
-        return Unsafe.getUnsafe().getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int columnIndex) {
-        return addressOfColumn(columnIndex);
     }
 
     @Override

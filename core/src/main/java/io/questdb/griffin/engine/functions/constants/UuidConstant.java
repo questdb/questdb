@@ -44,17 +44,17 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     }
 
     @Override
-    public long getUuidHi(Record rec, long location) {
+    public long getLong128Hi(Record rec, long location) {
         return hi;
     }
 
     @Override
-    public long getUuidLo(Record rec, long location) {
+    public long getLong128Lo(Record rec, long location) {
         return lo;
     }
 
     @Override
-    public long getUuidLocation(Record rec) {
+    public long getLong128Location(Record rec) {
         return 1;
     }
 }

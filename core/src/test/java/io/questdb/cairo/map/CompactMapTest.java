@@ -583,9 +583,9 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                        long loc = value.getUuidLocation(9);
-                        Assert.assertEquals(rnd2.nextLong(), value.getUuidLo(9, loc));
-                        Assert.assertEquals(rnd2.nextLong(), value.getUuidHi(9, loc));
+                        long loc = value.getLong128Location(9);
+                        Assert.assertEquals(rnd2.nextLong(), value.getLong128Lo(9, loc));
+                        Assert.assertEquals(rnd2.nextLong(), value.getLong128Hi(9, loc));
                         Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(10));
                         Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
                         Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
@@ -709,9 +709,9 @@ public class CompactMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-            long loc = record.getUuidLocation(9);
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidLo(9, loc));
-            Assert.assertEquals(rnd2.nextLong(), record.getUuidHi(9, loc));
+            long loc = record.getLong128Location(9);
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9, loc));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9, loc));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -778,13 +778,13 @@ public class CompactMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
-            loc = record.getUuidLocation(keyColumnOffset + 12);
+            loc = record.getLong128Location(keyColumnOffset + 12);
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getUuidLo(keyColumnOffset + 12, loc));
-                Assert.assertEquals(Numbers.LONG_NaN, record.getUuidHi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12, loc));
             } else {
-                Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12, loc));
-                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12, loc));
             }
 
         }
@@ -821,7 +821,7 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
-            value.putUuid(9, rnd2.nextLong(), rnd2.nextLong());
+            value.putLong128(9, rnd2.nextLong(), rnd2.nextLong());
         }
     }
 
@@ -842,7 +842,7 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
-            value.putUuid(9, rnd2.nextLong(), rnd2.nextLong());
+            value.putLong128(9, rnd2.nextLong(), rnd2.nextLong());
             value.putByte(10, (byte) Math.abs(rnd2.nextByte()));
             value.putShort(11, (short) Math.abs(rnd2.nextShort()));
             value.putInt(12, Math.abs(rnd2.nextInt()));

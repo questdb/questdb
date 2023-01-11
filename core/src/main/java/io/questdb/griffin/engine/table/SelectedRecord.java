@@ -109,13 +109,18 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public long getLong128Hi(int col) {
-        return base.getLong128Hi(getColumnIndex(col));
+    public long getLong128Hi(int col, long location) {
+        return base.getLong128Hi(getColumnIndex(col), location);
     }
 
     @Override
-    public long getLong128Lo(int col) {
-        return base.getLong128Lo(getColumnIndex(col));
+    public long getLong128Lo(int col, long location) {
+        return base.getLong128Lo(getColumnIndex(col), location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        return base.getLong128Location(getColumnIndex(col));
     }
 
     @Override
@@ -186,21 +191,6 @@ class SelectedRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        return base.getUuidHi(getColumnIndex(col), location);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        return base.getUuidLo(getColumnIndex(col), location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        return base.getUuidLocation(getColumnIndex(col));
     }
 
     private int getColumnIndex(int columnIndex) {

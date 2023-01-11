@@ -95,9 +95,11 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     long getLong(Record rec);
 
-    long getLong128Hi(Record rec);
+    long getLong128Hi(Record rec, long location);
 
-    long getLong128Lo(Record rec);
+    long getLong128Lo(Record rec, long location);
+
+    long getLong128Location(Record rec);
 
     void getLong256(Record rec, CharSink sink);
 
@@ -141,12 +143,6 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
     long getTimestamp(Record rec);
 
     int getType();
-
-    long getUuidHi(Record rec, long location);
-
-    long getUuidLo(Record rec, long location);
-
-    long getUuidLocation(Record rec);
 
     default boolean isConstant() {
         return false;

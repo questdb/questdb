@@ -47,18 +47,18 @@ public final class UuidColumn extends UuidFunction implements ScalarFunction {
     }
 
     @Override
-    public long getUuidHi(Record rec, long location) {
-        return rec.getUuidHi(columnIndex, location);
+    public long getLong128Hi(Record rec, long location) {
+        return rec.getLong128Hi(columnIndex, location);
     }
 
     @Override
-    public long getUuidLo(Record rec, long location) {
-        return rec.getUuidLo(columnIndex, location);
+    public long getLong128Lo(Record rec, long location) {
+        return rec.getLong128Lo(columnIndex, location);
     }
 
     @Override
-    public long getUuidLocation(Record rec) {
-        return rec.getUuidLocation(columnIndex);
+    public long getLong128Location(Record rec) {
+        return rec.getLong128Location(columnIndex);
     }
 
     @Override

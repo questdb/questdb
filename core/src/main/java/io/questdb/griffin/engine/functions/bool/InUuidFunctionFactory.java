@@ -66,9 +66,9 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                     }
                     break;
                 case ColumnType.UUID:
-                    long loc = func.getUuidLocation(null);
-                    long lo = func.getUuidLo(null, loc);
-                    long hi = func.getUuidHi(null, loc);
+                    long loc = func.getLong128Location(null);
+                    long lo = func.getLong128Lo(null, loc);
+                    long hi = func.getLong128Hi(null, loc);
                     if (hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN) {
                         throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
                     }
@@ -80,9 +80,9 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         }
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            long loc = var.getUuidLocation(null);
-            long lo = var.getUuidLo(null, loc);
-            long hi = var.getUuidHi(null, loc);
+            long loc = var.getLong128Location(null);
+            long lo = var.getLong128Lo(null, loc);
+            long hi = var.getLong128Hi(null, loc);
             if (Uuid.isNull(lo, hi)) {
                 return BooleanConstant.FALSE;
             }
@@ -107,9 +107,9 @@ public final class InUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long loc = arg.getUuidLocation(rec);
-            long lo = arg.getUuidLo(rec, loc);
-            long hi = arg.getUuidHi(rec, loc);
+            long loc = arg.getLong128Location(rec);
+            long lo = arg.getLong128Lo(rec, loc);
+            long hi = arg.getLong128Hi(rec, loc);
             if (Uuid.isNull(lo, hi)) {
                 return false;
             }

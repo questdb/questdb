@@ -129,13 +129,18 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public long getLong128Hi(int col) {
-        return getFunction(col).getLong128Hi(base);
+    public long getLong128Hi(int col, long location) {
+        return getFunction(col).getLong128Hi(base, location);
     }
 
     @Override
-    public long getLong128Lo(int col) {
-        return getFunction(col).getLong128Lo(base);
+    public long getLong128Lo(int col, long location) {
+        return getFunction(col).getLong128Lo(base, location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        return getFunction(col).getLong128Location(base);
     }
 
     @Override
@@ -206,21 +211,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        return getFunction(col).getUuidHi(base, location);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        return getFunction(col).getUuidLo(base, location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        return getFunction(col).getUuidLocation(base);
     }
 
     public void of(Record record) {

@@ -72,9 +72,9 @@ public class RecordComparatorCompiler {
         int compareNameIndex = asm.poolUtf8("compare");
         // our compare method signature
         int compareDescIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;)I");
-        int getUuidLocationIndex = -1;
+        int getLong128LocationIndex = -1;
         if (poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, columnTypes, keyColumnIndices)) {
-            getUuidLocationIndex = asm.poolInterfaceMethod(recordClassIndex, "getUuidLocation", "(I)J");
+            getLong128LocationIndex = asm.poolInterfaceMethod(recordClassIndex, "getLong128Location", "(I)J");
         }
         // elements for setLeft() method
         int setLeftNameIndex = asm.poolUtf8("setLeft");
@@ -90,22 +90,22 @@ public class RecordComparatorCompiler {
         }
         asm.methodCount(3);
         asm.defineDefaultConstructor();
-        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, getUuidLocationIndex, keyColumnIndices, columnTypes);
-        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, getUuidLocationIndex, keyColumnIndices, columnTypes);
+        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, getLong128LocationIndex, keyColumnIndices, columnTypes);
+        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, getLong128LocationIndex, keyColumnIndices, columnTypes);
 
         // class attribute count
         asm.putShort(0);
         return asm.newInstance();
     }
 
-    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, int getUuidLocationIndex, IntList keyColumns, ColumnTypes columnTypes) {
-        // if UUID is used, we need to allocate extra long on stack and also one extra long local variable
+    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, int getLong128LocIndex, IntList keyColumns, ColumnTypes columnTypes) {
+        // if Long128 is used, we need to allocate extra long on stack and also one extra long local variable
         // long uses 2 slots on stack and also 2 slots in local variable table
-        int uuidSpace = getUuidLocationIndex == -1 ? 0 : 2;
+        int long128Space = getLong128LocIndex == -1 ? 0 : 2;
         branches.clear();
         int sz = keyColumns.size();
-        int maxStack = sz + (fieldIndices.size() > sz ? 4 : 0) + 3 + uuidSpace;
-        asm.startMethod(nameIndex, descIndex, maxStack, 3 + uuidSpace);
+        int maxStack = sz + (fieldIndices.size() > sz ? 4 : 0) + 3 + long128Space;
+        asm.startMethod(nameIndex, descIndex, maxStack, 3 + long128Space);
 
         int fieldIndex = 0;
         for (int i = 0; i < sz; i++) {
@@ -122,17 +122,17 @@ public class RecordComparatorCompiler {
             int columnType = columnTypes.getColumnType(columnIndex);
 
             int argCount = 1;
-            if (columnType == ColumnType.UUID) {
+            if (columnType == ColumnType.UUID || columnType == ColumnType.LONG128) {
                 asm.aload(1);
                 asm.iconst(columnIndex);
-                asm.invokeInterface(getUuidLocationIndex, 1);
+                asm.invokeInterface(getLong128LocIndex, 1);
                 asm.lstore(3);
                 argCount = 3;
             }
 
             asm.aload(1);
             asm.iconst(columnIndex);
-            if (columnType == ColumnType.UUID) {
+            if (columnType == ColumnType.UUID || columnType == ColumnType.LONG128) {
                 asm.lload(3);
             }
             asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), argCount);
@@ -142,9 +142,7 @@ public class RecordComparatorCompiler {
                 asm.getfield(fieldIndices.getQuick(fieldIndex++));
                 asm.aload(1);
                 asm.iconst(columnIndex);
-                if (columnType == ColumnType.UUID) {
-                    asm.lload(3);
-                }
+                asm.lload(3);
                 asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), argCount);
             }
 
@@ -208,11 +206,11 @@ public class RecordComparatorCompiler {
      * all this complicated dancing around is to have class names, method names, field names
      * method signatures in constant pool in bytecode.
      */
-    private void instrumentSetLeftMethod(int nameIndex, int descIndex, int getUuidLocationIndex, IntList keyColumns, ColumnTypes columnTypes) {
-        // if UUID is used, we need to allocate extra long on stack and also one extra long local variable
+    private void instrumentSetLeftMethod(int nameIndex, int descIndex, int getLong128LocIndex, IntList keyColumns, ColumnTypes columnTypes) {
+        // if Long128 is used, we need to allocate extra long on stack and also one extra long local variable
         // long uses 2 slots on stack and also 2 slots in local variable table
-        int uuidSpace = getUuidLocationIndex == -1 ? 0 : 2;
-        asm.startMethod(nameIndex, descIndex, 3 + uuidSpace, 2 + uuidSpace);
+        int long128Space = getLong128LocIndex == -1 ? 0 : 2;
+        asm.startMethod(nameIndex, descIndex, 3 + long128Space, 2 + long128Space);
         int fieldIndex = 0;
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
             int index = keyColumns.getQuick(i);
@@ -221,19 +219,19 @@ public class RecordComparatorCompiler {
             int columnType = columnTypes.getColumnType(columnIndex);
 
             int argCount = 1;
-            if (columnType == ColumnType.UUID) {
-                assert getUuidLocationIndex != -1;
+            if (columnType == ColumnType.UUID || columnType == ColumnType.LONG128) {
+                assert getLong128LocIndex != -1;
                 asm.aload(1); // push Record to stack
-                asm.iconst(columnIndex); // push column index to stack
-                asm.invokeInterface(getUuidLocationIndex, 1); // call getUuidLocation
-                asm.lstore(2); // store result in local variable 2
+                asm.iconst(columnIndex);
+                asm.invokeInterface(getLong128LocIndex, 1);
+                asm.lstore(2);
                 argCount = 3;
             }
 
             asm.aload(0);
             asm.aload(1);
             asm.iconst(columnIndex);
-            if (columnType == ColumnType.UUID) {
+            if (columnType == ColumnType.UUID || columnType == ColumnType.LONG128) {
                 asm.lload(2);
             }
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), argCount);
@@ -243,9 +241,7 @@ public class RecordComparatorCompiler {
                 asm.aload(0);
                 asm.aload(1);
                 asm.iconst(columnIndex);
-                if (columnType == ColumnType.UUID) {
-                    asm.lload(2);
-                }
+                asm.lload(2);
                 asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), argCount);
                 asm.putfield(fieldIndices.getQuick(fieldIndex++));
             }
@@ -267,7 +263,7 @@ public class RecordComparatorCompiler {
      * @param recordClassIndex
      * @param columnTypes
      * @param keyColumnIndices
-     * @return true if at least one key is UUID
+     * @return true if at least one key is UUID or Long128
      */
     private boolean poolFieldArtifacts(
             int compareMethodIndex,
@@ -285,7 +281,7 @@ public class RecordComparatorCompiler {
         comparatorAccessorIndices.clear();
         methodMap.clear();
 
-        boolean hasUuid = false;
+        boolean hasLong128 = false;
         // define names and types
         for (int i = 0, n = keyColumnIndices.size(); i < n; i++) {
             String fieldType;
@@ -368,19 +364,14 @@ public class RecordComparatorCompiler {
                     comparatorClass = Long256Util.class;
                     break;
                 case ColumnType.LONG128:
+                    // fall-through
+                case ColumnType.UUID:
                     getterNameA = "getLong128Hi";
                     getterNameB = "getLong128Lo";
                     fieldType = "J";
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128Util.class;
-                    break;
-                case ColumnType.UUID:
-                    getterNameA = "getUuidHi";
-                    getterNameB = "getUuidLo";
-                    fieldType = "J";
-                    comparatorDesc = "(JJJJ)I";
-                    comparatorClass = Long128Util.class;
-                    hasUuid = true;
+                    hasLong128 = true;
                     break;
                 default:
                     // SYMBOL
@@ -418,11 +409,11 @@ public class RecordComparatorCompiler {
                 fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
             BytecodeAssembler.Utf8Appender utf8 = asm.poolUtf8();
-            if (columnType != ColumnType.UUID) {
+            if (columnType != ColumnType.UUID && columnType != ColumnType.LONG128) {
                 // Default case: getters receive a single parameter: (int column_index)
                 utf8.put("(I)");
             } else {
-                // Special case: UUID getters receive the extra parameter: (int column_index, long location) 
+                // Special case: Long128 getters receive the extra parameter: (int column_index, long location) 
                 utf8.put("(IJ)");
             }
             int getterSignatureIndex = utf8.put(getterType).$();
@@ -448,6 +439,6 @@ public class RecordComparatorCompiler {
                                             asm.poolUtf8(comparatorDesc))
                     ));
         }
-        return hasUuid;
+        return hasLong128;
     }
 }

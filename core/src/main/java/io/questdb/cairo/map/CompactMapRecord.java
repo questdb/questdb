@@ -121,6 +121,21 @@ public class CompactMapRecord implements MapRecord {
     }
 
     @Override
+    public long getLong128Hi(int col, long location) {
+        return entries.getLong(location + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int col, long location) {
+        return entries.getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        return getColumnOffset(col);
+    }
+
+    @Override
     public long getRowId() {
         return offset;
     }
@@ -165,21 +180,6 @@ public class CompactMapRecord implements MapRecord {
     @Override
     public CharSequence getSymB(int col) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        return entries.getLong(location + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        return entries.getLong(location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        return getColumnOffset(col);
     }
 
     @Override

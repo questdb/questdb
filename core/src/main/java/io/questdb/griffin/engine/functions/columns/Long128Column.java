@@ -47,13 +47,18 @@ public class Long128Column extends Long128Function implements ScalarFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        return rec.getLong128Hi(columnIndex);
+    public long getLong128Hi(Record rec, long location) {
+        return rec.getLong128Hi(columnIndex, location);
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
-        return rec.getLong128Lo(columnIndex);
+    public long getLong128Lo(Record rec, long location) {
+        return rec.getLong128Lo(columnIndex, location);
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return rec.getLong128Location(columnIndex);
     }
 
     @Override

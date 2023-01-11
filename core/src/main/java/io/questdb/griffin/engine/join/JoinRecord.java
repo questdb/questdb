@@ -151,19 +151,27 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getLong128Hi(int col) {
+    public long getLong128Hi(int col, long location) {
         if (col < split) {
-            return master.getLong128Hi(col);
+            return master.getLong128Hi(col, location);
         }
-        return slave.getLong128Hi(col - split);
+        return slave.getLong128Hi(col - split, location);
     }
 
     @Override
-    public long getLong128Lo(int col) {
+    public long getLong128Lo(int col, long location) {
         if (col < split) {
-            return master.getLong128Lo(col);
+            return master.getLong128Lo(col, location);
         }
-        return slave.getLong128Lo(col - split);
+        return slave.getLong128Lo(col - split, location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        if (col < split) {
+            return master.getLong128Location(col);
+        }
+        return slave.getLong128Location(col - split);
     }
 
     @Override
@@ -272,30 +280,6 @@ public class JoinRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return master.getUpdateRowId();
-    }
-
-    @Override
-    public long getUuidHi(int col, long location) {
-        if (col < split) {
-            return master.getUuidHi(col, location);
-        }
-        return slave.getUuidHi(col - split, location);
-    }
-
-    @Override
-    public long getUuidLo(int col, long location) {
-        if (col < split) {
-            return master.getUuidLo(col, location);
-        }
-        return slave.getUuidLo(col - split, location);
-    }
-
-    @Override
-    public long getUuidLocation(int col) {
-        if (col < split) {
-            return master.getUuidLocation(col);
-        }
-        return slave.getUuidLocation(col - split);
     }
 
     void of(Record master, Record slave) {

@@ -57,11 +57,9 @@ public class RecordToRowCopierUtils {
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
-        int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
-        int rGetUuidLoc = asm.poolInterfaceMethod(Record.class, "getUuidLocation", "(I)J");
-        int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(IJ)J");
-        int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(IJ)J");
+        int rGetLong128Loc = asm.poolInterfaceMethod(Record.class, "getLong128Location", "(I)J");
+        int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(IJ)J");
+        int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(IJ)J");
 
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
@@ -648,14 +646,6 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetLong256);
                     asm.invokeInterface(wPutLong256, 2);
                     break;
-                case ColumnType.LONG128:
-                    assert toColumnTypeTag == ColumnType.LONG128;
-                    asm.invokeInterface(rGetLong128Lo);
-                    asm.aload(1);
-                    asm.iconst(i);
-                    asm.invokeInterface(rGetLong128Hi);
-                    asm.invokeInterface(wPutLong128, 5);
-                    break;
                 case ColumnType.GEOBYTE:
                     asm.invokeInterface(rGetGeoByte, 1);
                     if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {
@@ -767,11 +757,15 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
+                case ColumnType.LONG128:
+                    // fall through
                 case ColumnType.UUID:
                     switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.LONG128:
+                            // fall through
                         case ColumnType.UUID:
                             // Stack: [RowWriter, Record, columnIndex]
-                            asm.invokeInterface(rGetUuidLoc);
+                            asm.invokeInterface(rGetLong128Loc);
                             // Stack: [RowWriter, location]
                             asm.lstore(3);
                             // Stack: [RowWriter]
@@ -781,7 +775,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, Record, columnIndex]
                             asm.lload(3);
                             // Stack: [RowWriter, Record, columnIndex, location]
-                            asm.invokeInterface(rGetUuidLo, 3);
+                            asm.invokeInterface(rGetLong128Lo, 3);
                             // Stack: [RowWriter, lo]
                             asm.aload(1);  // Push record to the stack.
                             // Stack: [RowWriter, lo, Record]
@@ -789,13 +783,14 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, lo, Record, columnIndex]
                             asm.lload(3);
                             // Stack: [RowWriter, lo, Record, columnIndex, location]
-                            asm.invokeInterface(rGetUuidHi, 3);
+                            asm.invokeInterface(rGetLong128Hi, 3);
                             // Stack: [RowWriter, lo, hi]
                             asm.invokeInterface(wPutLong128, 5);
                             // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
                             // The stack is now empty, and we are done with this column
                             break;
                         case ColumnType.STRING:
+                            assert fromColumnType == ColumnType.UUID;
                             // this logic is very similar to the one for ColumnType.UUID above
                             // There is one major difference: `SqlUtil.implicitCastUuidAsStr()` returns `false` to indicate
                             // that the UUID value represents null. In this case we won't call the writer and let null value
@@ -804,7 +799,7 @@ public class RecordToRowCopierUtils {
                             // so we rely on an auxiliary method `transferUuidToStrCol()` to do branching job and javac generates
                             // the stack maps.
                             // Stack: [RowWriter, Record, columnIndex]
-                            asm.invokeInterface(rGetUuidLoc);
+                            asm.invokeInterface(rGetLong128Loc);
                             // Stack: [RowWriter, location]
                             asm.lstore(3);
                             // Stack: [RowWriter]
@@ -814,7 +809,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, Record, columnIndex]
                             asm.lload(3);
                             // Stack: [RowWriter, Record, columnIndex, location]
-                            asm.invokeInterface(rGetUuidLo, 3);
+                            asm.invokeInterface(rGetLong128Lo, 3);
                             // Stack: [RowWriter, lo]
                             asm.aload(1);  // Push record to the stack.
                             // Stack: [RowWriter, lo, Record]
@@ -822,7 +817,7 @@ public class RecordToRowCopierUtils {
                             // Stack: [RowWriter, lo, Record, columnIndex]
                             asm.lload(3);
                             // Stack: [RowWriter, lo, Record, columnIndex, location]
-                            asm.invokeInterface(rGetUuidHi, 3);
+                            asm.invokeInterface(rGetLong128Hi, 3);
                             // Stack: [RowWriter, lo, hi]
                             asm.invokeStatic(transferUuidToStrCol);
                             break;
