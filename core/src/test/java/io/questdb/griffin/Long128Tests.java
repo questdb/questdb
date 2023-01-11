@@ -228,6 +228,20 @@ public class Long128Tests extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestOn() throws Exception {
+        assertCompile("create table x (ts timestamp, l long128, i int) timestamp(ts) partition by DAY");
+        assertCompile("insert into x values ('2020-01-01T00:00:00.000000Z', to_long128(0, 0), 0)");
+        assertCompile("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
+        assertCompile("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");
+
+        assertQuery("ts\tl\ti\n" +
+                        "2020-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000000\t0\n" +
+                        "2020-01-02T00:01:00.000000Z\t00000000-0000-0001-0000-000000000001\t2\n" +
+                        "2020-01-02T00:01:00.000000Z\t00000000-0000-0002-0000-000000000002\t0\n",
+                "select ts, l, i from x latest on ts partition by l", null, "ts", true, true, true);
+    }
+
+    @Test
     public void testLong128ValueNotSet() throws Exception {
         assertQuery("ts\tcount\n" +
                         "\t10\n" +
