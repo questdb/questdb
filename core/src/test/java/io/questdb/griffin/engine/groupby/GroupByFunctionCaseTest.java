@@ -169,7 +169,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     sqlSink.put("select key1, key2, ").put(function).put("(val) agg from test group by key1, key2;");
 
                     try {
-                        Assert.assertTrue(Chars.contains(getPlanSink(sqlSink).getText(), "vectorized: false"));
+                        Assert.assertTrue(Chars.contains(getPlanSink(sqlSink).getSink(), "vectorized: false"));
                     } catch (Exception ae) {
                         throwWithContext(typeName, function, ae);
                     }

@@ -1397,7 +1397,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws SqlException {
         String queryPlan = "Interval forward scan on: xts";
-        StringSink text = getPlanSink(query).getText();
+        StringSink text = getPlanSink(query).getSink();
         Assert.assertTrue(text.toString(), Chars.contains(text, queryPlan));
 
         long expectedCount = dates.stream().filter(arr -> filter.test((long) arr[0])).count();

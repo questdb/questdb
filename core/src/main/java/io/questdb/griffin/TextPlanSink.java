@@ -27,8 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Gathers important query execution plan details and prints them in a readable format.
@@ -100,22 +98,6 @@ public class TextPlanSink extends BasePlanSink {
         return eolIndexes.size() - 1;
     }
 
-    @TestOnly
-    public StringSink getSink() {
-        return sink;
-    }
-
-    @TestOnly
-    public StringSink getText() {
-        StringSink result = Misc.getThreadLocalBuilder();
-
-        for (int i = 0, n = eolIndexes.size() - 1; i < n; i++) {
-            result.put(sink, eolIndexes.getQuick(i), eolIndexes.getQuick(i + 1));
-        }
-
-        return result;
-    }
-
     public PlanSink meta(CharSequence name) {
         sink.put(" ");
         sink.put(name).put(": ");
@@ -125,11 +107,11 @@ public class TextPlanSink extends BasePlanSink {
     public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
         clear();
         this.executionContext = executionContext;
-        if (executionContext.getBindVariableService() == null) {
+        if (executionContext.getBindVariableService() == null) {//web console
             this.childIndent = "&nbsp;&nbsp;&nbsp;&nbsp;";
             this.attrIndent = "&nbsp;&nbsp;";
             this.sink = htmlSink;
-        } else {
+        } else {//pg wire
             this.childIndent = "    ";
             this.attrIndent = "  ";
             this.sink = textSink;
@@ -144,28 +126,6 @@ public class TextPlanSink extends BasePlanSink {
 
     public PlanSink type(CharSequence type) {
         sink.put(type);
-        return this;
-    }
-
-    public PlanSink val(ObjList<?> list, int from, int to) {
-        sink.put('[');
-        for (int i = from; i < to; i++) {
-            if (i > from) {
-                sink.put(',');
-            }
-            Object obj = list.getQuick(i);
-            if (obj instanceof Plannable) {
-                ((Plannable) obj).toPlan(this);
-            } else if (obj instanceof Sinkable) {
-                sink.put((Sinkable) obj);
-            } else if (obj == null) {
-                sink.put("null");
-            } else {
-                sink.put(obj.toString());
-            }
-        }
-        sink.put(']');
-
         return this;
     }
 

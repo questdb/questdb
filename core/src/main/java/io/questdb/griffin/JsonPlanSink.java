@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Sinkable;
-import io.questdb.std.str.StringSink;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -124,11 +123,6 @@ public class JsonPlanSink extends BasePlanSink {
     }
 
     @Override
-    public StringSink getText() {
-        return sink;
-    }
-
-    @Override
     public PlanSink meta(CharSequence name) {
         checkType(NODE_META);
         sink.put(name);
@@ -158,25 +152,7 @@ public class JsonPlanSink extends BasePlanSink {
     @Override
     public PlanSink val(ObjList<?> list, int from, int to) {
         checkType(NODE_VALUE);
-        sink.put('[');
-        for (int i = from; i < to; i++) {
-            if (i > from) {
-                sink.put(',');
-            }
-            Object obj = list.getQuick(i);
-            if (obj instanceof Plannable) {
-                ((Plannable) obj).toPlan(this);
-            } else if (obj instanceof Sinkable) {
-                sink.put((Sinkable) obj);
-            } else if (obj == null) {
-                sink.put("null");
-            } else {
-                sink.put(obj.toString());
-            }
-        }
-        sink.put(']');
-
-        return this;
+        return super.val(list, from, to);
     }
 
     @Override

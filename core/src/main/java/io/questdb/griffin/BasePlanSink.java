@@ -138,13 +138,32 @@ public abstract class BasePlanSink implements PlanSink {
         return val(list, from, list.size());
     }
 
+    public PlanSink val(ObjList<?> list, int from, int to) {
+        sink.put('[');
+        for (int i = from; i < to; i++) {
+            if (i > from) {
+                sink.put(',');
+            }
+            Object obj = list.getQuick(i);
+            if (obj instanceof Plannable) {
+                ((Plannable) obj).toPlan(this);
+            } else if (obj instanceof Sinkable) {
+                sink.put((Sinkable) obj);
+            } else if (obj == null) {
+                sink.put("null");
+            } else {
+                sink.put(obj.toString());
+            }
+        }
+        sink.put(']');
+
+        return this;
+    }
+
     static class EscapingStringSink extends StringSink {
         @Override
         public CharSink put(CharSequence cs) {
-            for (int i = 0, n = cs.length(); i < n; i++) {
-                escape(cs.charAt(i));
-            }
-            return this;
+            return put(cs, 0, cs.length());
         }
 
         @Override

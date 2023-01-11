@@ -625,9 +625,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testExplainPlanWithEOLs1() throws Exception {
         assertPlan("create table a (s string)",
-                "select * from a where s = '\n'",
+                "select * from a where s = '\b\f\n\r\t\\u0013'",
                 "Async Filter\n" +
-                        "  filter: s='\\n'\n" +
+                        "  filter: s='\\b\\f\\n\\r\\t\\u0013'\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +

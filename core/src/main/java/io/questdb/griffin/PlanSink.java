@@ -60,9 +60,6 @@ public interface PlanSink {
     @TestOnly
     StringSink getSink();
 
-    @TestOnly
-    StringSink getText();
-
     PlanSink meta(CharSequence name);
 
     void of(RecordCursorFactory factory, SqlExecutionContext executionContext);
