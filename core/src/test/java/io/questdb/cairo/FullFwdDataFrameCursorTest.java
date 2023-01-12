@@ -204,17 +204,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByWeek1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970W02" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByWeek2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970W02" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByWeek3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970W02" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -499,32 +499,32 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970W02" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970W02" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeek3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970W02" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeekEmpty1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970W01" + Files.SEPARATOR + "a.v", 0);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970-W01" + Files.SEPARATOR + "a.v", 0);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeekEmpty2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970W01" + Files.SEPARATOR + "b.v", 0);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970-W01" + Files.SEPARATOR + "b.v", 0);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByWeekEmpty3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970W01" + Files.SEPARATOR + "c.v", 0);
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970-W01" + Files.SEPARATOR + "c.v", 0);
     }
 
     @Test

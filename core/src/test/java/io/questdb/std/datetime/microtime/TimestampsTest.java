@@ -165,30 +165,30 @@ public class TimestampsTest {
     public void testParseWW() throws NumericException {
         DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
         try {
-            byWeek.parse("2020W00", null);
+            byWeek.parse("2020-W00", null);
             Assert.fail("ISO Week 00 is invalid");
         } catch (NumericException ignore) {
         }
 
         try {
-            byWeek.parse("2020W54", null);
+            byWeek.parse("2020-W54", null);
             Assert.fail();
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020W01", null)));
-        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020W53", null)));
-        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021W01", null)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
+        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", null)));
+        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", null)));
 
         try {
-            byWeek.parse("2019W53", null);
+            byWeek.parse("2019-W53", null);
             Assert.fail("2019 has 52 ISO weeks");
         } catch (NumericException ignore) {
         }
 
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020W01", null)));
-        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014W52", null)));
-        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015W53", null)));
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
+        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", null)));
+        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", null)));
     }
 
     @Test

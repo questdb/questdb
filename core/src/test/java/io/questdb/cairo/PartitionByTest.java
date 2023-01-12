@@ -169,11 +169,11 @@ public class PartitionByTest {
 
     @Test
     public void testDirectoryFormattingWeek() throws NumericException {
-        assertFormatAndParse("2020W53", "2020-12-28T00:00:00.000000Z", PartitionBy.WEEK);
+        assertFormatAndParse("2020-W53", "2020-12-28T00:00:00.000000Z", PartitionBy.WEEK);
         sink.clear();
-        assertFormatAndParse("2020W01", "2019-12-30T00:00:00.000000Z", PartitionBy.WEEK);
+        assertFormatAndParse("2020-W01", "2019-12-30T00:00:00.000000Z", PartitionBy.WEEK);
         sink.clear();
-        assertFormatAndParse("2021W33", "2021-08-16T00:00:00.000000Z", PartitionBy.WEEK);
+        assertFormatAndParse("2021-W33", "2021-08-16T00:00:00.000000Z", PartitionBy.WEEK);
     }
 
     @Test
@@ -285,7 +285,7 @@ public class PartitionByTest {
     public void testSetPathByWeek() throws NumericException {
         setSetPath(
                 "2021-01-03T23:59:59.999999Z",
-                "a/b/2020W53",
+                "a/b/2020-W53",
                 "2021-01-01T00:00:00.000000Z",
                 PartitionBy.WEEK
         );
@@ -347,7 +347,7 @@ public class PartitionByTest {
     @Test
     public void testSetPathNoCalcByWeek() throws NumericException {
         setSetPathNoCalc(
-                "a/b/2020W53",
+                "a/b/2020-W53",
                 "2021-01-01T00:00:00.000000Z",
                 PartitionBy.WEEK
         );

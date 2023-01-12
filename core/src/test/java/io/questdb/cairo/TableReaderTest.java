@@ -2631,7 +2631,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveActivePartitionByWeek() throws Exception {
-        testRemoveActivePartition(PartitionBy.WEEK, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1), "2017W51");
+        testRemoveActivePartition(PartitionBy.WEEK, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1), "2017-W51");
     }
 
     @Test
@@ -2734,22 +2734,22 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveFirstPartitionByWeek() throws Exception {
-        testRemovePartition(PartitionBy.WEEK, "2017W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+        testRemovePartition(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByWeekReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.WEEK, "2017W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+        testRemovePartitionReload(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByWeekReloadTwo() throws Exception {
-        testRemovePartitionReload(PartitionBy.WEEK, "2017W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 2));
+        testRemovePartitionReload(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 2));
     }
 
     @Test
     public void testRemoveFirstPartitionByWeekTwo() throws Exception {
-        testRemovePartition(PartitionBy.WEEK, "2017W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 2));
+        testRemovePartition(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 2));
     }
 
     @Test
@@ -2883,12 +2883,12 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemovePartitionByWeek() throws Exception {
-        testRemovePartition(PartitionBy.WEEK, "2017W51", 1000, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+        testRemovePartition(PartitionBy.WEEK, "2017-W51", 1000, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
     }
 
     @Test
     public void testRemovePartitionByWeekReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.WEEK, "2017W51", 1000, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+        testRemovePartitionReload(PartitionBy.WEEK, "2017-W51", 1000, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
     }
 
     @Test

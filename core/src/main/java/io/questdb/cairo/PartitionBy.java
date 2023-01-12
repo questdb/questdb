@@ -250,7 +250,7 @@ public final class PartitionBy {
                 y = Timestamps.getIsoYear(timestamp);
                 int w = Timestamps.getWeek(timestamp);
                 TimestampFormatUtils.appendYear000(path, y);
-                path.put('W');
+                path.put("-W");
                 TimestampFormatUtils.append0(path, w);
 
                 if (calculatePartitionMax) {
@@ -330,7 +330,7 @@ public final class PartitionBy {
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");
         fmtHour = compiler.compile("yyyy-MM-ddTHH");
-        fmtWeek = compiler.compile("YYYYWww");
+        fmtWeek = compiler.compile("YYYY-Www");
         fmtDefault = new DateFormat() {
             @Override
             public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {

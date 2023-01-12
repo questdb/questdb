@@ -624,13 +624,13 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionDeletedFromDiskWithoutDropByWeek() throws Exception {
-        String expected = "[0] Partition '2020W02' does not exist in table 'src' directory. " +
-                "Run [ALTER TABLE src DROP PARTITION LIST '2020W02'] " +
+        String expected = "[0] Partition '2020-W02' does not exist in table 'src' directory. " +
+                "Run [ALTER TABLE src DROP PARTITION LIST '2020-W02'] " +
                 "to repair the table or restore the partition directory.";
         String startDate = "2020-01-01";
         int day = PartitionBy.WEEK;
         int partitionToCheck = 0;
-        String folderToDelete = "2020W02";
+        String folderToDelete = "2020-W02";
         int deletedPartitionIndex = 1;
         int rowCount = 10000;
         testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, 1, rowCount, 1428);
