@@ -91,7 +91,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableInAllowedVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "oscar";
+        String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -116,7 +116,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableInAllowedVolumeNotAllowedByDefault() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "charlie";
+        String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -136,7 +136,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableInAllowedVolumeTableExists0() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "albert";
+        String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -160,7 +160,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableInAllowedVolumeTableExists1() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "lusitania";
+        String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -184,7 +184,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableInAllowedVolumeThenDrop() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "evil_hear";
+        String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -211,7 +211,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableMoveItsFolderAwayAndSoftLinkIt() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "sponsors";
+        String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             // create table with some data
             try (

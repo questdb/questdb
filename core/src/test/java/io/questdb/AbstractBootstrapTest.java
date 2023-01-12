@@ -27,11 +27,9 @@ package io.questdb;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -55,6 +53,9 @@ public abstract class AbstractBootstrapTest {
     private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
     protected static CharSequence root;
     private static boolean publicZipStubCreated = false;
+
+    @Rule
+    public TestName testName = new TestName();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
