@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -198,7 +199,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             Misc.getThreadLocalBuilder(),
                             TABLE_START_CONTENT);
                     assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts" + (tsIdx + i) + "\tevil_hear\tts\tDAY\t500000\t600000000\tfalse\tevil_hear\n");
-                    compiler.compile("DROP TABLE " + tableName, context).execute(null).await(); // it simply unlinks
+                    try (OperationFuture op = compiler.compile("DROP TABLE " + tableName, context).execute(null)) { // it simply unlinks
+                        op.await();
+                    }
                     deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete tha table's folder in the other volume
                 }
             }
@@ -276,6 +279,15 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         java.nio.file.Files.createSymbolicLink(Paths.get(tablePath), Paths.get(foreignPath));
     }
 
+    private static String createTableStmt(String tableName) {
+        return "CREATE TABLE " + tableName + '(' +
+                " investmentMill LONG," +
+                " ticketThous INT," +
+                " broker SYMBOL INDEX CAPACITY 32," +
+                " ts TIMESTAMP"
+                + ") TIMESTAMP(ts) PARTITION BY DAY";
+    }
+
     private static void deleteFolder(String folderName) throws IOException {
         java.nio.file.Path directory = Paths.get(folderName);
         java.nio.file.Files.walkFileTree(directory, new SimpleFileVisitor<java.nio.file.Path>() {
@@ -302,14 +314,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 null);
     }
 
-    private void createTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
-        compiler.compile("CREATE TABLE " + tableName + '(' +
-                        " investmentMill LONG," +
-                        " ticketThous INT," +
-                        " broker SYMBOL INDEX CAPACITY 32," +
-                        " ts TIMESTAMP"
-                        + ") TIMESTAMP(ts) PARTITION BY DAY",
-                context).execute(null).await();
+    private void createPopulateTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName, boolean inVolume) throws Exception {
+        String createStmt = createTableStmt(tableName);
+        if (inVolume) {
+            createStmt += " IN VOLUME '" + OTHER_VOLUME + '\'';
+        }
+        try (OperationFuture op = compiler.compile(createStmt, context).execute(null)) {
+            op.await();
+        }
         try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                 .col("investmentMill", ColumnType.LONG)
                 .col("ticketThous", ColumnType.INT)
@@ -319,21 +331,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         }
     }
 
+    private void createTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        createPopulateTable(cairoConfig, compiler, context, tableName, false);
+    }
+
     private void createTableInVolume(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
-        compiler.compile("CREATE TABLE " + tableName + '(' +
-                        " investmentMill LONG," +
-                        " ticketThous INT," +
-                        " broker SYMBOL INDEX CAPACITY 32," +
-                        " ts TIMESTAMP"
-                        + ") TIMESTAMP(ts) PARTITION BY DAY IN VOLUME '" + OTHER_VOLUME + '\'',
-                context).execute(null).await();
-        try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                .col("investmentMill", ColumnType.LONG)
-                .col("ticketThous", ColumnType.INT)
-                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                .timestamp("ts")) {
-            compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
-        }
+        createPopulateTable(cairoConfig, compiler, context, tableName, true);
     }
 
     static {
