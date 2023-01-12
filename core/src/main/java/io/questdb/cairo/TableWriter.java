@@ -2560,7 +2560,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         openLastPartition();
                     }
                 }
-            } else {
+            } else if (partitionBy != PartitionBy.NONE) {
                 // check that we can write to the partition
                 long activePartitionTs = partitionFloorMethod.floor(txWriter.getMaxTimestamp());
                 if (txWriter.isPartitionReadOnly(txWriter.getPartitionIndex(activePartitionTs))) {
