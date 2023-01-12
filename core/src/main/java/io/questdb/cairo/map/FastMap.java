@@ -51,7 +51,7 @@ import org.jetbrains.annotations.TestOnly;
  * </ul>
  * The offset list contains [compressed_offset, hash_code] pairs. An offset value contains an offset to
  * the address of a key-value pair in the key memory compressed to an int. Key-value pair addresses are
- * 8 byte aligned, so a FastMap is capable of holding up to 16GB of data.
+ * 8 byte aligned, so a FastMap is capable of holding up to 32GB of data.
  * <p>
  * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
  * offset list and copies offsets there while the key memory stays as is.
@@ -67,7 +67,7 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class FastMap implements Map, Reopenable {
 
-    private static final long MAX_HEAP_SIZE = ((long) (Integer.MAX_VALUE - 1)) << 3;
+    private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private static final long OFFSET_SLOT_SIZE = 2;
     private final FastMapCursor cursor;
@@ -293,7 +293,7 @@ public class FastMap implements Map, Reopenable {
     }
 
     private static long getOffset(DirectIntList offsets, int index) {
-        return ((long) (offsets.get(index * OFFSET_SLOT_SIZE) - 1)) << 3;
+        return (Integer.toUnsignedLong(offsets.get(index * OFFSET_SLOT_SIZE)) - 1) << 3;
     }
 
     private static void setHashCode(DirectIntList offsets, int index, int hashCode) {
@@ -382,7 +382,9 @@ public class FastMap implements Map, Reopenable {
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
             }
-            assert kCapacity <= MAX_HEAP_SIZE : "Max FastMap heap size reached: " + kCapacity;
+            if (kCapacity > MAX_HEAP_SIZE) {
+                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+            }
             long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, mapMemoryTag);
 
             this.capacity = kCapacity;
