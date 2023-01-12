@@ -1342,22 +1342,28 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     @Override
     public V get(Object key) {
+        if (key instanceof CharSequence) {
+            return get((CharSequence) key);
+        }
+        return null;
+    }
+
+    public V get(CharSequence key) {
         Node<V>[] tab;
         Node<V> e, p;
         int n, eh;
         CharSequence ek;
-        CharSequence key1 = (CharSequence) key;
-        int h = spread(keyHashCode(key1));
+        int h = spread(keyHashCode(key));
         if ((tab = table) != null && (n = tab.length) > 0 &&
                 (e = tabAt(tab, (n - 1) & h)) != null) {
             if ((eh = e.hash) == h) {
-                if ((ek = e.key) == key1 || (ek != null && keyEquals(key1, ek)))
+                if ((ek = e.key) == key || (ek != null && keyEquals(key, ek)))
                     return e.val;
             } else if (eh < 0)
-                return (p = e.find(h, key1)) != null ? p.val : null;
+                return (p = e.find(h, key)) != null ? p.val : null;
             while ((e = e.next) != null) {
                 if (e.hash == h &&
-                        ((ek = e.key) == key1 || (ek != null && keyEquals(key1, ek))))
+                        ((ek = e.key) == key || (ek != null && keyEquals(key, ek))))
                     return e.val;
             }
         }

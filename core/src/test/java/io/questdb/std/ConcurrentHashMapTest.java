@@ -26,6 +26,8 @@ package io.questdb.std;
 
 import org.junit.Test;
 
+import java.util.Map;
+
 import static org.junit.Assert.*;
 
 public class ConcurrentHashMapTest {
@@ -96,6 +98,8 @@ public class ConcurrentHashMapTest {
         map.computeIfAbsent("TaBlE", (key) -> "Hello");
         assertEquals(1, map.size());
         assertEquals(map.get("TABLE"), "5");
+        Map<CharSequence, String> m = map;
+        assertEquals(m.get("TABLE"), "5");
     }
 
     private static ConcurrentHashMap<String> identityMap() {
