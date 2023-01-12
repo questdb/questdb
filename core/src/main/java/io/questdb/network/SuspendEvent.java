@@ -43,12 +43,17 @@ public abstract class SuspendEvent implements Closeable {
     private static final long REF_COUNT_OFFSET;
 
     private long deadline = Long.MAX_VALUE;
+
+    // set by using Unsafe, see REF_COUNT_OFFSET, close().
+    @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile int refCount = 2;
 
     public abstract void _close();
 
     /**
      * Returns true if the event was triggered.
+     *
+     * @return true if the event was triggered
      */
     public abstract boolean checkTriggered();
 
@@ -65,7 +70,9 @@ public abstract class SuspendEvent implements Closeable {
     }
 
     /**
-     * Returns a deadline (epoch millis) for the event or Long.MAX_VALUE if the deadline is not set.
+     * Event deadline.
+     *
+     * @return a deadline (epoch millis) for the event or Long.MAX_VALUE if the deadline is not set
      */
     public long getDeadline() {
         return deadline;
@@ -73,6 +80,8 @@ public abstract class SuspendEvent implements Closeable {
 
     /**
      * Returns fd to be used to listen/wait for the event.
+     *
+     * @return fd to be used to listen/wait for the event
      */
     public abstract int getFd();
 
@@ -84,6 +93,9 @@ public abstract class SuspendEvent implements Closeable {
     /**
      * Returns true if the deadline was set to an older value than the given timestamp,
      * false - otherwise.
+     *
+     * @param timestamp timestamp to compare against
+     * @return true if the deadline was set to an older value than the given timestamp
      */
     public boolean isDeadlineMet(long timestamp) {
         return deadline > 0 && deadline <= timestamp;
@@ -91,6 +103,8 @@ public abstract class SuspendEvent implements Closeable {
 
     /**
      * Sets a deadline (epoch millis) for the event.
+     *
+     * @param deadline deadline (epoch millis) for the event
      */
     public void setDeadline(long deadline) {
         this.deadline = deadline;
