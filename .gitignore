@@ -29,3 +29,4 @@ core/CMakeCache.txt
 
 # Rust
 core/src/main/rust/**/target
+core/src/main/resources/io/questdb/bin/*/*questdb_r*
