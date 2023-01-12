@@ -85,6 +85,19 @@ public class ConcurrentHashMapTest {
         }
     }
 
+    @Test
+    public void testCaseKey() {
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4, false);
+        map.put("Table", "1");
+        map.put("tAble", "2");
+        map.put("TaBle", "3");
+        map.put("TABle", "4");
+        map.put("TaBLE", "5");
+        map.computeIfAbsent("TaBlE", (key) -> "Hello");
+        assertEquals(1, map.size());
+        assertEquals(map.get("TABLE"), "5");
+    }
+
     private static ConcurrentHashMap<String> identityMap() {
         ConcurrentHashMap<String> identity = new ConcurrentHashMap<>(3);
         assertTrue(identity.isEmpty());
