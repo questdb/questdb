@@ -48,6 +48,8 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                 return new TimestampFloorFunctions.TimestampFloorMMFunction(args.getQuick(1));
             case 'y':
                 return new TimestampFloorFunctions.TimestampFloorYYYYFunction(args.getQuick(1));
+            case 'w':
+                return new TimestampFloorFunctions.TimestampFloorWWFunction(args.getQuick(1));
             case 'h':
                 return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1));
             case 'm':

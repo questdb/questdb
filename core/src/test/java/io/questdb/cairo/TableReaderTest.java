@@ -1762,6 +1762,11 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentReloadMultipleByWeek() throws Exception {
+        testConcurrentReloadMultiplePartitions(PartitionBy.WEEK, 700000);
+    }
+
+    @Test
     public void testConcurrentReloadMultipleByYear() throws Exception {
         testConcurrentReloadMultiplePartitions(PartitionBy.MONTH, 12 * 3000000);
     }
@@ -2163,6 +2168,12 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadByWeek() throws Exception {
+        CairoTestUtils.createAllTable(engine, PartitionBy.WEEK);
+        TestUtils.assertMemoryLeak(() -> testTableCursor(7 * 60 * 60000L));
+    }
+
+    @Test
     public void testReadByYear() throws Exception {
         CairoTestUtils.createAllTable(engine, PartitionBy.YEAR);
         TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L));
@@ -2464,8 +2475,12 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReloadDaySamePartition() throws Exception {
+        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
+    }
+    @Test
     public void testReloadByDaySwitch() throws Exception {
-        testReload(PartitionBy.DAY, 150, 6 * 60000L, MUST_SWITCH);
+        testReload(PartitionBy.DAY, 15, 60L * 60000, MUST_SWITCH);
     }
 
     @Test
@@ -2479,6 +2494,16 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReloadByWeekSamePartition() throws Exception {
+        testReload(PartitionBy.WEEK, 15, 60L * 60000, MUST_NOT_SWITCH);
+    }
+
+    @Test
+    public void testReloadByWeekSwitch() throws Exception {
+        testReload(PartitionBy.WEEK, 15, 7 * 60L * 60000, MUST_SWITCH);
+    }
+
+    @Test
     public void testReloadByYearSamePartition() throws Exception {
         testReload(PartitionBy.YEAR, 100, 60 * 60000 * 24L, MUST_NOT_SWITCH);
     }
@@ -2486,11 +2511,6 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReloadByYearSwitch() throws Exception {
         testReload(PartitionBy.YEAR, 200, 60 * 60000 * 24L, MUST_SWITCH);
-    }
-
-    @Test
-    public void testReloadDaySamePartition() throws Exception {
-        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
     }
 
     @Test
@@ -2610,6 +2630,11 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveActivePartitionByWeek() throws Exception {
+        testRemoveActivePartition(PartitionBy.WEEK, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1), "2017-W51");
+    }
+
+    @Test
     public void testRemoveActivePartitionByYear() throws Exception {
         testRemoveActivePartition(PartitionBy.YEAR, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1), "2021");
     }
@@ -2705,6 +2730,26 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testRemoveFirstPartitionByMonthTwo() throws Exception {
         testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Timestamps.addMonths(Timestamps.floorMM(current), 2));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByWeek() throws Exception {
+        testRemovePartition(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByWeekReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByWeekReloadTwo() throws Exception {
+        testRemovePartitionReload(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 2));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByWeekTwo() throws Exception {
+        testRemovePartition(PartitionBy.WEEK, "2017-W50", 0, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 2));
     }
 
     @Test
@@ -2834,6 +2879,16 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testRemovePartitionByMonthReload() throws Exception {
         testRemovePartitionReload(PartitionBy.MONTH, "2018-01", 1000, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1));
+    }
+
+    @Test
+    public void testRemovePartitionByWeek() throws Exception {
+        testRemovePartition(PartitionBy.WEEK, "2017-W51", 1000, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
+    }
+
+    @Test
+    public void testRemovePartitionByWeekReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.WEEK, "2017-W51", 1000, current -> Timestamps.addWeeks(Timestamps.floorWW(current), 1));
     }
 
     @Test
@@ -4525,6 +4580,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 return Timestamps.floorDD(timestampA) == Timestamps.floorDD(timestampB);
             case PartitionBy.MONTH:
                 return Timestamps.floorMM(timestampA) == Timestamps.floorMM(timestampB);
+            case PartitionBy.WEEK:
+                return Timestamps.floorWW(timestampA) == Timestamps.floorWW(timestampB);
             case PartitionBy.YEAR:
                 return Timestamps.floorYYYY(timestampA) == Timestamps.floorYYYY(timestampB);
             case PartitionBy.HOUR:

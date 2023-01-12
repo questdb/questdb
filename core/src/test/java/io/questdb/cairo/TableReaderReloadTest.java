@@ -52,6 +52,11 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReloadTruncateByWeek() {
+        testReloadAfterTruncate(PartitionBy.WEEK, 7 * 3000000000L);
+    }
+
+    @Test
     public void testReloadTruncateByYear() {
         testReloadAfterTruncate(PartitionBy.YEAR, 365 * 50000000000L);
     }
@@ -69,6 +74,16 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     @Test
     public void testTruncateInsertReloadNone() {
         testTruncateInsertReload(PartitionBy.NONE, 1000000L);
+    }
+
+    @Test
+    public void testTruncateInsertReloadWeek() {
+        testTruncateInsertReload(PartitionBy.WEEK, 7 * 3000000000L);
+    }
+
+    @Test
+    public void testTruncateInsertReloadYear() {
+        testTruncateInsertReload(PartitionBy.YEAR, 365 * 50000000000L);
     }
 
     private void assertTable(Rnd rnd, long buffer, RecordCursor cursor, Record record) {
