@@ -68,6 +68,8 @@ public interface PoolTenant extends QuietCloseable {
 
     /**
      * Refreshes value of the Table Token to the one it was created with.
+     *
+     * @param tableToken new value of the Table Token to update to
      */
     void updateTableToken(TableToken tableToken);
 }
