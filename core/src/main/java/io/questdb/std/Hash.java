@@ -75,6 +75,18 @@ public final class Hash {
         return xxHash64(p, len, 0, unsafeAccessor);
     }
 
+    /**
+     * Calculates positive integer hash of memory pointer using a polynomial
+     * hash function.
+     * <p>
+     * The function is a modified version of the function from
+     * <a href="https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html">this article</a>
+     * by Peter Lawrey.
+     *
+     * @param p   memory pointer
+     * @param len memory length in bytes
+     * @return hash code
+     */
     public static int hashMem32(long p, long len) {
         long h = 0;
         int i = 0;
