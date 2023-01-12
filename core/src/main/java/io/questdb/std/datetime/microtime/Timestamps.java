@@ -194,7 +194,9 @@ public final class Timestamps {
         return floorSS(micros) + SECOND_MICROS;
     }
 
-    public static long ceilWW(long micros) {return floorWW(micros) + WEEK_MICROS;}
+    public static long ceilWW(long micros) {
+        return floorWW(micros) + WEEK_MICROS;
+    }
 
     public static long ceilYYYY(long micros) {
         int y;
