@@ -2560,6 +2560,18 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         openLastPartition();
                     }
                 }
+            } else {
+                // check that we can write to the partition
+                long activePartitionTs = partitionFloorMethod.floor(txWriter.getMaxTimestamp());
+                if (txWriter.isPartitionReadOnly(txWriter.getPartitionIndex(activePartitionTs))) {
+                    LOG.critical()
+                            .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                            .$(", timestamp=").$ts(activePartitionTs)
+                            .$(", numRows=").$(txWriter.unsafeCommittedTransientRowCount())
+                            .$();
+                    rollback();
+                    return TableSequencer.NO_TXN;
+                }
             }
 
             if (commitMode != CommitMode.NOSYNC) {

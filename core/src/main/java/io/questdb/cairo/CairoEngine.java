@@ -252,18 +252,6 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
-            TableStructure struct,
-            TableToken tableToken,
-            int tableId
-    ) {
-        createTableUnsafe(securityContext, mem, path, false, struct, tableToken, tableId);
-    }
-
-    // caller has to acquire the lock before this method is called and release the lock after the call
-    public void createTableUnsafe(
-            CairoSecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
             boolean pathIsLoadedWithVolume,
             TableStructure struct,
             TableToken tableToken,

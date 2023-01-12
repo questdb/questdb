@@ -482,7 +482,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n");
 
-            // the previously partition, read-only, becomes now the active partition, and cannot be written to
+            // the previously read-only partition becomes now the active partition, and cannot be written to
             engine.releaseAllWriters();
             engine.releaseAllReaders();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
@@ -508,7 +508,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n");
 
             // silently ignored as the partition is read only
-            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T00:00:00.100002Z')");
+            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + lastReadOnlyPartitionName + "T23:59:59.990002Z')");
             assertUpdateFailsBecausePartitionIsReadOnly(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + lastReadOnlyPartitionName + "T23:59:59.200000Z'",
                     tableName,
