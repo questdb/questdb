@@ -24,8 +24,10 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -35,6 +37,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampsTest {
@@ -152,6 +155,43 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testCeilWW() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2024-01-02T23:59:59.999Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilWW(micros));
+        TestUtils.assertEquals("2024-01-08T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testParseWW() throws NumericException {
+        DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
+        try {
+            byWeek.parse("2020-W00", null);
+            Assert.fail("ISO Week 00 is invalid");
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            byWeek.parse("2020-W54", null);
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
+        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", null)));
+        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", null)));
+
+        try {
+            byWeek.parse("2019-W53", null);
+            Assert.fail("2019 has 52 ISO weeks");
+        } catch (NumericException ignore) {
+        }
+
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
+        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", null)));
+        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", null)));
+    }
+
+    @Test
     public void testDayOfWeek() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1893-03-19T17:16:30.192Z");
         Assert.assertEquals(7, Timestamps.getDayOfWeek(micros));
@@ -240,6 +280,13 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));
         TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorWW() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2025-01-02T23:59:59.999Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorWW(micros));
+        TestUtils.assertEquals("2024-12-30T00:00:00.000Z", sink);
     }
 
     @Test

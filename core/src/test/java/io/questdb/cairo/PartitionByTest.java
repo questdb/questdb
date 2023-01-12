@@ -133,6 +133,26 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testAddCeilFloorWeek() throws NumericException {
+        testAddCeilFloor(
+                "2022-01-03T00:00:00.000000Z",
+                PartitionBy.WEEK,
+                "2021-12-27T00:00:00.000000Z",
+                "2022-01-01T11:22:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testAddCeilFloorWeekEdge() throws NumericException {
+        testAddCeilFloor(
+                "2022-01-03T00:00:00.000000Z",
+                PartitionBy.WEEK,
+                "2021-12-27T00:00:00.000000Z",
+                "2021-12-27T00:00:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDirectoryFormattingDay() throws NumericException {
         assertFormatAndParse("2013-03-31", "2013-03-31T00:00:00.000000Z", PartitionBy.DAY);
     }
@@ -145,6 +165,15 @@ public class PartitionByTest {
     @Test
     public void testDirectoryFormattingMonth() throws NumericException {
         assertFormatAndParse("2013-03", "2013-03-01T00:00:00.000000Z", PartitionBy.MONTH);
+    }
+
+    @Test
+    public void testDirectoryFormattingWeek() throws NumericException {
+        assertFormatAndParse("2020-W53", "2020-12-28T00:00:00.000000Z", PartitionBy.WEEK);
+        sink.clear();
+        assertFormatAndParse("2020-W01", "2019-12-30T00:00:00.000000Z", PartitionBy.WEEK);
+        sink.clear();
+        assertFormatAndParse("2021-W33", "2021-08-16T00:00:00.000000Z", PartitionBy.WEEK);
     }
 
     @Test
@@ -173,6 +202,11 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testDirectoryParseFailureByWeek() {
+        assertParseFailure("'YYYYWww' expected", "2013-03-12", PartitionBy.WEEK);
+    }
+
+    @Test
     public void testDirectoryParseFailureByYear() {
         assertParseFailure("'YYYY' expected", "2013-03-12", PartitionBy.YEAR);
     }
@@ -183,6 +217,7 @@ public class PartitionByTest {
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.MONTH));
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.YEAR));
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.HOUR));
+        Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.WEEK));
         Assert.assertFalse(PartitionBy.isPartitioned(PartitionBy.NONE));
     }
 
@@ -199,6 +234,11 @@ public class PartitionByTest {
     @Test
     public void testPartitionByNameMonth() {
         testPartitionByName("MONTH", PartitionBy.MONTH);
+    }
+
+    @Test
+    public void testPartitionByNameWeek() {
+        testPartitionByName("WEEK", PartitionBy.WEEK);
     }
 
     @Test
@@ -238,6 +278,16 @@ public class PartitionByTest {
                 "a/b/2021-04",
                 "2021-04-01T00:00:00.000000Z",
                 PartitionBy.MONTH
+        );
+    }
+
+    @Test
+    public void testSetPathByWeek() throws NumericException {
+        setSetPath(
+                "2021-01-03T23:59:59.999999Z",
+                "a/b/2020-W53",
+                "2021-01-01T00:00:00.000000Z",
+                PartitionBy.WEEK
         );
     }
 
@@ -291,6 +341,15 @@ public class PartitionByTest {
                 "a/b/2021-04",
                 "2021-04-01T00:00:00.000000Z",
                 PartitionBy.MONTH
+        );
+    }
+
+    @Test
+    public void testSetPathNoCalcByWeek() throws NumericException {
+        setSetPathNoCalc(
+                "a/b/2020-W53",
+                "2021-01-01T00:00:00.000000Z",
+                PartitionBy.WEEK
         );
     }
 

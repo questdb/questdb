@@ -400,7 +400,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         int second = 0;
         int millis = 0;
         int micros = 0;
-        int week = 0;
+        int week = -1;
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
