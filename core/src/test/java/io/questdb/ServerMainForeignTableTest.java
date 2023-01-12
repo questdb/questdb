@@ -89,7 +89,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     @Test
     public void testServerMainCreateTableInAllowedVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "evil_see";
+        String tableName = "oscar";
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
@@ -97,6 +97,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
                 createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 assertSql(
                         compiler,
@@ -104,7 +105,72 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts3\tevil_see\tts\tDAY\t500000\t600000000\tfalse\tevil_see\n");
+                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts3\toscar\tts\tDAY\t500000\t600000000\tfalse\toscar\n");
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInAllowedVolumeNotAllowedByDefault() throws Exception {
+        String tableName = "charlie";
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                try {
+                    createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + OTHER_VOLUME + ']');
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInAllowedVolumeTableExists0() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = "albert";
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
+                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                try {
+                    createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInAllowedVolumeTableExists1() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = "lusitania";
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
+                createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                try {
+                    createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                }
             }
         });
     }
@@ -120,7 +186,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
-                int tsIdx = 5;
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
+                int tsIdx = 7;
                 for (int i = 0; i < 5; i++) {
                     createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                     assertSql(
@@ -138,28 +205,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateTableInAllowedVolumeWithComplication() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = "evil_see";
-        assertMemoryLeak(() -> {
-            try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
-                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
-            ) {
-                qdb.start();
-                createTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
-                try {
-                    createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
-                }
-            }
-        });
-    }
-
-    @Test
     public void testServerMainCreateTableMoveItsFolderAwayAndSoftLinkIt() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = "sponsors";
@@ -171,6 +216,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
                 qdb.start();
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
                 createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 assertSql(
                         compiler,

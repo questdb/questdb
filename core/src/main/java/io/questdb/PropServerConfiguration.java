@@ -55,6 +55,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.io.IOException;
@@ -69,6 +70,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    private static boolean CREATE_TABLE_IN_VOLUME_ALLOWED = false; // TODO feature needs to support concurrent scenarios
     private final CharSequenceHashSet allowedVolumePaths = new CharSequenceHashSet();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
@@ -1372,6 +1374,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    static boolean isCreateTableInVolumeAllowed() {
+        // TODO disable the feature in production until concurrent create-in-volume and drop is supported
+        return CREATE_TABLE_IN_VOLUME_ALLOWED;
+    }
+
+    @TestOnly
+    static void setCreateTableInVolumeAllowed(boolean isAllowed) {
+        // TODO disable the feature in production until concurrent create-in-volume and drop is supported
+        // If you have a race creating table with same name on volume and locally, you can remove local 
+        // table here even though you tried to create table on another volume.
+        CREATE_TABLE_IN_VOLUME_ALLOWED = isAllowed;
+    }
+
     static ValidationResult validate(Properties properties) {
         // Settings that used to be valid but no longer are.
         Map<String, String> obsolete = new HashMap<>();
@@ -2296,7 +2311,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean isAllowedVolumePath(CharSequence volumePath) {
-            return volumePath != null && allowedVolumePaths.contains(volumePath);
+            return CREATE_TABLE_IN_VOLUME_ALLOWED && volumePath != null && allowedVolumePaths.contains(volumePath);
         }
 
         @Override
