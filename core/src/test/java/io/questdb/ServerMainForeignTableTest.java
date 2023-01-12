@@ -36,6 +36,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -44,6 +45,7 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.sql.*;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertSql;
@@ -67,7 +69,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private static final int partitionCount = 11;
 
     private String OTHER_VOLUME;
-
 
     @Before
     public void setUp() throws IOException {
@@ -106,7 +107,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts3\toscar\tts\tDAY\t500000\t600000000\tfalse\toscar\n");
+                assertTables(tableName);
+                dropTable(compiler, context, tableName, true);
             }
         });
     }
@@ -150,6 +152,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
+                dropTable(compiler, context, tableName, false);
             }
         });
     }
@@ -173,6 +176,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
                 }
+                dropTable(compiler, context, tableName, true);
             }
         });
     }
@@ -189,7 +193,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             ) {
                 qdb.start();
                 PropServerConfiguration.setCreateTableInVolumeAllowed(true);
-                int tsIdx = 7;
                 for (int i = 0; i < 5; i++) {
                     createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                     assertSql(
@@ -198,11 +201,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                             Misc.getThreadLocalBuilder(),
                             TABLE_START_CONTENT);
-                    assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts" + (tsIdx + i) + "\tevil_hear\tts\tDAY\t500000\t600000000\tfalse\tevil_hear\n");
-                    try (OperationFuture op = compiler.compile("DROP TABLE " + tableName, context).execute(null)) { // it simply unlinks
-                        op.await();
-                    }
-                    deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete tha table's folder in the other volume
+                    assertTables(tableName);
+                    dropTable(compiler, context, tableName, true);
                 }
             }
         });
@@ -228,7 +228,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts4\tsponsors\tts\tDAY\t500000\t600000000\tfalse\tsponsors\n");
+                assertTables(tableName);
             }
 
             // copy the table to a foreign location, remove it, then symlink it
@@ -270,9 +270,47 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertSql(compiler, context, "tables()", Misc.getThreadLocalBuilder(), "ts4\tsponsors\tts\tDAY\t500000\t600000000\tfalse\tsponsors\n");
+                assertTables(tableName);
+                dropTable(compiler, context, tableName, true);
             }
         });
+    }
+
+    private static void assertTables(String tableName) throws Exception {
+        StringSink sink = new StringSink();
+        try (
+                Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                PreparedStatement stmt = conn.prepareStatement("tables()");
+                ResultSet result = stmt.executeQuery()
+        ) {
+            ResultSetMetaData meta = result.getMetaData();
+            int colCount = meta.getColumnCount();
+            while (result.next()) {
+                // ignore table id
+                for (int i = 2; i <= colCount; i++) {
+                    switch (meta.getColumnType(i)) {
+                        case Types.BIT:
+                            sink.put(result.getBoolean(i));
+                            break;
+                        case Types.INTEGER:
+                            sink.put(result.getInt(i));
+                            break;
+                        case Types.BIGINT:
+                            sink.put(result.getLong(i));
+                            break;
+                        case Types.VARCHAR:
+                            sink.put(result.getString(i));
+                            break;
+                        default:
+                            throw new IllegalStateException("unexpected type: " + meta.getColumnType(i));
+
+                    }
+                    sink.put('\t');
+                }
+                sink.clear(sink.length() - 1);
+            }
+        }
+        TestUtils.assertEquals(tableName + "\tts\tDAY\t500000\t600000000\tfalse\t" + tableName, sink.toString());
     }
 
     private static void createSoftLink(String foreignPath, String tablePath) throws IOException {
@@ -337,6 +375,16 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private void createTableInVolume(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
         createPopulateTable(cairoConfig, compiler, context, tableName, true);
+    }
+
+    private void dropTable(SqlCompiler compiler, SqlExecutionContext context, String tableName, boolean isInVolume) throws Exception {
+        try (OperationFuture op = compiler.compile("DROP TABLE " + tableName, context).execute(null)) {
+            op.await();
+        }
+        if (isInVolume) {
+            // drop simply unlinks, the folder remains, it is a feature as the requirements need further refinement
+            deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete the table's folder in the other volume
+        }
     }
 
     static {

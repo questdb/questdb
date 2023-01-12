@@ -276,11 +276,11 @@ public final class TableUtils {
             LOG.info().$("create table [name=").utf8(tableDir).I$();
         } else {
             // path has been set by CREATE TABLE ... [IN VOLUME 'path'].
-            // it is a valid folder, or link to folder, checked at bootstrap
-            Path tmpPath = Path.getThreadLocal2(root).concat(tableDir).$();
-            LOG.info().$("create table in volume [path=").utf8(tmpPath).I$();
-            if (ff.isDirOrSoftLinkDir(Path.getThreadLocal2(root).concat(tableDir).$())) {
-                throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(tmpPath).put(']');
+            // it is a valid folder, or link to a folder, checked at bootstrap
+            Path otherPath = Path.getThreadLocal2(root).concat(tableDir).$();
+            LOG.info().$("create table in volume [path=").utf8(otherPath).I$();
+            if (ff.isDirOrSoftLinkDir(otherPath)) {
+                throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(otherPath).put(']');
             }
         }
 
