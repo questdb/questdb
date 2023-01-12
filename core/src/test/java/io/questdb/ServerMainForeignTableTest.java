@@ -112,6 +112,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableInAllowedVolumeNotAllowedByDefault() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = "charlie";
         assertMemoryLeak(() -> {
             try (
