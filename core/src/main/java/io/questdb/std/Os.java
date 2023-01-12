@@ -207,36 +207,62 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
-    static {
-        if ("64".equals(System.getProperty("sun.arch.data.model"))) {
-            String osName = System.getProperty("os.name");
-            if (osName.contains("Linux")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = LINUX_ARM64;
-                    loadLib("/io/questdb/bin/armlinux/libquestdb.so");
-                } else {
-                    type = LINUX_AMD64;
-                    loadLib("/io/questdb/bin/linux/libquestdb.so");
-                }
-            } else if (osName.contains("Mac")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = OSX_ARM64;
-                    loadLib("/io/questdb/bin/armosx/libquestdb.dylib");
-                } else {
-                    type = OSX_AMD64; // darwin
-                    loadLib("/io/questdb/bin/osx/libquestdb.dylib");
-                }
-            } else if (osName.contains("Windows")) {
-                type = WINDOWS;
-                loadLib("/io/questdb/bin/windows/libquestdb.dll");
-            } else if (osName.contains("FreeBSD")) {
-                type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/io/questdb/bin/freebsd/libquestdb.so");
-            } else {
-                throw new Error("Unsupported OS: " + osName);
-            }
-        } else {
-            type = _32Bit;
+    private static class SystemEnvironment {
+        public final String libDir;
+        public final boolean libPrefix;
+        public final String libSuffix;
+        public final int type;
+
+        private SystemEnvironment(
+                int type,
+                String libDir,
+                boolean libPrefix,
+                String libSuffix) {
+            this.type = type;
+            this.libDir = libDir;
+            this.libPrefix = libPrefix;
+            this.libSuffix = libSuffix;
         }
+
+        public static SystemEnvironment sniff() {
+            if ("64".equals(System.getProperty("sun.arch.data.model"))) {
+                String osName = System.getProperty("os.name");
+                if (osName.contains("Linux")) {
+                    if ("aarch64".equals(System.getProperty("os.arch"))) {
+                        return new SystemEnvironment(LINUX_ARM64, "armlinux", true, ".so");
+                    } else {
+                        return new SystemEnvironment(LINUX_AMD64, "linux", true, ".so");
+                    }
+                } else if (osName.contains("Mac")) {
+                    if ("aarch64".equals(System.getProperty("os.arch"))) {
+                        return new SystemEnvironment(OSX_ARM64, "armosx", true, ".dylib");
+                    } else {
+                        return new SystemEnvironment(OSX_AMD64, "osx", true, ".dylib");
+                    }
+                } else if (osName.contains("Windows")) {
+                    return new SystemEnvironment(WINDOWS, "windows", false, ".dll");
+                } else if (osName.contains("FreeBSD")) {
+                    // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
+                    return new SystemEnvironment(FREEBSD, "freebsd", true, ".so");
+                } else {
+                    throw new Error("Unsupported OS: " + osName);
+                }
+            } else {
+                return new SystemEnvironment(_32Bit, "", false, "");
+            }
+        }
+
+        public String getLibPath(String name, boolean forceLibPrefix) {
+            final String prefix = libPrefix || forceLibPrefix ? "lib" : "";
+            final String filename = prefix + name + libSuffix;
+            return "/io/questdb/bin/" + libDir + "/" + filename;
+        }
+    }
+
+    static {
+        final SystemEnvironment env = SystemEnvironment.sniff();
+        type = env.type;
+        loadLib(env.getLibPath("questdb", true));
+        loadLib(env.getLibPath("questdb_r", false));
     }
 }
