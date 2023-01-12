@@ -15,9 +15,6 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-        container:
-          image: adoptopenjdk/openjdk11:centos
-          options: "--name ci-container -v /usr/bin/docker:/tmp/docker:ro"
         pool:
           vmImage: "ubuntu-latest"
         steps:
@@ -25,18 +22,16 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
+          - task: Maven@3
+            displayName: "Build binaries with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              goals: "package"
+              options:
+                "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false"
+              jdkVersionOption: 1.11
           - bash: |
-              /tmp/docker exec -t -u 0 ci-container sh -c "yum -y install git"
-
-              cd /tmp
-              curl -q -O https://mirrors.ukfast.co.uk/sites/ftp.apache.org/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
-              tar xf "$MVN"-bin.tar.gz
-
-              cd "$HOME"
-
               cd "$(Build.SourcesDirectory)"/core
-              /tmp/"$MVN"/bin/mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
-
               find target \( -name "*rt-linux*.tar.gz" -o -name "*no-jre*.tar.gz" \) -exec mv '{}' "$(Build.BinariesDirectory)"/ \;
             displayName: "Build snapshot"
           - task: PublishBuildArtifacts@1
@@ -44,6 +39,7 @@ stages:
             inputs:
               artifactName: Snapshot
               pathtoPublish: $(Build.BinariesDirectory)
+
       - job: UploadToS3
         dependsOn: BuildOnLinux
         condition: succeeded()
