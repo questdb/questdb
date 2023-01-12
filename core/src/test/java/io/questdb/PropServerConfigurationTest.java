@@ -1221,6 +1221,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), "");
         Assert.assertNull(PropServerConfiguration.validate(properties));
         StringSink sink = new StringSink();
+        PropServerConfiguration.setCreateTableInVolumeAllowed(true);
         for (int i = 0; i < 20; i++) {
             sink.clear();
             sink.put(randWhiteSpace()).put(volumeA).put(randWhiteSpace()).put(',')
@@ -1228,6 +1229,7 @@ public class PropServerConfigurationTest {
                     .put(randWhiteSpace()).put(volumeC).put(randWhiteSpace());
             properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
             CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
+
             Assert.assertTrue(cairoConfig.isAllowedVolumePath(volumeA));
             Assert.assertTrue(cairoConfig.isAllowedVolumePath(volumeB));
             Assert.assertTrue(cairoConfig.isAllowedVolumePath(volumeC));
