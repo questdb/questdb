@@ -115,7 +115,7 @@ public class Bootstrap {
         boolean isOsSupported = true;
         switch (Os.type) {
             case Os.WINDOWS:
-                archName = "OS/Arch windows/amd64";
+                archName = "OS/Arch Windows/amd64";
                 break;
             case Os.LINUX_AMD64:
                 archName = "OS/Arch linux/amd64";

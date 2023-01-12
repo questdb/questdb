@@ -583,7 +583,7 @@ public final class SqlParser {
             }
             tok = tok(lexer, "path for volume");
             if (Os.isWindows()) {
-                throw CairoException.critical(0).position(lexer.getPosition()).put("'in volume' is not supported in windows");
+                throw CairoException.critical(0).position(lexer.getPosition()).put("'in volume' is not supported in Windows");
             }
             model.setVolumePath(GenericLexer.unquote(tok));
             tok = optTok(lexer);

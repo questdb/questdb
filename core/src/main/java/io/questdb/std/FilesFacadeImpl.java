@@ -376,7 +376,7 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
         if (checkedType == Files.DT_LNK) {
-            // in windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact

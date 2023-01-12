@@ -264,7 +264,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
                             path.of(configuration.getRoot()).concat(tableToken);
                             int plen = path.length();
-                            // in windows if this was a real soft link to a folder, the link would be deleted
+                            // in Windows if this was a real soft link to a folder, the link would be deleted
                             Assert.assertFalse(ff.exists(path.concat(readOnlyPartitionName).$()));
                             Assert.assertTrue(ff.exists(path.trimTo(plen).concat("2022-10-18").$()));
                         } catch (SqlException ex) {

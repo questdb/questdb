@@ -2289,7 +2289,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (CairoException e) {
             if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in windows");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
             } else {
                 TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=niza]");
             }
@@ -2323,7 +2323,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     true);
         } catch (CairoException e) {
             if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in windows");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
             } else {
                 TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + volume + ']');
             }

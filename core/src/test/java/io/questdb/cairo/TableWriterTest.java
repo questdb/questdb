@@ -1532,7 +1532,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    // tests scenario where truncate is not supported (windows) but fails on close
+    // tests scenario where truncate is not supported (Windows) but fails on close
     // truncate on close fails once and then succeeds
     // close is expected not to fail
     public void testCannotTruncateColumnOnCloseAndNotSupported() throws Exception {
@@ -1572,7 +1572,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    // tests scenario where truncate is not supported (windows) but fails on close
+    // tests scenario where truncate is not supported (Windows) but fails on close
     // truncate on close fails all the time
     public void testCannotTruncateColumnOnCloseAndNotSupported2() throws Exception {
         int N = 100000;

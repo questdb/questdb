@@ -88,7 +88,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableInAllowedVolume() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = "evil_see";
         assertMemoryLeak(() -> {
             try (
@@ -111,7 +111,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableInAllowedVolumeThenDrop() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = "evil_hear";
         assertMemoryLeak(() -> {
             try (
@@ -139,7 +139,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableInAllowedVolumeWithComplication() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = "evil_see";
         assertMemoryLeak(() -> {
             try (
@@ -161,7 +161,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainCreateTableMoveItsFolderAwayAndSoftLinkIt() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // windows requires special privileges to create soft links
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = "sponsors";
         assertMemoryLeak(() -> {
             // create table with some data

@@ -668,7 +668,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             if (ff.exists(detachedPath)) {
 
-                isSoftLink = ff.isSoftLink(detachedPath); // returns false regardless in windows
+                isSoftLink = ff.isSoftLink(detachedPath); // returns false regardless in Windows
 
                 // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
