@@ -116,7 +116,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 for (int i = 0; i < 11; i++) {
                     startLatch.setCount(3);
                     haltLatch.setCount(2);
-
                     concurrentTableCreator(
                             "createTable",
                             cairoConfig,
@@ -127,7 +126,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             tableName,
                             false
                     ).start();
-
                     concurrentTableCreator(
                             "createTableInVolume",
                             cairoConfig,
@@ -138,7 +136,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             tableName,
                             true
                     ).start();
-
                     startLatch.countDown();
                     haltLatch.await();
                 }
