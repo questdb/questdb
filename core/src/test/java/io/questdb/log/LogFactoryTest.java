@@ -813,10 +813,10 @@ public class LogFactoryTest {
         }
         //It usually ends up with 4 files without auto log removal
         if (sizeLimit != null) {
-            Assert.assertTrue(fileCount == 1);
+            Assert.assertEquals(1, fileCount);
         }
         if (lifeDuration != null) {
-            Assert.assertTrue(fileCount == 2);
+            Assert.assertEquals(2, fileCount);
         }
     }
 
