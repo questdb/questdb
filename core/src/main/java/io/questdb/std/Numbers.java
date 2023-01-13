@@ -900,86 +900,6 @@ public final class Numbers {
         return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
-    public static long parseLongQuiet(CharSequence sequence) {
-        if (sequence == null) {
-            return Long.MIN_VALUE;
-        }
-        try {
-            return parseLong0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-    }
-
-    public static long parseLongSize(CharSequence sequence) throws NumericException {
-        int lim = sequence.length();
-
-        if (lim == 0) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(0) == '-';
-        int i = 0;
-        if (negative) {
-            i++;
-        }
-
-        if (i >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-        long val = 0;
-        long r;
-        EX:
-        for (; i < lim; i++) {
-            int c = sequence.charAt(i);
-            if (c < '0' || c > '9') {
-                if (i == lim - 1) {
-                    switch (c) {
-                        case 'K':
-                        case 'k':
-                            r = val * 1024L;
-                            if (r > val) {
-                                throw NumericException.INSTANCE;
-                            }
-                            val = r;
-                            break EX;
-                        case 'M':
-                        case 'm':
-                            r = val * 1024L * 1024L;
-                            if (r > val) {
-                                throw NumericException.INSTANCE;
-                            }
-                            val = r;
-                            break EX;
-                        case 'G':
-                        case 'g':
-                            r = val * 1024L * 1024L * 1024L;
-                            if (r > val) {
-                                throw NumericException.INSTANCE;
-                            }
-                            val = r;
-                            break EX;
-                        default:
-                            break;
-                    }
-                }
-                throw NumericException.INSTANCE;
-            }
-            // val * 10 + (c - '0')
-            r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
-        }
-
-        if (val == Long.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
-        }
-        return negative ? val : -val;
-    }
-
     public static long parseLongDuration(CharSequence sequence) throws NumericException {
         int lim = sequence.length();
         if (lim == 0) {
@@ -1066,6 +986,86 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return -val;
+    }
+
+    public static long parseLongQuiet(CharSequence sequence) {
+        if (sequence == null) {
+            return Long.MIN_VALUE;
+        }
+        try {
+            return parseLong0(sequence, 0, sequence.length());
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    public static long parseLongSize(CharSequence sequence) throws NumericException {
+        int lim = sequence.length();
+
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        EX:
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
+            if (c < '0' || c > '9') {
+                if (i == lim - 1) {
+                    switch (c) {
+                        case 'K':
+                        case 'k':
+                            r = val * 1024L;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'M':
+                        case 'm':
+                            r = val * 1024L * 1024L;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'G':
+                        case 'g':
+                            r = val * 1024L * 1024L * 1024L;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        default:
+                            break;
+                    }
+                }
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
     }
 
     public static short parseShort(CharSequence sequence) throws NumericException {
