@@ -171,6 +171,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             Misc.freeObjList(assignedTables[i]);
             assignedTables[i].clear();
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
@@ -201,7 +202,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             pubSeq[writerWorkerId].done(seq);
                             if (listener != null) {
                                 // table going idle
-                                listener.onEvent(tableNameUtf16, 1);
+                                listener.onEvent(tab.getTableToken(), 1);
                             }
                             LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
                         }
@@ -266,7 +267,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (tudKeyIndex < 0) {
                 tab = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
-                int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
+                TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
+                int status = engine.getStatus(securityContext, path, tableToken);
                 if (status != TableUtils.TABLE_EXISTS) {
                     if (!autoCreateNewTables) {
                         throw CairoException.nonCritical()
@@ -286,7 +288,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    engine.createTable(securityContext, ddlMem, path, tsa);
+                    engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
@@ -338,20 +340,20 @@ class LineTcpMeasurementScheduler implements Closeable {
                 threadId = i;
             }
         }
-
+        TableToken tableToken = engine.getTableToken(tableNameUtf16);
         final TableUpdateDetails tableUpdateDetails = new TableUpdateDetails(
                 configuration,
                 engine,
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails
-                engine.getTableWriterAPI(securityContext, tableNameUtf16, "tcpIlp"),
+                engine.getTableWriterAPI(securityContext, tableToken, "tcpIlp"),
                 threadId,
                 netIoJobs,
                 defaultColumnTypes
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tableUpdateDetails.getTableNameUtf16(), tableUpdateDetails);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").$(tableToken).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
     }
 

@@ -42,7 +42,8 @@ public final class FastDoubleParser {
     /**
      * Convenience method for calling {@link #parseDouble(CharSequence, int, int)}.
      *
-     * @param str the string to be parsed
+     * @param str            the string to be parsed
+     * @param rejectOverflow numbers that overflow double type will be considered illegal
      * @return the parsed double value
      * @throws NumericException if the string can not be parsed
      */
@@ -75,7 +76,7 @@ public final class FastDoubleParser {
      * @param str            the string to be parsed
      * @param offset         the start offset of the {@code FloatingPointLiteral} in {@code str}
      * @param length         the length of {@code FloatingPointLiteral} in {@code str}
-     * @param rejectOverflow numbers that overflow double type will considered illegal
+     * @param rejectOverflow numbers that overflow double type will be considered illegal
      * @return the parsed double value
      * @throws NumericException if the string can not be parsed
      */
@@ -102,6 +103,7 @@ public final class FastDoubleParser {
      * @param str            the string to be parsed, a memory pointer to array with characters
      *                       in ISO-8859-1, ASCII or UTF-8 encoding
      * @param rejectOverflow reject parsed values that overflow double type
+     * @param len            length of the string
      * @return the parsed double value
      * @throws NumericException if the string can not be parsed
      */

@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -94,6 +95,6 @@ public class LineTcpReceiver implements Closeable {
 
     @FunctionalInterface
     public interface SchedulerListener {
-        void onEvent(CharSequence tableName, int event);
+        void onEvent(TableToken tableToken, int event);
     }
 }

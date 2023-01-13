@@ -54,7 +54,7 @@ public abstract class AbstractLongHashSet implements Mutable {
     @Override
     public void clear() {
         Arrays.fill(keys, noEntryKeyValue);
-        free = this.capacity;
+        free = capacity;
     }
 
     public boolean excludes(long key) {

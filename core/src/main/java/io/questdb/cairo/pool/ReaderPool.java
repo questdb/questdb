@@ -27,6 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
@@ -43,7 +44,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newTenant(String tableName, Entry<R> entry, int index) {
+    protected R newTenant(TableToken tableName, Entry<R> entry, int index) {
         return new R(this, entry, index, tableName, messageBus);
     }
 
@@ -52,8 +53,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
 
-        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, CharSequence name, MessageBus messageBus) {
-            super(pool.getConfiguration(), name, messageBus);
+        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, TableToken tableToken, MessageBus messageBus) {
+            super(pool.getConfiguration(), tableToken, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

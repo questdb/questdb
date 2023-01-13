@@ -41,7 +41,7 @@ import java.util.concurrent.CountDownLatch;
 
 public class SnapshotTest extends AbstractGriffinTest {
 
-    private static final TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
+    private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
     private int rootLen;
 
@@ -322,7 +322,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol, b double, c long)",
-                null
+                null,
+                tableName
         );
     }
 
@@ -332,7 +333,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " as " +
                         " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
-                null
+                null,
+                tableName
         );
     }
 
@@ -341,7 +343,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                "alter table " + tableName + " drop column c"
+                "alter table " + tableName + " drop column c",
+                tableName
         );
     }
 
@@ -350,7 +353,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null
+                null,
+                tableName
         );
     }
 
@@ -360,7 +364,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
                         " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
-                null
+                null,
+                tableName
         );
     }
 
@@ -405,19 +410,20 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareEmptyFolder() throws Exception {
         final String tableName = "test";
         path.of(configuration.getRoot()).concat("empty_folder").slash$();
-        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+        TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
 
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null
+                null,
+                tableName
         );
 
         // Assert snapshot folder exists
-        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
+        Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
                 path.of(configuration.getSnapshotRoot()).slash$())
         );
         // But snapshot/db folder does not
-        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
+        Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
         );
     }
@@ -430,7 +436,10 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertTrue(ff.remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
+            TableToken tableToken = engine.getTableToken(tableName);
+
+            engine.releaseInactive();
+            Assert.assertTrue(ff.remove(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
@@ -732,9 +741,9 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
 
             // WalWriter.applyMetadataChangeLog should be triggered
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter1.getTableName()), 0);
+            try (WalWriter walWriter1 = getWalWriter(tableName)) {
+                try (WalWriter walWriter2 = getWalWriter(tableName)) {
+                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, walWriter2.getTableToken(), 0);
                     addColumnC.addColumnToList("C", 8, ColumnType.INT, 0, false, false, 0);
                     walWriter1.apply(addColumnC.build(), true);
                     walWriter1.commit();
@@ -869,10 +878,11 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                path.concat(tableName);
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.concat(tableToken);
                 int tableNameLen = path.length();
                 FilesFacade ff = configuration.getFilesFacade();
-                try (TableReader tableReader = new TableReader(configuration, "t")) {
+                try (TableReader tableReader = newTableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
@@ -944,7 +954,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2) throws Exception {
+    @SuppressWarnings("SameParameterValue")
+    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
                 path.of(configuration.getRoot());
@@ -957,9 +968,10 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                path.concat("test");
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.concat(tableToken);
                 int tableNameLen = path.length();
-                copyPath.concat("test");
+                copyPath.concat(tableToken);
                 int copyTableNameLen = copyPath.length();
 
                 // _meta
@@ -980,7 +992,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    private static class TestFilesFacadeImpl extends FilesFacadeImpl {
+    private static class TestFilesFacade extends TestFilesFacadeImpl {
 
         boolean errorOnSync = false;
 

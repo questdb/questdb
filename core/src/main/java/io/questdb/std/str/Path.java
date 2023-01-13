@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -44,6 +45,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
+    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
     private int capacity;
     private int len;
     private long ptr;
@@ -131,6 +133,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path concat(CharSequence str) {
         return concat(str, 0, str.length());
+    }
+
+    public Path concat(TableToken token) {
+        return concat(token.getDirName());
     }
 
     public Path concat(long pUtf8NameZ) {
@@ -345,7 +351,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @NotNull
     public String toString() {
         if (ptr != 0) {
-            final CharSink b = Misc.getThreadLocalBuilder();
+            // Don't use Misc.getThreadLocalBuilder() to convert Path to String.
+            // This leads difficulties in debugging / running tests when FilesFacade tracks open files 
+            // when this method called implicitly
+            final StringSink b = tlBuilder.get();
+            b.clear();
             toSink(b);
             return b.toString();
         }

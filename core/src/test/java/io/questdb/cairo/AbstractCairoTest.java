@@ -27,18 +27,17 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.QuestDBNode;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.*;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -49,6 +48,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -61,6 +61,8 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCairoTest {
+
+
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new PlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
@@ -122,6 +124,10 @@ public abstract class AbstractCairoTest {
             .withLookingForStuckThread(true)
             .build();
 
+    public static void configOverrideMangleTableDirNames(boolean mangle) {
+        node1.getConfigurationOverrides().setMangleTableDirNames(mangle);
+    }
+
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
     // join map memory - because it's usually a small and can't really be released until factory is closed
@@ -174,6 +180,10 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    public static void refreshTablesInBaseEngine() {
+        engine.reloadTableNames();
+    }
+
     @BeforeClass
     public static void setUpStatic() {
         // it is necessary to initialise logger before tests start
@@ -213,7 +223,11 @@ public abstract class AbstractCairoTest {
         SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         forEachNode(QuestDBNode::setUpCairo);
+        engine.resetNameRegistryMemory();
+        refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
+        TestFilesFacadeImpl.resetTracking();
+        memoryUsage = -1;
     }
 
     @After
@@ -228,6 +242,12 @@ public abstract class AbstractCairoTest {
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         sink.clear();
         memoryUsage = -1;
+    }
+
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
+        addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
     }
 
     protected static void assertFactoryMemoryUsage() {
@@ -369,12 +389,6 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void drainWalQueue() {
-        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-            drainWalQueue(walApplyJob, engine);
-        }
-    }
-
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
         drainWalQueue(walApplyJob, engine);
     }
@@ -386,15 +400,18 @@ public abstract class AbstractCairoTest {
         }
 
         final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        //noinspection StatementWithEmptyBody
-        while (checkWalTransactionsJob.run(0)) {
-            // run until empty
-        }
+        checkWalTransactionsJob.run(0);
 
         // run once again as there might be notifications to handle now
         //noinspection StatementWithEmptyBody
         while (walApplyJob.run(0)) {
             // run until empty
+        }
+    }
+
+    protected static void drainWalQueue() {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            drainWalQueue(walApplyJob);
         }
     }
 
@@ -410,6 +427,35 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableReader getReader(CharSequence tableName) {
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
+        return engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "test");
+    }
+
+    @NotNull
+    protected static WalWriter getWalWriter(CharSequence tableName) {
+        return engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriter getWriter(CharSequence tableName) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+    }
+
+    protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+    }
+
+    protected static TableWriter getWriter(TableToken tt) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt, "testing");
+    }
+
     protected static QuestDBNode newNode(int nodeId) {
         return newNode(nodeId, "dbRoot" + nodeId, new Overrides());
     }
@@ -421,35 +467,46 @@ public abstract class AbstractCairoTest {
         return node;
     }
 
+    protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
+        return new TableReader(configuration, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        return new TableWriter(configuration, engine.getTableToken(tableName), metrics);
+    }
+
     protected static void releaseInactive(CairoEngine engine) {
         engine.releaseInactive();
-        engine.releaseInactiveCompilers();
         engine.releaseInactiveTableSequencers();
+        engine.resetNameRegistryMemory();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
 
     protected static void replicate(String tableName, String wal, QuestDBNode srcNode, QuestDBNode dstNode) {
-        dstNode.getEngine().getTableSequencerAPI().closeSequencer(tableName);
+        TableToken srcTableToken = srcNode.getEngine().getTableToken(tableName);
+        TableToken dstTableToken = dstNode.getEngine().getTableToken(tableName);
+
+        dstNode.getEngine().getTableSequencerAPI().closeSequencer(dstTableToken);
         dstNode.getEngine().getTableSequencerAPI().releaseInactive();
 
         final FilesFacade ff = configuration.getFilesFacade();
         final int mkdirMode = configuration.getMkDirMode();
 
-        final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(tableName).concat(wal).$();
-        final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(tableName).concat(wal).$();
+        final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
+        final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
         if (ff.exists(dstWal)) {
             Assert.assertEquals(0, ff.rmdir(dstWal));
         }
         Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
         Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
-        final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(tableName).concat(WalUtils.SEQ_DIR).$();
-        final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(tableName).concat(WalUtils.SEQ_DIR).$();
+        final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
+        final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
         Assert.assertEquals(0, ff.rmdir(dstTxnLog));
         Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
-        dstNode.getEngine().getTableSequencerAPI().openSequencer(tableName);
+        dstNode.getEngine().getTableSequencerAPI().openSequencer(srcTableToken);
     }
 
     protected static void replicateAndApplyToAllNodes(String tableName, String walName) {
@@ -461,13 +518,13 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
-        final WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
-        snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
-        //noinspection StatementWithEmptyBody
-        while (job.run(0)) {
-            // run until empty
+        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+            //noinspection StatementWithEmptyBody
+            while (job.run(0)) {
+                // run until empty
+            }
         }
-        job.close();
     }
 
     protected static void runWalPurgeJob() {
@@ -485,9 +542,19 @@ public abstract class AbstractCairoTest {
     }
 
     protected boolean isWalTable(CharSequence tableName) {
-        try (Path path = new Path().of(configuration.getRoot())) {
-            return TableSequencerAPI.isWalTable(tableName, path, configuration.getFilesFacade());
+        return engine.isWalTable(engine.getTableToken(tableName));
+    }
+
+    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
+        return new TableWriter(configuration, engine.getTableToken(tableName), messageBus, metrics);
+    }
+
+    protected TableToken registerTableName(CharSequence tableName) {
+        TableToken token = engine.lockTableName(tableName, false);
+        if (token != null) {
+            engine.registerTableToken(token);
         }
+        return token;
     }
 
     protected enum StringAsTagMode {

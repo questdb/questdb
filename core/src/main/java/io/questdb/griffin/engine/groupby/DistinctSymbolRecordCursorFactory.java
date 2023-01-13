@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
@@ -36,28 +33,24 @@ import io.questdb.std.Misc;
 
 public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
-    private final int tableId;
-    private final String tableName;
+    private final TableToken tableToken;
     private final long tableVersion;
 
     public DistinctSymbolRecordCursorFactory(
             final GenericRecordMetadata metadata,
-            final String tableName,
+            final TableToken tableToken,
             final int columnIndex,
-            final int tableId,
             final long tableVersion
     ) {
         super(metadata);
-        this.tableName = tableName;
+        this.tableToken = tableToken;
         this.tableVersion = tableVersion;
-        this.tableId = tableId;
         this.cursor = new DistinctSymbolRecordCursor(columnIndex);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        TableReader reader = executionContext.getCairoEngine()
-                .getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
+        TableReader reader = executionContext.getReader(tableToken, tableVersion);
         cursor.of(reader);
         return cursor;
     }

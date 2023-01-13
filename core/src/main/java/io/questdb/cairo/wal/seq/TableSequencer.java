@@ -24,10 +24,13 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
 
 public interface TableSequencer extends QuietCloseable {
     long NO_TXN = Long.MIN_VALUE;
+
+    void dropTable();
 
     TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo);
 
@@ -38,6 +41,9 @@ public interface TableSequencer extends QuietCloseable {
     int getTableId();
 
     /**
+     * Copies table metadata to provided sink.
+     *
+     * @param sink metadata sink
      * @return current transaction number
      */
     long getTableMetadata(TableRecordMetadataSink sink);
@@ -53,6 +59,8 @@ public interface TableSequencer extends QuietCloseable {
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn);
+
+    void rename(TableToken newTableToken);
 
     void resumeTable();
 

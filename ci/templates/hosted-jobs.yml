@@ -10,6 +10,8 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "griffin.**.*?"
+          javadoc_step: ""
+          javadoc_profile: ""
         mac-cairo:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
@@ -17,6 +19,8 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "cairo.**.*?"
+          javadoc_step: ""
+          javadoc_profile: ""
         mac-other:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
@@ -24,6 +28,8 @@ jobs:
           jdk: "1.11"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**"
+          javadoc_step: ""
+          javadoc_profile: ""
         windows-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
@@ -31,6 +37,8 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "griffin.**.*?"
+          javadoc_step: ""
+          javadoc_profile: ""
         windows-cairo:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
@@ -38,6 +46,8 @@ jobs:
           jdk: "1.11"
           testset: "all"
           includeTests: "cairo.**.*?"
+          javadoc_step: ""
+          javadoc_profile: ""
         windows-other:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
@@ -45,18 +55,24 @@ jobs:
           jdk: "1.11"
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-jdk8:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.8"
           testset: "none"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-jdk17:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.17"
           testset: "none"
+          javadoc_step: "javadoc:javadoc"
+          javadoc_profile: ",javadoc"
     pool:
       vmImage: $(imageName)
       name: $(poolName)

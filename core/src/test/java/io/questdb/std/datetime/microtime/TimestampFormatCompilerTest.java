@@ -506,8 +506,10 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatYearIsoFourDigits() throws Exception {
+        assertFormat("53, 2020", "ww, YYYY", "2021-01-02T00:00:00.000Z");
         assertFormat("2020", "YYYY", "2021-01-02T00:00:00.000Z");
 
+        assertFormat("01, 1970", "ww, YYYY", "1970-01-01T00:00:00.000Z");
         assertFormat("1970", "YYYY", "1970-01-01T00:00:00.000Z");
     }
 

@@ -44,8 +44,12 @@ public class GroupByFunctionsUpdaterFactory {
      * <li>updateNew(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeFirst(value, record) for each group by function</li>
      * <li>updateExisting(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeNext(value, record) for each group by function</li>
      * <li>updateEmpty(MapValue value) - calls f0, f1, f2 ... fn.setEmpty(value) for each group by function</li>
-     * <li>setFunctions(ObjList<GroupByFunction> groupByFunctions) - sets the group by functions to the fields. This method is called by the factory and should not be called by the caller.</li>
+     * <li>setFunctions(ObjList&lt;GroupByFunction&gt; groupByFunctions) - sets the group by functions to the fields. This method is called by the factory and should not be called by the caller.</li>
      * </ul>
+     *
+     * @param asm              BytecodeAssembler instance
+     * @param groupByFunctions list of group by functions
+     * @return GroupByFunctionUpdater instance
      */
     public static GroupByFunctionsUpdater getInstance(
             BytecodeAssembler asm,

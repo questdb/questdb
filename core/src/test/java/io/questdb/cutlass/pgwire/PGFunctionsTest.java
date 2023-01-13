@@ -1,7 +1,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -25,7 +25,7 @@ public class PGFunctionsTest extends BasePGTest {
                         st1.execute();
                     }
                     sink.clear();
-                    long openFilesBefore = FilesFacadeImpl.INSTANCE.getOpenFileCount();
+                    long openFilesBefore = TestFilesFacadeImpl.INSTANCE.getOpenFileCount();
                     try (PreparedStatement ps = connection.prepareStatement("select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")) {
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
@@ -36,7 +36,7 @@ public class PGFunctionsTest extends BasePGTest {
                             );
                         }
                     }
-                    long openFilesAfter = FilesFacadeImpl.INSTANCE.getOpenFileCount();
+                    long openFilesAfter = TestFilesFacadeImpl.INSTANCE.getOpenFileCount();
 
                     Assert.assertEquals(openFilesBefore, openFilesAfter);
                 }

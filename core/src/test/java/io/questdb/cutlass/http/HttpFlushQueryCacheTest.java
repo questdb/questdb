@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
 import org.junit.Assert;
@@ -163,7 +163,7 @@ public class HttpFlushQueryCacheTest {
 
     private void testJsonQuery(int workerCount, Metrics metrics, HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final String baseDir = temp.getRoot().getAbsolutePath();
-        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
             public int getQueryCacheEventQueueCapacity() {
                 return 1;

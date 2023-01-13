@@ -24,15 +24,16 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 
 public class SequencerMetadataUpdater implements SequencerMetadataChangeSPI {
     private final SequencerMetadata metadata;
-    private final CharSequence tableName;
+    private final TableToken tableToken;
 
-    public SequencerMetadataUpdater(SequencerMetadata metadata, CharSequence tableName) {
+    public SequencerMetadataUpdater(SequencerMetadata metadata, TableToken tableToken) {
         this.metadata = metadata;
-        this.tableName = tableName;
+        this.tableToken = tableToken;
     }
 
     @Override
@@ -53,8 +54,8 @@ public class SequencerMetadataUpdater implements SequencerMetadataChangeSPI {
     }
 
     @Override
-    public CharSequence getTableName() {
-        return tableName;
+    public TableToken getTableToken() {
+        return tableToken;
     }
 
     @Override
