@@ -65,7 +65,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String logFileTemplate;
     private int nBufferSize;
     private long nLifeDuration;
-    private final FindVisitor removeExpiredLogsVisitor = this::removeOldLogsVisitor;
+    private final FindVisitor removeExpiredLogsVisitor = this::removeExpiredLogsVisitor;
     private long nRollSize;
     private long nSizeLimit;
     private final FindVisitor removeExcessiveLogsVisitor = this::removeExcessiveLogsVisitor;
@@ -387,7 +387,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    private void removeOldLogsVisitor(long filePointer, int type) {
+    private void removeExpiredLogsVisitor(long filePointer, int type) {
         path.trimTo(logDir.length());
         path.concat(filePointer).$();
         logFileName.of(filePointer);
