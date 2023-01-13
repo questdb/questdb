@@ -122,6 +122,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         if (this.sizeLimit != null) {
             try {
                 nSizeLimit = Numbers.parseLongSize(this.sizeLimit);
+                if(nSizeLimit < nRollSize) {
+                    throw new LogError("sizeLimit must be larger than rollSize");
+                }
             } catch (NumericException e) {
                 throw new LogError("Invalid value for sizeLimit");
             }
