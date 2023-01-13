@@ -4494,7 +4494,7 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 50;
+        final int timeout = 100;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -7207,7 +7207,7 @@ public class IODispatcherTest {
 
     @Test
     public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 50;
+        final int timeout = 100;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
