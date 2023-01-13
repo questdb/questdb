@@ -2563,7 +2563,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             } else if (partitionBy != PartitionBy.NONE) {
                 // check that we can write to the partition
                 long activePartitionTs = partitionFloorMethod.floor(txWriter.getMaxTimestamp());
-                if (txWriter.isPartitionReadOnly(txWriter.getPartitionIndex(activePartitionTs))) {
+                int pIndex = txWriter.getPartitionIndex(activePartitionTs);
+                if (pIndex > -1 && txWriter.isPartitionReadOnly(pIndex)) {
                     LOG.critical()
                             .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
                             .$(", timestamp=").$ts(activePartitionTs)
