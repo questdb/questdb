@@ -270,7 +270,9 @@ public class PropServerConfigurationTest {
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
 
-        Assert.assertEquals(500000, configuration.getCairoConfiguration().getMaxUncommittedRows());
+        Assert.assertEquals(500_000, configuration.getCairoConfiguration().getMaxUncommittedRows());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getO3MinLag());
+        Assert.assertEquals(600_000_000, configuration.getCairoConfiguration().getO3MaxLag());
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
@@ -935,8 +937,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getCairoConfiguration().getWriterFileOpenOpts());
             Assert.assertFalse(configuration.getCairoConfiguration().isIOURingEnabled());
 
-            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getO3MaxLag());
-            Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
+            Assert.assertEquals(100_000, configuration.getCairoConfiguration().getMaxUncommittedRows());
+            Assert.assertEquals(42_000_000, configuration.getCairoConfiguration().getO3MinLag());
+            Assert.assertEquals(420_000_000, configuration.getCairoConfiguration().getO3MaxLag());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlDistinctTimestampKeyCapacity());
             Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlDistinctTimestampLoadFactor(), 0.001);
