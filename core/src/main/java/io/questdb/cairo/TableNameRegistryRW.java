@@ -31,7 +31,7 @@ import java.util.Map;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
-    private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>(false);
+    private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);

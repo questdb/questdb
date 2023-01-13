@@ -36,8 +36,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private volatile long lastReloadTimestampMs = 0;
     private ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private ConcurrentHashMap<TableToken> nameTableTokenMap2 = new ConcurrentHashMap<>(false);
-    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>(false);
-    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap2 = new ConcurrentHashMap<>(false);
+    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap2 = new ConcurrentHashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration) {
         super(configuration);
