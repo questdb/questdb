@@ -55,9 +55,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final MicrosecondClock microClock;
+    private final long smallCommitThreshold;
     private final SqlToOperation sqlToOperation;
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
+    private long rowsSinceLastCommit;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -65,6 +67,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         this.sqlToOperation = new SqlToOperation(engine, workerCount, sharedWorkerCount);
         this.microClock = engine.getConfiguration().getMicrosecondClock();
         walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
+        smallCommitThreshold = 500_000L;
     }
 
     @Override
@@ -384,8 +387,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             } else {
                                 // Something messed up in sequencer.
                                 // There is a transaction in WAL but no structure change record.
-                                // TODO: make sequencer distressed and try to reconcile on sequencer opening
-                                //  or skip the transaction?
                                 throw CairoException.critical(0)
                                         .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                         .put(newStructureVersion)
@@ -442,6 +443,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
                     if (minTimestampsIndex < minTimestamps.size()) {
                         long commitToTimestamp = minTimestamps.getQuick(minTimestampsIndex);
+                        long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();
+                        if (commitToTimestamp < 0) {
+                            // commit everything, do not store data in memory LAG buffer
+                            commitToTimestamp = Long.MAX_VALUE;
+                            rowsSinceLastCommit = 0;
+                        } else {
+                            rowsSinceLastCommit += rowCount;
+                            if (rowsSinceLastCommit < smallCommitThreshold) {
+                                // Do not commit yet, copy to LAG memory buffer and wait for more rows
+                                commitToTimestamp = -1;
+                            } else {
+                                rowsSinceLastCommit = 0;
+                            }
+                        }
                         writer.processWalData(
                                 walPath,
                                 !dataInfo.isOutOfOrder(),
@@ -451,9 +466,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 dataInfo.getMaxTimestamp(),
                                 dataInfo,
                                 seqTxn,
-                                commitToTimestamp >= 0 ? commitToTimestamp : Long.MAX_VALUE
+                                commitToTimestamp
                         );
-                        return dataInfo.getEndRowID() - dataInfo.getStartRowID();
+                        return rowCount;
                     } else {
                         return -2L;
                     }

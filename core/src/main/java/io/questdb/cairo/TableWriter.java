@@ -1303,7 +1303,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
-    public void processWalBlock(
+    public boolean processWalBlock(
             @Transient Path walPath,
             int timestampIndex,
             boolean ordered,
@@ -1377,7 +1377,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         o3ShiftLagRowsUp(timestampIndex, lagRowCount, o3Lo);
                     }
                     // otherwise the rows are already copied to LAG
-                    return;
+                    return false;
                 } else {
                     if (commitToTimestamp < o3TimestampMax) {
                         final long lagThresholdRow = 1 +
@@ -1424,6 +1424,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             }
 
             finishO3Commit(partitionTimestampHiLimit);
+            return true;
         } finally {
             walPath.trimTo(walRootPathLen);
         }
@@ -1456,22 +1457,24 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // table truncated, open partition file.
             openFirstPartition(o3TimestampMin);
         }
-        processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp);
-        final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
-        final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+        boolean dataSavedToDisk = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp);
+        if (dataSavedToDisk) {
+            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
+            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
-        updateIndexes();
-        columnVersionWriter.commit();
-        txWriter.setSeqTxn(seqTxn);
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
+            updateIndexes();
+            columnVersionWriter.commit();
+            txWriter.setSeqTxn(seqTxn);
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
 
-        // Bookmark masterRef to track how many rows is in uncommitted state
-        this.committedMasterRef = masterRef;
-        processPartitionRemoveCandidates();
+            // Bookmark masterRef to track how many rows is in uncommitted state
+            this.committedMasterRef = masterRef;
+            processPartitionRemoveCandidates();
 
-        metrics.tableWriter().incrementCommits();
-        metrics.tableWriter().addCommittedRows(rowsAdded);
+            metrics.tableWriter().incrementCommits();
+            metrics.tableWriter().addCommittedRows(rowsAdded);
+        }
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
