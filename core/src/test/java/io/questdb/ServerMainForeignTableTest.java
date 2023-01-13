@@ -387,8 +387,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             sink.put(result.getString(i));
                             break;
                         default:
-                            throw new IllegalStateException("unexpected type: " + meta.getColumnType(i));
-
+                            Assert.fail("unexpected type: " + meta.getColumnType(i));
                     }
                     sink.put('\t');
                 }
