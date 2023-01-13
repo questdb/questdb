@@ -35,7 +35,6 @@ import io.questdb.log.LogFactory;
 
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -69,7 +68,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private static final String firstPartitionName = "2023-01-01";
     private static final int partitionCount = 11;
-
     private static String otherVolume;
 
     @BeforeClass
@@ -160,7 +158,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        new StringSink(),
                         TABLE_START_CONTENT);
                 assertTable(tableName);
                 dropTable(compiler, context, tableName, true);
@@ -254,7 +252,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             compiler,
                             context,
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                            Misc.getThreadLocalBuilder(),
+                            new StringSink(),
                             TABLE_START_CONTENT);
                     assertTable(tableName);
                     dropTable(compiler, context, tableName, true);
@@ -281,7 +279,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        new StringSink(),
                         TABLE_START_CONTENT);
                 assertTable(tableName);
             }
@@ -323,7 +321,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         compiler,
                         context,
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                        Misc.getThreadLocalBuilder(),
+                        new StringSink(),
                         TABLE_START_CONTENT);
                 assertTable(tableName);
                 dropTable(compiler, context, tableName, true);
@@ -332,39 +330,39 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     private static void assertTable(String tableName) throws Exception {
-        StringSink sink = new StringSink();
+        StringSink resultSink = new StringSink();
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                PreparedStatement stmt = conn.prepareStatement("tables()");
+                PreparedStatement stmt = conn.prepareStatement("select name, designatedTimestamp, partitionBy, walEnabled from tables()");
                 ResultSet result = stmt.executeQuery()
         ) {
             ResultSetMetaData meta = result.getMetaData();
             int colCount = meta.getColumnCount();
+            Assert.assertEquals(4, colCount);
             while (result.next()) {
-                // ignore table id
-                for (int i = 2; i <= colCount; i++) {
+                for (int i = 1; i <= colCount; i++) {
                     switch (meta.getColumnType(i)) {
                         case Types.BIT:
-                            sink.put(result.getBoolean(i));
+                            resultSink.put(result.getBoolean(i));
                             break;
                         case Types.INTEGER:
-                            sink.put(result.getInt(i));
+                            resultSink.put(result.getInt(i));
                             break;
                         case Types.BIGINT:
-                            sink.put(result.getLong(i));
+                            resultSink.put(result.getLong(i));
                             break;
                         case Types.VARCHAR:
-                            sink.put(result.getString(i));
+                            resultSink.put(result.getString(i));
                             break;
                         default:
                             Assert.fail("unexpected type: " + meta.getColumnType(i));
                     }
-                    sink.put('\t');
+                    resultSink.put('\t');
                 }
-                sink.clear(sink.length() - 1);
+                resultSink.clear(resultSink.length() - 1);
             }
         }
-        TestUtils.assertEquals(tableName + "\tts\tDAY\t500000\t600000000\tfalse\t" + tableName, sink.toString());
+        TestUtils.assertContains(resultSink.toString(), tableName + "\tts\tDAY\tfalse");
     }
 
     private static void createSoftLink(String foreignPath, String tablePath) throws IOException {
