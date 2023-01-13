@@ -92,7 +92,7 @@ public class AbstractO3Test {
             String table,
             CairoEngine engine
     ) throws SqlException {
-        TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
+        TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts,step", "x where sym = 'googl'");
         TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
     }
 
@@ -184,7 +184,7 @@ public class AbstractO3Test {
         // expected outcome - output ignored, but useful for debug
         // y ordered with 'order by ts' is not the same order as OOO insert into x when there are several records
         // with the same ts value
-        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+//        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, "y order by ts, step");
         compiler.compile(o3InsertSQL, sqlExecutionContext);
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x", resourceName);
 

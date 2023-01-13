@@ -139,8 +139,6 @@ public final class TestUtils {
 
         long timestampValue = -1;
         BytecodeAssembler asm = null;
-        EntityColumnFilter entityColumnFilter;
-        RecordSink recordSink;
         long chainLO = -1;
         long chainRO = -1;
         RecordChain chainL = null;
@@ -191,6 +189,7 @@ public final class TestUtils {
                         chainR.toTop();
                         while (chainR.hasNext()) {
                             try {
+//                                assertColumnValues(metadataExpected, metadataActual, chainLR, chainRR, 0, false);
                                 assertColumnValues(symAsStrTypes, symAsStrTypes, chainLR, chainRR, 0, false);
                                 recordsMatched++;
                             } catch (AssertionError ignore) {
@@ -239,9 +238,16 @@ public final class TestUtils {
 
                         if (asm == null) {
                             asm = new BytecodeAssembler();
-                            entityColumnFilter = new EntityColumnFilter();
+//                            EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+//                            entityColumnFilter.of(metadataActual.getColumnCount());
+//                            RecordSink recordSinkL = RecordSinkFactory.getInstance(asm, metadataActual, entityColumnFilter, false);
+//                            RecordSink recordSinkR = RecordSinkFactory.getInstance(asm, metadataExpected, entityColumnFilter, false);
+//                            chainL = new RecordChain(metadataActual, recordSinkL, 1024 * 1024, Integer.MAX_VALUE);
+//                            chainR = new RecordChain(metadataExpected, recordSinkR, 1024 * 1024, Integer.MAX_VALUE);
+
+                            EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                             entityColumnFilter.of(metadataActual.getColumnCount());
-                            recordSink = RecordSinkFactory.getInstance(asm, metadataActual, entityColumnFilter, true);
+                            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadataActual, entityColumnFilter, true);
                             symAsStrTypes = copySymAstStr(metadataActual);
                             chainL = new RecordChain(symAsStrTypes, recordSink, 1024 * 1024, Integer.MAX_VALUE);
                             chainR = new RecordChain(symAsStrTypes, recordSink, 1024 * 1024, Integer.MAX_VALUE);

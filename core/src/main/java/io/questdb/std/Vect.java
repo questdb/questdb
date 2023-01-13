@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.BinarySearch;
+
 public final class Vect {
 
     public static native double avgDoubleAcc(long pInt, long count, long pCount);
@@ -39,7 +41,7 @@ public final class Vect {
     public static long boundedBinarySearch64Bit(long pData, long value, long low, long high, int scanDirection) {
         long index = binarySearch64Bit(pData, value, low, high, scanDirection);
         if (index < 0) {
-            return (-index - 1) - 1;
+            return (-index - 1) - (scanDirection == BinarySearch.SCAN_UP ? 0 : 1);
         }
         return index;
     }
@@ -139,7 +141,7 @@ public final class Vect {
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     //caller must call freeMergedIndexes !!!
-    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
+    public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count);
 
     public static native double minDouble(long pDouble, long count);
 

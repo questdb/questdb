@@ -120,8 +120,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
+                    "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
                     "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n");
         });
     }
@@ -498,12 +498,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "101\tBC2\t2022-02-24T00:00:00.000000Z\tDE2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "102\tBC2\t2022-02-24T00:00:01.000000Z\tFG2\n" +
+                    "101\tBC2\t2022-02-24T00:00:00.000000Z\tDE2\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                    "103\tBC2\t2022-02-24T00:00:02.000000Z\tDE2\n" +
+                    "102\tBC2\t2022-02-24T00:00:01.000000Z\tFG2\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
+                    "103\tBC2\t2022-02-24T00:00:02.000000Z\tDE2\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
         });
@@ -1038,6 +1038,87 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
+        });
+    }
+
+    @Test
+    public void testStableO3InsertWithLag() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String tableNameLag = tableName + "_lag";
+
+            compile("create table " + tableName + " as (" +
+                    "select x - 1, " +
+                    " cast('2022-02-25T01' as timestamp) + (x + 1) / 2 * 4 * 60 * 60 * 1000000L as ts " +
+                    " from long_sequence(12)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            compile("create table insertMid as (" +
+                    "select x + 100, " +
+                    " timestamp_sequence('2022-02-25T09', 4 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(4)" +
+                    ") timestamp(ts) partition by DAY"
+            );
+
+            compile("create table insertTop as (" +
+                    "select x + 200, " +
+                    " timestamp_sequence('2022-02-25T05', 4 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY"
+            );
+
+            compile("create table insertTop2 as (" +
+                    "select x + 300, " +
+                    " timestamp_sequence('2022-02-25T04', 1 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY"
+            );
+
+            drainWalQueue();
+            compile("insert into " + tableName + " select * from insertMid");
+            drainWalQueue();
+            compile("insert into " + tableName + " select * from insertTop");
+            drainWalQueue();
+            compile("insert into " + tableName + " select * from insertTop2");
+            drainWalQueue();
+
+            compile("create table " + tableNameLag + " as (" +
+                    "select x - 1, " +
+                    " cast('2022-02-25T01' as timestamp) + (x + 1) / 2 * 4 * 60 * 60 * 1000000L as ts " +
+                    " from long_sequence(12)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            compile("insert into " + tableNameLag + " select * from insertMid");
+            compile("insert into " + tableNameLag + " select * from insertTop");
+            compile("insert into " + tableNameLag + " select * from insertTop2");
+            drainWalQueue();
+
+            String expected = "column\tts\n" +
+                    "301\t2022-02-25T04:00:00.000000Z\n" +
+                    "0\t2022-02-25T05:00:00.000000Z\n" +
+                    "1\t2022-02-25T05:00:00.000000Z\n" +
+                    "201\t2022-02-25T05:00:00.000000Z\n" +
+                    "302\t2022-02-25T05:00:00.000000Z\n" +
+                    "2\t2022-02-25T09:00:00.000000Z\n" +
+                    "3\t2022-02-25T09:00:00.000000Z\n" +
+                    "101\t2022-02-25T09:00:00.000000Z\n" +
+                    "202\t2022-02-25T09:00:00.000000Z\n" +
+                    "4\t2022-02-25T13:00:00.000000Z\n" +
+                    "5\t2022-02-25T13:00:00.000000Z\n" +
+                    "102\t2022-02-25T13:00:00.000000Z\n" +
+                    "6\t2022-02-25T17:00:00.000000Z\n" +
+                    "7\t2022-02-25T17:00:00.000000Z\n" +
+                    "103\t2022-02-25T17:00:00.000000Z\n" +
+                    "8\t2022-02-25T21:00:00.000000Z\n" +
+                    "9\t2022-02-25T21:00:00.000000Z\n" +
+                    "104\t2022-02-25T21:00:00.000000Z\n" +
+                    "10\t2022-02-26T01:00:00.000000Z\n" +
+                    "11\t2022-02-26T01:00:00.000000Z\n";
+
+            assertSql(tableNameLag, expected);
+            assertSql(tableName, expected);
+
         });
     }
 

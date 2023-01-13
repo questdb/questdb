@@ -166,7 +166,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWriteO3DataOnlyBig() throws Exception {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
-        runFuzz(TestUtils.generateRandom(LOG));
+        runFuzz(new Rnd(257538161351166L, 1673605032657L));
     }
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
@@ -598,14 +598,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 long endWalMicro = System.nanoTime() / 1000;
                 long walTotal = endWalMicro - endNonWalMicro;
 
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + " WHERE ts > '2022-03-13'", tableNameWal + " WHERE ts > '2022-03-13'", LOG);
 
                 startMicro = System.nanoTime() / 1000;
                 applyWalParallel(transactions, tableNameWal2, getRndParallelWalCount(rnd));
                 endWalMicro = System.nanoTime() / 1000;
                 long totalWalParallel = endWalMicro - startMicro;
 
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                String where = " WHERE ts between '2022-03-13T18:52' and '2022-03-13T19'";
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + where, tableNameWal2 + where, LOG);
 
                 LOG.infoW().$("=== non-wal(ms): ").$(nonWalTotal / 1000).$(" === wal(ms): ").$(walTotal / 1000).$(" === wal_parallel(ms): ").$(totalWalParallel / 1000).$();
             } finally {

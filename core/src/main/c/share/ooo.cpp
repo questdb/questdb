@@ -54,8 +54,7 @@ struct long_3x {
     uint64_t l2;
     uint64_t l3;
 
-    bool operator<=(const long_3x& other) const
-    {
+    bool operator<=(const long_3x &other) const {
         if (l1 > other.l1) return false;
         if (l1 == other.l1) {
             if (l2 > other.l2) return false;
@@ -72,7 +71,7 @@ struct long_3x {
 #if RADIX_SHUFFLE == 0
 
 template<uint16_t sh, typename T>
-inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, uint64_t size) {
+inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_t size) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < size; x++) {
         const auto digit = (src[x] >> sh) & 0xffu;
@@ -387,6 +386,42 @@ void k_way_merge_long_index(
     }
 }
 
+
+DECLARE_DISPATCHER(make_timestamp_index);
+
+void binary_merge_ts_long_index(
+        const int64_t *timestamps,
+        const int64_t timestampLo,
+        const int64_t timestamps_count,
+        const index_t *index,
+        const int64_t index_count,
+        index_t *dest
+) {
+
+    // calculate size of the tree
+    int64_t its = timestampLo, iidx = 0, r = 0;
+    int64_t timestamps_hi = timestampLo + timestamps_count;
+
+    while (its < timestamps_hi && iidx < index_count) {
+        if (timestamps[its] <= (int64_t)index[iidx].ts) {
+            dest[r].ts = timestamps[its];
+            dest[r++].i = (1ull << 63) | its;
+            its++;
+        } else {
+            dest[r++] = index[iidx++];
+        }
+    }
+
+    make_timestamp_index(
+            timestamps,
+            its,
+            timestamps_hi - 1,
+            &dest[r]
+    );
+
+    memcpy(&dest[r], &index[iidx], (index_count - iidx) * sizeof(index_t));
+}
+
 #ifdef OOO_CPP_PROFILE_TIMING
 const int perf_counter_length = 32;
 std::atomic_ulong perf_counters[perf_counter_length];
@@ -542,7 +577,7 @@ Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStruc
 
     auto count = static_cast<uint32_t>(cnt);
     const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
-    auto * merged_index = reinterpret_cast<index_t *>(mergedIndex);
+    auto *merged_index = reinterpret_cast<index_t *>(mergedIndex);
 
     uint32_t size = ceil_pow_2(count);
     index_entry_t entries[size];
@@ -565,17 +600,18 @@ Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStruc
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
-        JAVA_STATIC, jlong pIndex1, jlong index1Count, jlong pIndex2, jlong index2Count) {
+        JAVA_STATIC, jlong pTs, jlong tsIndexLo, jlong tsCount, jlong pIndex, long jIndexCount) {
     index_entry_t entries[2];
-    uint64_t merged_index_size = index1Count + index2Count;
-    entries[0].index = reinterpret_cast<index_t *> (pIndex1);
-    entries[0].pos = 0;
-    entries[0].size = index1Count;
-    entries[1].index = reinterpret_cast<index_t *>(pIndex2);
-    entries[1].pos = 0;
-    entries[1].size = index2Count;
+    uint64_t merged_index_size = tsCount + jIndexCount;
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
-    k_way_merge_long_index(entries, 2, 0, merged_index);
+    binary_merge_ts_long_index(
+            reinterpret_cast<int64_t *>(pTs),
+            (int64_t)tsIndexLo,
+            (int64_t)tsCount,
+            reinterpret_cast<index_t *>(pIndex),
+            (int64_t)jIndexCount,
+            merged_index
+    );
     return reinterpret_cast<jlong>(merged_index);
 }
 
@@ -779,7 +815,6 @@ Java_io_questdb_std_Vect_binarySearchIndexT(JNIEnv *env, jclass cl, jlong pData,
     return binary_search<index_t>(reinterpret_cast<index_t *>(pData), value, low, high, scan_dir);
 }
 
-DECLARE_DISPATCHER(make_timestamp_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData, jlong low,
                                             jlong high, jlong pIndex) {
