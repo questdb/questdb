@@ -86,15 +86,16 @@ public class TextImportRequestTask implements Mutable {
         return headerFlag;
     }
 
-    public void of(long importId,
-                   String tableName,
-                   String fileName,
-                   boolean headerFlag,
-                   String timestampColumnName,
-                   byte delimiter,
-                   String timestampFormat,
-                   int partitionBy,
-                   int atomicity
+    public void of(
+            long importId,
+            String tableName,
+            String fileName,
+            boolean headerFlag,
+            String timestampColumnName,
+            byte delimiter,
+            String timestampFormat,
+            int partitionBy,
+            int atomicity
     ) {
         this.clear();
         this.importId = importId;

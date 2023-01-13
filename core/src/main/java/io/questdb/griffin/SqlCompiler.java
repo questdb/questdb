@@ -1173,7 +1173,7 @@ public class SqlCompiler implements Closeable {
                 }
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
-                TableToken tableToken = executionContext.getTableToken(queryModel.getTableName().token);
+                TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata);
                     return model;
@@ -1256,7 +1256,7 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofRenameTable();
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
-                TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName().token);
+                TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadata(tableToken)) {
                     final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                     return compiledQuery.ofUpdate(updateOperation);
@@ -1818,9 +1818,9 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
-        final ExpressionNode name = model.getTableName();
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
         ObjList<Function> valueFunctions = null;
-        TableToken token = tableExistsOrFail(name.position, name.token, executionContext);
+        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
         try (TableRecordMetadata metadata = engine.getMetadata(
                 executionContext.getCairoSecurityContext(),
@@ -1920,9 +1920,9 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
-        final ExpressionNode name = model.getTableName();
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
 
-        TableToken tableToken = tableExistsOrFail(name.position, name.token, executionContext);
+        TableToken tableToken = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
         long insertCount;
 
         try (
@@ -1970,14 +1970,14 @@ public class SqlCompiler implements Closeable {
                     if (index == writerTimestampIndex) {
                         timestampIndexFound = i;
                         if (fromType != ColumnType.TIMESTAMP && fromType != ColumnType.STRING) {
-                            throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
+                            throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(fromType));
                         }
                     }
                 }
 
                 // fail when target table requires chronological data and cursor cannot provide it
                 if (timestampIndexFound < 0 && writerTimestampIndex >= 0) {
-                    throw SqlException.$(name.position, "select clause must provide timestamp column");
+                    throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                 }
 
                 copier = RecordToRowCopierUtils.generateCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
@@ -1985,18 +1985,18 @@ public class SqlCompiler implements Closeable {
                 // fail when target table requires chronological data and cursor cannot provide it
                 if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
                     if (cursorColumnCount <= writerTimestampIndex) {
-                        throw SqlException.$(name.position, "select clause must provide timestamp column");
+                        throw SqlException.$(tableNameExpr.position, "select clause must provide timestamp column");
                     } else {
                         int columnType = ColumnType.tagOf(cursorMetadata.getColumnType(writerTimestampIndex));
                         if (columnType != ColumnType.TIMESTAMP && columnType != ColumnType.STRING && columnType != ColumnType.NULL) {
-                            throw SqlException.$(name.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
+                            throw SqlException.$(tableNameExpr.position, "expected timestamp column but type is ").put(ColumnType.nameOf(columnType));
                         }
                     }
                 }
 
                 if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
                     throw SqlException
-                            .$(name.position, "designated timestamp of existing table (").put(writerTimestampIndex)
+                            .$(tableNameExpr.position, "designated timestamp of existing table (").put(writerTimestampIndex)
                             .put(") does not match designated timestamp in select query (")
                             .put(cursorTimestampIndex)
                             .put(')');
@@ -2108,9 +2108,9 @@ public class SqlCompiler implements Closeable {
     }
 
     private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {
-        ExpressionNode tableName = model.getTableName();
-        if (tableName.type != ExpressionNode.LITERAL) {
-            throw SqlException.$(tableName.position, "literal expected");
+        ExpressionNode tableNameExpr = model.getTableNameExpr();
+        if (tableNameExpr.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(tableNameExpr.position, "literal expected");
         }
 
         int columnNameListSize = model.getColumnNameList().size();
@@ -2509,7 +2509,7 @@ public class SqlCompiler implements Closeable {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
-            throw SqlException.$(model.getTableName().position, "column count mismatch");
+            throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);
         return model;

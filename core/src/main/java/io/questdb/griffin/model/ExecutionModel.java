@@ -40,7 +40,11 @@ public interface ExecutionModel {
         return null;
     }
 
-    default Object getTableName() {
+    default CharSequence getTableName() {
+        return null;
+    }
+    
+    default ExpressionNode getTableNameExpr() {
         return null;
     }
 

@@ -2111,9 +2111,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             QueryModel model,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        ExpressionNode tableName = model.getTableName();
-        if (tableName != null) {
-            if (tableName.type == FUNCTION) {
+        ExpressionNode tableNameExpr = model.getTableNameExpr();
+        if (tableNameExpr != null) {
+            if (tableNameExpr.type == FUNCTION) {
                 return generateFunctionQuery(model, executionContext);
             } else {
                 return generateTableQuery(model, executionContext);
@@ -3017,7 +3017,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
                         && twoDeepNested.getLatestBy().size() == 0
-                        && (tableNameEn = twoDeepNested.getTableName()) != null
+                        && (tableNameEn = twoDeepNested.getTableNameExpr()) != null
                         && twoDeepNested.getWhereClause() == null
         ) {
             CharSequence tableName = tableNameEn.token;
@@ -3613,7 +3613,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName().token;
+        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName();
         final boolean supportsRandomAccess;
         if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
             tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
@@ -4547,13 +4547,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         public void toPlan(PlanSink sink) {
             sink.type(model.getTypeName());
 
-            CharSequence tableName;
-            Object obj = model.getTableName();
-            if (obj instanceof ExpressionNode) {
-                tableName = ((ExpressionNode) obj).token;
-            } else {
-                tableName = (CharSequence) obj;
-            }
+            CharSequence tableName = model.getTableName();
             if (tableName != null) {
                 sink.meta("table").val(tableName);
             }
