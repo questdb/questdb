@@ -105,9 +105,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetryPubSeq = null;
             this.telemetrySubSeq = null;
         }
-        tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
-            tableIdGenerator.open();
+            this.tableIdGenerator.open();
         } catch (Throwable e) {
             close();
             throw e;
@@ -649,6 +649,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @Nullable
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
+        if (tableNameRegistry.isTableNameLocked(tableNameStr)) {
+            // optimisation
+            return null;
+        }
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }

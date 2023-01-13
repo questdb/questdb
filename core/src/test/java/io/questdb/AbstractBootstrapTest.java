@@ -79,7 +79,7 @@ public abstract class AbstractBootstrapTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         if (publicZipStubCreated) {
             File publicZip = new File(siteDir, "public.zip");
             if (publicZip.exists()) {

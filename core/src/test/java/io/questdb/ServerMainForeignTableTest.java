@@ -32,6 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -46,6 +48,7 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertSql;
@@ -68,24 +71,106 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private static final String firstPartitionName = "2023-01-01";
     private static final int partitionCount = 11;
 
-    private String OTHER_VOLUME;
+    private static String otherVolume;
 
-    @Before
-    public void setUp() throws IOException {
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractBootstrapTest.setUpStatic();
         try (Path path = new Path().of(root).concat("db")) {
-            int plen = path.length();
+            int pathLen = path.length();
             Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
-            Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
-            OTHER_VOLUME = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
-            createDummyConfiguration(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + OTHER_VOLUME);
+            Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
+            otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
+            createDummyConfiguration(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + otherVolume);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    @After
-    public void tearDown() throws IOException {
-        deleteFolder(OTHER_VOLUME);
+    @AfterClass
+    public static void tearDownStatic() throws Exception {
+        deleteFolder(otherVolume);
+        AbstractBootstrapTest.tearDownStatic();
+    }
+
+    @Test
+    public void testServerMainCreateTableConcurrent() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    CairoEngine engine = qdb.getCairoEngine();
+                    SqlCompiler compiler0 = new SqlCompiler(engine);
+                    SqlCompiler compiler1 = new SqlCompiler(engine);
+                    SqlExecutionContext context0 = executionContext(engine);
+                    SqlExecutionContext context1 = executionContext(engine)
+            ) {
+                qdb.start();
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+                SOCountDownLatch startLatch = new SOCountDownLatch();
+                SOCountDownLatch haltLatch = new SOCountDownLatch();
+                AtomicReference<String> user0Error = new AtomicReference<>();
+                AtomicReference<String> user1Error = new AtomicReference<>();
+
+                for (int i = 0; i < 10; i++) {
+                    startLatch.setCount(3);
+                    haltLatch.setCount(2);
+                    user0Error.set(null);
+                    user1Error.set(null);
+
+                    new Thread(() -> {
+                        try {
+                            startLatch.countDown();
+                            startLatch.await();
+                            Os.pause();
+                            createTableInVolume(cairoConfig, compiler0, context0, tableName);
+                        } catch (Throwable thr) {
+                            user0Error.set(thr.getMessage());
+                        } finally {
+                            haltLatch.countDown();
+                            Path.clearThreadLocals();
+                        }
+                    }, "user0").start();
+
+                    new Thread(() -> {
+                        try {
+                            startLatch.countDown();
+                            startLatch.await();
+                            Os.pause();
+                            createTable(cairoConfig, compiler1, context1, tableName);
+                        } catch (Throwable thr) {
+                            user1Error.set(thr.getMessage());
+                        } finally {
+                            haltLatch.countDown();
+                            Path.clearThreadLocals();
+                        }
+                    }, "user1").start();
+
+                    startLatch.countDown();
+                    haltLatch.await();
+
+                    String err0 = user0Error.get();
+                    String err1 = user1Error.get();
+                    Assert.assertTrue((err0 == null && err1 != null) || (err0 != null && err1 == null));
+                    boolean isInVolume = false;
+                    if (err0 == null) {
+                        // user1 failed create table
+                        TestUtils.assertContains(err1, "[13] table already exists");
+                        isInVolume = true;
+                        user1Error.set(null);
+                    }
+                    if (err1 == null) {
+                        // user1 failed create table in volume
+                        TestUtils.assertContains(err0, "[13] table already exists");
+                        user0Error.set(null);
+                    }
+                    assertTable(tableName);
+                    dropTable(compiler0, context0, tableName, isInVolume);
+                }
+            }
+        });
     }
 
     @Test
@@ -107,7 +192,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertTables(tableName);
+                assertTable(tableName);
                 dropTable(compiler, context, tableName, true);
             }
         });
@@ -127,7 +212,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 try {
                     createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + OTHER_VOLUME + ']');
+                    TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + otherVolume + ']');
                 }
             }
         });
@@ -201,7 +286,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                             Misc.getThreadLocalBuilder(),
                             TABLE_START_CONTENT);
-                    assertTables(tableName);
+                    assertTable(tableName);
                     dropTable(compiler, context, tableName, true);
                 }
             }
@@ -228,7 +313,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertTables(tableName);
+                assertTable(tableName);
             }
 
             // copy the table to a foreign location, remove it, then symlink it
@@ -270,13 +355,13 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                         Misc.getThreadLocalBuilder(),
                         TABLE_START_CONTENT);
-                assertTables(tableName);
+                assertTable(tableName);
                 dropTable(compiler, context, tableName, true);
             }
         });
     }
 
-    private static void assertTables(String tableName) throws Exception {
+    private static void assertTable(String tableName) throws Exception {
         StringSink sink = new StringSink();
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
@@ -355,7 +440,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private void createPopulateTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName, boolean inVolume) throws Exception {
         String createStmt = createTableStmt(tableName);
         if (inVolume) {
-            createStmt += " IN VOLUME '" + OTHER_VOLUME + '\'';
+            createStmt += " IN VOLUME '" + otherVolume + '\'';
         }
         try (OperationFuture op = compiler.compile(createStmt, context).execute(null)) {
             op.await();
@@ -383,7 +468,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         }
         if (isInVolume) {
             // drop simply unlinks, the folder remains, it is a feature as the requirements need further refinement
-            deleteFolder(OTHER_VOLUME + Files.SEPARATOR + tableName); // delete the table's folder in the other volume
+            deleteFolder(otherVolume + Files.SEPARATOR + tableName); // delete the table's folder in the other volume
         }
     }
 
