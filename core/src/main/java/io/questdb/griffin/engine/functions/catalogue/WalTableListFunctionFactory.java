@@ -124,6 +124,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
+                tableIndex = -1;
                 txReader.close();
             }
 
