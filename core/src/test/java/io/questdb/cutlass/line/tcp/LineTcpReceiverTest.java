@@ -260,7 +260,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testDateColumnAcceptsTimestamp() throws Exception {
-        Assume.assumeFalse(walEnabled);
         partitionByDefault = PartitionBy.NONE;
         String tableName = "date_column_accepts_timestamp";
 
@@ -1319,8 +1318,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease3() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1349,7 +1346,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease4() throws Exception {
-        Assume.assumeFalse(walEnabled);
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1378,7 +1374,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease5() throws Exception {
-        Assume.assumeFalse(walEnabled);
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
