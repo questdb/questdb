@@ -46,7 +46,9 @@ public interface RowCursorFactory extends Plannable {
     boolean isEntity();
 
     /**
-     * Returns true if the returned RowCursor is using an index, false otherwise
+     * Indicates if the factory uses index
+     *
+     * @return true if the returned RowCursor is using an index, false otherwise
      */
     default boolean isUsingIndex() {
         return false;

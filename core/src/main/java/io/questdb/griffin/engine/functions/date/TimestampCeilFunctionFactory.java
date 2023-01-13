@@ -56,6 +56,8 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
                 return new TimestampCeilMMFunction(args.getQuick(1));
             case 'y':
                 return new TimestampCeilYYYYFunction(args.getQuick(1));
+            case 'w':
+                return new TimestampCeilWWFunction(args.getQuick(1));
             case 'h':
                 return new TimestampCeilHHFunction(args.getQuick(1));
             case 'm':
@@ -163,6 +165,17 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilSS(timestamp);
+        }
+    }
+
+    public static class TimestampCeilWWFunction extends AbstractTimestampCeilFunction {
+        public TimestampCeilWWFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long ceil(long timestamp) {
+            return Timestamps.ceilWW(timestamp);
         }
     }
 

@@ -140,6 +140,8 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
 
     /**
      * Returns a reset borrowed iterator. It can't be used to iterate the collection in parallel.
+     *
+     * @return iterator
      */
     public PrimitiveIterator.OfInt iterator() {
         if (it == null) {

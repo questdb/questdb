@@ -128,6 +128,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * The idea is to access the memory to page fault and, thus, warm up the pages
      * in parallel, on multiple threads, instead of relying on the "query owner" thread
      * to do it later serially.
+     *
+     * @param record record to use
+     * @param rows   rows to pre-touch
      */
     public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
         if (!preTouchEnabled || preTouchColumnTypes == null) {
