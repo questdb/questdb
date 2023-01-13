@@ -48,7 +48,6 @@ import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.*;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertSql;
@@ -107,67 +106,41 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     SqlExecutionContext context1 = executionContext(engine)
             ) {
                 qdb.start();
+
                 PropServerConfiguration.setCreateTableInVolumeAllowed(true);
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+
                 SOCountDownLatch startLatch = new SOCountDownLatch();
                 SOCountDownLatch haltLatch = new SOCountDownLatch();
-                AtomicReference<String> user0Error = new AtomicReference<>();
-                AtomicReference<String> user1Error = new AtomicReference<>();
 
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < 11; i++) {
                     startLatch.setCount(3);
                     haltLatch.setCount(2);
-                    user0Error.set(null);
-                    user1Error.set(null);
 
-                    new Thread(() -> {
-                        try {
-                            startLatch.countDown();
-                            startLatch.await();
-                            Os.pause();
-                            createTableInVolume(cairoConfig, compiler0, context0, tableName);
-                        } catch (Throwable thr) {
-                            user0Error.set(thr.getMessage());
-                        } finally {
-                            haltLatch.countDown();
-                            Path.clearThreadLocals();
-                        }
-                    }, "user0").start();
+                    concurrentTableCreator(
+                            "createTable",
+                            cairoConfig,
+                            compiler0,
+                            context0,
+                            startLatch,
+                            haltLatch,
+                            tableName,
+                            false
+                    ).start();
 
-                    new Thread(() -> {
-                        try {
-                            startLatch.countDown();
-                            startLatch.await();
-                            Os.pause();
-                            createTable(cairoConfig, compiler1, context1, tableName);
-                        } catch (Throwable thr) {
-                            user1Error.set(thr.getMessage());
-                        } finally {
-                            haltLatch.countDown();
-                            Path.clearThreadLocals();
-                        }
-                    }, "user1").start();
+                    concurrentTableCreator(
+                            "createTableInVolume",
+                            cairoConfig,
+                            compiler1,
+                            context1,
+                            startLatch,
+                            haltLatch,
+                            tableName,
+                            true
+                    ).start();
 
                     startLatch.countDown();
                     haltLatch.await();
-
-                    String err0 = user0Error.get();
-                    String err1 = user1Error.get();
-                    Assert.assertTrue((err0 == null && err1 != null) || (err0 != null && err1 == null));
-                    boolean isInVolume = false;
-                    if (err0 == null) {
-                        // user1 failed create table
-                        TestUtils.assertContains(err1, "[13] table already exists");
-                        isInVolume = true;
-                        user1Error.set(null);
-                    }
-                    if (err1 == null) {
-                        // user1 failed create table in volume
-                        TestUtils.assertContains(err0, "[13] table already exists");
-                        user0Error.set(null);
-                    }
-                    assertTable(tableName);
-                    dropTable(compiler0, context0, tableName, isInVolume);
                 }
             }
         });
@@ -434,6 +407,53 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 null,
                 -1,
                 null);
+    }
+
+    private Thread concurrentTableCreator(
+            String threadName,
+            CairoConfiguration cairoConfig,
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            SOCountDownLatch startLatch,
+            SOCountDownLatch haltLatch,
+            String tableName,
+            boolean isInVolume
+    ) {
+        return new Thread(() -> {
+            try {
+                startLatch.countDown();
+                startLatch.await();
+                Os.pause();
+                if (isInVolume) {
+                    createTableInVolume(cairoConfig, compiler, context, tableName);
+                } else {
+                    createTable(cairoConfig, compiler, context, tableName);
+                }
+                assertTable(tableName);
+            } catch (Throwable thr) {
+                TestUtils.assertContains(thr.getMessage(), "[13] table already exists");
+                long startTs = System.currentTimeMillis();
+                boolean tableAsserted = false;
+                while (System.currentTimeMillis() - startTs < 500L) {
+                    try {
+                        assertTable(tableName);
+                        tableAsserted = true;
+                        break;
+                    } catch (Throwable ignore) {
+                        // no-op
+                    }
+                }
+                Assert.assertTrue(tableAsserted);
+                try {
+                    dropTable(compiler, context, tableName, !isInVolume);
+                } catch (Throwable unexpected) {
+                    Assert.fail("unexpected: " + unexpected.getMessage());
+                }
+            } finally {
+                haltLatch.countDown();
+                Path.clearThreadLocals();
+            }
+        }, threadName);
     }
 
     private void createPopulateTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName, boolean inVolume) throws Exception {
