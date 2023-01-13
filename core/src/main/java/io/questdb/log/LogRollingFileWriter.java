@@ -61,6 +61,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     // can be set via reflection
     private String location;
     private String logDir;
+    private NativeLPSZ logFileName = new NativeLPSZ();
     private String logFileTemplate;
     private int nBufferSize;
     private long nLifeDuration;
@@ -364,9 +365,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeExcessiveLogsVisitor(long filePointer, int type) {
         path.trimTo(logDir.length());
         path.concat(filePointer).$();
-        NativeLPSZ name = new NativeLPSZ();
-        name.of(filePointer);
-        if (Files.notDots(filePointer) && type == Files.DT_FILE && name.toString().contains(logFileTemplate)
+        logFileName.of(filePointer);
+        if (Files.notDots(filePointer) && type == Files.DT_FILE && Chars.contains(logFileName, logFileTemplate)
                 && (currentLogSizeSum += Files.length(path)) > nSizeLimit) {
             if (!ff.remove(path)) {
                 throw new LogError("cannot remove: " + path.$());
@@ -387,9 +387,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeOldLogsVisitor(long filePointer, int type) {
         path.trimTo(logDir.length());
         path.concat(filePointer).$();
-        NativeLPSZ name = new NativeLPSZ();
-        name.of(filePointer);
-        if (Files.notDots(filePointer) && type == Files.DT_FILE && name.toString().contains(logFileTemplate)
+        logFileName.of(filePointer);
+        if (Files.notDots(filePointer) && type == Files.DT_FILE && Chars.contains(logFileName, logFileTemplate)
                 && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
             if (!ff.remove(path)) {
                 throw new LogError("cannot remove: " + path.$());
