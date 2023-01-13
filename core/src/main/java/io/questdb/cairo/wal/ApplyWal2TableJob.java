@@ -103,6 +103,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return 0;
                 }
 
+                rowsSinceLastCommit = 0;
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     applyOutstandingWalTransactions(tableToken, writer, engine, sqlToOperation, tempPath);
@@ -451,6 +452,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         } else {
                             rowsSinceLastCommit += rowCount;
                             if (rowsSinceLastCommit < smallCommitThreshold) {
+                                // This is an optimisation to apply small commits.
+                                // We want to store data in memory LAG buffer and commit it later when the buffer size is reasonably big
+                                // or when there is no more data available in WAL.
                                 // Do not commit yet, copy to LAG memory buffer and wait for more rows
                                 commitToTimestamp = -1;
                             } else {

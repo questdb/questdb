@@ -30,13 +30,17 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class CompareTableTest {
     protected static final Log LOG = LogFactory.getLog(CompareTableTest.class);
 
     @Test
+    @Ignore
     public void testCompareTables() throws SqlException {
+        // This is an integration test stub to compare 2 tables 
+        // on local disk.
         String table1Name = "cpu";
         String table2Name = "cpu_non_wal";
         String root = "/Users/alpel/questdb-root/db";
