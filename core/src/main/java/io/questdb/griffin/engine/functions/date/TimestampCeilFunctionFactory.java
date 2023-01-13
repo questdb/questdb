@@ -170,7 +170,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilWWFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilWWFunction(Function arg) {
-            super(arg);
+            super(arg, 'w');
         }
 
         @Override

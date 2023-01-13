@@ -253,6 +253,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorWW(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "week";
+        }
     }
 
     static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
