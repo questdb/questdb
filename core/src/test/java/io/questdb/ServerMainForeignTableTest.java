@@ -445,12 +445,15 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         try (OperationFuture op = compiler.compile(createStmt, context).execute(null)) {
             op.await();
         }
-        try (TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
-                .col("investmentMill", ColumnType.LONG)
-                .col("ticketThous", ColumnType.INT)
-                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                .timestamp("ts")) {
-            compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context);
+        try (
+                TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
+                        .col("investmentMill", ColumnType.LONG)
+                        .col("ticketThous", ColumnType.INT)
+                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                        .timestamp("ts");
+                OperationFuture op = compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount), context).execute(null)
+        ) {
+            op.await();
         }
     }
 
