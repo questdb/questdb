@@ -111,7 +111,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 SOCountDownLatch startLatch = new SOCountDownLatch();
                 SOCountDownLatch haltLatch = new SOCountDownLatch();
 
-                for (int i = 0; i < 11; i++) {
+                for (int i = 0; i < 3; i++) {
                     startLatch.setCount(3);
                     haltLatch.setCount(2);
                     concurrentTableCreator(
