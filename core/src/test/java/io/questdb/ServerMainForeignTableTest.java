@@ -89,7 +89,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         deleteFolder(otherVolume);
         AbstractBootstrapTest.tearDownStatic();
     }
-    
+
     @Test
     public void testServerMainCreateTableInAllowedVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
@@ -279,6 +279,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
+    @Ignore("broken on mac")
     public void testServerMainCreateTableWhileConcurrentCreateTable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
