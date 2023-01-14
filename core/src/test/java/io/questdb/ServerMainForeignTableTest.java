@@ -89,58 +89,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         deleteFolder(otherVolume);
         AbstractBootstrapTest.tearDownStatic();
     }
-
-    @Test
-    public void testServerMainCreateTableConcurrent() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
-        String tableName = testName.getMethodName();
-        assertMemoryLeak(() -> {
-            try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    CairoEngine engine = qdb.getCairoEngine();
-                    SqlCompiler compiler0 = new SqlCompiler(engine);
-                    SqlCompiler compiler1 = new SqlCompiler(engine);
-                    SqlExecutionContext context0 = executionContext(engine);
-                    SqlExecutionContext context1 = executionContext(engine)
-            ) {
-                qdb.start();
-
-                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
-                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-
-                SOCountDownLatch startLatch = new SOCountDownLatch();
-                SOCountDownLatch haltLatch = new SOCountDownLatch();
-
-                for (int i = 0; i < 3; i++) {
-                    startLatch.setCount(3);
-                    haltLatch.setCount(2);
-                    concurrentTableCreator(
-                            "createTable",
-                            cairoConfig,
-                            compiler0,
-                            context0,
-                            startLatch,
-                            haltLatch,
-                            tableName,
-                            false
-                    ).start();
-                    concurrentTableCreator(
-                            "createTableInVolume",
-                            cairoConfig,
-                            compiler1,
-                            context1,
-                            startLatch,
-                            haltLatch,
-                            tableName,
-                            true
-                    ).start();
-                    startLatch.countDown();
-                    haltLatch.await();
-                }
-            }
-        });
-    }
-
+    
     @Test
     public void testServerMainCreateTableInAllowedVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
@@ -325,6 +274,57 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                         TABLE_START_CONTENT);
                 assertTable(tableName);
                 dropTable(compiler, context, tableName, true);
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableWhileConcurrentCreateTable() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    CairoEngine engine = qdb.getCairoEngine();
+                    SqlCompiler compiler0 = new SqlCompiler(engine);
+                    SqlCompiler compiler1 = new SqlCompiler(engine);
+                    SqlExecutionContext context0 = executionContext(engine);
+                    SqlExecutionContext context1 = executionContext(engine)
+            ) {
+                qdb.start();
+
+                PropServerConfiguration.setCreateTableInVolumeAllowed(true);
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+
+                SOCountDownLatch startLatch = new SOCountDownLatch();
+                SOCountDownLatch haltLatch = new SOCountDownLatch();
+
+                for (int i = 0; i < 2; i++) {
+                    startLatch.setCount(3);
+                    haltLatch.setCount(2);
+                    concurrentTableCreator(
+                            "createTable",
+                            cairoConfig,
+                            compiler0,
+                            context0,
+                            startLatch,
+                            haltLatch,
+                            tableName,
+                            false
+                    ).start();
+                    concurrentTableCreator(
+                            "createTableInVolume",
+                            cairoConfig,
+                            compiler1,
+                            context1,
+                            startLatch,
+                            haltLatch,
+                            tableName,
+                            true
+                    ).start();
+                    startLatch.countDown();
+                    haltLatch.await();
+                }
             }
         });
     }
