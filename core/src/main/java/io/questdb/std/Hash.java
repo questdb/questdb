@@ -120,9 +120,10 @@ public final class Hash {
     /**
      * Calculates positive integer hash of memory pointer using 64-bit variant of xxHash hash algorithm.
      *
-     * @param p    memory pointer
-     * @param len  memory length in bytes
-     * @param seed seed value
+     * @param p        memory pointer
+     * @param len      memory length in bytes
+     * @param seed     seed value
+     * @param accessor memory accessor
      * @return hash code
      */
     public static long xxHash64(long p, long len, long seed, MemoryAccessor accessor) {

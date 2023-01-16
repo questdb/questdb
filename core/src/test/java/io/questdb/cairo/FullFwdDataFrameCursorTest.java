@@ -124,6 +124,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailToRemoveDistressFileByWeek() throws Exception {
+        testFailToRemoveDistressFile(PartitionBy.WEEK, 10000000L * 8);
+    }
+
+    @Test
     public void testFailToRemoveDistressFileByYear() throws Exception {
         testFailToRemoveDistressFile(PartitionBy.YEAR, 10000000L * 32 * 12);
     }
@@ -195,6 +200,21 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testIndexFailAtRuntimeByNoneEmpty3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 1);
+    }
+
+    @Test
+    public void testIndexFailAtRuntimeByWeek1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v", 2);
+    }
+
+    @Test
+    public void testIndexFailAtRuntimeByWeek2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
+    }
+
+    @Test
+    public void testIndexFailAtRuntimeByWeek3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -348,6 +368,26 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelIndexByWeek() throws Exception {
+        testParallelIndex(PartitionBy.WEEK, 1000000 * 4, 3, WORK_STEALING_DONT_TEST);
+    }
+
+    @Test
+    public void testParallelIndexByWeekBusy() throws Exception {
+        testParallelIndex(PartitionBy.WEEK, 1000000 * 4, 3, WORK_STEALING_BUSY_QUEUE);
+    }
+
+    @Test
+    public void testParallelIndexByWeekContention() throws Exception {
+        testParallelIndex(PartitionBy.WEEK, 1000000 * 4, 3, WORK_STEALING_HIGH_CONTENTION);
+    }
+
+    @Test
+    public void testParallelIndexByWeekNoPickup() throws Exception {
+        testParallelIndex(PartitionBy.WEEK, 1000000 * 4, 3, WORK_STEALING_NO_PICKUP);
+    }
+
+    @Test
     public void testParallelIndexByYear() throws Exception {
         testParallelIndex(PartitionBy.YEAR, 1000000 * 10 * 12, 3, WORK_STEALING_DONT_TEST);
     }
@@ -458,6 +498,36 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelIndexFailAtRuntimeByWeek1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 6, false, "1970-W02" + Files.SEPARATOR + "a.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByWeek2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "b.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByWeek3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, false, "1970-W02" + Files.SEPARATOR + "c.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByWeekEmpty1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970-W01" + Files.SEPARATOR + "a.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByWeekEmpty2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970-W01" + Files.SEPARATOR + "b.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByWeekEmpty3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.WEEK, 10000000L * 7, true, "1970-W01" + Files.SEPARATOR + "c.v", 0);
+    }
+
+    @Test
     public void testParallelIndexFailAtRuntimeByYear1v() throws Exception {
         testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
     }
@@ -503,6 +573,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstColByWeek() throws Exception {
+        testRemoveFirstColumn(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
+    }
+
+    @Test
     public void testRemoveFirstColByYear() throws Exception {
         testRemoveFirstColumn(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
@@ -523,6 +598,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveLastColByWeek() throws Exception {
+        testRemoveLastColumn(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
+    }
+
+    @Test
     public void testRemoveLastColByYear() throws Exception {
         testRemoveLastColumn(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
@@ -540,6 +620,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testRemoveMidColByNone() throws Exception {
         testRemoveMidColumn(PartitionBy.NONE, 1000000 * 60 * 5, 0);
+    }
+
+    @Test
+    public void testRemoveMidColByWeek() throws Exception {
+        testRemoveMidColumn(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
@@ -630,6 +715,26 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceIndexedWithIndexedByWeek() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByWeekR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByWeekRTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByWeekTrunc() throws Exception {
+        testReplaceIndexedColWithIndexedWithTruncate(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+    }
+
+    @Test
     public void testReplaceIndexedWithUnindexedByByDay() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
     }
@@ -659,6 +764,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testReplaceIndexedWithUnindexedByByYearR() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByWeek() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByWeekR() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
     }
 
     @Test
@@ -702,6 +817,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceUnindexedWithIndexedByWeek() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+    }
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByWeekR() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
+    }
+
+    @Test
     public void testReplaceUnindexedWithIndexedByYear() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
@@ -726,6 +851,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testRollbackSymbolIndexByNone() throws Exception {
         testSymbolIndexReadAfterRollback(PartitionBy.NONE, 1000000 * 60 * 5, 0);
+    }
+
+    @Test
+    public void testRollbackSymbolIndexByWeek() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
     }
 
     @Test
@@ -833,6 +963,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testSymbolIndexReadByNoneAfterAlter() throws Exception {
         testSymbolIndexReadAfterAlter(PartitionBy.NONE, 1000000 * 60 * 5, 0, 1000);
+    }
+
+    @Test
+    public void testSymbolIndexReadByWeek() throws Exception {
+        testSymbolIndexRead(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2);
+    }
+
+    @Test
+    public void testSymbolIndexReadByWeekAfterAlter() throws Exception {
+        testSymbolIndexReadAfterAlter(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, 1000);
     }
 
     @Test

@@ -43,7 +43,9 @@ public interface SqlExecutionCircuitBreakerConfiguration {
     NetworkFacade getNetworkFacade();
 
     /**
-     * Returns maximum SQL execution time in millis.
+     * Maximum SQL execution time in millis.
+     *
+     * @return maximum SQL execution time in millis
      */
     long getTimeout();
 
