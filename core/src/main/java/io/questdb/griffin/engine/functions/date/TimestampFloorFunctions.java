@@ -181,6 +181,17 @@ final class TimestampFloorFunctions {
         }
     }
 
+    static class TimestampFloorWWFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorWWFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorWW(timestamp);
+        }
+    }
+
     static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
         public TimestampFloorYYYYFunction(Function arg) {
             super(arg);

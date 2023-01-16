@@ -55,6 +55,11 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBusyPollByWeek() throws Exception {
+        testBusyPollFromMidTable(PartitionBy.WEEK, 7 * 3000000000L);
+    }
+
+    @Test
     public void testBusyPollByYear() throws Exception {
         testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 500000000L);
     }
@@ -72,6 +77,11 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
     @Test
     public void testBusyPollFromBottomByNone() throws Exception {
         testBusyPollFromBottomOfTable(PartitionBy.NONE, 10000L);
+    }
+
+    @Test
+    public void testBusyPollFromBottomByWeek() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.WEEK, 7 * 3000000000L);
     }
 
     @Test
@@ -94,6 +104,15 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                 40000000,
                 300_000,
                 "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by MONTH"
+        );
+    }
+
+    @Test
+    public void testByWeek() throws Exception {
+        testBusyPoll(
+                10000000,
+                300_000,
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by WEEK"
         );
     }
 

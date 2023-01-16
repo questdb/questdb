@@ -103,6 +103,11 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnAndOpenWriterByWeek() throws Exception {
+        testAddColumnAndOpenWriter(PartitionBy.WEEK, 1000);
+    }
+
+    @Test
     public void testAddColumnAndOpenWriterByYear() throws Exception {
         testAddColumnAndOpenWriter(PartitionBy.YEAR, 1000);
     }
