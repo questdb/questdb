@@ -81,10 +81,11 @@ public class MemEqBenchmark {
                 return false;
             }
         }
-        for (; i + 3 < len; i += 4) {
+        if (i + 3 < len) {
             if (Unsafe.getUnsafe().getInt(a + i) != Unsafe.getUnsafe().getInt(b + i)) {
                 return false;
             }
+            i += 4;
         }
         for (; i < len; i++) {
             if (Unsafe.getUnsafe().getByte(a + i) != Unsafe.getUnsafe().getByte(b + i)) {
