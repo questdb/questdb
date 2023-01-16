@@ -33,6 +33,7 @@ final class FastMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final int[] valueOffsets;
     private long address;
+    private long limit;
     private boolean newValue;
     private FastMapRecord record; // double-linked
 
@@ -186,12 +187,16 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void putByte(int index, byte value) {
-        Unsafe.getUnsafe().putByte(address0(index), value);
+        final long p = address0(index);
+        assert p + Byte.BYTES < limit;
+        Unsafe.getUnsafe().putByte(p, value);
     }
 
     @Override
     public void putChar(int index, char value) {
-        Unsafe.getUnsafe().putChar(address0(index), value);
+        final long p = address0(index);
+        assert p + Character.BYTES < limit;
+        Unsafe.getUnsafe().putChar(p, value);
     }
 
     @Override
@@ -201,27 +206,36 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void putDouble(int index, double value) {
-        Unsafe.getUnsafe().putDouble(address0(index), value);
+        final long p = address0(index);
+        assert p + Double.BYTES < limit;
+        Unsafe.getUnsafe().putDouble(p, value);
     }
 
     @Override
     public void putFloat(int index, float value) {
-        Unsafe.getUnsafe().putFloat(address0(index), value);
+        final long p = address0(index);
+        assert p + Float.BYTES < limit;
+        Unsafe.getUnsafe().putFloat(p, value);
     }
 
     @Override
     public void putInt(int index, int value) {
-        Unsafe.getUnsafe().putInt(address0(index), value);
+        final long p = address0(index);
+        assert p + Integer.BYTES < limit;
+        Unsafe.getUnsafe().putInt(p, value);
     }
 
     @Override
     public void putLong(int index, long value) {
-        Unsafe.getUnsafe().putLong(address0(index), value);
+        final long p = address0(index);
+        assert p + Long.BYTES < limit;
+        Unsafe.getUnsafe().putLong(p, value);
     }
 
     @Override
     public void putLong256(int index, Long256 value) {
         final long p = address0(index);
+        assert p + Long256.BYTES < limit;
         Unsafe.getUnsafe().putLong(p, value.getLong0());
         Unsafe.getUnsafe().putLong(p + Long.BYTES, value.getLong1());
         Unsafe.getUnsafe().putLong(p + 2 * Long.BYTES, value.getLong2());
@@ -240,7 +254,7 @@ final class FastMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        record.of(address);
+        record.of(address, limit);
     }
 
     private long address0(int index) {
@@ -251,8 +265,9 @@ final class FastMapValue implements MapValue {
         this.record = record;
     }
 
-    FastMapValue of(long address, boolean newValue) {
+    FastMapValue of(long address, long limit, boolean newValue) {
         this.address = address;
+        this.limit = limit;
         this.newValue = newValue;
         return this;
     }

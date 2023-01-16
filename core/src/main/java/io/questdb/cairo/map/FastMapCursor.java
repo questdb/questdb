@@ -36,6 +36,7 @@ public final class FastMapCursor implements RecordCursor {
     private final MapRecord recordB;
     private long address;
     private int count;
+    private long limit;
     private int remaining;
     private long topAddress;
 
@@ -81,7 +82,7 @@ public final class FastMapCursor implements RecordCursor {
             }
 
             remaining--;
-            recordA.of(address);
+            recordA.of(address, limit);
             return true;
         }
         return false;
@@ -89,8 +90,7 @@ public final class FastMapCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        assert record instanceof FastMapRecord;
-        ((FastMapRecord) record).of(atRowId);
+        ((FastMapRecord) record).of(atRowId, limit);
     }
 
     @Override
@@ -104,8 +104,9 @@ public final class FastMapCursor implements RecordCursor {
         remaining = count;
     }
 
-    FastMapCursor init(long address, int count) {
+    FastMapCursor init(long address, long limit, int count) {
         this.address = this.topAddress = address;
+        this.limit = limit;
         this.remaining = this.count = count;
         return this;
     }

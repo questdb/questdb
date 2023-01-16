@@ -56,6 +56,7 @@ final class FastMapRecord implements MapRecord {
     private long keyAddress;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
+    private long limit;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
     private long valueAddress;
@@ -315,7 +316,7 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(valueAddress, false);
+        return value.of(valueAddress, limit, false);
     }
 
     @Override
@@ -443,9 +444,10 @@ final class FastMapRecord implements MapRecord {
         return new FastMapRecord(valueOffsets, keyTypes, split, keyOffset, csA, csB, bs, long256A, long256B);
     }
 
-    void of(long address) {
+    void of(long address, long limit) {
         this.valueAddress = address;
         this.keyAddress = address + keyOffset;
+        this.limit = limit;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;
     }
