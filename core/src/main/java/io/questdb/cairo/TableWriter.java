@@ -1230,7 +1230,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     @Override
     public Row newRow(long timestamp) {
-
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
 
@@ -1254,6 +1253,15 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     }
 
                     if (timestamp > partitionTimestampHi && PartitionBy.isPartitioned(partitionBy)) {
+                        int pIndex = txWriter.getPartitionIndex(partitionTimestampHi);
+                        if (txWriter.isPartitionReadOnly(pIndex)) {
+                            LOG.critical()
+                                    .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                                    .$(", timestamp=").$ts(partitionFloorMethod.floor(partitionTimestampHi))
+                                    .$(", numRows=").$(txWriter.getTransientRowCount() - txWriter.getPartitionSizeByIndex(pIndex))
+                                    .$();
+                            rollback();
+                        }
                         switchPartition(timestamp);
                     }
                 }
@@ -1711,7 +1719,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     masterRef++;
                 }
                 freeColumns(false);
-                this.txWriter.unsafeLoadAll();
+                txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
                 columnVersionWriter.readUnsafe();
@@ -2562,6 +2570,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 }
             } else if (partitionBy != PartitionBy.NONE) {
                 // check that we can write to the partition
+
                 long activePartitionTs = partitionFloorMethod.floor(txWriter.getMaxTimestamp());
                 int pIndex = txWriter.getPartitionIndex(activePartitionTs);
                 if (pIndex > -1 && txWriter.isPartitionReadOnly(pIndex)) {
