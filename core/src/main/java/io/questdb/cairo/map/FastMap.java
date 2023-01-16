@@ -320,7 +320,7 @@ public class FastMap implements Map, Reopenable {
             kPos |= 0x7;
             kPos++;
         }
-        setPackedOffset(index, keyWriter.startAddress - kStart, hashCode);
+        setPackedOffset(offsets, index, keyWriter.startAddress - kStart, hashCode);
         if (--free == 0) {
             rehash();
         }
@@ -328,14 +328,10 @@ public class FastMap implements Map, Reopenable {
         return valueOf(keyWriter.startAddress, true, value);
     }
 
-    private long getPackedOffset(int index) {
-        return getPackedOffset(offsets, index);
-    }
-
     private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {
         long packedOffset;
         long offset;
-        while ((offset = unpackOffset(packedOffset = getPackedOffset(index = (++index & mask)))) > -1) {
+        while ((offset = unpackOffset(packedOffset = getPackedOffset(offsets, index = (++index & mask)))) > -1) {
             if (hashCode == unpackHashCode(packedOffset) && keyWriter.eq(offset)) {
                 return valueOf(kStart + offset, false, value);
             }
@@ -346,7 +342,7 @@ public class FastMap implements Map, Reopenable {
     private FastMapValue probeReadOnly(BaseKey keyWriter, int index, long hashCode, FastMapValue value) {
         long packedOffset;
         long offset;
-        while ((offset = unpackOffset(packedOffset = getPackedOffset(index = (++index & mask)))) > -1) {
+        while ((offset = unpackOffset(packedOffset = getPackedOffset(offsets, index = (++index & mask)))) > -1) {
             if (hashCode == unpackHashCode(packedOffset) && keyWriter.eq(offset)) {
                 return valueOf(kStart + offset, false, value);
             }
@@ -362,7 +358,7 @@ public class FastMap implements Map, Reopenable {
         newOffsets.zero(0);
 
         for (int i = 0, k = (int) offsets.size(); i < k; i++) {
-            long packedOffset = getPackedOffset(i);
+            long packedOffset = getPackedOffset(offsets, i);
             long offset = unpackOffset(packedOffset);
             if (offset < 0) {
                 continue;
@@ -408,11 +404,6 @@ public class FastMap implements Map, Reopenable {
         } else {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
-    }
-
-    private void setPackedOffset(int index, long offset, int hashCode) {
-        final int compressedOffset = (int) ((offset >> 3) + 1);
-        offsets.set(index, Numbers.encodeLowHighInts(compressedOffset, hashCode));
     }
 
     private FastMapValue valueOf(long address, boolean newValue, FastMapValue value) {
@@ -491,7 +482,7 @@ public class FastMap implements Map, Reopenable {
             // [ len | value block | key offset block | key data block ]
             int hashCode = hash();
             int index = hashCode & mask;
-            long packedOffset = getPackedOffset(index);
+            long packedOffset = getPackedOffset(offsets, index);
             long offset = unpackOffset(packedOffset);
 
             if (offset < 0) {
@@ -507,7 +498,7 @@ public class FastMap implements Map, Reopenable {
             commit();
             int hashCode = hash();
             int index = hashCode & mask;
-            long packedOffset = getPackedOffset(index);
+            long packedOffset = getPackedOffset(offsets, index);
             long offset = unpackOffset(packedOffset);
 
             if (offset < 0) {
