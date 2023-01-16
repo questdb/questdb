@@ -533,7 +533,7 @@ public class FastMap implements Map, Reopenable {
 
             if (offset < 0) {
                 return null;
-            } else if (eq(offset)) {
+            } else if (hashCode == getHashCode(index) && eq(offset)) {
                 return valueOf(kStart + offset, false, value);
             } else {
                 return probeReadOnly(this, index, hashCode, value);
