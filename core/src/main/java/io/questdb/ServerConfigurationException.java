@@ -30,10 +30,6 @@ public class ServerConfigurationException extends Exception {
     }
 
     public static ServerConfigurationException forInvalidKey(String key, String value) {
-        return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + ']');
-    }
-
-    public static ServerConfigurationException forInvalidVolumePath(CharSequence path) {
-        return new ServerConfigurationException("inaccessible volume [path=" + path + ']');
+        return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + "]");
     }
 }

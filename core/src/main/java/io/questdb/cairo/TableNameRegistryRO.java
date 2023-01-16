@@ -62,11 +62,6 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public boolean isTableNameLocked(String tableName) {
-        throw CairoException.critical(0).put("instance is read only");
-    }
-
-    @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         throw CairoException.critical(0).put("instance is read only");
     }
