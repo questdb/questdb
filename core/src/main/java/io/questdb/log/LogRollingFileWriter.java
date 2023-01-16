@@ -61,7 +61,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     // can be set via reflection
     private String location;
     private String logDir;
-    private NativeLPSZ logFileName = new NativeLPSZ();
+    private final NativeLPSZ logFileName = new NativeLPSZ();
     private String logFileTemplate;
     private int nBufferSize;
     private long nLifeDuration;
