@@ -1194,11 +1194,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return updateOperatorImpl;
     }
 
-    @Override
-    public int getWriterType() {
-        return TableWriterAPI.WRITER_METADATA_SERVICE;
-    }
-
     public boolean hasO3() {
         return o3MasterRef > -1;
     }
@@ -1796,6 +1791,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long size() {
         // This is uncommitted row count
         return txWriter.getRowCount() + getO3RowCount();
+    }
+
+    @Override
+    public boolean supportsMultipleWriters() {
+        return false;
     }
 
     /**

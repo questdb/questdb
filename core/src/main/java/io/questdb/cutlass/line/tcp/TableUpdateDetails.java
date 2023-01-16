@@ -91,13 +91,13 @@ public class TableUpdateDetails implements Closeable {
         TableRecordMetadata tableMetadata = writer.getMetadata();
         this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableToken = writer.getTableToken();
-        if (writer.getWriterType() == TableWriterAPI.WRITER_METADATA_SERVICE) {
+        if (writer.supportsMultipleWriters()) {
+            metadataService = null;
+            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
+        } else {
             metadataService = (MetadataService) writer;
             metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
             this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();
-        } else {
-            metadataService = null;
-            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
         }
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {

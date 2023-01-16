@@ -715,11 +715,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public int getWriterType() {
-            return TableWriterAPI.WRITER_OTHER;
-        }
-
-        @Override
         public void ic() {
         }
 
@@ -739,6 +734,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
         @Override
         public void rollback() {
+        }
+
+        @Override
+        public boolean supportsMultipleWriters() {
+            return true;
         }
 
         @Override

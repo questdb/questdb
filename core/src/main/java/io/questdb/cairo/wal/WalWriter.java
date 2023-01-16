@@ -325,11 +325,6 @@ public class WalWriter implements TableWriterAPI {
         return walName;
     }
 
-    @Override
-    public int getWriterType() {
-        return TableWriterAPI.WRITER_OTHER;
-    }
-
     public void goActive() {
         goActive(Long.MAX_VALUE);
     }
@@ -475,6 +470,11 @@ public class WalWriter implements TableWriterAPI {
             distressed = true;
             throw th;
         }
+    }
+
+    @Override
+    public boolean supportsMultipleWriters() {
+        return true;
     }
 
     @Override
