@@ -147,14 +147,16 @@ int64_t COUNT_LONG(int64_t *pl, int64_t count) {
     const int step = 8;
     Vec8q vec;
     Vec8qb bVec;
-    int64_t result = 0;
+    Vec8q veccount = 0;
+
     int i;
     for (i = 0; i < count - 7; i += step) {
-        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
         bVec = vec != L_MIN;
-        result += horizontal_count(bVec);
+        veccount = if_add(bVec, veccount, 1);
     }
+
+    int64_t result = horizontal_add(veccount);
 
     for (; i < count; i++) {
         int64_t x = *(pl + i);
@@ -265,14 +267,16 @@ int64_t COUNT_INT(int32_t *pi, int64_t count) {
     const auto *vec_lim = lim - remainder;
 
     Vec16i vec;
+    Vec16i veccount = 0;
     Vec16ib bVec;
-    int64_t result = 0;
+
     for (; pi < vec_lim; pi += step) {
-        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
         bVec = vec != I_MIN;
-        result += horizontal_count(bVec);
+        veccount = if_add(bVec, veccount, 1);
     }
+
+    int64_t result = horizontal_add(veccount);
 
     if (pi < lim) {
         for (; pi < lim; pi++) {
@@ -383,13 +387,11 @@ int64_t COUNT_DOUBLE(double *d, int64_t count) {
     Vec8q nancount = 0;
     int i;
     for (i = 0; i < count - 7; i += step) {
-        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
         vec.load(d + i);
         bVec = is_nan(vec);
         nancount = if_add(bVec, nancount, 1);
     }
 
-    _mm_prefetch(d, _MM_HINT_T0);
     int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
