@@ -118,7 +118,11 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, String lockReason) {
-        return getWriterEntry(tableToken, lockReason, null);
+        return get(tableToken, lockReason, true);
+    }
+
+    public TableWriter get(TableToken tableToken, String lockReason, boolean logBusy) {
+        return getWriterEntry(tableToken, lockReason, null, logBusy);
     }
 
     /**
@@ -152,7 +156,7 @@ public class WriterPool extends AbstractPool {
     ) {
         while (true) {
             try {
-                return getWriterEntry(tableToken, lockReason, asyncWriterCommand);
+                return getWriterEntry(tableToken, lockReason, asyncWriterCommand, true);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -372,7 +376,8 @@ public class WriterPool extends AbstractPool {
     private TableWriter getWriterEntry(
             TableToken tableToken,
             String lockReason,
-            @Nullable AsyncWriterCommand asyncWriterCommand
+            @Nullable AsyncWriterCommand asyncWriterCommand,
+            boolean logBusy
     ) {
         assert null != lockReason;
         checkClosed();
@@ -428,11 +433,14 @@ public class WriterPool extends AbstractPool {
                 }
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
-                LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
-                        .$("`, owner=").$(owner)
-                        .$(", thread=").$(thread)
-                        .$(", reason=").$(reason)
-                        .I$();
+
+                if (logBusy) {
+                    LOG.debug().$("busy [table=`").utf8(tableToken.getDirName())
+                            .$("`, owner=").$(owner)
+                            .$(", thread=").$(thread)
+                            .$(", reason=").$(reason)
+                            .I$();
+                }
                 throw EntryUnavailableException.instance(reason);
             }
         }

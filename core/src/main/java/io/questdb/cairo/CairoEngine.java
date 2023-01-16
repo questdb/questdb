@@ -502,7 +502,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
 
         if (!tableToken.isWal()) {
-            return writerPool.get(tableToken, lockReason);
+            return writerPool.get(tableToken, lockReason, true);
 
         }
         return walWriterPool.get(tableToken);
@@ -562,7 +562,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         verifyTableToken(tableToken);
-        return writerPool.get(tableToken, lockReason);
+        return writerPool.get(tableToken, lockReason, true);
     }
 
     public TableWriter getWriterOrPublishCommand(
@@ -575,8 +575,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
-    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason) {
-        return writerPool.get(tableToken, lockReason);
+    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason, boolean logBusy) {
+        return writerPool.get(tableToken, lockReason, logBusy);
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -650,7 +650,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
-                LOG.info().$("cannot publish WAL notifications, queue is full [current=")
+                LOG.debug().$("cannot publish WAL notifications, queue is full [current=")
                         .$(pubSeq.current()).$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
@@ -833,7 +833,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         try {
             securityContext.checkWritePermission();
-            writerPool.get(tableToken, "repair").close();
+            writerPool.get(tableToken, "repair", false).close();
         } catch (EntryUnavailableException e) {
             // This is fine, writer is busy. Throw back origin error.
             throw rethrow;
