@@ -1541,8 +1541,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                         row.putSym(24, String.valueOf(i));
                         row.putSym(25, (char) (65 + i % 26));
 
-                        WriterRowUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 26, true);
-                        WriterRowUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 27, false);
+                        TestUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 26, true);
+                        TestUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 27, false);
 
                         row.append();
                     }
@@ -1995,12 +1995,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 } catch (UnsupportedOperationException ignore) {
                 }
                 try {
-                    WriterRowUtils.putUtf8(row, "Щось", 1, true);
+                    TestUtils.putUtf8(row, "Щось", 1, true);
                     fail("UnsupportedOperationException expected");
                 } catch (UnsupportedOperationException ignore) {
                 }
 
-                WriterRowUtils.putUtf8(row, "Таке-Сяке", 2, true);
+                TestUtils.putUtf8(row, "Таке-Сяке", 2, true);
                 row.append();
                 walWriter.commit();
             }

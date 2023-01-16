@@ -35,7 +35,6 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -3137,10 +3136,10 @@ public class TableWriterTest extends AbstractCairoTest {
         String boring = "Таке-Сяке";
         try (TableWriter writer = newTableWriter(configuration, name, metrics)) {
             TableWriter.Row r = writer.newRow();
-            WriterRowUtils.putUtf8(r, something, 0, false);
+            TestUtils.putUtf8(r, something, 0, false);
             try {
                 // putSymUtf8 is not implemented for TableWriter
-                WriterRowUtils.putUtf8(r, boring, 1, true);
+                TestUtils.putUtf8(r, boring, 1, true);
                 Assert.fail("UnsupportedOperationException");
             } catch (UnsupportedOperationException ignore) {
             }
