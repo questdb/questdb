@@ -1550,30 +1550,13 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(name.position, "table already exists");
         }
 
-        CharSequence volumePath = createTableModel.getVolumePath();
-        if (volumePath != null) {
-            if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                throw CairoException.critical(0).put("not a valid path for volume [path=").put(path).put(']');
-            }
-            if (!configuration.isAllowedVolumePath(volumePath)) {
-                throw CairoException.critical(0).put("volume path is not allowed [path=").put(path).put(']');
-            }
-        }
-
         if (createTableModel.getQueryModel() == null) {
             executionContext.getCairoSecurityContext().checkWritePermission();
             try {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
-                engine.createTable(
-                        executionContext.getCairoSecurityContext(),
-                        mem,
-                        path,
-                        volumePath != null,
-                        createTableModel.isIgnoreIfExists(),
-                        createTableModel,
-                        false);
+                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel.isIgnoreIfExists(), createTableModel, false);
             } catch (EntryUnavailableException e) {
                 throw SqlException.$(name.position, "table already exists");
             } catch (CairoException e) {
@@ -1584,7 +1567,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            createTableFromCursor(createTableModel, executionContext, name.position, volumePath != null);
+            createTableFromCursor(createTableModel, executionContext, name.position);
         }
 
         if (createTableModel.getQueryModel() == null) {
@@ -1594,12 +1577,8 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void createTableFromCursor(
-            CreateTableModel model,
-            SqlExecutionContext executionContext,
-            int position,
-            boolean pathIsLoadedWithVolume
-    ) throws SqlException {
+    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext, int position) throws
+            SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -1613,7 +1592,6 @@ public class SqlCompiler implements Closeable {
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,
-                    pathIsLoadedWithVolume,
                     false,
                     tableStructureAdapter.of(model, metadata, typeCast),
                     keepLock

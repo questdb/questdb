@@ -35,7 +35,10 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -2259,75 +2262,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "Could not create table. See log for details"
 
         );
-    }
-
-    @Test
-    public void testCreateAsSelectInVolumeFail() throws Exception {
-        try {
-            assertQuery(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c)) in volume 'niza'",
-                    null,
-                    "insert into geohash " +
-                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                    "geohash\n" +
-                            "q\n" +
-                            "q\n" +
-                            "u\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "u\n" +
-                            "q\n" +
-                            "u\n",
-                    true,
-                    true,
-                    true
-            );
-            Assert.fail();
-        } catch (CairoException e) {
-            if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
-            } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [path=niza]");
-            }
-        }
-    }
-
-    @Test
-    public void testCreateAsSelectInVolumeNotAllowed() throws Exception {
-        String volume = temp.newFolder("other").getAbsolutePath();
-        try {
-            assertQuery(
-                    "geohash\n",
-                    "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c)) in volume '" + volume + "'",
-                    null,
-                    "insert into geohash " +
-                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                    "geohash\n" +
-                            "q\n" +
-                            "q\n" +
-                            "u\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "u\n" +
-                            "q\n" +
-                            "u\n",
-                    true,
-                    true,
-                    true);
-        } catch (CairoException e) {
-            if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
-            } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "volume path is not allowed [path=" + volume + ']');
-            }
-        }
     }
 
     @Test

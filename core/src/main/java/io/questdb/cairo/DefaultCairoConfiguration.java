@@ -73,11 +73,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequenceHashSet getAllowedVolumePaths() {
-        return null;
-    }
-
-    @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
     }
@@ -832,11 +827,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
-    }
-
-    @Override
-    public boolean isAllowedVolumePath(CharSequence volumePath) {
-        return false;
     }
 
     @Override

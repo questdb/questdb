@@ -36,7 +36,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
@@ -105,7 +104,7 @@ public abstract class AbstractBootstrapTest {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
 
             // enable services
             writer.println("http.enabled=true");
@@ -149,14 +148,14 @@ public abstract class AbstractBootstrapTest {
 
         // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("");
         }
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
-        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");

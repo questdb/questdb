@@ -55,7 +55,6 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.io.IOException;
@@ -70,8 +69,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
-    private static boolean CREATE_TABLE_IN_VOLUME_ALLOWED = false; // TODO feature needs to support concurrent scenarios
-    private final CharSequenceHashSet allowedVolumePaths = new CharSequenceHashSet();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -490,7 +487,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            extractAllowedVolumePaths(overrideWithEnv(properties, env, PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS), ',', path);
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
@@ -1148,51 +1144,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         map.put(old, sb.toString());
     }
 
-    private void extractAllowedVolumePaths(@Nullable String paths, char separator, Path path) throws ServerConfigurationException {
-        if (paths != null) {
-            FilesFacade ff = getCairoConfiguration().getFilesFacade();
-            final int len = paths.length();
-            int start = 0, end;
-            int separatorCount = 0;
-            for (int i = 0; i < len; i++) {
-                if (separator == paths.charAt(i)) {
-                    separatorCount++;
-                    while (start < len && paths.charAt(start) == ' ') { // left trim
-                        start++;
-                    }
-                    end = i;
-                    while (end > start && paths.charAt(end - 1) == ' ') { // right trim
-                        end--;
-                    }
-                    if (end > start) {
-                        if (!ff.isDirOrSoftLinkDir(path.of(paths, start, end).$())) {
-                            throw ServerConfigurationException.forInvalidVolumePath(path);
-                        }
-                        allowedVolumePaths.add(path);
-                    } else {
-                        throw new ServerConfigurationException("volume path cannot be empty");
-                    }
-                    start = i + 1;
-                }
-            }
-            while (start < len && paths.charAt(start) == ' ') { // left trim
-                start++;
-            }
-            end = len;
-            while (end > start && paths.charAt(end - 1) == ' ') { // right trim
-                end--;
-            }
-            if (end > start) {
-                if (!ff.isDirOrSoftLinkDir(path.of(paths, start, end).$())) {
-                    throw ServerConfigurationException.forInvalidVolumePath(path);
-                }
-                allowedVolumePaths.add(path);
-            } else if (separatorCount > 0) {
-                throw new ServerConfigurationException("volume path cannot be empty");
-            }
-        }
-    }
-
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, PropertyKey key, int workerCount) throws ServerConfigurationException {
         final int[] result = new int[workerCount];
         String value = overrideWithEnv(properties, env, key);
@@ -1374,19 +1325,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    static boolean isCreateTableInVolumeAllowed() {
-        // TODO disable the feature in production until concurrent create-in-volume and drop is supported
-        return CREATE_TABLE_IN_VOLUME_ALLOWED;
-    }
-
-    @TestOnly
-    static void setCreateTableInVolumeAllowed(boolean isAllowed) {
-        // TODO disable the feature in production until concurrent create-in-volume and drop is supported
-        // If you have a race creating table with same name on volume and locally, you can remove local 
-        // table here even though you tried to create table on another volume.
-        CREATE_TABLE_IN_VOLUME_ALLOWED = isAllowed;
-    }
-
     static ValidationResult validate(Properties properties) {
         // Settings that used to be valid but no longer are.
         Map<String, String> obsolete = new HashMap<>();
@@ -1553,11 +1491,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
             return false;
-        }
-
-        @Override
-        public CharSequenceHashSet getAllowedVolumePaths() {
-            return allowedVolumePaths;
         }
 
         @Override
@@ -2307,11 +2240,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
-        }
-
-        @Override
-        public boolean isAllowedVolumePath(CharSequence volumePath) {
-            return CREATE_TABLE_IN_VOLUME_ALLOWED && volumePath != null && allowedVolumePaths.contains(volumePath);
         }
 
         @Override

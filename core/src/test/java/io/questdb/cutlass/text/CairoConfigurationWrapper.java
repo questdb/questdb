@@ -28,7 +28,6 @@ import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -56,11 +55,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return conf.getAllowTableRegistrySharedWrite();
-    }
-
-    @Override
-    public CharSequenceHashSet getAllowedVolumePaths() {
-        return null;
     }
 
     @Override
@@ -821,11 +815,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return conf.getWriterTickRowsCountMod();
-    }
-
-    @Override
-    public boolean isAllowedVolumePath(CharSequence volumePath) {
-        return false;
     }
 
     @Override

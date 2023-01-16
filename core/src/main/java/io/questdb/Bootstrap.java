@@ -333,12 +333,6 @@ public class Bootstrap {
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input");
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker");
             verifyFileOpts(path, cairoConfig);
-            if (PropServerConfiguration.isCreateTableInVolumeAllowed()) {
-                CharSequenceHashSet volumePaths = cairoConfig.getAllowedVolumePaths();
-                for (int i = 0, len = volumePaths.size(); i < len; i++) {
-                    verifyFileSystem(path, volumePaths.get(i), "create table allowed volume");
-                }
-            }
         }
         if (JitUtil.isJitSupported()) {
             final int jitMode = cairoConfig.getSqlJitMode();

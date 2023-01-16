@@ -52,8 +52,6 @@ public interface CairoConfiguration {
 
     boolean getAllowTableRegistrySharedWrite();
 
-    CharSequenceHashSet getAllowedVolumePaths();
-
     int getAnalyticColumnPoolCapacity();
 
     // the '+' is used to prevent overlap with table names
@@ -422,8 +420,6 @@ public interface CairoConfiguration {
     long getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
-
-    boolean isAllowedVolumePath(CharSequence volumePath);
 
     boolean isIOURingEnabled();
 
