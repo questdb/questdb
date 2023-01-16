@@ -550,21 +550,21 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putBool(boolean value) {
-            assert appendAddress + Byte.BYTES < kLimit;
+            assert appendAddress + Byte.BYTES <= kLimit;
             Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
             appendAddress += Byte.BYTES;
         }
 
         @Override
         public void putByte(byte value) {
-            assert appendAddress + Byte.BYTES < kLimit;
+            assert appendAddress + Byte.BYTES <= kLimit;
             Unsafe.getUnsafe().putByte(appendAddress, value);
             appendAddress += Byte.BYTES;
         }
 
         @Override
         public void putChar(char value) {
-            assert appendAddress + Character.BYTES < kLimit;
+            assert appendAddress + Character.BYTES <= kLimit;
             Unsafe.getUnsafe().putChar(appendAddress, value);
             appendAddress += Character.BYTES;
         }
@@ -576,35 +576,35 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putDouble(double value) {
-            assert appendAddress + Double.BYTES < kLimit;
+            assert appendAddress + Double.BYTES <= kLimit;
             Unsafe.getUnsafe().putDouble(appendAddress, value);
             appendAddress += Double.BYTES;
         }
 
         @Override
         public void putFloat(float value) {
-            assert appendAddress + Float.BYTES < kLimit;
+            assert appendAddress + Float.BYTES <= kLimit;
             Unsafe.getUnsafe().putFloat(appendAddress, value);
             appendAddress += Float.BYTES;
         }
 
         @Override
         public void putInt(int value) {
-            assert appendAddress + Integer.BYTES < kLimit;
+            assert appendAddress + Integer.BYTES <= kLimit;
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += Integer.BYTES;
         }
 
         @Override
         public void putLong(long value) {
-            assert appendAddress + Long.BYTES < kLimit;
+            assert appendAddress + Long.BYTES <= kLimit;
             Unsafe.getUnsafe().putLong(appendAddress, value);
             appendAddress += Long.BYTES;
         }
 
         @Override
         public void putLong128LittleEndian(long hi, long lo) {
-            assert appendAddress + 16 < kLimit;
+            assert appendAddress + 16 <= kLimit;
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
             appendAddress += 16;
@@ -612,7 +612,7 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putLong256(Long256 value) {
-            assert appendAddress + Long256.BYTES < kLimit;
+            assert appendAddress + Long256.BYTES <= kLimit;
             Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
@@ -622,7 +622,7 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         public void putShort(short value) {
-            assert appendAddress + Short.BYTES < kLimit;
+            assert appendAddress + Short.BYTES <= kLimit;
             Unsafe.getUnsafe().putShort(appendAddress, value);
             appendAddress += Short.BYTES;
         }
