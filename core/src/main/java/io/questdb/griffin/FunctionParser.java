@@ -513,7 +513,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        // Make sure to override timestamp required flag from base query.
+        sqlExecutionContext.pushTimestampRequiredFlag(false);
+        try {
+            return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        } finally {
+            sqlExecutionContext.popTimestampRequiredFlag();
+        }
     }
 
     private Function createFunction(
