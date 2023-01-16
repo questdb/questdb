@@ -572,8 +572,8 @@ public class WalWriter implements TableWriterAPI {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableToken, metadata.getStructureVersion())) {
-            long nextStructVer = getStructureVersion();
-            while (log.hasNext() && nextStructVer < structureVersionHi) {
+            long structVer = getStructureVersion();
+            while (log.hasNext() && structVer < structureVersionHi) {
                 TableMetadataChange chg = log.next();
                 try {
                     chg.apply(metaWriterSvc, true);
@@ -582,7 +582,7 @@ public class WalWriter implements TableWriterAPI {
                     throw e;
                 }
 
-                if (++nextStructVer != getStructureVersion()) {
+                if (++structVer != getStructureVersion()) {
                     distressed = true;
                     throw CairoException.critical(0)
                             .put("could not apply table definition changes to the current transaction, version unchanged");
