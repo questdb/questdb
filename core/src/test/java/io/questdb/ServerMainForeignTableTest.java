@@ -68,6 +68,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     private static final String firstPartitionName = "2023-01-01";
     private static final int partitionCount = 11;
+    private static final int pgPort = PG_PORT + 10;
     private static String otherVolume;
 
     @BeforeClass
@@ -78,7 +79,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
             Files.remove(path.trimTo(pathLen).concat("telemetry_config.lock").$());
             otherVolume = AbstractBootstrapTest.temp.newFolder("path", "to", "wherever").getAbsolutePath();
-            createDummyConfiguration(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + otherVolume);
+            createDummyConfiguration(
+                    HTTP_PORT + 10,
+                    HTTP_MIN_PORT + 10,
+                    pgPort,
+                    ILP_PORT + 10,
+                    PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + otherVolume);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -279,7 +285,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore("broken on mac")
     public void testServerMainCreateTableWhileConcurrentCreateTable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
@@ -333,7 +338,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private static void assertTable(String tableName) throws Exception {
         StringSink resultSink = new StringSink();
         try (
-                Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Connection conn = DriverManager.getConnection(getPgConnectionUri(pgPort), PG_CONNECTION_PROPERTIES);
                 PreparedStatement stmt = conn.prepareStatement("select name, designatedTimestamp, partitionBy, walEnabled from tables()");
                 ResultSet result = stmt.executeQuery()
         ) {
