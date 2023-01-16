@@ -64,7 +64,7 @@ public class O3CallbackJob extends AbstractQueueConsumerJob<O3CallbackTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         O3CallbackTask task = queue.get(cursor);
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue

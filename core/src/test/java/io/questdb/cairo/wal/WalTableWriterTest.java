@@ -973,7 +973,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             }
 
             @Override
-            protected boolean doRun(int workerId, long cursor) {
+            protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
                 try {
                     queue.get(cursor);
                 } finally {

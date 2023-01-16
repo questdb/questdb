@@ -1100,7 +1100,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         processPartition(queue.get(cursor), cursor, subSeq);
         return true;
     }

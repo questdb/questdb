@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
@@ -1103,7 +1104,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void stealWork() {
-        if (localImportJob.run(0)) {
+        if (localImportJob.run(0, Job.RUNNING_STATUS)) {
             return;
         }
         Os.pause();

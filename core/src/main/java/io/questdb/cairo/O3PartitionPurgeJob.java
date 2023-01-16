@@ -382,7 +382,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(
                 configuration.getFilesFacade(),

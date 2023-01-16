@@ -197,7 +197,7 @@ public class LogFactory implements Closeable {
                     if (job != null && flush) {
                         try {
                             // noinspection StatementWithEmptyBody
-                            while (job.run(0)) {
+                            while (job.run(0, Job.TERMINATING_STATUS)) {
                                 // Keep running the job until it returns false to log all the buffered messages
                             }
                         } catch (Exception th) {
@@ -289,7 +289,7 @@ public class LogFactory implements Closeable {
             if (job != null) {
                 try {
                     // noinspection StatementWithEmptyBody
-                    while (job.run(0)) {
+                    while (job.run(0, Job.RUNNING_STATUS)) {
                         // Keep running the job until it returns false to log all the buffered messages
                     }
                 } catch (Exception th) {

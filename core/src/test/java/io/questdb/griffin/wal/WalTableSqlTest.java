@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.mp.Job;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1071,6 +1072,60 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\t\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n");
 
+        });
+    }
+
+    @Test
+    public void testWhenApplyJobTerminatesEarlierLagFlushed() throws Exception {
+        AtomicBoolean isTerminating = new AtomicBoolean();
+        Job.RunStatus runStatus = isTerminating::get;
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            // terminate WAL apply Job as soon as first wal segment is opened.
+            @Override
+            public int openRO(LPSZ name) {
+                if (Chars.contains(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
+                    isTerminating.set(true);
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName() + "_लаблअца";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24T02', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-24T01:01', 'asd')");
+
+            executeInsert("insert into " + tableName +
+                    " values (102, 'dfd', '2022-02-24T01:02', 'asd')");
+
+            executeInsert("insert into " + tableName +
+                    " values (103, 'dfd', '2022-02-24T01:03', 'asd')");
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.run(0, runStatus);
+
+                assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                        "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
+                        "1\tAB\t2022-02-24T02:00:00.000000Z\tEF\n");
+
+                isTerminating.set(false);
+                while (walApplyJob.run(0, runStatus)) {
+                }
+                assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                        "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
+                        "102\tdfd\t2022-02-24T01:02:00.000000Z\tasd\n" +
+                        "103\tdfd\t2022-02-24T01:03:00.000000Z\tasd\n" +
+                        "1\tAB\t2022-02-24T02:00:00.000000Z\tEF\n");
+            }
         });
     }
 
