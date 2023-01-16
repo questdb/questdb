@@ -50,7 +50,6 @@ import java.io.File;
  * LOG.info().$("Hello world: ").$(123).$();
  * </code>
  * <p>
- * <p>
  * Logger appends messages to native memory buffer and dispatches buffer to writer thread queue with {@link #$()} call.
  * When writer queue is full all logger method calls between level and $() become no-ops. In this case queue size
  * have to be increased or choice of log storage has to be reviewed. Depending on complexity of log message
