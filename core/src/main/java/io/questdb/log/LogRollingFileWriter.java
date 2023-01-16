@@ -80,7 +80,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String sizeLimit;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String spinBeforeFlush;
-    private ObjList<String> sortedFiles; 
+    private ObjList<String> sortedFiles = new ObjList<>(); 
+    private Comparator<String> fileComparator = new FileOrderComparator();
     
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
@@ -408,19 +409,20 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
         if (this.sizeLimit != null) {
             currentLogSizeSum = 0;
-            sortedFiles = new ObjList<>();
+            sortedFiles.clear();
             ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
-            sortedFiles.sort(new fileOrderComparator());
+            sortedFiles.sort(fileComparator);
             removeExcessiveLogs();
         }
     }
 
-    public class fileOrderComparator implements Comparator<String> {
+    private class FileOrderComparator implements Comparator<String> {
         @Override
         public int compare(String s1, String s2) {
             return (int)(ff.getLastModified(path.of(s2).$()) - ff.getLastModified(path.of(s1).$()));
         }
     }
+    
     @FunctionalInterface
     private interface NextDeadline {
         long getDeadline();
