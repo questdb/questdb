@@ -88,6 +88,10 @@ void platform_memcpy(void *dst, const void *src, const size_t len) {
     __MEMCPY(dst, src, len);
 }
 
+int platform_memcmp(const void *a, const void *b, const size_t len, int *res) {
+    *res = __MEMCMP(a, b, len);
+}
+
 void platform_memset(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
 }

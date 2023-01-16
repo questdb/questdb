@@ -302,26 +302,6 @@ public class FastMap implements Map, Reopenable {
         return (Integer.toUnsignedLong(offsets.get(index * OFFSET_SLOT_SIZE)) - 1) << 3;
     }
 
-    private static boolean memeq(long a, long b, int len) {
-        int i = 0;
-        for (; i + 7 < len; i += 8) {
-            if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
-                return false;
-            }
-        }
-        for (; i + 3 < len; i += 4) {
-            if (Unsafe.getUnsafe().getInt(a + i) != Unsafe.getUnsafe().getInt(b + i)) {
-                return false;
-            }
-        }
-        for (; i < len; i++) {
-            if (Unsafe.getUnsafe().getByte(a + i) != Unsafe.getUnsafe().getByte(b + i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private static void setHashCode(DirectIntList offsets, int index, int hashCode) {
         offsets.set(index * OFFSET_SLOT_SIZE + 1, hashCode);
     }
@@ -679,7 +659,7 @@ public class FastMap implements Map, Reopenable {
 
         @Override
         protected boolean eq(long offset) {
-            return memeq(kStart + offset + keyOffset, startAddress + keyOffset, keySize);
+            return Vect.memeq(kStart + offset + keyOffset, startAddress + keyOffset, keySize);
         }
 
         @Override
@@ -878,7 +858,7 @@ public class FastMap implements Map, Reopenable {
                 return false;
             }
 
-            return memeq(a + keyOffset, b + keyOffset, this.len - keyOffset);
+            return Vect.memeq(a + keyOffset, b + keyOffset, this.len - keyOffset);
         }
 
         @Override

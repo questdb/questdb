@@ -93,8 +93,9 @@ public final class Hash {
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }
-        for (; i + 3 < len; i += 4) {
+        if (i + 3 < len) {
             h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            i += 4;
         }
         for (; i < len; i++) {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
