@@ -36,6 +36,7 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.Collections;
 import java.util.TreeMap;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
@@ -406,7 +407,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             ff.iterateDir(path.of(logDir).$(), removeExpiredLogsVisitor);
         }
         if (this.sizeLimit != null) {
-            sortedFiles = new TreeMap<>();
+            sortedFiles = new TreeMap<>(Collections.reverseOrder());
             ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
             currentLogSizeSum = 0;
             removeExcessiveLogs();
