@@ -34,6 +34,9 @@ import org.jetbrains.annotations.NotNull;
 
 public class MapFactory {
 
+    /**
+     * Creates a Map pre-allocated to a large capacity to be used in JOIN queries.
+     */
     public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
@@ -42,6 +45,9 @@ public class MapFactory {
         return createMap(false, configuration, keyTypes, valueTypes);
     }
 
+    /**
+     * Creates a Map pre-allocated to a large capacity to be used in JOIN queries.
+     */
     public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
@@ -49,6 +55,9 @@ public class MapFactory {
         return createMap(false, configuration, keyTypes);
     }
 
+    /**
+     * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
+     */
     public static Map createSmallMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
@@ -56,6 +65,9 @@ public class MapFactory {
         return createMap(true, configuration, keyTypes);
     }
 
+    /**
+     * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
+     */
     public static Map createSmallMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,

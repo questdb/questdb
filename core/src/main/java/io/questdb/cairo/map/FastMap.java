@@ -36,13 +36,19 @@ import org.jetbrains.annotations.TestOnly;
 /**
  * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
  * group by, sample by queries, but not only. It provides {@link MapKey} and {@link MapValue},
- * as well as  {@link RecordCursor} interfaces for data access and modification.
+ * as well as {@link RecordCursor} interfaces for data access and modification.
  * The preferred way to create a FastMap is {@link MapFactory}.
  * <p>
- * Key and value structure must match the one provided via lists of columns ({@link ColumnTypes})
- * to the map constructor. Keys may be var-size, i.e. a key may contain string or binary columns,
- * while values are expected to be fixed-size. Only insertions and updates operations are supported
- * meaning that a key can't be removed from the map once it was inserted.
+ * <strong>Important!</strong>
+ * Key and value structures must match the ones provided via lists of columns ({@link ColumnTypes})
+ * to the map constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match
+ * the declared column types to guarantee memory access safety.
+ * <p>
+ * Keys may be var-size, i.e. a key may contain string or binary columns, while values are expected
+ * to be fixed-size. Only insertions and updates operations are supported meaning that a key can't
+ * be removed from the map once it was inserted.
+ * <p>
+ * Map iteration provided by {@link RecordCursor} preserves the key insertion order.
  * <p>
  * The hash table is organized into two main parts:
  * <ul>
