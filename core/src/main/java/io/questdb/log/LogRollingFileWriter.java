@@ -36,9 +36,7 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.Collections;
 import java.util.Comparator;
-import java.util.TreeMap;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -80,8 +78,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String sizeLimit;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String spinBeforeFlush;
-    private ObjList<String> sortedFiles = new ObjList<>(); 
-    private Comparator<String> fileComparator = new FileOrderComparator();
+    private ObjList<FileTimestamp> sortedFiles = new ObjList<>(); 
+    private Comparator<FileTimestamp> fileComparator = new FileOrderComparator();
     
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
@@ -376,13 +374,13 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         path.concat(filePointer).$();
         logFileName.of(filePointer);
         if (type == Files.DT_FILE && Chars.contains(logFileName, logFileTemplate) && Files.notDots(filePointer)) {
-            sortedFiles.add(path.toString());
+            sortedFiles.add(new FileTimestamp(path.toString(), ff.getLastModified(path)));
         }
     }
     
     private void removeExcessiveLogs() {
         for (int i = 0; i < sortedFiles.size(); i++) {
-            path.of(sortedFiles.get(i));
+            path.of(sortedFiles.get(i).filePath);
             if ((currentLogSizeSum += Files.length(path)) > nSizeLimit) {
                 if (!ff.remove(path)) {
                     throw new LogError("cannot remove: " + path.$());
@@ -416,10 +414,21 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    private class FileOrderComparator implements Comparator<String> {
+    private class FileOrderComparator implements Comparator<FileTimestamp> {
         @Override
-        public int compare(String s1, String s2) {
-            return (int)(ff.getLastModified(path.of(s2).$()) - ff.getLastModified(path.of(s1).$()));
+        public int compare(FileTimestamp f1, FileTimestamp f2) {
+            return (int)(f2.lastModified - f1.lastModified);
+        }
+    }
+    
+    private class FileTimestamp {
+        
+        private String filePath;
+        private long lastModified;
+        
+        private FileTimestamp(String filePath, long lastModified) {
+            this.filePath = filePath;
+            this.lastModified = lastModified;
         }
     }
     
