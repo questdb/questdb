@@ -715,8 +715,8 @@ public class TimestampFormatCompiler {
         }
 
         if ((stackState & (1 << LOCAL_WEEK)) == 0) {
-            // int week = 0
-            asm.iconst(0);
+            // int week = -1
+            asm.iconst(-1);
             asm.istore(LOCAL_WEEK);
         }
 
