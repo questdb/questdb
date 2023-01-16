@@ -30,13 +30,11 @@ public interface TransactionLogCursor extends Closeable {
     @Override
     void close();
 
-    long countLeft();
-
     long getCommitTimestamp();
 
     int getSegmentId();
 
-    long getSegmentTxn();
+    int getSegmentTxn();
 
     long getStructureVersion();
 

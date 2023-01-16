@@ -50,13 +50,15 @@ import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
+    private static final int FORCE_FULL_COMMIT = -2;
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    private static final int TXN_METADATA_LONGS_SIZE = 3;
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final int WAL_APPLY_FAILED = -2;
+    private final long commitSquashRowLimit;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final MicrosecondClock microClock;
-    private final long smallCommitThreshold;
     private final SqlToOperation sqlToOperation;
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
@@ -68,7 +70,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         this.sqlToOperation = new SqlToOperation(engine, workerCount, sharedWorkerCount);
         this.microClock = engine.getConfiguration().getMicrosecondClock();
         walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
-        smallCommitThreshold = 500_000L;
+        commitSquashRowLimit = engine.getConfiguration().getWalCommitSquashRowLimit();
     }
 
     @Override
@@ -278,71 +280,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();
                 int rootLen = tempPath.length();
-                int longsPerTxn = 6;
-                try (WalEventReader eventReader = walEventReader) {
-                    transactionMeta.clear();
-                    while (transactionLogCursor.hasNext()) {
 
-                        final int walId = transactionLogCursor.getWalId();
-                        final int segmentId = transactionLogCursor.getSegmentId();
-                        final long segmentTxn = transactionLogCursor.getSegmentTxn();
-
-                        if (walId > 0) {
-                            tempPath.trimTo(rootLen).put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                            final WalEventCursor walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
-                            final byte walTxnType = walEventCursor.getType();
-                            if (walTxnType == DATA) {
-                                var commitInfo = walEventCursor.getDataInfo();
-                                transactionMeta.add(walId);
-                                transactionMeta.add(segmentId);
-                                transactionMeta.add(segmentTxn);
-                                transactionMeta.add(-1); // commit to timestamp 
-                                transactionMeta.add(commitInfo.getMaxTimestamp());
-                                transactionMeta.add(commitInfo.getMinTimestamp());
-                                continue;
-                            }
-                        }
-
-                        // This is a structural change, UPDATE or non-structural ALTER
-                        // when it happens in between the transactions, we want to commit everything before it.
-                        if (transactionMeta.size() > 0) {
-                            transactionMeta.setQuick(transactionMeta.size() - 3, -2); // commit to timestamp of prev record
-                        }
-                    }
-                }
-
-                // find min timestamp after every transaction
-                long runningMinTimestamp = Long.MAX_VALUE;
-                long maxLag = 0;
-                for (int n = transactionMeta.size(), i = n - 1; i > -1; i -= longsPerTxn) {
-
-                    long currentMinTimestamp = transactionMeta.getQuick(i);
-                    long currentMaxTimestamp = transactionMeta.getQuick(i - 1);
-
-                    long nextMinTimestamp = Math.min(currentMaxTimestamp, runningMinTimestamp);
-                    long lag = currentMaxTimestamp - nextMinTimestamp;
-                    if (lag > maxLag) {
-                        maxLag = lag;
-                    }
-
-                    runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
-                    transactionMeta.setQuick(i, runningMinTimestamp);
-
-                    // Leave last commitToTimestamp as -1 so everything is committed at the end
-                    if (i < n - 1) {
-                        if (transactionMeta.getQuick(i - 2) != -2) {
-                            transactionMeta.setQuick(i - 2, nextMinTimestamp);
-                        } else {
-                            // This is a flag that the commit has to be done in full
-                            // because of following UPDATE or ALTER
-                            runningMinTimestamp = currentMinTimestamp;
-                        }
-                    }
-                }
-
+                // Populate transactionMeta with timestamps of future transactions
+                // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
+                LongList transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen);
                 transactionLogCursor.toTop();
-                boolean isTerminating = runStatus.isTerminating();
 
+                boolean isTerminating = runStatus.isTerminating();
                 WHILE_TRANSACTION_CURSOR:
                 while (transactionLogCursor.hasNext() && !isTerminating) {
                     final int walId = transactionLogCursor.getWalId();
@@ -413,7 +357,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     seqTxn,
                                     isTerminating,
                                     transactionMeta,
-                                    transactionCount * longsPerTxn + 3
+                                    transactionCount * TXN_METADATA_LONGS_SIZE
                             );
 
                             if (added > -1L) {
@@ -466,7 +410,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             rowsSinceLastCommit = 0;
                         } else {
                             rowsSinceLastCommit += rowCount;
-                            if (rowsSinceLastCommit < smallCommitThreshold) {
+                            if (rowsSinceLastCommit < commitSquashRowLimit) {
                                 // This is an optimisation to apply small commits.
                                 // We want to store data in memory LAG buffer and commit it later when the buffer size is reasonably big
                                 // or when there is no more data available in WAL.
@@ -546,6 +490,89 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 throw e;
             }
         }
+    }
+
+    private LongList readObservableTxnMeta(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen) {
+        try (WalEventReader eventReader = walEventReader) {
+            transactionMeta.clear();
+            int prevWalId = Integer.MIN_VALUE;
+            int prevSegmentId = Integer.MIN_VALUE;
+            int prevSegmentTxn = Integer.MIN_VALUE;
+            WalEventCursor walEventCursor = null;
+
+            while (transactionLogCursor.hasNext()) {
+
+                final int walId = transactionLogCursor.getWalId();
+                final int segmentId = transactionLogCursor.getSegmentId();
+                final int segmentTxn = transactionLogCursor.getSegmentTxn();
+
+                boolean recordAdded = false;
+                if (walId > 0) {
+                    tempPath.trimTo(rootLen).put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+
+                    if (prevWalId != walId || prevSegmentId != segmentId || prevSegmentTxn + 1 != segmentTxn) {
+                        walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+                    } else {
+                        // This is same WALE file, just read next txn transaction.
+                        if (!walEventCursor.hasNext()) {
+                            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+                        }
+                    }
+
+                    final byte walTxnType = walEventCursor.getType();
+                    if (walTxnType == DATA) {
+                        recordAdded = true;
+                        var commitInfo = walEventCursor.getDataInfo();
+                        transactionMeta.add(-1); // commit to timestamp 
+                        transactionMeta.add(commitInfo.getMaxTimestamp());
+                        transactionMeta.add(commitInfo.getMinTimestamp());
+                    }
+                }
+                prevWalId = walId;
+                prevSegmentId = segmentId;
+                prevSegmentTxn = segmentTxn;
+
+                // This is a structural change, UPDATE or non-structural ALTER
+                // when it happens in between the transactions, we want to commit everything before it.
+                if (!recordAdded && transactionMeta.size() > 0) {
+                    transactionMeta.setQuick(transactionMeta.size() - 3, FORCE_FULL_COMMIT); // commit to timestamp of prev record
+                }
+            }
+        }
+
+        // find min timestamp after every transaction
+        long runningMinTimestamp = Long.MAX_VALUE;
+        long maxLag = 0;
+        for (int n = transactionMeta.size(), i = n - 1; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
+
+            long currentMinTimestamp = transactionMeta.getQuick(i);
+            long currentMaxTimestamp = transactionMeta.getQuick(i - 1);
+
+            long nextMinTimestamp = Math.min(currentMaxTimestamp, runningMinTimestamp);
+            long lag = currentMaxTimestamp - nextMinTimestamp;
+            if (lag > maxLag) {
+                maxLag = lag;
+            }
+
+            runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
+            transactionMeta.setQuick(i, runningMinTimestamp);
+
+            // Leave last commitToTimestamp as -1 so everything is committed at the end
+            if (i < n - 1) {
+                long commitToTimestamp = transactionMeta.getQuick(i - 2);
+                if (commitToTimestamp != FORCE_FULL_COMMIT) {
+                    // set commitToTimestamp to be nextMinTimestamp
+                    // so that O3 does not happen
+                    transactionMeta.setQuick(i - 2, nextMinTimestamp);
+                } else {
+                    // This is a flag that the commit has to be done in full
+                    // because of following UPDATE or ALTER.
+                    // Everything will be committed at this point, so it's safe to reset runningMinTimestamp
+                    runningMinTimestamp = Long.MAX_VALUE;
+                }
+            }
+        }
+        return transactionMeta;
     }
 
     @Override

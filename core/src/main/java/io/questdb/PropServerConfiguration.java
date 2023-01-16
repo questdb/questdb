@@ -274,6 +274,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerSleepThreshold;
     private final long walApplyWorkerYieldThreshold;
+    private final int walCommitSquashRowLimit;
     private final boolean walEnabledDefault;
     private final long walPurgeInterval;
     private final int walRecreateDistressedSequencerAttempts;
@@ -456,6 +457,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.isWalSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, false);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
+        this.walCommitSquashRowLimit = getInt(properties, env, PropertyKey.CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT, 512 * 1024);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
@@ -2175,6 +2177,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
+        }
+
+        @Override
+        public int getWalCommitSquashRowLimit() {
+            return walCommitSquashRowLimit;
         }
 
         @Override

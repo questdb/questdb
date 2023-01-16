@@ -330,7 +330,6 @@ public class TableTransactionLog implements Closeable {
         private static final long WAL_ID_OFFSET = 0;
         // @formatter:off
         private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
-        private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Integer.BYTES;
         // @formatter:on
         private long address;
         private int fd;
@@ -351,12 +350,6 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public long countLeft() {
-            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
-            return newTxnCount - txn;
-        }
-
-        @Override
         public long getCommitTimestamp() {
             return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
         }
@@ -367,7 +360,7 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public long getSegmentTxn() {
+        public int getSegmentTxn() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 

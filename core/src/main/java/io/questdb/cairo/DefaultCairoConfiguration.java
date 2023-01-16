@@ -761,6 +761,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalCommitSquashRowLimit() {
+        return 512 * 1024;
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return false;
     }
