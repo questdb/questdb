@@ -45,6 +45,10 @@ public class Long256Impl implements Long256, Sinkable {
         return sum;
     }
 
+    public static boolean isNull(Long256 value) {
+        return Long256Impl.NULL_LONG256.equals(value);
+    }
+
     public static void putNull(long appendPointer) {
         Unsafe.getUnsafe().putLong(appendPointer, NULL_LONG256.getLong0());
         Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, NULL_LONG256.getLong1());

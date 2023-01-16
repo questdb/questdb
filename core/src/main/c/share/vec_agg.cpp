@@ -548,7 +548,7 @@ double MIN_DOUBLE(double *d, int64_t count) {
     double min = horizontal_min(vecMin);
     for (; d < lim; d++) {
         double x = *d;
-        if (std::isfinite(x) && x < min) {
+        if (!std::isnan(x) && x < min) {
             min = x;
         }
     }
@@ -577,7 +577,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
     double max = horizontal_max(vecMax);
     for (; d < lim; d++) {
         double x = *d;
-        if (std::isfinite(x) && x > max) {
+        if (!std::isnan(x) && x > max) {
             max = x;
         }
     }

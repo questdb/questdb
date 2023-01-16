@@ -190,10 +190,6 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
-    public static boolean isIntegerType(int columnType) {
-        return columnType == ColumnType.BYTE || columnType == ColumnType.SHORT || columnType == ColumnType.INT || columnType == ColumnType.LONG;
-    }
-
     public static boolean isNull(int columnType) {
         return columnType == NULL;
     }

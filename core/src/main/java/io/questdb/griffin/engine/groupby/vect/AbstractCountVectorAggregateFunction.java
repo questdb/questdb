@@ -38,11 +38,6 @@ public abstract class AbstractCountVectorAggregateFunction extends LongFunction 
         return count.sum();
     }
 
-//    @Override
-//    public String getSymbol() {
-//        return "count";
-//    }
-
     @Override
     public int getValueOffset() {
         return valueOffset;
@@ -71,6 +66,6 @@ public abstract class AbstractCountVectorAggregateFunction extends LongFunction 
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum(), aggCount.sum());
+        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, aggCount.sum() > 0 ? count.sum() : Long.MIN_VALUE);
     }
 }

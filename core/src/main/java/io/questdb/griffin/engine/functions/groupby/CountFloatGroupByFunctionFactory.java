@@ -55,7 +55,7 @@ public class CountFloatGroupByFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             float val = arg.getFloat(null);
-            if (val == val) {
+            if (!Float.isNaN(val)) {
                 return new CountLongConstGroupByFunction();
             }
             throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");

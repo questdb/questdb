@@ -1665,14 +1665,6 @@ class SqlOptimiser {
         return true;
     }
 
-    private boolean isIntegerColumn(ExpressionNode n, QueryModel model) {
-        if (n.type != LITERAL) {
-            return false;
-        }
-        QueryColumn qc = model.getAliasToColumnMap().get(n.token);
-        return qc != null && ColumnType.isIntegerType(qc.getColumnType());
-    }
-
     private boolean isIntegerConstant(ExpressionNode n) {
         if (n.type != CONSTANT) {
             return false;
@@ -1684,6 +1676,18 @@ class SqlOptimiser {
         } catch (NumericException ne) {
             return false;
         }
+    }
+
+    private boolean isSimpleIntegerColumn(ExpressionNode n, QueryModel model) {
+        if (n.type != LITERAL) {
+            return false;
+        }
+        QueryColumn qc = model.getAliasToColumnMap().get(n.token);
+        return qc != null &&
+                (qc.getColumnType() == ColumnType.BYTE ||
+                        qc.getColumnType() == ColumnType.SHORT ||
+                        qc.getColumnType() == ColumnType.INT ||
+                        qc.getColumnType() == ColumnType.LONG);
     }
 
     private ExpressionNode makeJoinAlias() {
@@ -2612,7 +2616,7 @@ class SqlOptimiser {
     }
 
     private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
-        if (!isIntegerColumn(column, model)) {
+        if (!isSimpleIntegerColumn(column, model)) {
             return agg;
         }
 
@@ -2824,11 +2828,11 @@ class SqlOptimiser {
                 Chars.equalsIgnoreCase("sum", agg.token) &&
                 op.type == OPERATION) {
             if (Chars.equals(op.token, '*')) { //sum(x*10) == sum(x)*10
-                if (isIntegerConstant(op.rhs) && isIntegerColumn(op.lhs, model)) {
+                if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
                     agg.rhs = op.lhs;
                     op.lhs = agg;
                     return op;
-                } else if (isIntegerConstant(op.lhs) && isIntegerColumn(op.rhs, model)) {
+                } else if (isIntegerConstant(op.lhs) && isSimpleIntegerColumn(op.rhs, model)) {
                     agg.rhs = op.rhs;
                     op.rhs = agg;
                     return op;
@@ -3302,6 +3306,7 @@ class SqlOptimiser {
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         QueryColumn matchingCol = groupByModel.findBottomUpColumnByAst(qc.getAst());
+                        //reuse existing aggregate column in group by model
                         if (useOuterModel && matchingCol != null) {
                             QueryColumn ref = nextColumn(qc.getAlias(), matchingCol.getAlias());
                             ref = ensureAliasUniqueness(outerVirtualModel, ref);

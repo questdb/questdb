@@ -98,11 +98,6 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
         return rec.getLong(valueIndex);
     }
 
-//    @Override
-//    public String getSymbol() {
-//        return "count";
-//    }
-
     @Override
     public boolean isConstant() {
         return false;

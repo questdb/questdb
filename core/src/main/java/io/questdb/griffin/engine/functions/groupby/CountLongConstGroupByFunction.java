@@ -75,9 +75,4 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
     }
-
-//    @Override
-//    public void toPlan(PlanSink sink) {
-//        sink.val("count(*)");
-//    }
 }

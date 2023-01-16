@@ -40,7 +40,7 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         final Long256 value = arg.getLong256A(record);
-        if (!value.equals(Long256Impl.NULL_LONG256)) {
+        if (!Long256Impl.isNull(value)) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -50,7 +50,7 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         final Long256 value = arg.getLong256A(record);
-        if (!value.equals(Long256Impl.NULL_LONG256)) {
+        if (!Long256Impl.isNull(value)) {
             mapValue.addLong(valueIndex, 1);
         }
     }

@@ -316,7 +316,6 @@ static jboolean kIntCountLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong
     const auto *pl = reinterpret_cast<jlong *>(pLong);
     const auto value_offset = map->value_offsets_[valueOffset];
     for (int i = 0; i < count; i++) {
-        MM_PREFETCH_T0(pl + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jlong val = pl[i];
         auto res = find(map, key);
@@ -340,15 +339,13 @@ static jboolean kIntCountLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong
     return JNI_TRUE;
 }
 
-static jboolean kIntCountWrapUp(jlong pRosti, jint valueOffset, jlong valueAtNull, jlong valueAtNullCount) {
+static jboolean kIntCountWrapUp(jlong pRosti, jint valueOffset, jlong valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
 
-    // populate null value
-    if (valueAtNullCount > 0) {
+    if (valueAtNull > -1) {
         auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
         auto res = find(map, nullKey);
-        // maps must have identical structure to use "shift" from map B on map A
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
             if (PREDICT_FALSE(res.first == UL_MAX)) {
@@ -1727,8 +1724,8 @@ Java_io_questdb_std_Rosti_keyedHourCountLong(JNIEnv *env, jclass cl, jlong pRost
 
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_Rosti_keyedIntCountWrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
-                                                jlong valueAtNull, jlong valueAtNullCount) {
-    return kIntCountWrapUp(pRosti, valueOffset, valueAtNull, valueAtNullCount);
+                                                jlong valueAtNull) {
+    return kIntCountWrapUp(pRosti, valueOffset, valueAtNull);
 }
 
 // SUM long

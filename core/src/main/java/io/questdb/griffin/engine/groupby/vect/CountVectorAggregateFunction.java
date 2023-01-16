@@ -94,14 +94,9 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
         types.add(ColumnType.LONG);
     }
 
-//    @Override
-//    public void toPlan(PlanSink sink) {
-//        sink.val("count()");
-//    }
-
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum(), count.sum());
+        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum() > 0 ? count.sum() : -1);
     }
 
     @FunctionalInterface

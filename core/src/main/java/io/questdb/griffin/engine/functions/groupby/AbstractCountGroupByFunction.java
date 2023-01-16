@@ -53,11 +53,6 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
         return rec.getLong(valueIndex);
     }
 
-//    @Override
-//    public String getSymbol() {
-//        return "count";
-//    }
-
     @Override
     public boolean isConstant() {
         return false;

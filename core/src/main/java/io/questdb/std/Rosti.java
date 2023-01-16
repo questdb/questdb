@@ -167,7 +167,7 @@ public final class Rosti {
 
     public static native boolean keyedIntCountMerge(long pRostiA, long pRostiB, int valueOffset);
 
-    public static native boolean keyedIntCountWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
+    public static native boolean keyedIntCountWrapUp(long pRosti, int valueOffset, long valueAtNull);
 
     public static native boolean keyedIntDistinct(long pRosti, long pKeys, long count);
 
