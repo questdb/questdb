@@ -36,6 +36,7 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.TreeMap;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -77,6 +78,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String sizeLimit;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String spinBeforeFlush;
+    private TreeMap<Long, Long> sortedFiles; 
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
@@ -368,13 +370,23 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeExcessiveLogsVisitor(long filePointer, int type) {
         path.trimTo(logDir.length());
         path.concat(filePointer).$();
-        logFileName.of(filePointer);
-        if (Files.notDots(filePointer) && type == Files.DT_FILE && Chars.contains(logFileName, logFileTemplate)
-                && (currentLogSizeSum += Files.length(path)) > nSizeLimit) {
-            if (!ff.remove(path)) {
-                throw new LogError("cannot remove: " + path.$());
-            }
+        if (type == Files.DT_FILE) {
+            sortedFiles.put(ff.getLastModified(path.$()), filePointer);
         }
+    }
+    
+    private void removeExcessiveLogs() {
+        sortedFiles.entrySet().stream().forEach(entry -> {
+            path.trimTo(logDir.length());
+            path.concat(entry.getValue()).$();
+            logFileName.of(entry.getValue());
+            if (Files.notDots(entry.getValue()) && Chars.contains(logFileName, logFileTemplate)
+                    && (currentLogSizeSum += Files.length(path)) > nSizeLimit) {
+                if (!ff.remove(path)) {
+                    throw new LogError("cannot remove: " + path.$());
+                }
+            }
+        });
     }
 
     private void removeExpiredLogsVisitor(long filePointer, int type) {
@@ -394,8 +406,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             ff.iterateDir(path.of(logDir).$(), removeExpiredLogsVisitor);
         }
         if (this.sizeLimit != null) {
-            currentLogSizeSum = 0;
+            sortedFiles = new TreeMap<>();
             ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
+            currentLogSizeSum = 0;
+            removeExcessiveLogs();
         }
     }
 
