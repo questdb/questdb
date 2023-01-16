@@ -32,7 +32,8 @@ public class CountColumnTest extends AbstractGriffinTest {
     @Test
     public void testCountNull() throws Exception {
         assertMemoryLeak(() -> {
-            String[] types = {"int", "long", "float", "double", "date", "timestamp", "long256", "string", "symbol", "geohash(5b)", "geohash(10b)", "geohash(20b)", "geohash(40b) "};
+            String[] types = {"int", "long", "float", "double", "date", "timestamp", "long256", "string",
+                    "symbol", "geohash(5b)", "geohash(10b)", "geohash(20b)", "geohash(40b) "};
 
             for (String type : types) {
                 assertFailure("select count(cast(null as " + type + ")) from long_sequence(1)", null, 13, "NULL is not allowed");
