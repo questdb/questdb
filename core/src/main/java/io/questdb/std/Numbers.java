@@ -907,7 +907,7 @@ public final class Numbers {
         }
 
         boolean negative = sequence.charAt(0) == '-';
-        if(negative){
+        if (negative){
             throw NumericException.INSTANCE;
         }
 

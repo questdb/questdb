@@ -122,7 +122,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         if (this.sizeLimit != null) {
             try {
                 nSizeLimit = Numbers.parseLongSize(this.sizeLimit);
-                if(nSizeLimit < nRollSize) {
+                if (nSizeLimit < nRollSize) {
                     throw new LogError("sizeLimit must be larger than rollSize");
                 }
             } catch (NumericException e) {
@@ -377,16 +377,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    private void removeOldLogs() {
-        if (this.lifeDuration != null) {
-            ff.iterateDir(path.of(logDir).$(), removeExpiredLogsVisitor);
-        }
-        if (this.sizeLimit != null) {
-            currentLogSizeSum = 0;
-            ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
-        }
-    }
-
     private void removeExpiredLogsVisitor(long filePointer, int type) {
         path.trimTo(logDir.length());
         path.concat(filePointer).$();
@@ -396,6 +386,16 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             if (!ff.remove(path)) {
                 throw new LogError("cannot remove: " + path.$());
             }
+        }
+    }
+
+    private void removeOldLogs() {
+        if (this.lifeDuration != null) {
+            ff.iterateDir(path.of(logDir).$(), removeExpiredLogsVisitor);
+        }
+        if (this.sizeLimit != null) {
+            currentLogSizeSum = 0;
+            ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
         }
     }
 
