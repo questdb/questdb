@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
@@ -48,6 +50,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -1259,6 +1262,88 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDropTable() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        configOverrideMaxUncommittedRows(2);
+        configOverrideWalSegmentRolloverRowCount(2);
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "weather~2" + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                    mayDrainWalQueue();
+                    dropWeatherTable();
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        runInContext(filesFacade, (receiver) -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            sendNoWait(receiver, lineData, "weather");
+
+            lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
+                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
+            send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
+
+            mayDrainWalQueue();
+
+            // two of the three commits are lost
+            String expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        }, false, 250);
+    }
+
+    @Test
+    public void testRenameTable() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        configOverrideMaxUncommittedRows(2);
+        configOverrideWalSegmentRolloverRowCount(2);
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "weather~2" + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                    mayDrainWalQueue();
+                    renameTable("weather", "meteorology");
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        runInContext(filesFacade, (receiver) -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            sendNoWait(receiver, lineData, "weather");
+
+            lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
+                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
+            send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
+
+            mayDrainWalQueue();
+            // two of the three commits go to the renamed table
+            String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t\tNaN\n" +
+                    "us-midwest\tNaN\t2016-06-13T17:43:50.102300Z\tsensor1\t85.0\n";
+            assertTable(expected, "meteorology");
+
+            // last commit goes to the recreated table
+            expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+
+        }, false, 250);
+    }
+
+    @Test
     public void testWriterRelease1() throws Exception {
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -1318,8 +1403,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease3() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1348,7 +1431,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease4() throws Exception {
-        Assume.assumeFalse(walEnabled);
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1377,7 +1459,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease5() throws Exception {
-        Assume.assumeFalse(walEnabled);
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1423,6 +1504,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private void dropWeatherTable() {
         TableToken tt = engine.getTableToken("weather");
         engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
+    }
+
+    private void renameTable(CharSequence from, CharSequence to) {
+        try (MemoryMARW mem = Vm.getMARWInstance(); Path otherPath = new Path()) {
+            engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, from, otherPath, to);
+        }
     }
 
     private void mayDrainWalQueue() {

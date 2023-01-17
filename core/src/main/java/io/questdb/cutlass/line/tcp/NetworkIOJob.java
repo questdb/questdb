@@ -32,6 +32,8 @@ import io.questdb.std.str.DirectByteCharSequence;
 interface NetworkIOJob extends Job, QuietCloseable {
     void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
+    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
+
     TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName);
 
     ObjList<SymbolCache> getUnusedSymbolCaches();

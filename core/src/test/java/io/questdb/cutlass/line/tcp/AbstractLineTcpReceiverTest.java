@@ -259,9 +259,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         runInContext(r, false, 250);
     }
 
-    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+    protected void runInContext(FilesFacade ff, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(ff, () -> {
             final Path path = new Path(4096);
 
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
@@ -286,6 +286,10 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 Misc.free(path);
             }
         });
+    }
+
+    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+        runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
     }
 
     protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {

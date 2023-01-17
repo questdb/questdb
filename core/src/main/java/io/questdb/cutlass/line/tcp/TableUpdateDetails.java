@@ -111,7 +111,7 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void addReference(int workerId) {
-        if (writerThreadId != -1) {
+        if (!isWal()) {
             networkIOOwnerCount++;
         }
         LOG.info()
@@ -184,6 +184,10 @@ public class TableUpdateDetails implements Closeable {
         return writerThreadId;
     }
 
+    public void commit() throws CommitFailedException {
+        commit(false);
+    }
+
     public void incrementEventsProcessedSinceReshuffle() {
         ++eventsProcessedSinceReshuffle;
     }
@@ -196,8 +200,12 @@ public class TableUpdateDetails implements Closeable {
         return writerInError;
     }
 
+    public boolean isWal() {
+        return writerThreadId == -1;
+    }
+
     public void removeReference(int workerId) {
-        if (writerThreadId != -1) {
+        if (!isWal()) {
             networkIOOwnerCount--;
         }
         localDetailsArray[workerId].clear();
@@ -240,6 +248,13 @@ public class TableUpdateDetails implements Closeable {
                     LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
                 }
                 throw CommitFailedException.instance(ex);
+            }
+            try {
+                if (isWal()) {
+                    engine.verifyTableToken(tableToken);
+                }
+            } catch (Throwable ignore) {
+                setWriterInError();
             }
         }
     }
@@ -286,7 +301,7 @@ public class TableUpdateDetails implements Closeable {
         nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
 
         try {
-            writerAPI.ic();
+            commit(true);
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
@@ -319,7 +334,7 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    writerAPI.commit();
+                    commit();
                 }
             } catch (Throwable ex) {
                 LOG.error().$("writer commit fails, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
@@ -624,10 +639,14 @@ public class TableUpdateDetails implements Closeable {
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetStateIfNecessary() {
-            // First, reset processed column tracking.
+        void clearProcessedColumns() {
             processedCols.setAll(columnCount, false);
             addedColsUtf16.clear();
+        }
+
+        void resetStateIfNecessary() {
+            // First, reset processed column tracking.
+            clearProcessedColumns();
             // Second, check if writer's structure version has changed
             // compared with the known metadata.
             if (latestKnownMetadata != null) {
