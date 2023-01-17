@@ -98,7 +98,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     }
 
     public int keyIndex(DirectByteCharSequence key) {
-        int index = Hash.spread(Chars.hashCode(key)) & mask;
+        int index = hash(key);
 
         if (keys[index] == null) {
             return index;
@@ -112,7 +112,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     }
 
     public int keyIndex(String key) {
-        int index = Hash.spread(Chars.hashCode(key)) & mask;
+        int index = hash(key);
 
         if (keys[index] == null) {
             return index;
@@ -174,7 +174,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                     k != null;
                     from = (from + 1) & mask, k = keys[from]
             ) {
-                int idealHit = Hash.spread(Chars.hashCode(k)) & mask;
+                int idealHit = hash(k);
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
@@ -190,6 +190,10 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             }
             list.remove(key);
         }
+    }
+
+    private int hash(CharSequence k) {
+        return Chars.hashCode(k) & mask;
     }
 
     public int size() {

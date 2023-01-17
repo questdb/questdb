@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
@@ -360,6 +361,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                 new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
+                    @NotNull
                     public MillisecondClock getClock() {
                         return () -> Long.MAX_VALUE;
                     }

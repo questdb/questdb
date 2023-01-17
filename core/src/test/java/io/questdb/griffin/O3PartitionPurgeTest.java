@@ -642,10 +642,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         // when reader is returned to pool it remains in open state
         // holding files such that purge fails with access violation
         engine.releaseInactive();
-        //noinspection StatementWithEmptyBody
-        while (purgeJob.run(0)) {
-            // drain the purge job queue fully
-        }
+        purgeJob.drain(0);
     }
 
     private void testManyReadersOpenClosedDense(int start, int increment, int iterations) throws Exception {

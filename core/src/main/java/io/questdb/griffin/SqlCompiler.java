@@ -780,7 +780,13 @@ public class SqlCompiler implements Closeable {
         }
         return compiledQuery.ofAlter(
                 alterOperationBuilder
-                        .ofAddIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, Numbers.ceilPow2(indexValueBlockSize))
+                        .ofAddIndex(
+                                tableNamePosition,
+                                tableToken,
+                                metadata.getTableId(),
+                                columnName,
+                                Numbers.ceilPow2(indexValueBlockSize)
+                        )
                         .build()
         );
     }
