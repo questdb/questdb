@@ -137,7 +137,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         final MapKey key = map.withKey();
         final int dot = Chars.indexOf(columnName, lo, '.');
         if (dot == -1) {
-            key.putStrLowerCase(null);
+            key.putStr(null);
             key.putStrLowerCase(columnName, lo, hi);
         } else {
             key.putStrLowerCase(columnName, 0, dot);
@@ -178,20 +178,18 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             throw CairoException.duplicateColumn(columnName, tableAlias);
         }
 
-        value.putLong(0, columnCount++);
+        value.putInt(0, columnCount++);
         return dot;
     }
 
     private void addToMap(CharSequence columnName, int dot, TableColumnMetadata cm) {
-        MapKey key;
-        MapValue value;
-        this.columnMetadata.add(cm);
+        columnMetadata.add(cm);
 
-        key = map.withKey();
+        final MapKey key = map.withKey();
         key.putStr(null);
         key.putStrLowerCase(columnName, dot + 1, columnName.length());
 
-        value = key.createValue();
+        final MapValue value = key.createValue();
         if (value.isNew()) {
             value.putInt(0, columnCount - 1);
         } else {

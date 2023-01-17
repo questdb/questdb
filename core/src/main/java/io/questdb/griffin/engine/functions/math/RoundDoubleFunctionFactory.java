@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -103,6 +104,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("round(").val(left).val(',').val(right).val(')');
+        }
     }
 
     private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
@@ -128,6 +134,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
             return Numbers.roundHalfUpNegScale(l, scale);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("round(").val(arg).val(',').val(scale).val(')');
+        }
     }
 
     private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
@@ -152,6 +163,13 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundHalfUpPosScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            int i = -scale;
+            PlanSink planSink = sink.val("round(").val(arg).val(',').val(i);
+            planSink.val(')');
         }
     }
 }

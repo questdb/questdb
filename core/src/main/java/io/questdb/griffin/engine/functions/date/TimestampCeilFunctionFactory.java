@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -55,6 +56,8 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
                 return new TimestampCeilMMFunction(args.getQuick(1));
             case 'y':
                 return new TimestampCeilYYYYFunction(args.getQuick(1));
+            case 'w':
+                return new TimestampCeilWWFunction(args.getQuick(1));
             case 'h':
                 return new TimestampCeilHHFunction(args.getQuick(1));
             case 'm':
@@ -72,9 +75,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     private abstract static class AbstractTimestampCeilFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
+        private final char symbol;
 
-        public AbstractTimestampCeilFunction(Function arg) {
+        public AbstractTimestampCeilFunction(Function arg, char symbol) {
             this.arg = arg;
+            this.symbol = symbol;
         }
 
         @Override
@@ -88,23 +93,29 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : ceil(micros);
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_ceil('").val(symbol).val("',").val(arg).val(')');
+        }
+
         abstract long ceil(long timestamp);
     }
 
     public static class TimestampCeilDDFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilDDFunction(Function arg) {
-            super(arg);
+            super(arg, 'd');
         }
 
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilDD(timestamp);
         }
+
     }
 
     public static class TimestampCeilHHFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilHHFunction(Function arg) {
-            super(arg);
+            super(arg, 'h');
         }
 
         @Override
@@ -115,7 +126,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilMIFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilMIFunction(Function arg) {
-            super(arg);
+            super(arg, 'm');
         }
 
         @Override
@@ -126,7 +137,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilMMFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilMMFunction(Function arg) {
-            super(arg);
+            super(arg, 'M');
         }
 
         @Override
@@ -137,7 +148,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilMSFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilMSFunction(Function arg) {
-            super(arg);
+            super(arg, 'T');
         }
 
         @Override
@@ -148,7 +159,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilSSFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilSSFunction(Function arg) {
-            super(arg);
+            super(arg, 's');
         }
 
         @Override
@@ -157,9 +168,20 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
     }
 
+    public static class TimestampCeilWWFunction extends AbstractTimestampCeilFunction {
+        public TimestampCeilWWFunction(Function arg) {
+            super(arg, 'w');
+        }
+
+        @Override
+        public long ceil(long timestamp) {
+            return Timestamps.ceilWW(timestamp);
+        }
+    }
+
     public static class TimestampCeilYYYYFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilYYYYFunction(Function arg) {
-            super(arg);
+            super(arg, 'y');
         }
 
         @Override

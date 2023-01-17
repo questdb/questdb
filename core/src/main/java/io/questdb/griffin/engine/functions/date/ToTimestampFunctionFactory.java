@@ -49,7 +49,6 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
     }
 
     public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
-
         private final Function arg;
 
         public ToTimestampFunction(Function arg) {
@@ -59,6 +58,11 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public String getName() {
+            return "to_timestamp";
         }
 
         @Override

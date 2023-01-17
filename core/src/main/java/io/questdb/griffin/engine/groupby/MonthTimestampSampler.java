@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
@@ -72,6 +73,11 @@ class MonthTimestampSampler implements TimestampSampler {
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
         this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MonthTsSampler");
     }
 
     private long addMonth(long timestamp, int monthCount) {

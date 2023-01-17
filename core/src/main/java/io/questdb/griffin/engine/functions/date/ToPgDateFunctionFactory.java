@@ -73,5 +73,10 @@ public class ToPgDateFunctionFactory implements FunctionFactory {
             }
             return Numbers.LONG_NaN;
         }
+
+        @Override
+        public String getName() {
+            return "to_pg_date";
+        }
     }
 }

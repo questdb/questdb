@@ -51,4 +51,8 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
+
+    protected String getOperation() {
+        return "Union All";
+    }
 }

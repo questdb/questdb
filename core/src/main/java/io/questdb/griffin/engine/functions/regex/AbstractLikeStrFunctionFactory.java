@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -161,6 +162,17 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            //impl is regex 
+            sink.val(" ~ ");
+            sink.val(pattern);
+            if (!caseInsensitive) {
+                sink.val(" [case-sensitive]");
+            }
+        }
     }
 
     private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
@@ -186,6 +198,17 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            //impl is regex 
+            sink.val(" ~ ");
+            sink.val(matcher.pattern().toString());
+            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
+                sink.val(" [case-sensitive]");
+            }
         }
     }
 }

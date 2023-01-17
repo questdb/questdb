@@ -39,7 +39,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private long o3MaxLag = 0;
     private QueryModel queryModel;
     private int selectKeywordPosition;
-    private ExpressionNode tableName;
+    private ExpressionNode tableNameExpr;
 
     private InsertModel() {
     }
@@ -66,7 +66,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void clear() {
-        this.tableName = null;
+        this.tableNameExpr = null;
         this.queryModel = null;
         this.columnNameSet.clear();
         this.columnPositions.clear();
@@ -122,8 +122,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return selectKeywordPosition;
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return tableNameExpr;
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return tableNameExpr.token;
     }
 
     public void setBatchSize(long batchSize) {
@@ -143,7 +149,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     public void setTableName(ExpressionNode tableName) {
-        this.tableName = tableName;
+        this.tableNameExpr = tableName;
     }
 
     @Override
@@ -157,7 +163,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             sink.put(" lag ").put(o3MaxLag);
         }
 
-        sink.put(" into ").put(tableName.token).put(' ');
+        sink.put(" into ").put(tableNameExpr.token).put(' ');
         int n = columnNameList.size();
         if (n > 0) {
             sink.put('(');

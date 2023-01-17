@@ -186,6 +186,22 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
+    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.DATA);
+        eventMem.putLong(startRowID);
+        eventMem.putLong(endRowID);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(outOfOrder);
+        writeSymbolMapDiffs();
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
+        return txn++;
+    }
+
     int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -198,22 +214,6 @@ class WalWriterEvents implements Closeable {
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         writeIndexedVariables(bindVariableService);
         writeNamedVariables(bindVariableService);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
-        return txn++;
-    }
-
-    int data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.DATA);
-        eventMem.putLong(startRowID);
-        eventMem.putLong(endRowID);
-        eventMem.putLong(minTimestamp);
-        eventMem.putLong(maxTimestamp);
-        eventMem.putBool(outOfOrder);
-        writeSymbolMapDiffs();
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
         eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());

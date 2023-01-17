@@ -243,6 +243,51 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAllByWeek() throws Exception {
+        testBindVariableInsert(PartitionBy.WEEK, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 7;
+                    }
+                },
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByWeekUndefined() throws Exception {
+        testBindVariableInsert(PartitionBy.WEEK, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 7;
+                    }
+                },
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByWeekUndefinedNoColumnSet() throws Exception {
+        testBindVariableInsert(PartitionBy.WEEK, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 7;
+                    }
+                },
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testInsertAllByYear() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
                     private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");

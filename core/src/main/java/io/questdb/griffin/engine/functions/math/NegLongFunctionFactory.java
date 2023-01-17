@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -62,6 +63,11 @@ public class NegLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long value = arg.getLong(rec);
             return value != Numbers.LONG_NaN ? -value : Numbers.LONG_NaN;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val('-').val(arg);
         }
     }
 }

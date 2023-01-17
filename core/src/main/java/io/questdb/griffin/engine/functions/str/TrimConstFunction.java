@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.str.StringSink;
@@ -57,5 +58,10 @@ public class TrimConstFunction extends StrFunction implements UnaryFunction {
     @Override
     public CharSequence getStrB(Record rec) {
         return sink2;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val('\'').val(sink1).val('\'');
     }
 }

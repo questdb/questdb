@@ -38,7 +38,7 @@ public class QueryModelTest {
 
         model.setAlias(newExpressionNode());
         model.setArtificialStar(true);
-        model.setTableName(newExpressionNode());
+        model.setTableNameExpr(newExpressionNode());
         model.setJoinType(QueryModel.JOIN_LT);
         model.setJoinCriteria(newExpressionNode());
         model.setModelPosition(42);

@@ -66,5 +66,10 @@ public class LnDoubleFunctionFactory implements FunctionFactory {
             double value = function.getDouble(rec);
             return Math.log(value);
         }
+
+        @Override
+        public String getName() {
+            return "ln";
+        }
     }
 }

@@ -27,10 +27,45 @@ package io.questdb.griffin.model;
 public interface ExecutionModel {
     int COPY = 5;
     int CREATE_TABLE = 2;
+    int EXPLAIN = 7;
     int INSERT = 4;
+    int MAX = EXPLAIN + 1;
     int QUERY = 1;
     int RENAME_TABLE = 3;
     int UPDATE = 6;
 
     int getModelType();
+
+    default QueryModel getQueryModel() {
+        return null;
+    }
+
+    default CharSequence getTableName() {
+        return null;
+    }
+    
+    default ExpressionNode getTableNameExpr() {
+        return null;
+    }
+
+    default String getTypeName() {
+        return Inner.typeNameMap[getModelType()];
+    }
+
+    class Inner {
+        private static final String[] typeNameMap = new String[ExecutionModel.MAX];
+
+        static {
+            typeNameMap[ExecutionModel.QUERY] = "Query";
+            typeNameMap[ExecutionModel.CREATE_TABLE] = "Create";
+            typeNameMap[ExecutionModel.RENAME_TABLE] = "Rename";
+            typeNameMap[ExecutionModel.INSERT] = "Insert into";
+            typeNameMap[ExecutionModel.COPY] = "Copy";
+            typeNameMap[ExecutionModel.UPDATE] = "Update";
+            typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
+        }
+    }
 }
+
+
+

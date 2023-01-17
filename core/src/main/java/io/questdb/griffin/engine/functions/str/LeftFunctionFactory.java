@@ -29,6 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -109,6 +110,11 @@ public class LeftFunctionFactory implements FunctionFactory {
             return len != TableUtils.NULL_LEN ? getPos(len) : TableUtils.NULL_LEN;
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("left(").val(strFunc).val(',').val(count).val(')');
+        }
+
         private int getPos(int len) {
             return LeftFunctionFactory.getPos(len, count);
         }
@@ -145,13 +151,13 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return countFunc;
+        public String getName() {
+            return "left";
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink);
+        public Function getRight() {
+            return countFunc;
         }
 
         @Override
@@ -163,6 +169,11 @@ public class LeftFunctionFactory implements FunctionFactory {
                 final int pos = getPos(len, count);
                 sink.put(str, 0, pos);
             }
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink);
         }
 
         @Override

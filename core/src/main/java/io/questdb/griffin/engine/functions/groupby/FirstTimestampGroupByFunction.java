@@ -59,6 +59,11 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
+    public String getName() {
+        return "first";
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return rec.getTimestamp(this.valueIndex);
     }

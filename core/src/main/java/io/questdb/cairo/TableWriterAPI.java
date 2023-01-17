@@ -31,9 +31,6 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import java.io.Closeable;
 
 public interface TableWriterAPI extends Closeable {
-    int WRITER_METADATA_SERVICE = 1;
-    int WRITER_OTHER = 2;
-
     void addColumn(CharSequence columnName, int columnType);
 
     /**
@@ -111,8 +108,6 @@ public interface TableWriterAPI extends Closeable {
 
     long getUncommittedRowCount();
 
-    int getWriterType();
-
     /**
      * Intermediate commit. It provides the best effort guarantee to commit as much data from the RSS to storage.
      * However, it also takes into account O3 data overlap from the previous intermediate commits and adjust
@@ -129,6 +124,13 @@ public interface TableWriterAPI extends Closeable {
     TableWriter.Row newRow(long timestamp);
 
     void rollback();
+
+    /**
+     * Declares type of behaviour of the implementing class.
+     *
+     * @return true when multiple writers of this type can be used simultaneously against the same table, false otherwise.
+     */
+    boolean supportsMultipleWriters();
 
     void truncate();
 }

@@ -1194,11 +1194,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return updateOperatorImpl;
     }
 
-    @Override
-    public int getWriterType() {
-        return TableWriterAPI.WRITER_METADATA_SERVICE;
-    }
-
     public boolean hasO3() {
         return o3MasterRef > -1;
     }
@@ -1796,6 +1791,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long size() {
         // This is uncommitted row count
         return txWriter.getRowCount() + getO3RowCount();
+    }
+
+    @Override
+    public boolean supportsMultipleWriters() {
+        return false;
     }
 
     /**
@@ -6340,6 +6340,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
+        /**
+         * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
+         * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
+         *
+         * @param columnIndex      index of the column we are writing to
+         * @param value            UTF8 bytes represented as CharSequence interface.
+         *                         On this interface getChar() returns a byte, not complete character.
+         * @param hasNonAsciiChars helper flag to indicate implementation if all bytes can be assumed as ASCII.
+         *                         "true" here indicates that UTF8 decoding is compulsory.
+         */
         void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars);
 
         void putSym(int columnIndex, CharSequence value);

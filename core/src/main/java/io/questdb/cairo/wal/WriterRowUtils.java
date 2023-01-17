@@ -28,11 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
 
 public class WriterRowUtils {
 
@@ -81,23 +77,4 @@ public class WriterRowUtils {
         putGeoHash(index, val, type, row);
     }
 
-    public static void putUtf8(TableWriter.Row r, String s, int columnIndex, boolean symbol) {
-        byte[] bytes = s.getBytes(Files.UTF_8);
-        long len = bytes.length;
-        long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-            }
-            DirectByteCharSequence seq = new DirectByteCharSequence();
-            seq.of(p, p + len);
-            if (symbol) {
-                r.putSymUtf8(columnIndex, seq, true);
-            } else {
-                r.putStrUtf8AsUtf16(columnIndex, seq, true);
-            }
-        } finally {
-            Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
 }

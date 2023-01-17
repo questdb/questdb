@@ -98,6 +98,22 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         return this;
     }
 
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
+    Function getFilter() {
+        return filter;
+    }
+
+    int getIndexDirection() {
+        return indexDirection;
+    }
+
+    int getSymbolKey() {
+        return symbolKey;
+    }
+
     void prepare(TableReader tableReader) {
         this.record.of(tableReader);
     }

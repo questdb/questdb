@@ -43,18 +43,18 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class QMapWriteBenchmark {
+public class FastMapWriteLongBenchmark {
 
-    private static final int M = 25;
-    private static final double loadFactor = 0.5;
-    private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final int N = 1_000_000;
+    private static final FastMap fmap = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5f, 1024);
+    private static final double loadFactor = 0.7;
+    private static final HashMap<Long, Long> hmap = new HashMap<>(64, (float) loadFactor);
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(QMapWriteBenchmark.class.getSimpleName())
+                .include(FastMapWriteLongBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -64,36 +64,36 @@ public class QMapWriteBenchmark {
     }
 
     @Benchmark
-    public CharSequence baseline() {
-        return rnd.nextChars(M);
+    public long baseline() {
+        return rnd.nextLong(N) + rnd.nextLong();
     }
 
     @Setup(Level.Iteration)
     public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
-        map.clear();
+        System.out.print(" [q=" + qmap.size() + ", l=" + fmap.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
+        fmap.clear();
         qmap.clear();
         rnd.reset();
     }
 
     @Benchmark
-    public void testDirectMap() {
-        MapKey key = map.withKey();
-        key.putStr(rnd.nextChars(M));
+    public void testCompactMap() {
+        MapKey key = qmap.withKey();
+        key.putLong(rnd.nextLong(N));
+        MapValue value = key.createValue();
+        value.putLong(0, rnd.nextLong());
+    }
+
+    @Benchmark
+    public void testFastMap() {
+        MapKey key = fmap.withKey();
+        key.putLong(rnd.nextLong(N));
         MapValue values = key.createValue();
-        values.putLong(0, 20);
+        values.putLong(0, rnd.nextLong());
     }
 
     @Benchmark
     public void testHashMap() {
-        hmap.put(rnd.nextChars(M).toString(), 20L);
-    }
-
-    @Benchmark
-    public void testQMap() {
-        MapKey key = qmap.withKey();
-        key.putStr(rnd.nextChars(M));
-        MapValue value = key.createValue();
-        value.putLong(0, 20);
+        hmap.put(rnd.nextLong(N), rnd.nextLong());
     }
 }

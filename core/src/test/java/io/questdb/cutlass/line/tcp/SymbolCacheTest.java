@@ -742,6 +742,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
+        public boolean supportsMultipleWriters() {
+            return true;
+        }
+
+        @Override
         public void truncate() {
         }
     }

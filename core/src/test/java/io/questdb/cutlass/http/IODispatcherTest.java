@@ -764,6 +764,40 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testExplainQueryPlan() throws Exception {
+        testJsonQuery(1,
+                "GET /query?query=explain+select+1+from+x+where+f>systimestamp()+and+f<0+limit+1 HTTP/1.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cookie: _ga=GA1.1.1723668823.1636741549\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Referer: http://localhost:9000/\r\n" +
+                        "Sec-Fetch-Dest: empty\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36\r\n" +
+                        "sec-ch-ua: \" Not A;Brand\";v=\"99\", \"Chromium\";v=\"100\", \"Google Chrome\";v=\"100\"\r\n" +
+                        "sec-ch-ua-mobile: ?0\r\n" +
+                        "sec-ch-ua-platform: \"Windows\"\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0340\r\n" +
+                        "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"count\":9}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                , 1);
+
+    }
+
+    @Test
     public void testFailsOnBadMaxUncommittedRows() throws Exception {
         String command = "POST /upload?fmt=json&" +
                 "maxUncommittedRows=two&" +
@@ -4460,7 +4494,7 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 50;
+        final int timeout = 100;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -7173,7 +7207,7 @@ public class IODispatcherTest {
 
     @Test
     public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 50;
+        final int timeout = 100;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)

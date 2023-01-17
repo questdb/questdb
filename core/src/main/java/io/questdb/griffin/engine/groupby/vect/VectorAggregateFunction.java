@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
@@ -45,6 +46,11 @@ public interface VectorAggregateFunction extends Function, Mutable {
     boolean merge(long pRostiA, long pRostiB);
 
     void pushValueTypes(ArrayColumnTypes types);
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');
+    }
 
     // sets null as result of aggregation of all nulls
     // this typically checks non-null count and replaces 0 with null if all values were null

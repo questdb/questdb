@@ -26,6 +26,7 @@ package io.questdb.std;
 
 public final class Hash {
 
+    private static final long M2 = 0x7a646e4d;
     private static final int SPREAD_HASH_BITS = 0x7fffffff;
     private static final long XXH_PRIME64_1 = -7046029288634856825L; /* 0b1001111000110111011110011011000110000101111010111100101010000111 */
     private static final long XXH_PRIME64_2 = -4417276706812531889L; /* 0b1100001010110010101011100011110100100111110101001110101101001111 */
@@ -72,6 +73,35 @@ public final class Hash {
      */
     public static long hashMem(long p, long len) {
         return xxHash64(p, len, 0, unsafeAccessor);
+    }
+
+    /**
+     * Calculates positive integer hash of memory pointer using a polynomial
+     * hash function.
+     * <p>
+     * The function is a modified version of the function from
+     * <a href="https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html">this article</a>
+     * by Peter Lawrey.
+     *
+     * @param p   memory pointer
+     * @param len memory length in bytes
+     * @return hash code
+     */
+    public static int hashMem32(long p, long len) {
+        long h = 0;
+        int i = 0;
+        for (; i + 7 < len; i += 8) {
+            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
+        }
+        if (i + 3 < len) {
+            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            i += 4;
+        }
+        for (; i < len; i++) {
+            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
+        }
+        h *= M2;
+        return (int) h ^ (int) (h >>> 32);
     }
 
     /**

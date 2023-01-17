@@ -238,6 +238,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getExplainPoolCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }
@@ -567,7 +572,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getSqlFastMapLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -693,6 +698,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
+    }
+
+    @Override
+    public int getSqlSmallMapPageSize() {
+        return 4 * 1024;
     }
 
     @Override

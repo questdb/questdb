@@ -241,7 +241,7 @@ public class WalWriter implements TableWriterAPI {
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
-                lastSegmentTxn = events.data(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
@@ -323,11 +323,6 @@ public class WalWriter implements TableWriterAPI {
 
     public String getWalName() {
         return walName;
-    }
-
-    @Override
-    public int getWriterType() {
-        return TableWriterAPI.WRITER_OTHER;
     }
 
     public void goActive() {
@@ -478,6 +473,11 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
+    public boolean supportsMultipleWriters() {
+        return true;
+    }
+
+    @Override
     public String toString() {
         return "WalWriter{" +
                 "name=" + walName +
@@ -572,8 +572,8 @@ public class WalWriter implements TableWriterAPI {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableToken, metadata.getStructureVersion())) {
-            long nextStructVer = getStructureVersion();
-            while (log.hasNext() && nextStructVer < structureVersionHi) {
+            long structVer = getStructureVersion();
+            while (log.hasNext() && structVer < structureVersionHi) {
                 TableMetadataChange chg = log.next();
                 try {
                     chg.apply(metaWriterSvc, true);
@@ -582,7 +582,7 @@ public class WalWriter implements TableWriterAPI {
                     throw e;
                 }
 
-                if (++nextStructVer != getStructureVersion()) {
+                if (++structVer != getStructureVersion()) {
                     distressed = true;
                     throw CairoException.critical(0)
                             .put("could not apply table definition changes to the current transaction, version unchanged");
@@ -1148,7 +1148,7 @@ public class WalWriter implements TableWriterAPI {
         events.rollback();
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());
-        lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
     }
 
     private void rolloverSegmentLock() {
@@ -1742,7 +1742,7 @@ public class WalWriter implements TableWriterAPI {
                     utf8Map.putAt(
                             index,
                             utf8BytesToString(value, tempSink),
-                            putSymUtf8Slow(columnIndex, value, hasNonAsciiChars)
+                            putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
                     );
                 }
             } else {
@@ -1758,14 +1758,13 @@ public class WalWriter implements TableWriterAPI {
             return columns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
 
-        private void putSym0(int columnIndex, CharSequence value, SymbolMapReader symbolMapReader) {
+        private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
+            final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
             int key;
-            if (value != null) {
-                // Search in local map first
-                CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
-                key = symbolMap.get(value);
-                if (key == SymbolTable.VALUE_NOT_FOUND) {
-                    key = symbolMapReader.keyOf(value);
+            if (utf16Value != null) {
+                int index = utf16Map.keyIndex(utf16Value);
+                if (index > -1) {
+                    key = symbolMapReader.keyOf(utf16Value);
                     if (key == SymbolTable.VALUE_NOT_FOUND) {
                         // Add it to in-memory symbol map
                         // Locally added symbols must have a continuous range of keys
@@ -1773,35 +1772,9 @@ public class WalWriter implements TableWriterAPI {
                         key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
                     }
                     // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
-                    symbolMap.put(Chars.toString(value), key);
-                }
-            } else {
-                key = SymbolTable.VALUE_IS_NULL;
-                symbolMapNullFlags.set(columnIndex, true);
-            }
-
-            getPrimaryColumn(columnIndex).putInt(key);
-            setRowValueNotNull(columnIndex);
-        }
-
-        private int putSymUtf8Slow(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
-            final CharSequence utf16Symbol = utf8ToUtf16(value, tempSink, hasNonAsciiChars);
-            CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
-            int key;
-            if (utf16Symbol != null) {
-                int kk = utf16Map.keyIndex(utf16Symbol);
-                if (kk > -1) {
-                    key = symbolMapReaders.getQuick(columnIndex).keyOf(utf16Symbol);
-                    if (key == SymbolTable.VALUE_NOT_FOUND) {
-                        // Add it to in-memory symbol map
-                        // Locally added symbols must have a continuous range of keys
-                        final int initialSymCount = initialSymbolCounts.get(columnIndex);
-                        key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
-                    }
-                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
-                    utf16Map.putAt(kk, Chars.toString(utf16Symbol), key);
+                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
                 } else {
-                    key = utf16Map.valueAt(kk);
+                    key = utf16Map.valueAt(index);
                 }
             } else {
                 key = SymbolTable.VALUE_IS_NULL;
@@ -1811,6 +1784,19 @@ public class WalWriter implements TableWriterAPI {
             getPrimaryColumn(columnIndex).putInt(key);
             setRowValueNotNull(columnIndex);
             return key;
+        }
+
+        private int putSymUtf8Slow(
+                int columnIndex,
+                DirectByteCharSequence utf8Value,
+                boolean hasNonAsciiChars,
+                SymbolMapReader symbolMapReader
+        ) {
+            return putSym0(
+                    columnIndex,
+                    utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
+                    symbolMapReader
+            );
         }
     }
 }

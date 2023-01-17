@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.FullFwdDataFrameCursorFactory;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
@@ -663,7 +660,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
 
         return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
-                new FullFwdDataFrameCursorFactory(metadata.getTableToken(), metadata.getTableId(), reader.getVersion()),
+                new FullFwdDataFrameCursorFactory(metadata.getTableToken(), metadata.getTableId(), reader.getVersion(), GenericRecordMetadata.copyOf(metadata)),
                 new DataFrameRowCursorFactory(),
                 false,
                 null,

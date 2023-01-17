@@ -28,15 +28,18 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TestNPEFactory implements FunctionFactory {
+    public static final String SIGNATURE = "npe()";
+
     @Override
     public String getSignature() {
-        return "npe()";
+        return SIGNATURE;
     }
 
     @Override
@@ -56,6 +59,11 @@ public class TestNPEFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }
