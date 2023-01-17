@@ -30,7 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 
-public interface MetadataChangeSPI {
+public interface MetadataService {
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
      * already have data this function will create ".top" file in addition to column files. ".top" file contains

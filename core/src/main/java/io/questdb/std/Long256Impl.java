@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public class Long256Impl implements Long256, Sinkable {
 
@@ -106,6 +107,13 @@ public class Long256Impl implements Long256, Sinkable {
     @Override
     public void toSink(CharSink sink) {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
+    }
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
     }
 
     static {

@@ -56,6 +56,7 @@ public final class MemoryTag {
     public static final int NATIVE_HTTP_CONN = 11;
     public static final int NATIVE_ILP_RSS = 46;
     public static final int NATIVE_IMPORT = 34;
+    public static final int NATIVE_INT_LIST = 54;
     public static final int NATIVE_IO_DISPATCHER_RSS = 49;
     public static final int NATIVE_JIT = 22;
     public static final int NATIVE_JIT_LONG_LIST = 20;
@@ -79,7 +80,7 @@ public final class MemoryTag {
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
-    public static final int SIZE = MMAP_TX_LOG + 1;
+    public static final int SIZE = NATIVE_INT_LIST + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -109,6 +110,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_LATEST_BY_LONG_LIST, "NATIVE_LATEST_BY_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_JIT_LONG_LIST, "NATIVE_JIT_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_INT_LIST, "NATIVE_INT_LIST");
         tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
         tagNameMap.extendAndSet(NATIVE_OFFLOAD, "NATIVE_OFFLOAD");
         tagNameMap.extendAndSet(MMAP_UPDATE, "MMAP_UPDATE");

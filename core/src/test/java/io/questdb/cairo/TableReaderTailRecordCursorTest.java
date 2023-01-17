@@ -210,7 +210,6 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                                         ss.put(",");
                                     }
                                     ss.put("]:").put(reader.getTxn());
-                                    int val = record.getInt(0);
                                     Assert.assertEquals(ss.toString(), count, record.getInt(0));
                                 }
                                 BinarySequence binarySequence = record.getBin(1);

@@ -36,7 +36,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     private static final long NO_CORRELATION_ID = -1L;
     protected @Nullable TableToken tableToken;
     @Nullable SqlExecutionContext sqlExecutionContext;
-    @Nullable CharSequence sqlStatement;
+    @Nullable CharSequence sqlText;
     int tableNamePosition;
     private String cmdName;
     private int cmdType;
@@ -54,13 +54,13 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
-    public String getCommandName() {
-        return cmdName;
+    public int getCmdType() {
+        return cmdType;
     }
 
     @Override
-    public int getCommandType() {
-        return cmdType;
+    public String getCommandName() {
+        return cmdName;
     }
 
     @Override
@@ -72,8 +72,8 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         return sqlExecutionContext;
     }
 
-    public @Nullable CharSequence getSqlStatement() {
-        return sqlStatement;
+    public @Nullable CharSequence getSqlText() {
+        return sqlText;
     }
 
     @Override
@@ -112,7 +112,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     public void withSqlStatement(String sqlStatement) {
-        this.sqlStatement = sqlStatement;
+        this.sqlText = sqlStatement;
     }
 
     void init(

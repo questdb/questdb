@@ -32,7 +32,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.std.Chars.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";

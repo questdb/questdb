@@ -29,7 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.wal.MetadataChangeSPI;
+import io.questdb.cairo.wal.MetadataService;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
@@ -70,8 +70,8 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) {
-        return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
+    public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
+        return svc.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 
     @Override
@@ -108,7 +108,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public boolean isStructureChange() {
+    public boolean isStructural() {
         return false;
     }
 

@@ -2252,9 +2252,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         if (Os.isWindows()) {
             engine.releaseInactive();
         }
-        //noinspection StatementWithEmptyBody
-        while (purgeJob.run(0)) {
-            // drain the purge job queue fully
-        }
+        purgeJob.drain(0);
     }
 }

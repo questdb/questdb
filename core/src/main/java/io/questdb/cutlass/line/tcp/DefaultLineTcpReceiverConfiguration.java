@@ -35,6 +35,8 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -112,6 +114,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
         return ioDispatcherConfiguration;
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return FilesFacadeImpl.INSTANCE;
     }
 
     @Override

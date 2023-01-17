@@ -93,7 +93,7 @@ public class LineTcpParserBenchmark {
                 .warmupIterations(1)
                 .measurementIterations(3)
                 // Uncomment to collect a flame graph via async-profiler:
-                //.addProfiler(AsyncProfiler.class, "output=flamegraph")
+//                .addProfiler(AsyncProfiler.class, "output=flamegraph")
                 .forks(1)
                 .build();
 
