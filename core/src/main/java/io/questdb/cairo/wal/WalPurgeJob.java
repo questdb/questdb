@@ -214,7 +214,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 ) {
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
-                    ff.rmdir(Path.getThreadLocal(configuration.getRoot()).concat(tableToken));
+                    ff.rmdir(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).slash$());
                     engine.removeTableToken(tableToken);
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
@@ -442,19 +442,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     @Override
     protected boolean runSerially() {
         final long t = clock.getTicks();
-        if (last + checkInterval < t) {
-            last = t;
-            if (runLock.tryLock()) {
-                try {
-                    broadSweep();
-                } finally {
-                    runLock.unlock();
-                }
-            } else {
-                LOG.info().$("skipping, locked out").$();
+//        if (last + checkInterval < t) {
+        last = t;
+        if (runLock.tryLock()) {
+            try {
+                broadSweep();
+            } finally {
+                runLock.unlock();
             }
+        } else {
+            LOG.info().$("skipping, locked out").$();
         }
-        return false;
+//        }
+        return true;
     }
 
     /**

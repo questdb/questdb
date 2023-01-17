@@ -540,7 +540,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final byte walTxnType = walEventCursor.getType();
                     if (walTxnType == DATA) {
                         recordAdded = true;
-                        var commitInfo = walEventCursor.getDataInfo();
+                        WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
                         transactionMeta.add(-1); // commit to timestamp
                         transactionMeta.add(commitInfo.getMaxTimestamp());
                         transactionMeta.add(commitInfo.getMinTimestamp());
