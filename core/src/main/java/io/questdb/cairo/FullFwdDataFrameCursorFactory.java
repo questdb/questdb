@@ -32,8 +32,8 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
     private FullBwdDataFrameCursor bwdCursor;
 
-    public FullFwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
-        super(tableName, tableId, tableVersion);
+    public FullFwdDataFrameCursorFactory(TableToken tableToken, int tableId, long tableVersion, GenericRecordMetadata metadata) {
+        super(tableToken, tableVersion, metadata);
     }
 
     @Override
@@ -57,7 +57,11 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("FullFwdDataFrame");
+        if (sink.getOrder() == ORDER_DESC) {
+            sink.type("Frame backward scan");
+        } else {
+            sink.type("Frame forward scan");
+        }
         super.toPlan(sink);
     }
 }

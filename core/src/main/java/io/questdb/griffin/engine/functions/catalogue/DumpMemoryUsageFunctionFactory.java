@@ -28,23 +28,22 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-memory-usage");
+    private static final String SIGNATURE = "dump_memory_usage()";
 
     @Override
     public String getSignature() {
-        return "dump_memory_usage()";
+        return SIGNATURE;
     }
 
     @Override
@@ -63,6 +62,7 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
             final LogRecord record = LOG.advisory();
 
             record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
+            record.$("\n\tRSS: ").$(Os.getRss());
             record.$("\n\tMALLOC_COUNT: ").$(Unsafe.getMallocCount());
             record.$("\n\tREALLOC_COUNT: ").$(Unsafe.getReallocCount());
             record.$("\n\tFREE_COUNT: ").$(Unsafe.getFreeCount());
@@ -77,6 +77,11 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

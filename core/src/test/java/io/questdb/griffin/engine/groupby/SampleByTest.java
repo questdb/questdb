@@ -31,14 +31,15 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.ObjList;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -506,7 +507,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
             engine.clear();
 
-            final FilesFacade ff = new FilesFacadeImpl() {
+            final FilesFacade ff = new TestFilesFacadeImpl() {
                 int count = 10;
 
                 @Override
@@ -518,7 +519,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -1240,7 +1241,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "),index(s) timestamp(k)");
     }
 
-    @Test//here
+    @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
@@ -1432,7 +1433,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "sample by 3d");
     }
 
-    @Test//here
+    @Test
     public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -3869,7 +3870,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 int count = 4;
 
                 @Override
@@ -3881,7 +3882,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -3890,8 +3891,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                    try {
-                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext);
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));
@@ -3918,7 +3919,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 int count = 10;
 
                 @Override
@@ -3930,7 +3931,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -8213,7 +8214,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure we get the same outcome when we get factory to create new cursor
                 assertCursor(expected, factory, false, true, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, true, sqlExecutionContext);
+                assertVariableColumns(factory, sqlExecutionContext);
 
                 compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -8470,7 +8471,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueListWithNullAndPrev() throws Exception { //here
+    public void testSampleFillValueListWithNullAndPrev() throws Exception {
         assertQuery("b\tsum\tcount\tmin\tmax\tavg\tk\n" +
                         "XYZ\t28.45577791213847\t1\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:00:00.000000Z\n" +
                         "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:00:00.000000Z\n" +

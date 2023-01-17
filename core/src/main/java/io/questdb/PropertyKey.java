@@ -131,6 +131,7 @@ public enum PropertyKey {
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
+    CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY("cairo.sql.explain.model.pool.capacity"),
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
@@ -384,7 +385,9 @@ public enum PropertyKey {
     CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
     CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
-    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl");
+    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
+    READ_ONLY_INSTANCE("readonly"),
+    CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

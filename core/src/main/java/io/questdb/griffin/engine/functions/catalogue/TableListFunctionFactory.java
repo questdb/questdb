@@ -31,30 +31,32 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
+    private static final String SIGNATURE = "tables()";
     private static final int designatedTimestampColumn;
     private static final int idColumn;
     private static final int maxUncommittedRowsColumn;
     private static final int nameColumn;
     private static final int o3MaxLagColumn;
     private static final int partitionByColumn;
+    private static final int systemNameColumn;
     private static final int writeModeColumn;
 
     @Override
     public String getSignature() {
-        return "tables()";
+        return SIGNATURE;
     }
 
     @Override
@@ -80,15 +82,14 @@ public class TableListFunctionFactory implements FunctionFactory {
 
     private static class TableListCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
-        private final FilesFacade ff;
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
+        private CairoEngine engine;
         private Path path;
         private TableReaderMetadata tableReaderMetadata;
 
         public TableListCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
-            this.ff = configuration.getFilesFacade();
             path = new Path().of(configuration.getRoot()).$();
             this.sysTablePrefix = configuration.getSystemTableNamePrefix();
             cursor = new TableListRecordCursor();
@@ -98,6 +99,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            this.engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
         }
@@ -108,6 +110,11 @@ public class TableListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("tables()");
+        }
+
+        @Override
         protected void _close() {
             path = Misc.free(path);
             tableReaderMetadata = Misc.free(tableReaderMetadata);
@@ -115,12 +122,13 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final StringSink sink = new StringSink();
-            private long findPtr = 0;
+            private final ObjList<TableToken> tableBucket = new ObjList<>();
+            private int tableIndex = -1;
+            private TableToken tableToken;
 
             @Override
             public void close() {
-                findPtr = ff.findClose(findPtr);
+                tableIndex = -1;
                 tableReaderMetadata.clear();//release FD of last table on the list
             }
 
@@ -136,23 +144,21 @@ public class TableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                while (true) {
-                    if (findPtr == 0) {
-                        findPtr = ff.findFirst(path);
-                        if (findPtr <= 0) {
-                            return false;
-                        }
-                    } else {
-                        if (ff.findNext(findPtr) <= 0) {
-                            return false;
-                        }
-                    }
-                    if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                        if (record.open(sink)) {
-                            return true;
-                        }
+                if (tableIndex < 0) {
+                    engine.getTableTokens(tableBucket, false);
+                    tableIndex = -1;
+                }
+
+                tableIndex++;
+                int n = tableBucket.size();
+                for (; tableIndex < n; tableIndex++) {
+                    tableToken = tableBucket.get(tableIndex);
+                    if (record.open(tableToken)) {
+                        break;
                     }
                 }
+
+                return tableIndex < n;
             }
 
             @Override
@@ -206,7 +212,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return sink;
+                        return tableToken.getTableName();
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -215,6 +221,9 @@ public class TableListFunctionFactory implements FunctionFactory {
                         if (tableReaderMetadata.getTimestampIndex() > -1) {
                             return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
                         }
+                    }
+                    if (col == systemNameColumn) {
+                        return tableToken.getDirName();
                     }
                     return null;
                 }
@@ -229,15 +238,17 @@ public class TableListFunctionFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(CharSequence tableName) {
+                public boolean open(TableToken tableToken) {
 
-                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
+                    if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryJob.tableName)
+                            || Chars.equals(tableToken.getTableName(), TelemetryJob.configTableName)
+                            || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
                         return false;
                     }
 
                     int pathLen = path.length();
                     try {
-                        path.chop$().concat(tableName).concat(META_FILE_NAME).$();
+                        path.chop$().concat(tableToken).concat(META_FILE_NAME).$();
                         tableReaderMetadata.load(path.$());
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
@@ -249,7 +260,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         // perhaps this folder is not a table
                         // remove it from the result set
                         LOG.info()
-                                .$("cannot query table metadata [table=").$(tableName)
+                                .$("cannot query table metadata [table=").$(tableToken)
                                 .$(", error=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
@@ -280,6 +291,8 @@ public class TableListFunctionFactory implements FunctionFactory {
         o3MaxLagColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         writeModeColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
+        systemNameColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

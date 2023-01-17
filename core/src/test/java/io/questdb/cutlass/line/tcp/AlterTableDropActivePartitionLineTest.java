@@ -29,6 +29,7 @@ import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineTcpSender;
@@ -103,6 +104,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 serverMain.start();
 
                 final CairoEngine engine = serverMain.getCairoEngine();
+                engine.reloadTableNames();
 
                 // create table over PGWire
                 try (
@@ -124,6 +126,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                     stmt.execute();
                 }
 
+                TableToken token = engine.getTableToken(tableName);
                 // set up a thread that will send ILP/TCP for today
 
                 // today is deterministic
@@ -157,7 +160,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 // so that we know when the table writer is returned to the pool whence the ilpAgent is stopped
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equalsNc(tableName, name)) {
+                    if (name != null && Chars.equalsNc(tableName, name.getTableName())) {
                         if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                             tableWriterReturnedToPool.countDown();
                         }
@@ -174,7 +177,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
 
                 // check table reader size
                 long beforeDropSize;
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
                     beforeDropSize = reader.size();
                     Assert.assertTrue(beforeDropSize > 0L);
                 }
@@ -194,7 +197,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 ilpAgentHalted.await();
 
                 // check size
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
                     Assert.assertTrue(beforeDropSize > reader.size());
                 }
 

@@ -26,6 +26,8 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.str.CharSink;
 
 /**
@@ -35,7 +37,7 @@ import io.questdb.std.str.CharSink;
  * <p>
  * Types are defined in {@link io.questdb.cairo.ColumnType}
  */
-public interface RecordMetadata extends ColumnTypes {
+public interface RecordMetadata extends ColumnTypes, Plannable {
 
     int COLUMN_NOT_FOUND = -1;
 
@@ -212,5 +214,15 @@ public interface RecordMetadata extends ColumnTypes {
         sink.put(']');
         sink.put(',').putQuoted("timestampIndex").put(':').put(getTimestampIndex());
         sink.put('}');
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        for (int i = 0, n = getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.val(',');
+            }
+            sink.val(getColumnName(i));
+        }
     }
 }

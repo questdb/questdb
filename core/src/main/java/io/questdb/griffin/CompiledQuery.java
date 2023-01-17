@@ -43,6 +43,7 @@ public interface CompiledQuery {
     short CREATE_TABLE_AS_SELECT = 21;
     short DEALLOCATE = 24;
     short DROP = 7;
+    short EXPLAIN = 25;
     short INSERT = 2;
     short INSERT_AS_SELECT = 10;
     short LOCK = 15;
@@ -56,7 +57,7 @@ public interface CompiledQuery {
     short SNAPSHOT_DB_PREPARE = 22;
     short TABLE_RESUME = 25;
     short TRUNCATE = 3;
-    short TYPES_COUNT = DEALLOCATE;
+    short TYPES_COUNT = EXPLAIN;
     short UNLOCK = 16;
     short UPDATE = 14;
     short VACUUM = 17;
@@ -76,6 +77,8 @@ public interface CompiledQuery {
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
+     *
+     * @return number of rows changed by this command
      */
     long getAffectedRowsCount();
 
@@ -85,8 +88,12 @@ public interface CompiledQuery {
 
     RecordCursorFactory getRecordCursorFactory();
 
+    String getSqlStatement();
+
     /**
      * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
+     *
+     * @return statement name
      */
     CharSequence getStatementName();
 
@@ -98,5 +105,5 @@ public interface CompiledQuery {
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    void withSqlStatement(CharSequence sqlStatement);
+    void withSqlStatement(String sqlStatement);
 }

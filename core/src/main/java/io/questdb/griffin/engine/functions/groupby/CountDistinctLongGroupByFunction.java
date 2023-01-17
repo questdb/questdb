@@ -32,13 +32,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.LongHashSet;
+import io.questdb.std.CompactLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<LongHashSet> sets = new ObjList<>();
+    private final ObjList<CompactLongHashSet> sets = new ObjList<>();
     private int setIndex;
     private int valueIndex;
 
@@ -54,14 +54,14 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final LongHashSet set;
+        final CompactLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongHashSet());
+            sets.extendAndSet(setIndex, set = new CompactLongHashSet());
         } else {
             set = sets.getQuick(setIndex);
         }
-
         set.clear();
+
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
             set.add(val);
@@ -74,7 +74,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final LongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final CompactLongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final long val = arg.getLong(record);
         if (val != Numbers.LONG_NaN) {
             final int index = set.keyIndex(val);
@@ -97,6 +97,11 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public String getName() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -108,7 +113,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
+        valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
         columnTypes.add(ColumnType.INT);
     }

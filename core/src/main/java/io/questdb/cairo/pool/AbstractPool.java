@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -53,7 +54,7 @@ public abstract class AbstractPool implements Closeable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, FALSE, TRUE)) {
             closePool();
         }
@@ -93,10 +94,10 @@ public abstract class AbstractPool implements Closeable {
         return closed == TRUE;
     }
 
-    protected void notifyListener(long thread, CharSequence name, short event) {
+    protected void notifyListener(long thread, TableToken tableToken, short event) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
-            listener.onEvent(PoolListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0);
+            listener.onEvent(PoolListener.SRC_WRITER, thread, tableToken, event, (short) 0, (short) 0);
         }
     }
 

@@ -41,7 +41,7 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -64,7 +64,7 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putInt(0, i);
@@ -262,7 +262,7 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 if (i % 4 == 0) {

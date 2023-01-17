@@ -27,9 +27,11 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
@@ -219,6 +221,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("$").val(variableIndex).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
     private Function getBase() {

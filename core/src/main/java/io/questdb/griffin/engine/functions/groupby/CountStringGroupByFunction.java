@@ -32,14 +32,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
+import io.questdb.std.CompactCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CountStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<CharSequenceHashSet> sets = new ObjList<>();
+    private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
     private int setIndex = 0;
     private int valueIndex;
 
@@ -55,14 +55,14 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final CharSequenceHashSet set;
+        final CompactCharSequenceHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CharSequenceHashSet());
+            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
         } else {
             set = sets.getQuick(setIndex);
         }
-
         set.clear();
+
         final CharSequence val = arg.getStr(record);
         if (val != null) {
             set.add(Chars.toString(val));
@@ -75,7 +75,7 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final CharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final CharSequence val = arg.getStr(record);
         if (val != null) {
             final int index = set.keyIndex(val);
@@ -95,6 +95,11 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "count";
     }
 
     @Override

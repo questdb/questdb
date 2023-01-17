@@ -23,38 +23,29 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public static final String TABLE_NAME_COLUMN = "table";
     private static final RecordMetadata METADATA;
     private final TableListRecordCursor cursor;
-    private final FilesFacade ff;
-    private Path path;
 
-    public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
+    public TableListRecordCursorFactory() {
         super(METADATA);
-        this.ff = ff;
-        path = new Path().of(dbRoot).$();
         cursor = new TableListRecordCursor();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of();
+        return cursor.of(executionContext.getCairoEngine());
     }
 
     @Override
@@ -63,18 +54,23 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        path = Misc.free(path);
+    public void toPlan(PlanSink sink) {
+        sink.type("all_tables");
     }
 
-    private class TableListRecordCursor implements RecordCursor {
+    @Override
+    protected void _close() {
+    }
+
+    private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
-        private final StringSink sink = new StringSink();
-        private long findPtr = 0;
+        private final ObjList<TableToken> tableBucket = new ObjList<>();
+        private CairoEngine engine;
+        private int tableIndex = -1;
+        private String tableName = null;
 
         @Override
         public void close() {
-            findPtr = ff.findClose(findPtr);
         }
 
         @Override
@@ -89,21 +85,16 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            while (true) {
-                if (findPtr == 0) {
-                    findPtr = ff.findFirst(path);
-                    if (findPtr <= 0) {
-                        return false;
-                    }
-                } else {
-                    if (ff.findNext(findPtr) <= 0) {
-                        return false;
-                    }
-                }
-                if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                    return true;
-                }
+            if (tableIndex < 0) {
+                engine.getTableTokens(tableBucket, false);
+                tableIndex = 0;
             }
+
+            if (tableIndex == tableBucket.size()) {
+                return false;
+            }
+            tableName = tableBucket.get(tableIndex++).getTableName();
+            return true;
         }
 
         @Override
@@ -118,10 +109,11 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            close();
+            tableIndex = -1;
         }
 
-        private TableListRecordCursor of() {
+        private TableListRecordCursor of(@NotNull CairoEngine cairoEngine) {
+            this.engine = cairoEngine;
             toTop();
             return this;
         }
@@ -130,7 +122,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    return sink;
+                    return tableName;
                 }
                 return null;
             }

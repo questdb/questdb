@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -885,8 +884,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             if (columnType != ColumnType.UNDEFINED) {
                 try (TableModel model = new TableModel(configuration, table, PartitionBy.DAY)) {
-                    model.col(targetColumnName, columnType).timestamp();
-                    engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
+                    CairoTestUtils.create(engine, model.col(targetColumnName, columnType).timestamp());
                 }
                 if (walEnabled) {
                     Assert.assertTrue(isWalTable(table));
@@ -907,7 +905,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             } while (recvBuffer.length() > 0);
             closeContext();
             mayDrainWalQueue();
-            try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), table)) {
+            try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), table)) {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });

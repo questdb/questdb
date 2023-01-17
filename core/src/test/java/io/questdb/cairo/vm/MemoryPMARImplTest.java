@@ -50,7 +50,7 @@ public class MemoryPMARImplTest {
             long pageSize = Files.PAGE_SIZE;
             ConcurrentLinkedQueue<Throwable> allErrors = new ConcurrentLinkedQueue<>();
             ObjList<Thread> threads = new ObjList<>();
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
             for (int thread = 0; thread < 10; thread++) {
                 Thread th = new Thread(() -> {
@@ -59,7 +59,7 @@ public class MemoryPMARImplTest {
 
                         LOG.info().$(path).$();
                         try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
-                            long pos = 0;
+                            long pos;
 
                             mem.jumpTo(0);
                             String value = "abcdef";
@@ -87,10 +87,7 @@ public class MemoryPMARImplTest {
             }
 
             for (int i = 0, n = threads.size(); i < n; i++) {
-                try {
-                    threads.getQuick(i).join();
-                } catch (InterruptedException e) {
-                }
+                threads.getQuick(i).join();
             }
 
             if (!allErrors.isEmpty()) {

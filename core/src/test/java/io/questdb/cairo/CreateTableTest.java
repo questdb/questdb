@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -7,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -18,6 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
  */
+@SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
@@ -282,6 +308,48 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistParallelWal() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                compiler.compile("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            Assert.assertEquals(tableCount, getTablesInRegistrySize());
+        });
+    }
+
+    @Test
     public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
         assertCompile("create table x (s1 symbol)");
         assertCompile("create table y (s2 symbol)");
@@ -427,6 +495,52 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableParallelWal() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertEquals("table already exists", e.getFlyweightMessage());
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            Assert.assertEquals(tableCount, getTablesInRegistrySize());
+        });
+    }
+
+    @Test
     public void testCreateTableWithIndex() throws Exception {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol), index(s)", null);
 
@@ -445,9 +559,86 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol) ", null);
     }
 
+    @Test
+    public void testCreateWalAndNonWalTablesParallel() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 3;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(2 * threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int)", executionContext);
+                                    compiler.compile("drop table tab" + j, executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(2 * i).start();
+
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL ", executionContext);
+                                    compiler.compile("drop table tab" + j, executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(2 * i + 1).start();
+            }
+
+            for (int i = 0; i < threads.size(); i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    private static int getTablesInRegistrySize() {
+        ObjList<TableToken> bucket = new ObjList<>();
+        engine.getTableTokens(bucket, true);
+        return bucket.size();
+    }
+
     private void assertColumnTypes(String[][] columnTypes) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("tab"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int i = 0; i < columnTypes.length; i++) {
                     String[] arr = columnTypes[i];
@@ -460,7 +651,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertColumnsIndexed(String tableName, String... columnNames) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader r = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader r = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName))) {
                 TableReaderMetadata metadata = r.getMetadata();
                 IntList indexed = new IntList();
                 indexed.setPos(metadata.getColumnCount());
@@ -496,7 +687,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertPartitionAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("tab"))) {
                 Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
                 Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
             }
@@ -505,7 +696,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertSymbolParameters(SymbolParameters parameters) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("tab"))) {
                 if (parameters.symbolCapacity != null) {
                     Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(1).getSymbolCapacity());
                 }
@@ -520,7 +711,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertWalEnabled(boolean isWalEnabled) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(("x")))) {
                 Assert.assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
             }
         });
@@ -528,7 +719,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertWithClauseParameters(int maxUncommittedRows, int o3MaxLag) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(("x")))) {
                 Assert.assertEquals(o3MaxLag, reader.getMetadata().getO3MaxLag());
                 Assert.assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
             }

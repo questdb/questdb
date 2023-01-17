@@ -27,8 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Os;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -290,17 +289,16 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
             assertPartitionResult("count\n44\n", "2020-01-01");
 
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
+            TableToken tableToken = engine.getTableToken(tableName);
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
-                Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
-                if (Os.type == Os.WINDOWS) {
-                    engine.releaseAllReaders();
-                }
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path));
+                engine.releaseAllReaders();
 
                 compile("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
 
                 assertPartitionResult("count\n0\n", "2020-01-01");
-                Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(path));
+                Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path));
             }
         });
     }
@@ -317,8 +315,9 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
             assertReader("x\tts\n" +
                     "1\t2022-12-12T10:04:59.000000Z\n", "x");
 
-            TableReader rdr1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x");
-            try (TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test")) {
+            TableToken tableToken = engine.getTableToken(tableName);
+            TableReader rdr1 = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+            try (TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "test")) {
 
                 TableWriter.Row row;
 
@@ -382,10 +381,10 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionsByDayUsingWhereClause() throws Exception {
         assertMemoryLeak(() -> {
-            createX("DAY", 720000000);
+                    createX("DAY", 720000000);
 
-            String expectedBeforeDrop = "count\n" +
-                    "120\n";
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
@@ -624,6 +623,20 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionDeletedFromDiskWithoutDropByWeek() throws Exception {
+        String expected = "[0] Partition '2020-W02' does not exist in table 'src' directory. " +
+                "Run [ALTER TABLE src DROP PARTITION LIST '2020-W02'] " +
+                "to repair the table or restore the partition directory.";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.WEEK;
+        int partitionToCheck = 0;
+        String folderToDelete = "2020-W02";
+        int deletedPartitionIndex = 1;
+        int rowCount = 10000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, 1, rowCount, 1428);
+    }
+
+    @Test
     public void testPartitionDeletedFromDiskWithoutDropByNone() throws Exception {
         String expected = "[0] Table 'src' data directory does not exist on the disk at ";
         String startDate = "2020-01-01";
@@ -815,7 +828,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
                 engine.clear();
 
-                try (final TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getName())) {
+                try (final TableReader reader = getReader(src.getName())) {
                     long sum = 0;
                     int colIndex = 0;
                     boolean opened = false;
@@ -833,7 +846,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
                     // Delete partition directory
                     String dirToDelete = insertIterations > 1 ? partitionDirBaseName + "." + (insertIterations - 1) : partitionDirBaseName;
-                    File dir = new File(Paths.get(root.toString(), src.getName(), dirToDelete).toString());
+                    TableToken tableToken = engine.getTableToken(src.getName());
+                    File dir = new File(Paths.get(root.toString(), tableToken.getDirName(), dirToDelete).toString());
                     deleteDir(dir);
 
                     if (opened) {

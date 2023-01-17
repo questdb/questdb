@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -31,6 +32,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -87,5 +89,12 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.symbolKey = TableUtils.toIndexKey(symbolKey);
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.meta("deferred").val("true");
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbol);
     }
 }

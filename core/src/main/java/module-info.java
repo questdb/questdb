@@ -149,6 +149,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLong256FunctionFactory,
 
 //                   '+' operator
@@ -192,6 +193,18 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.LnDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.LogDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SqrtDoubleFunctionFactory,
+//                    # 'trigonometric'
+            io.questdb.griffin.engine.functions.math.SinDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CosDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.TanDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CotDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AsinDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AcosDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.AtanDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.Atan2DoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.PIDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.RadiansDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.DegreesDoubleFunctionFactory,
 //                    # '~=',
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,

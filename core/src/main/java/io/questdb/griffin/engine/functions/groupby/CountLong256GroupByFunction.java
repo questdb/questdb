@@ -95,6 +95,11 @@ public class CountLong256GroupByFunction extends LongFunction implements UnaryFu
     }
 
     @Override
+    public String getName() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

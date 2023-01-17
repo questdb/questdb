@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
@@ -38,7 +38,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class BindVariableServiceImplTest {
-    private final static BindVariableService bindVariableService = new BindVariableServiceImpl(new DefaultCairoConfiguration(null));
+    private final static BindVariableService bindVariableService = new BindVariableServiceImpl(new DefaultTestCairoConfiguration(null));
 
     @Before
     public void setUp() {

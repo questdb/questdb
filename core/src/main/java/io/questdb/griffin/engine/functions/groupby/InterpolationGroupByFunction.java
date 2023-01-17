@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
@@ -288,5 +289,10 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     public void stopInterpolating() {
         interpolating = false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("Interpolated(").val(wrappedFunction).val(")");
     }
 }

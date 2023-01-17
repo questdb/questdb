@@ -31,6 +31,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -102,6 +103,15 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             Misc.free(map);
             throw e;
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleBy");
+        sink.attr("fill").val("value");
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", cursor.groupByFunctions, true);
+        sink.child(base);
     }
 
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {

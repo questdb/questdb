@@ -42,7 +42,7 @@ public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
 
-    public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
+    public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
         this.factory = timeZoneRuleFactory;
         index(monthArray = symbols.getMonths(), months);
         index(shortMonthArray = symbols.getShortMonths(), months);
@@ -50,7 +50,7 @@ public class DateLocale {
         index(shortWeekdayArray = symbols.getShortWeekdays(), weekdays);
         index(ampmArray = symbols.getAmPmStrings(), amspms);
         index(eraArray = symbols.getEras(), eras);
-        indexZones(symbols.getZoneStrings(), timeZoneRuleFactory, cache);
+        indexZones(symbols.getZoneStrings(), timeZoneRuleFactory);
     }
 
     @SuppressWarnings("unchecked")
@@ -176,7 +176,8 @@ public class DateLocale {
         sort(map);
     }
 
-    private void indexZones(String[][] zones, TimeZoneRuleFactory timeZoneRuleFactory, CharSequenceHashSet cache) {
+    private void indexZones(String[][] zones, TimeZoneRuleFactory timeZoneRuleFactory) {
+        CharSequenceHashSet cache = new CharSequenceHashSet();
         // this is a workaround a problem where UTC timezone comes nearly last
         // in this array, which gives way to Antarctica/Troll take its place
 

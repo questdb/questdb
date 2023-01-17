@@ -22,12 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool;
+package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 
-@FunctionalInterface
-public interface WalWriterSource {
-    WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName);
+public abstract class AbstractCastToDoubleFunction extends DoubleFunction implements UnaryFunction {
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(getArg()).val("::double");
+    }
 }

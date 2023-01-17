@@ -34,6 +34,12 @@ public interface BitmapIndexReader extends Closeable {
 
     int DIR_BACKWARD = 2;
     int DIR_FORWARD = 1;
+    String NAME_BACKWARD = "backward";
+    String NAME_FORWARD = "forward";
+
+    static CharSequence nameOf(int direction) {
+        return DIR_FORWARD == direction ? NAME_FORWARD : NAME_BACKWARD;
+    }
 
     @Override
     default void close() {

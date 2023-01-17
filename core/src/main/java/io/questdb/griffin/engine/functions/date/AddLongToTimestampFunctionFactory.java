@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class AddLongToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -62,6 +61,11 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "+";
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }
@@ -77,8 +81,8 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
-            sink.put("AddLongToTimestamp(").put(left).put(",").put(right).put(')');
+        public boolean isOperator() {
+            return true;
         }
     }
 }

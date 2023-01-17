@@ -134,14 +134,13 @@ public class IODispatcherTest {
         );
     }
 
-    public static void createTestTable(CairoConfiguration configuration, int n) {
-        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
-            model
-                    .col("j", ColumnType.SYMBOL);
-            CairoTestUtils.create(model);
+    public static void createTestTable(CairoEngine engine, int n) {
+        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
+            model.col("j", ColumnType.SYMBOL);
+            CairoTestUtils.create(model, engine);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "y", metrics)) {
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -495,6 +494,43 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testEmptyQuotedString() throws Exception {
+        testJsonQuery0(1, engine -> {
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    // select '' from long_sequence(1)
+                    "GET /exec?query=select%20%27%27%20from%20long_sequence%281%29 HTTP/1.1\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "74\r\n" +
+                            "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"}],\"dataset\":[[\"\"]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false
+            );
+        }, false);
+    }
+
+    @Test
     public void testExistentCheckBadArg() throws Exception {
         testJsonQuery(
                 20,
@@ -728,6 +764,40 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testExplainQueryPlan() throws Exception {
+        testJsonQuery(1,
+                "GET /query?query=explain+select+1+from+x+where+f>systimestamp()+and+f<0+limit+1 HTTP/1.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cookie: _ga=GA1.1.1723668823.1636741549\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Referer: http://localhost:9000/\r\n" +
+                        "Sec-Fetch-Dest: empty\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36\r\n" +
+                        "sec-ch-ua: \" Not A;Brand\";v=\"99\", \"Chromium\";v=\"100\", \"Google Chrome\";v=\"100\"\r\n" +
+                        "sec-ch-ua-mobile: ?0\r\n" +
+                        "sec-ch-ua-platform: \"Windows\"\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0340\r\n" +
+                        "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"count\":9}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                , 1);
+
+    }
+
+    @Test
     public void testFailsOnBadMaxUncommittedRows() throws Exception {
         String command = "POST /upload?fmt=json&" +
                 "maxUncommittedRows=two&" +
@@ -829,10 +899,10 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics, 2);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -850,7 +920,8 @@ public class IODispatcherTest {
                 // upload file
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                TableToken tableToken = cairoEngine.getTableToken("sample.csv");
+                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                     StringSink sink = new StringSink();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -901,10 +972,10 @@ public class IODispatcherTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = temp.getRoot().getAbsolutePath();
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics, 2);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -922,7 +993,8 @@ public class IODispatcherTest {
                 // upload file
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                TableToken tableToken = cairoEngine.getTableToken("sample.csv");
+                try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                     StringSink sink = new StringSink();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -947,7 +1019,8 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        testImport(response, request, nf, null, expectDisconnect, requestCount);
+        testImport(response, request, nf, null, expectDisconnect, requestCount, engine -> {
+        });
     }
 
     public void testImport(
@@ -956,7 +1029,8 @@ public class IODispatcherTest {
             NetworkFacade nf,
             CairoConfiguration configuration,
             boolean expectDisconnect,
-            int requestCount
+            int requestCount,
+            HttpQueryTestBuilder.HttpClientCode createTable
     ) throws Exception {
 
         new HttpQueryTestBuilder()
@@ -971,15 +1045,18 @@ public class IODispatcherTest {
                                 .withServerKeepAlive(true)
                 )
                 .run(configuration,
-                        engine -> sendAndReceive(
-                                nf,
-                                request,
-                                response,
-                                requestCount,
-                                0,
-                                false,
-                                expectDisconnect
-                        ));
+                        engine -> {
+                            createTable.run(engine);
+                            sendAndReceive(
+                                    nf,
+                                    request,
+                                    response,
+                                    requestCount,
+                                    0,
+                                    false,
+                                    expectDisconnect
+                            );
+                        });
     }
 
     @Test
@@ -1829,7 +1906,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2378,7 +2455,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2414,7 +2491,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             30,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -2985,7 +3062,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -3327,10 +3404,7 @@ public class IODispatcherTest {
     public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
-            createTestTable(
-                    engine.getConfiguration(),
-                    20
-            );
+            createTestTable(engine, 20);
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     "GET /query?query=y HTTP/1.1\r\n" +
@@ -3835,6 +3909,9 @@ public class IODispatcherTest {
                         "\r\n"
         );
 
+        TestUtils.removeTestPath(temp.getRoot().getAbsolutePath());
+        TestUtils.createTestPath(temp.getRoot().getAbsolutePath());
+
         // quote large numbers (LONG) to string, on param 'quoteLargeNum=true'
         testJsonQuery(
                 0,
@@ -3860,6 +3937,9 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+
+        TestUtils.removeTestPath(temp.getRoot().getAbsolutePath());
+        TestUtils.createTestPath(temp.getRoot().getAbsolutePath());
 
         // quote large numbers (LONG) for questdb web console
         testJsonQuery(
@@ -3893,7 +3973,7 @@ public class IODispatcherTest {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
+                    engine,
                     20,
                     new Rnd(),
                     new TestRecord.ArrayBinarySequence());
@@ -4310,7 +4390,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4347,7 +4427,7 @@ public class IODispatcherTest {
 
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             20,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -4503,7 +4583,7 @@ public class IODispatcherTest {
         testJsonQuery0(2, engine -> {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             20,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence()
@@ -4547,7 +4627,7 @@ public class IODispatcherTest {
     public void testJsonQueryVacuumTable() throws Exception {
         testJsonQuery0(2, engine -> {
             CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
+                    engine,
                     20,
                     new Rnd(),
                     new TestRecord.ArrayBinarySequence());
@@ -4589,7 +4669,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4623,7 +4703,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             30,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -4664,7 +4744,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4699,7 +4779,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             1000,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence());
@@ -4756,13 +4836,13 @@ public class IODispatcherTest {
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
+            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir) {
                 @Override
                 public int getSqlPageFrameMaxRows() {
                     // this is necessary to sufficiently fragment paged filter execution
                     return 10_000;
                 }
-            }, metrics, 2);
+            }, metrics);
                  HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4828,7 +4908,7 @@ public class IODispatcherTest {
                 try {
                     // create table with all column types
                     CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
+                            engine,
                             tableRowCount,
                             new Rnd(),
                             new TestRecord.ArrayBinarySequence()
@@ -5505,7 +5585,7 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -5660,7 +5740,7 @@ public class IODispatcherTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
@@ -5805,7 +5885,7 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+            final DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
                     NetworkFacadeImpl.INSTANCE,
                     baseDir,
@@ -7483,9 +7563,10 @@ public class IODispatcherTest {
 
     private void assertColumn(CharSequence expected, int index) {
         final String baseDir = temp.getRoot().getAbsolutePath();
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
-        try (TableReader reader = new TableReader(configuration, "telemetry")) {
+        TableToken tememetryTableName = new TableToken("telemetry", "telemetry", 0, false);
+        try (TableReader reader = new TableReader(configuration, tememetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
@@ -7502,11 +7583,15 @@ public class IODispatcherTest {
             long expectedO3MaxLag,
             int expectedMaxUncommittedRows,
             int expectedImportedRows,
-            String expectedData
+            String expectedData,
+            boolean mangleTableDirNames
     ) {
         final String baseDir = temp.getRoot().getAbsolutePath();
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+
+        String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
+        TableToken tableToken = new TableToken(tableName, dirName, 1, false);
+        try (TableReader reader = new TableReader(configuration, tableToken)) {
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
@@ -7583,10 +7668,10 @@ public class IODispatcherTest {
     ) throws Exception {
         final AtomicInteger msyncCallCount = new AtomicInteger();
         final String baseDir = temp.getRoot().getAbsolutePath();
-        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir) {
             @Override
             public FilesFacade getFilesFacade() {
-                return new FilesFacadeImpl() {
+                return new TestFilesFacadeImpl() {
                     @Override
                     public int msync(long addr, long len, boolean async) {
                         msyncCallCount.incrementAndGet();
@@ -7597,12 +7682,6 @@ public class IODispatcherTest {
         };
 
         String tableName = "test_table";
-        try (TableModel model = new TableModel(configuration, tableName, partitionBy)
-                .timestamp("ts")
-                .col("int", ColumnType.INT)) {
-            CairoTestUtils.create(model);
-        }
-
         String command = "POST /upload?fmt=json&" +
                 String.format("overwrite=%b&", overwrite) +
                 String.format("durable=%b&", durable) +
@@ -7662,7 +7741,14 @@ public class IODispatcherTest {
                 NetworkFacadeImpl.INSTANCE,
                 configuration,
                 false,
-                1
+                1,
+                engine -> {
+                    try (TableModel model = new TableModel(configuration, tableName, partitionBy)
+                            .timestamp("ts")
+                            .col("int", ColumnType.INT)) {
+                        CairoTestUtils.create(model, engine);
+                    }
+                }
         );
 
         Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
@@ -7672,17 +7758,19 @@ public class IODispatcherTest {
                 expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 1,
-                "2021-01-01T00:01:00.000000Z\t1\n"
+                "2021-01-01T00:01:00.000000Z\t1\n",
+                true
         );
     }
 
-    private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(long o3MaxLag,
-                                                                       int maxUncommittedRows,
-                                                                       long expectedO3MaxLag,
-                                                                       int expectedMaxUncommittedRows,
-                                                                       int expectedImportedRows,
-                                                                       String data,
-                                                                       String expectedData) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
+            long o3MaxLag,
+            int maxUncommittedRows,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows,
+            int expectedImportedRows,
+            String data,
+            String expectedData) throws Exception {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 "overwrite=false&" +
@@ -7748,7 +7836,8 @@ public class IODispatcherTest {
                 expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
-                expectedData);
+                expectedData,
+                false);
     }
 
     private void testDisconnectOnDataUnavailableEventNeverFired(String request) throws Exception {
@@ -7824,7 +7913,7 @@ public class IODispatcherTest {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
             CairoTestUtils.createTestTable(
-                    engine.getConfiguration(),
+                    engine,
                     recordCount,
                     new Rnd(),
                     new TestRecord.ArrayBinarySequence()
@@ -8153,7 +8242,7 @@ public class IODispatcherTest {
             Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
         }
 
-        Files.close(fd);
+        TestFilesFacadeImpl.INSTANCE.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }

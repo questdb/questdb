@@ -93,7 +93,6 @@ public class IntHashSetTest {
 
     @Test
     public void testRemove() {
-
         Rnd rnd = new Rnd();
         IntHashSet set = new IntHashSet();
         final int N = 1000;

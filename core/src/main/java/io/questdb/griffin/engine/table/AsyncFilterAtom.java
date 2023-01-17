@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -37,7 +39,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Closeable {
+public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
 
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
 
@@ -126,6 +128,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
      * The idea is to access the memory to page fault and, thus, warm up the pages
      * in parallel, on multiple threads, instead of relying on the "query owner" thread
      * to do it later serially.
+     *
+     * @param record record to use
+     * @param rows   rows to pre-touch
      */
     public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
         if (!preTouchEnabled || preTouchColumnTypes == null) {
@@ -208,5 +213,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
             return;
         }
         perWorkerLocks.set(filterId, 0);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(filter);
     }
 }

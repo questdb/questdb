@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -133,6 +134,15 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         return true;
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnExcludedValues");
+        sink.attr("symbolFilter").putColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
+        sink.optAttr("filter", filter);
+        sink.child(cursor.getRowCursorFactory());
+        sink.child(dataFrameCursorFactory);
+    }
+
     private void upsertRowCursorFactory(int symbolKey) {
         if (cursorFactoriesIdx[0] < cursorFactories.size()) {
             // Reuse the existing factory.
@@ -178,7 +188,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             throws SqlException {
         TableReader reader = dataFrameCursor.getTableReader();
         if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
-            throw ReaderOutOfDateException.of(reader.getTableName());
+            throw TableReferenceOutOfDateException.of(reader.getTableToken().getTableName());
         }
         Function.init(keyExcludedValueFunctions, reader, executionContext);
         this.recalculateIncludedValues(reader);
