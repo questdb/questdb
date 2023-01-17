@@ -263,7 +263,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeFalse(walEnabled);
         partitionByDefault = PartitionBy.NONE;
         String tableName = "date_column_accepts_timestamp";
- 
+
         runInContext((receiver) -> {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
@@ -554,7 +554,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool, true);
+            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -567,7 +567,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool, true);
+            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -579,17 +579,133 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         assertMemoryLeak(() -> {
             WorkerPool sharedPool = new TestWorkerPool("shared", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool, true);
+            shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
     }
 
     @Test
-    public void testSomeWritersReleased() throws Exception {
-        // TODO(puzpuzpuz): truncate() in WalWriter seems broken when it comes to symbols; re-enable the test when it's fixed.
-        Assume.assumeFalse(walEnabled);
+    public void testNoAutoCreateNewColumns() throws Exception {
+        autoCreateNewColumns = false;
+        runInContext((receiver) -> {
+            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
+            try (TableModel m = new TableModel(configuration, "up", PartitionBy.MONTH)) {
+                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+                engine.createTable(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), false, m, false);
+            }
 
+            String lineData =
+                    "up out=1.0 631150000000000000\n" +
+                            "up out=2.0 631152000000000000\n" +
+                            "up out=3.0 631160000000000000\n" +
+                            "up out=4.0 631170000000000000\n";
+            sendLinger(receiver, lineData, "up");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("up"));
+            }
+            String expected = "ts\tsym\n";
+            assertTable(expected, "up");
+        });
+        autoCreateNewColumns = true;
+    }
+
+    @Test
+    public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \n \"число\", \r\n \"key2\": \"value2\"}\n")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("table"));
+            }
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \n" +
+                    " \"число\", \r\n" +
+                    " \"key2\": \"value2\"}\n\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testSymbolAddedInO3Mode() throws Exception {
+        maxMeasurementSize = 4096;
+        runInContext((receiver) -> {
+            String lineData = "plug,room=6A watts=\"3195\" 1631817296977\n" +
+                    "plug,room=6A watts=\"3188\" 1631817599910\n" +
+                    "plug,room=6A watts=\"3180\" 1631817902842\n" +
+                    "plug,room=6A watts=\"469\" 1631817902842\n" +
+                    "plug,label=Power,room=6A watts=\"475\" 1631817478737\n";
+            sendLinger(receiver, lineData, "plug");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("plug"));
+            }
+            String expected = "room\twatts\ttimestamp\tlabel\n" +
+                    "6A\t3195\t1970-01-01T00:27:11.817296Z\t\n" +
+                    "6A\t475\t1970-01-01T00:27:11.817478Z\tPower\n" +
+                    "6A\t3188\t1970-01-01T00:27:11.817599Z\t\n" +
+                    "6A\t3180\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t469\t1970-01-01T00:27:11.817902Z\t\n";
+            assertTable(expected, "plug");
+        });
+    }
+
+    @Test
+    public void testSymbolAddedInO3ModeFirstRow() throws Exception {
+        maxMeasurementSize = 4096;
+        runInContext((receiver) -> {
+            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
+            sendLinger(receiver, lineData, "plug");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("plug"));
+            }
+            String expected = "room\twatts\ttimestamp\tlabel\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected, "plug");
+        });
+    }
+
+    @Test
+    public void testSymbolAddedInO3ModeFirstRow2Lines() throws Exception {
+        maxMeasurementSize = 4096;
+        runInContext((receiver) -> {
+            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+            sendLinger(receiver, lineData, "plug");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("plug"));
+            }
+            String expected = "room\twatts\ttimestamp\tlabel\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected, "plug");
+        });
+    }
+
+    @Test
+    public void testSomeWritersReleased() throws Exception {
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
@@ -693,98 +809,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 1")
-                            .tag("tag=2", "значение 2")
-                            .field("поле=3", "{\"ключ\": \n \"число\", \r\n \"key2\": \"value2\"}\n")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("table"));
-            }
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \n" +
-                    " \"число\", \r\n" +
-                    " \"key2\": \"value2\"}\n\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testSymbolAddedInO3Mode() throws Exception {
-        maxMeasurementSize = 4096;
-        runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"3195\" 1631817296977\n" +
-                    "plug,room=6A watts=\"3188\" 1631817599910\n" +
-                    "plug,room=6A watts=\"3180\" 1631817902842\n" +
-                    "plug,room=6A watts=\"469\" 1631817902842\n" +
-                    "plug,label=Power,room=6A watts=\"475\" 1631817478737\n";
-            sendLinger(receiver, lineData, "plug");
-
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("plug"));
-            }
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6A\t3195\t1970-01-01T00:27:11.817296Z\t\n" +
-                    "6A\t475\t1970-01-01T00:27:11.817478Z\tPower\n" +
-                    "6A\t3188\t1970-01-01T00:27:11.817599Z\t\n" +
-                    "6A\t3180\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "6A\t469\t1970-01-01T00:27:11.817902Z\t\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
-    public void testSymbolAddedInO3ModeFirstRow() throws Exception {
-        maxMeasurementSize = 4096;
-        runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
-            sendLinger(receiver, lineData, "plug");
-
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("plug"));
-            }
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
-    public void testSymbolAddedInO3ModeFirstRow2Lines() throws Exception {
-        maxMeasurementSize = 4096;
-        runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            sendLinger(receiver, lineData, "plug");
-
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("plug"));
-            }
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = new SqlCompiler(engine);
@@ -836,33 +860,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
-        int rowCount = 100;
-        maxMeasurementSize = 100;
-        runInContext((receiver) -> {
-            String tableName = "table";
-            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
-                    for (int i = 0; i < rowCount; i++) {
-                        lineTcpSender
-                                .metric(tableName)
-                                .tag("tag1", "value 1")
-                                .field("tag2", Chars.repeat("value 2", 10))
-                                .$(0);
-                    }
-                    lineTcpSender.flush();
-                }
-            });
-
-            mayDrainWalQueue();
-            try (TableReader reader = getReader(tableName)) {
-                Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
-                Assert.assertEquals(rowCount, reader.size());
-            }
-        });
-    }
-
-    @Test
     public void testTcpSenderWithSpaceInTableName() throws Exception {
         runInContext((receiver) -> {
             String tableName = "ta ble";
@@ -891,6 +888,53 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     // flapping test
     public void testUnauthenticated() throws Exception {
         test(null, null, 200, 1_000, false);
+    }
+
+    @Test
+    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
+        int rowCount = 100;
+        maxMeasurementSize = 100;
+        runInContext((receiver) -> {
+            String tableName = "table";
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        lineTcpSender
+                                .metric(tableName)
+                                .tag("tag1", "value 1")
+                                .field("tag2", Chars.repeat("value 2", 10))
+                                .$(0);
+                    }
+                    lineTcpSender.flush();
+                }
+            });
+
+            mayDrainWalQueue();
+            try (TableReader reader = getReader(tableName)) {
+                Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
+                Assert.assertEquals(rowCount, reader.size());
+            }
+        });
+    }
+
+    @Test
+    public void testUnicodeTableNameExistingTable() throws Exception {
+        runInContext((receiver) -> {
+            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
+            sendLinger(receiver, lineData, "लаблअца");
+
+            String lineData2 = "लаблअца,символ=значение2 1619509249714000000\n";
+            sendLinger(receiver, lineData2, "लаблअца");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("लаблअца"));
+            }
+            String expected = "поле\ttimestamp\tсимвол\n" +
+                    "значение\t2021-04-27T07:40:49.714000Z\t\n" +
+                    "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
+            assertTable(expected, "लаблअца");
+        });
     }
 
     @Test
@@ -927,26 +971,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testUnicodeTableNameExistingTable() throws Exception {
-        runInContext((receiver) -> {
-            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
-            sendLinger(receiver, lineData, "लаблअца");
-
-            String lineData2 = "लаблअца,символ=значение2 1619509249714000000\n";
-            sendLinger(receiver, lineData2, "लаблअца");
-
-            mayDrainWalQueue();
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable("लаблअца"));
-            }
-            String expected = "поле\ttimestamp\tсимвол\n" +
-                    "значение\t2021-04-27T07:40:49.714000Z\t\n" +
-                    "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
-            assertTable(expected, "लаблअца");
-        });
-    }
-
-    @Test
     public void testWindowsAccessDenied() throws Exception {
         String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
 
@@ -975,6 +999,37 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTimestampColumn() throws Exception {
+        String table = "Timestamp";
+        runInContext((receiver) -> {
+            String lineData = table + ",location=us-midwest timestamp=1465839830100400200t,temperature=82\n" +
+                    table + ",location=us-midwest timestamp=1465839830100500200t,temperature=83\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830101600200t,temperature=81\n" +
+                    table + ",location=us-midwest timestamp=1465839830102300200t,temperature=85\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
+                    table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
+                    table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
+
+            sendLinger(receiver, lineData, table);
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(table));
+            }
+
+            String expected = "location\ttimestamp\ttemperature\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
+                    "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
         runInContext((receiver) -> {
             String lineData =
@@ -994,6 +1049,26 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
                             "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
                             "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+            assertTable(expected, "up");
+        });
+    }
+
+    @Test
+    public void testWithInvalidColumn() throws Exception {
+        runInContext((receiver) -> {
+            String lineData =
+                    "up out=1.0 631150000000000000\n" +
+                            "up ..=2.0 631152000000000000\n" +
+                            "up ..=3.0 631160000000000000\n" +
+                            "up ..=4.0 631170000000000000\n";
+            sendLinger(receiver, lineData, "up");
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("up"));
+            }
+            String expected = "out\ttimestamp\n" +
+                    "1.0\t1989-12-31T23:26:40.000000Z\n";
             assertTable(expected, "up");
         });
     }
@@ -1214,9 +1289,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease2() throws Exception {
-        // TODO(puzpuzpuz): truncate() in WalWriter seems broken when it comes to symbols; re-enable the test when it's fixed.
-        Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1247,7 +1319,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease3() throws Exception {
-        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
         Assume.assumeFalse(walEnabled);
 
         runInContext((receiver) -> {
@@ -1278,9 +1349,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease4() throws Exception {
-        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
         Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1309,9 +1378,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease5() throws Exception {
-        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
         Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1391,7 +1458,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         send(receiver, lineData, tableName, WAIT_NO_WAIT);
     }
 
-    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool, boolean closeIoPoolFirst) throws SqlException {
+    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {
         String tableName = "tab";
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
@@ -1415,7 +1482,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             new Thread(() -> {
                 try {
-                    (closeIoPoolFirst ? ioPool : writerPool).halt();
+                    ioPool.halt();
 
                     long start = System.currentTimeMillis();
                     while (engine.getMetrics().health().unhandledErrorsCount() == 0) {
@@ -1425,9 +1492,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
 
-                    if (writerPool != ioPool) {
-                        (closeIoPoolFirst ? writerPool : ioPool).halt();
-                    }
+                    if (writerPool != ioPool) (writerPool).halt();
 
                     receiver.close();
                 } catch (Throwable e) {
