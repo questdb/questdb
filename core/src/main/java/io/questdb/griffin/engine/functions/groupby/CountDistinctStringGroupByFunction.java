@@ -99,7 +99,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
 
     @Override
     public String getName() {
-        return "count";
+        return "count_distinct";
     }
 
     @Override

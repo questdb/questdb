@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
@@ -86,6 +87,11 @@ public abstract class AbstractCountVectorAggregateFunction extends LongFunction 
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("count(").putBaseColumnName(columnIndex).val(')');
     }
 
     @Override

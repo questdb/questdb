@@ -95,6 +95,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
+    public String getName() {
+        return "count_distinct";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

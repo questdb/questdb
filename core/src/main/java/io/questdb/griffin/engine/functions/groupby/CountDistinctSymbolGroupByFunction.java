@@ -99,6 +99,11 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public String getName() {
+        return "count_distinct";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
