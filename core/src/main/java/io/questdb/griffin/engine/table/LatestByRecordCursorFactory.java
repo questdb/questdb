@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -69,6 +70,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
         this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -114,6 +120,12 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestBy");
+        sink.child(base);
     }
 
     @Override

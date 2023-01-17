@@ -24,12 +24,14 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -84,5 +86,13 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
             this.cursor.of(symbolKey);
             this.cursor.prepare(tableReader);
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putBaseColumnName(cursor.getColumnIndex());
+        sink.meta("deferred").val(true);
+        sink.attr("symbolFilter").putBaseColumnName(cursor.getColumnIndex()).val('=').val(symbolFunction);
+        sink.optAttr("filter", cursor.getFilter());
     }
 }

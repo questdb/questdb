@@ -35,9 +35,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class Atan2DoubleFunctionFactory implements FunctionFactory {
+    public static final String SYMBOL = "atan2";
+
     @Override
     public String getSignature() {
-        return "atan2(DD)"; // y, x
+        return SYMBOL + "(DD)"; // y, x
     }
 
     @Override
@@ -63,6 +65,11 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return Math.atan2(y.getDouble(rec), x.getDouble(rec));
+        }
+
+        @Override
+        public String getName() {
+            return SYMBOL;
         }
     }
 }

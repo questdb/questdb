@@ -79,6 +79,11 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
+    public String getName() {
+        return "first";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BYTE);

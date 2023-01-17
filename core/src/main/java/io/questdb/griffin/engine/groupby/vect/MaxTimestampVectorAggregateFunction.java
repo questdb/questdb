@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -87,6 +86,11 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
+    public String getName() {
+        return "max";
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return max.longValue();
     }
@@ -115,11 +119,6 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxTimestampVector(").put(columnIndex).put(')');
     }
 
     @Override

@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -47,7 +45,7 @@ public class CastSymbolToShortFunctionFactory implements FunctionFactory {
         return new CastSymbolToShortFunction(args.getQuick(0));
     }
 
-    public static class CastSymbolToShortFunction extends ShortFunction implements UnaryFunction {
+    public static class CastSymbolToShortFunction extends AbstractCastToShortFunction {
         private final Function arg;
 
         public CastSymbolToShortFunction(Function arg) {

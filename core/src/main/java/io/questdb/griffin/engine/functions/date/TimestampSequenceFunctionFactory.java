@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -102,6 +103,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_sequence(").val(start).val(',').val(longIncrement).val(')');
+        }
+
+        @Override
         public void toTop() {
             next = start;
         }
@@ -146,6 +152,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public boolean supportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_sequence(").val(start).val(',').val(longIncrement).val(')');
         }
 
         @Override

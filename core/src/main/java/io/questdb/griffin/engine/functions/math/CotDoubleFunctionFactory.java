@@ -36,9 +36,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CotDoubleFunctionFactory implements FunctionFactory {
+    public static final String SYMBOL = "cot";
+
     @Override
     public String getSignature() {
-        return "cot(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -71,6 +73,11 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
             return 1.0 / Math.tan(angle);
+        }
+
+        @Override
+        public String getName() {
+            return SYMBOL;
         }
     }
 }

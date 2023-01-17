@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -159,6 +160,11 @@ public class ConcatFunctionFactory implements FunctionFactory {
             sinkB.clear();
             getStr(rec, sinkB);
             return sinkB;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("concat(").val(functions).val(')');
         }
     }
 

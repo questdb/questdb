@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -136,6 +137,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
             return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(tsFunc);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(inList);
+        }
     }
 
     private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -176,6 +186,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 }
             }
             return negated;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0));
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ");
+            sink.val(args, 1);
         }
     }
 }

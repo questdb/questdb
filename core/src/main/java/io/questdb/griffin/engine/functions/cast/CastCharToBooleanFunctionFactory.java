@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,16 +43,9 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
         return new CastCharToBooleanFunction(args.getQuick(0));
     }
 
-    public static class CastCharToBooleanFunction extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
+    public static class CastCharToBooleanFunction extends AbstractCastToBooleanFunction {
         public CastCharToBooleanFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

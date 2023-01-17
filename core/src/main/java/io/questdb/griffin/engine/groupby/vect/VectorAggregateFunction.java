@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
@@ -80,6 +81,11 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     void pushValueTypes(ArrayColumnTypes types);
 
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');
+    }
+    
     /**
      * Used for keyed aggregates only.
      * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.

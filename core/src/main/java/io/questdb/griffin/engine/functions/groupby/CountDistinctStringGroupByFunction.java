@@ -98,6 +98,11 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public String getName() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -58,6 +59,13 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DistinctSymbol");
+        sink.meta("tableName").val(tableToken);
+        sink.attr("columnIndex").val(cursor.columnIndex);
     }
 
     @Override

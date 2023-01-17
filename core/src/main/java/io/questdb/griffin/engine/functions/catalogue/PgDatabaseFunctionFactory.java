@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
@@ -37,10 +38,11 @@ import io.questdb.std.ObjList;
 
 public class PgDatabaseFunctionFactory implements FunctionFactory {
     private final static RecordMetadata METADATA;
+    private final static String SIGNATURE = "pg_catalog.pg_database()";
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_database()";
+        return SIGNATURE;
     }
 
     @Override
@@ -195,6 +197,11 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
         }
     }
 

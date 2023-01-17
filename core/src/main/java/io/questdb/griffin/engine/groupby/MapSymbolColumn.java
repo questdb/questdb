@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
@@ -108,6 +109,11 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public @Nullable SymbolTable newSymbolTable() {
         return symbolTableSource.newSymbolTable(cursorColumnIndex);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(mapColumnIndex);
     }
 
     @Override

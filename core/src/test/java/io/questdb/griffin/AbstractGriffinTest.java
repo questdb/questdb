@@ -30,6 +30,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.engine.ExplainPlanFactory;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -1090,9 +1093,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
-            planSink.reset();
+            planSink.clear();
             factory.toPlan(planSink);
-            TestUtils.assertEquals(expectedPlan, planSink.getText());
+            assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT), false, checkSameStr, expectSize, sizeCanBeVariable);
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
@@ -1189,8 +1192,20 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         });
     }
 
+    //asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc. 
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
-        TestUtils.assertEquals(expectedPlan, getPlan(query).getText());
+        StringSink sink = new StringSink();
+        sink.put("EXPLAIN ").put(query);
+
+        try (ExplainPlanFactory planFactory = getPlanFactory(sink);
+             RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
+
+            if (!JitUtil.isJitSupported()) {
+                expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
+            }
+
+            TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
+        }
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp) throws SqlException {
@@ -1552,12 +1567,15 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         executeOperation(node1, query, opType);
     }
 
-    protected PlanSink getPlan(CharSequence query) throws SqlException {
+    protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
+        return (ExplainPlanFactory) compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+    }
+
+    protected PlanSink getPlanSink(CharSequence query) throws SqlException {
         RecordCursorFactory factory = null;
         try {
-            planSink.reset();
             factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
-            factory.toPlan(planSink);
+            planSink.of(factory, sqlExecutionContext);
             return planSink;
         } finally {
             Misc.free(factory);

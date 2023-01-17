@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.FullBwdDataFrameCursorFactory;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
@@ -740,7 +737,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                         "  from long_sequence(10);");
     }
 
-    private RecordCursorFactory prepareFactory(TableReader reader) throws SqlException {
+    private RecordCursorFactory prepareFactory(TableReader reader) {
         TableReaderMetadata metadata = reader.getMetadata();
         IntList columnIndexes = new IntList();
         columnIndexes.add(0);
@@ -751,7 +748,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
 
         return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
-                new FullBwdDataFrameCursorFactory(reader.getTableToken(), metadata.getTableId(), reader.getVersion()),
+                new FullBwdDataFrameCursorFactory(reader.getTableToken(), metadata.getTableId(), reader.getVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
                 new BwdDataFrameRowCursorFactory(),
                 false,
                 null,

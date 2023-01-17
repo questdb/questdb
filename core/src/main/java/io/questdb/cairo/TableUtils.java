@@ -35,6 +35,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -192,9 +193,14 @@ public final class TableUtils {
             @NotNull QueryModel model,
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
-        final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        final Function function = functionParser.parseFunction(
+                tableNameExpr, 
+                AnyRecordMetadata.INSTANCE, 
+                executionContext
+        );
         if (!ColumnType.isCursor(function.getType())) {
-            throw SqlException.$(model.getTableName().position, "function must return CURSOR");
+            throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
     }

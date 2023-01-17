@@ -28,6 +28,7 @@ package io.questdb.griffin.engine.analytic;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -101,6 +102,11 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
@@ -110,6 +116,13 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("CachedAnalytic");
+        sink.optAttr("functions", allFunctions);
+        sink.child(base);
     }
 
     @Override

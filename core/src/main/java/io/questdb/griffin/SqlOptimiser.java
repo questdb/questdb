@@ -198,7 +198,7 @@ class SqlOptimiser {
             cross.setAlias(makeJoinAlias());
 
             final QueryModel crossInner = queryModelPool.next();
-            crossInner.setTableName(node);
+            crossInner.setTableNameExpr(node);
             parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext);
             cross.setNestedModel(crossInner);
 
@@ -762,7 +762,7 @@ class SqlOptimiser {
     }
 
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
-        final ExpressionNode alias = model.getAlias() != null ? model.getAlias() : model.getTableName();
+        final ExpressionNode alias = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         if (parent.addModelAliasIndex(alias, modelIndex)) {
             return;
         }
@@ -1227,7 +1227,7 @@ class SqlOptimiser {
                         if (jm.getAlias() != null) {
                             sink.put(jm.getAlias().token);
                         } else {
-                            sink.put(jm.getTableName().token);
+                            sink.put(jm.getTableName());
                         }
 
                         sink.put('.');
@@ -1508,9 +1508,9 @@ class SqlOptimiser {
 
         // we have plain tables and possibly joins
         // deal with _this_ model first, it will always be the first element in join model list
-        final ExpressionNode tableName = model.getTableName();
-        if (tableName != null) {
-            if (tableName.type == ExpressionNode.FUNCTION) {
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        if (tableNameExpr != null) {
+            if (tableNameExpr.type == ExpressionNode.FUNCTION) {
                 parseFunctionAndEnumerateColumns(model, executionContext);
             } else {
                 openReaderAndEnumerateColumns(executionContext, model);
@@ -2085,11 +2085,11 @@ class SqlOptimiser {
     }
 
     private void openReaderAndEnumerateColumns(SqlExecutionContext executionContext, QueryModel model) throws SqlException {
-        final ExpressionNode tableNameNode = model.getTableName();
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
 
         // table name must not contain quotes by now
-        final CharSequence tableName = tableNameNode.token;
-        final int tableNamePosition = tableNameNode.position;
+        final CharSequence tableName = tableNameExpr.token;
+        final int tableNamePosition = tableNameExpr.position;
 
         int lo = 0;
         int hi = tableName.length();
@@ -2106,7 +2106,7 @@ class SqlOptimiser {
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
-                model.getTableName().type = ExpressionNode.FUNCTION;
+                model.getTableNameExpr().type = ExpressionNode.FUNCTION;
                 parseFunctionAndEnumerateColumns(model, executionContext);
                 return;
             } catch (SqlException e) {
@@ -3818,9 +3818,9 @@ class SqlOptimiser {
             }
 
             TableToken tableToken = metadata.getTableToken();
-            if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName().token)) {
+            if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableToken.getTableName(), updateQueryModel.getTableName())) {
                 // Table renamed
-                throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName().token);
+                throw TableReferenceOutOfDateException.of(updateQueryModel.getTableName());
             }
             updateQueryModel.setUpdateTableToken(tableToken);
         } catch (EntryLockedException e) {
