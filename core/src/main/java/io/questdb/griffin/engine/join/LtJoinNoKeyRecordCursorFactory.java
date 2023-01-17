@@ -25,10 +25,9 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -77,6 +76,13 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Lt Join");
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
     }
 
     @Override

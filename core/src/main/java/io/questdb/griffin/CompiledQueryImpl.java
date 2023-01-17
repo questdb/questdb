@@ -231,6 +231,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(DROP);
     }
 
+    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
+        return of(EXPLAIN, recordCursorFactory);
+    }
+
     CompiledQuery ofInsert(InsertOperation insertOperation) {
         this.insertOp = insertOperation;
         return of(INSERT);

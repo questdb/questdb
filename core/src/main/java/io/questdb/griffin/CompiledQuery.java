@@ -43,6 +43,7 @@ public interface CompiledQuery {
     short CREATE_TABLE_AS_SELECT = 21;
     short DEALLOCATE = 24;
     short DROP = 7;
+    short EXPLAIN = 25;
     short INSERT = 2;
     short INSERT_AS_SELECT = 10;
     short LOCK = 15;
@@ -56,7 +57,7 @@ public interface CompiledQuery {
     short SNAPSHOT_DB_PREPARE = 22;
     short TABLE_RESUME = 25;
     short TRUNCATE = 3;
-    short TYPES_COUNT = DEALLOCATE;
+    short TYPES_COUNT = EXPLAIN;
     short UNLOCK = 16;
     short UPDATE = 14;
     short VACUUM = 17;

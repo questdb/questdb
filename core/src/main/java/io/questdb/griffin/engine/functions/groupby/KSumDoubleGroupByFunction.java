@@ -33,11 +33,9 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction, Sinkable {
+public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
@@ -83,6 +81,11 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public String getName() {
+        return "ksum";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -105,10 +108,5 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 2, 0);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("KSumDouble(").put(arg).put(')');
     }
 }

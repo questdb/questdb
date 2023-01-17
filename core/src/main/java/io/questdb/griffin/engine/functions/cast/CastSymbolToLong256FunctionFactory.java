@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -57,19 +55,13 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends Long256Function implements UnaryFunction {
-        private final Function arg;
+    private static class Func extends AbstractCastToLong256Function {
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
         private final Long256Impl long256builder = new Long256Impl();
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

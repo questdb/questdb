@@ -2614,6 +2614,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testExplainWithBadFormat() throws Exception {
+        assertSyntaxError("explain (format xyz) select * from x", 16, "unexpected explain format found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithBadOption() throws Exception {
+        assertSyntaxError("explain (xyz) select * from x", 9, "unexpected explain option found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithDefaultFormat() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain select * from x", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithJsonFormat() throws Exception {
+        assertModel("EXPLAIN (FORMAT JSON) ",
+                "explain (format json) select * from x", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithMissingFormat() throws Exception {
+        assertSyntaxError("explain (format) select * from x", 15, "unexpected explain format found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithTextFormat() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain (format text ) select * from x", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testExpressionIsNotNull() throws Exception {
         assertQuery(
                 "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where coalesce(x,42) != null)",

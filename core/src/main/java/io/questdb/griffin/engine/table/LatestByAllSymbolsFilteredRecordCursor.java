@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -41,7 +43,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
+class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
 
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
     private final Function filter;
@@ -76,6 +78,16 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
         }
     }
 
+    public Function getFilter() {
+        return filter;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan");
+        sink.attr("expectedSymbolsCount").val(countSymbolCombinationsSimple());
+    }
+
     private long countSymbolCombinations() {
         long combinations = 1;
         for (int i = 0, n = partitionByColumnIndexes.size(); i < n; i++) {
@@ -89,6 +101,19 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             }
             try {
                 combinations = Math.multiplyExact(combinations, Math.min(symbolCount, distinctSymbols));
+            } catch (ArithmeticException ignore) {
+                return Long.MAX_VALUE;
+            }
+        }
+        return combinations;
+    }
+
+    private long countSymbolCombinationsSimple() {
+        long combinations = 1;
+        for (int i = 0, n = partitionByColumnIndexes.size(); i < n; i++) {
+            int symbolCount = partitionBySymbolCounts != null ? partitionBySymbolCounts.getQuick(i) : Integer.MAX_VALUE;
+            try {
+                combinations = Math.multiplyExact(combinations, symbolCount);
             } catch (ArithmeticException ignore) {
                 return Long.MAX_VALUE;
             }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.Chars;
@@ -177,6 +178,11 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(items).val("::string[]");
     }
 
     private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {

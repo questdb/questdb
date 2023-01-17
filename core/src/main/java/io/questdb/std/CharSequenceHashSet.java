@@ -24,9 +24,11 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.CharSink;
+
 import java.util.Arrays;
 
-public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
+public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements Sinkable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<CharSequence> list;
@@ -167,6 +169,11 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
             return index;
         }
         return -1;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(list);
     }
 
     @Override
