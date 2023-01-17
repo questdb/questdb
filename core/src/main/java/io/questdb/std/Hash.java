@@ -56,25 +56,6 @@ public final class Hash {
     }
 
     /**
-     * 32-bit variant of {@link #hashMem64(long, long)}.
-     */
-    public static int hashMem32(long p, long len) {
-        long h = 0;
-        int i = 0;
-        for (; i + 7 < len; i += 8) {
-            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
-        }
-        for (; i + 3 < len; i += 4) {
-            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
-        }
-        for (; i < len; i++) {
-            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
-        }
-        h *= M2;
-        return (int) h ^ (int) (h >>> 32);
-    }
-
-    /**
      * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
      * instead of direct unsafe access.
      */
@@ -85,8 +66,9 @@ public final class Hash {
         for (; i + 7 < len; i += 8) {
             h = h * M2 + seq.longAt(i);
         }
-        for (; i + 3 < len; i += 4) {
+        if (i + 3 < len) {
             h = h * M2 + seq.intAt(i);
+            i += 4;
         }
         for (; i < len; i++) {
             h = h * M2 + seq.byteAt(i);
@@ -107,40 +89,42 @@ public final class Hash {
      * @param len memory length in bytes
      * @return hash code
      */
-    public static long hashMem64(long p, long len) {
+    public static int hashMem32(long p, long len) {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + Unsafe.getUnsafe().getLong(p + i);
         }
-        for (; i + 3 < len; i += 4) {
+        if (i + 3 < len) {
             h = h * M2 + Unsafe.getUnsafe().getInt(p + i);
+            i += 4;
         }
         for (; i < len; i++) {
             h = h * M2 + Unsafe.getUnsafe().getByte(p + i);
         }
         h *= M2;
-        return h ^ (h >>> 32);
+        return (int) h ^ (int) (h >>> 32);
     }
 
     /**
-     * Same as {@link #hashMem64(long, long)}, but with MemoryR instead of direct
+     * Same as {@link #hashMem32(long, long)}, but with MemoryR instead of direct
      * unsafe access.
      */
-    public static long hashMem64(long p, long len, MemoryR mem) {
+    public static int hashMem32(long p, long len, MemoryR mem) {
         long h = 0;
         int i = 0;
         for (; i + 7 < len; i += 8) {
             h = h * M2 + mem.getLong(p + i);
         }
-        for (; i + 3 < len; i += 4) {
+        if (i + 3 < len) {
             h = h * M2 + mem.getInt(p + i);
+            i += 4;
         }
         for (; i < len; i++) {
             h = h * M2 + mem.getByte(p + i);
         }
         h *= M2;
-        return h ^ (h >>> 32);
+        return (int) h ^ (int) (h >>> 32);
     }
 
     /**

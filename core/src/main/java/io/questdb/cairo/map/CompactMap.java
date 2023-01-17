@@ -241,7 +241,7 @@ public class CompactMap implements Map, Reopenable {
     }
 
     private static HashFunction defaultHashFunction(MemoryR memory) {
-        return (offset, size) -> Hash.hashMem64(offset, size, memory);
+        return (offset, size) -> Hash.hashMem32(offset, size, memory);
     }
 
     private long calcColumnOffsets(ColumnTypes valueTypes, long startOffset, int startPosition) {

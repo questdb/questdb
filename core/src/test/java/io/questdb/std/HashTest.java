@@ -35,26 +35,7 @@ import java.util.zip.ZipFile;
 public class HashTest {
 
     @Test
-    public void testHashMem32EnglishWordsCorpus() throws IOException, URISyntaxException {
-        testHashMemEnglishWordsCorpus(Hash::hashMem32);
-    }
-
-    @Test
-    public void testHashMem32RandomCorpus() {
-        testHashMemRandomCorpus(Hash::hashMem32);
-    }
-
-    @Test
-    public void testHashMem64EnglishWordsCorpus() throws IOException, URISyntaxException {
-        testHashMemEnglishWordsCorpus(Hash::hashMem64);
-    }
-
-    @Test
-    public void testHashMem64RandomCorpus() {
-        testHashMemRandomCorpus(Hash::hashMem64);
-    }
-
-    private void testHashMemEnglishWordsCorpus(HashFunction hashFunction) throws IOException, URISyntaxException {
+    public void testHashMemEnglishWordsCorpus() throws IOException, URISyntaxException {
         final int maxLen = 128;
         LongHashSet hashes = new LongHashSet(500000);
 
@@ -71,7 +52,7 @@ public class HashTest {
                 for (int i = 0; i < bytes.length; i++) {
                     Unsafe.getUnsafe().putByte(address + i, bytes[i]);
                 }
-                hashes.add(hashFunction.hash(address, bytes.length));
+                hashes.add(Hash.hashMem32(address, bytes.length));
             }
             // 466189 is the number of unique values of String#hashCode() on the same corpus.
             Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
@@ -80,7 +61,8 @@ public class HashTest {
         }
     }
 
-    private void testHashMemRandomCorpus(HashFunction hashFunction) {
+    @Test
+    public void testHashMemRandomCorpus() {
         final int len = 15;
         Rnd rnd = new Rnd();
         LongHashSet hashes = new LongHashSet(100000);
@@ -89,15 +71,11 @@ public class HashTest {
         try {
             for (int i = 0; i < 100000; i++) {
                 rnd.nextChars(address, len / 2);
-                hashes.add(hashFunction.hash(address, len));
+                hashes.add(Hash.hashMem32(address, len));
             }
             Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
         } finally {
             Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    private interface HashFunction {
-        long hash(long p, long len);
     }
 }
