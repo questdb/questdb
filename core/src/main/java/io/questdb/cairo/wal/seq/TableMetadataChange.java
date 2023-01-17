@@ -25,9 +25,9 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.wal.MetadataChangeSPI;
+import io.questdb.cairo.wal.MetadataService;
 
 @FunctionalInterface
 public interface TableMetadataChange {
-    long apply(MetadataChangeSPI tableMetadataWriterSPI, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
+    long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 }

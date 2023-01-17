@@ -27,6 +27,7 @@ package io.questdb.cairo.vm.api;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
 
 //contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
@@ -238,5 +239,10 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putInt(addr, len);
         Chars.copyStrChars(value, pos, len, addr + Integer.BYTES);
         return getAppendOffset();
+    }
+
+    @Override
+    default long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
+        throw new UnsupportedOperationException();
     }
 }

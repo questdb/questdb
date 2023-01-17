@@ -25,6 +25,14 @@
 package io.questdb.mp;
 
 public interface Job {
+    default void drain(int workerId) {
+        while (true) {
+            if (!run(workerId)) {
+                return;
+            }
+        }
+    }
+
     /**
      * Runs and returns true if it should be rescheduled ASAP.
      *

@@ -37,8 +37,8 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16Unchecked;
+import static io.questdb.std.Chars.utf8ToUtf16;
+import static io.questdb.std.Chars.utf8ToUtf16Unchecked;
 
 public class LineTcpEventBuffer {
     private final long bufLo;
@@ -311,8 +311,7 @@ public class LineTcpEventBuffer {
     }
 
     public CharSequence readUtf16Chars(long address, int length) {
-        tempSink.asCharSequence(address, address + length * 2L);
-        return tempSink;
+        return tempSink.asCharSequence(address, address + length * 2L);
     }
 
     private long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {

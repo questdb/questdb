@@ -4188,6 +4188,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 true
         );
         valueTypes.clear();
+        // Remap symbol columns to string type since that's how recordSink copies them.
+        keyTypes.clear();
+        for (int i = 0, n = setMetadata.getColumnCount(); i < n; i++) {
+            final int columnType = setMetadata.getColumnType(i);
+            if (ColumnType.isSymbol(columnType)) {
+                keyTypes.add(ColumnType.STRING);
+            } else {
+                keyTypes.add(columnType);
+            }
+        }
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
                 setMetadata,
@@ -4196,6 +4206,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 castFunctionsA,
                 castFunctionsB,
                 recordSink,
+                keyTypes,
                 valueTypes
         );
 
