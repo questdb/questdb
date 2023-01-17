@@ -249,12 +249,12 @@ public class TableUpdateDetails implements Closeable {
                 }
                 throw CommitFailedException.instance(ex);
             }
-            try {
-                if (isWal()) {
+            if (isWal()) {
+                try {
                     engine.verifyTableToken(tableToken);
+                } catch (Throwable ignore) {
+                    setWriterInError();
                 }
-            } catch (Throwable ignore) {
-                setWriterInError();
             }
         }
     }
@@ -334,7 +334,7 @@ public class TableUpdateDetails implements Closeable {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableToken).I$();
-                    commit();
+                    writerAPI.commit();
                 }
             } catch (Throwable ex) {
                 LOG.error().$("writer commit fails, force closing it [table=").$(tableToken).$(",ex=").$(ex).I$();
