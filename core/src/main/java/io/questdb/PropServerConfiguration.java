@@ -54,6 +54,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -2809,6 +2810,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return lineTcpIOWorkerPoolConfiguration;
         }
@@ -3420,11 +3426,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        @NotNull
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
         }
 
         @Override
+        @NotNull
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }

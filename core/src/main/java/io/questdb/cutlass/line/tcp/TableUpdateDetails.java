@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.MetadataChangeSPI;
+import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -37,12 +37,13 @@ import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -61,12 +62,11 @@ public class TableUpdateDetails implements Closeable {
     // multiple threads without synchronisation
     private long eventsProcessedSinceReshuffle = 0;
     private long lastMeasurementMillis = Long.MAX_VALUE;
+    private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
     private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
-    // todo: rename
-    private MetadataChangeSPI writerSPI;
     private int writerThreadId;
 
     TableUpdateDetails(
@@ -90,16 +90,17 @@ public class TableUpdateDetails implements Closeable {
         TableRecordMetadata tableMetadata = writer.getMetadata();
         this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableToken = writer.getTableToken();
-        if (writer instanceof MetadataChangeSPI) {
-            writerSPI = (MetadataChangeSPI) writer;
-            writerSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-            this.nextCommitTime = millisecondClock.getTicks() + writerSPI.getCommitInterval();
-        } else {
-            writerSPI = null;
+        if (writer.supportsMultipleWriters()) {
+            metadataService = null;
             this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
+        } else {
+            metadataService = (MetadataService) writer;
+            metadataService.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
+            this.nextCommitTime = millisecondClock.getTicks() + metadataService.getCommitInterval();
         }
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
+            //noinspection resource
             this.localDetailsArray[i] = new ThreadLocalDetails(
                     configuration,
                     netIoJobs[i].getUnusedSymbolCaches(),
@@ -109,7 +110,9 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void addReference(int workerId) {
-        networkIOOwnerCount++;
+        if (writerThreadId != -1) {
+            networkIOOwnerCount++;
+        }
         LOG.info()
                 .$("network IO thread using table [workerId=").$(workerId)
                 .$(", tableName=").$(tableToken)
@@ -145,7 +148,7 @@ public class TableUpdateDetails implements Closeable {
                 } finally {
                     // returning to pool rolls back the transaction
                     writerAPI = Misc.free(writerAPI);
-                    writerSPI = null;
+                    metadataService = null;
                 }
             }
             writerThreadId = Integer.MIN_VALUE;
@@ -158,6 +161,10 @@ public class TableUpdateDetails implements Closeable {
 
     public long getLastMeasurementMillis() {
         return lastMeasurementMillis;
+    }
+
+    public MillisecondClock getMillisecondClock() {
+        return millisecondClock;
     }
 
     public int getNetworkIOOwnerCount() {
@@ -189,7 +196,9 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void removeReference(int workerId) {
-        networkIOOwnerCount--;
+        if (writerThreadId != -1) {
+            networkIOOwnerCount--;
+        }
         localDetailsArray[workerId].clear();
         LOG.info()
                 .$("network IO thread released table [workerId=").$(workerId)
@@ -207,8 +216,8 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void tick() {
-        if (writerSPI != null) {
-            writerSPI.tick();
+        if (metadataService != null) {
+            metadataService.tick();
         }
     }
 
@@ -235,15 +244,15 @@ public class TableUpdateDetails implements Closeable {
     }
 
     private long getCommitInterval() {
-        if (writerSPI != null) {
-            return writerSPI.getCommitInterval();
+        if (metadataService != null) {
+            return metadataService.getCommitInterval();
         }
         return defaultCommitInterval;
     }
 
     private long getMetaMaxUncommittedRows() {
-        if (writerSPI != null) {
-            return writerSPI.getMetaMaxUncommittedRows();
+        if (metadataService != null) {
+            return metadataService.getMetaMaxUncommittedRows();
         }
         return defaultMaxUncommittedRows;
     }
@@ -317,7 +326,7 @@ public class TableUpdateDetails implements Closeable {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
                 writerAPI = Misc.free(writerAPI);
-                writerSPI = null;
+                metadataService = null;
             }
         }
     }
@@ -421,6 +430,38 @@ public class TableUpdateDetails implements Closeable {
             }
         }
 
+        private int getColumnIndex0(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+            // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
+            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
+            final int index = addedColsUtf16.keyIndex(colNameUtf16);
+            if (index > -1) {
+                // column has not been sent to the writer by name on this line before
+                // we can try to resolve column index using table reader
+                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
+                int colWriterIndex = colIndex < 0 ? colIndex : metadata.getWriterIndex(colIndex);
+                ByteCharSequence onHeapColNameUtf8 = ByteCharSequence.newInstance(colNameUtf8);
+                if (colWriterIndex > -1) {
+                    // keys of this map will be checked against DirectByteCharSequence when get() is called
+                    // DirectByteCharSequence.equals() compares chars created from each byte, basically it
+                    // assumes that each char is encoded on a single byte (ASCII)
+                    // utf8BytesToString() is used here instead of a simple toString() call to make sure
+                    // column names with non-ASCII chars are handled properly
+                    columnIndexByNameUtf8.put(onHeapColNameUtf8, colWriterIndex);
+
+                    processedCols.extendAndReplace(colWriterIndex, true);
+                    return colWriterIndex;
+                }
+                // cannot not resolve column index even from the reader
+                // column will be passed to the writer by name
+                this.colNameUtf16 = colNameUtf16.toString();
+                this.colNameUtf8 = onHeapColNameUtf8;
+                addedColsUtf16.addAt(index, this.colNameUtf16);
+                return COLUMN_NOT_FOUND;
+            }
+            // column has been passed by name earlier on this event, duplicate should be skipped
+            return DUPLICATED_COLUMN;
+        }
+
         private int getColumnWriterIndex(CharSequence colNameUtf16) {
             assert latestKnownMetadata != null;
             int colIndex = latestKnownMetadata.getColumnIndexQuiet(colNameUtf16);
@@ -460,6 +501,10 @@ public class TableUpdateDetails implements Closeable {
                     geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
+        void addColumnType(int colIndex, int colType) {
+            columnTypes.add(Numbers.encodeLowHighShorts((short) colType, (short) colIndex));
+        }
+
         void clear() {
             columnIndexByNameUtf8.clear();
             columnTypeByNameUtf8.clear();
@@ -479,6 +524,10 @@ public class TableUpdateDetails implements Closeable {
             }
             this.clean = true;
             this.latestKnownMetadata = Misc.free(latestKnownMetadata);
+        }
+
+        void clearColumnTypes() {
+            columnTypes.clear();
         }
 
         String getColNameUtf16() {
@@ -524,6 +573,21 @@ public class TableUpdateDetails implements Closeable {
                     // column has been passed by name earlier on this event, duplicate should be skipped
                     return DUPLICATED_COLUMN;
                 }
+            }
+
+            if (processedCols.extendAndReplace(colWriterIndex, true)) {
+                // column has been passed by index earlier on this event, duplicate should be skipped
+                return DUPLICATED_COLUMN;
+            }
+            return colWriterIndex;
+        }
+
+        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+            final int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
+            if (colWriterIndex < 0) {
+                // Hot path optimisation to allow the body of the current method to be small
+                // enough for inlining. Rarely used code is extracted into a method call.
+                return getColumnIndex0(colNameUtf8, hasNonAsciiChars, metadata);
             }
 
             if (processedCols.extendAndReplace(colWriterIndex, true)) {

@@ -39,6 +39,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.std.Chars.utf8ToUtf16Unchecked;
+
 /**
  * Important note:
  * This cache is optimized for ASCII and UTF8 DirectByteCharSequence lookups. Lookups of UTF16
@@ -92,7 +94,7 @@ class SymbolCache implements Closeable, DirectByteSymbolLookup {
             lastSymbolReaderReloadTimestamp = ticks;
         }
 
-        LineTcpUtils.utf8ToUtf16Unchecked(value, tempSink);
+        utf8ToUtf16Unchecked(value, tempSink);
         final int symbolKey = symbolMapReader.keyOf(tempSink);
 
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

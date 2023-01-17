@@ -274,76 +274,77 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 final AtomicBoolean cacheInError = new AtomicBoolean(false);
 
-                RingQueue<Holder> wheel = new RingQueue<>(Holder::new, 256);
-                SPSequence pubSeq = new SPSequence(wheel.getCycle());
-                SCSequence subSeq = new SCSequence();
-                pubSeq.then(subSeq).then(pubSeq);
+                try (RingQueue<Holder> wheel = new RingQueue<>(Holder::new, 256)) {
+                    SPSequence pubSeq = new SPSequence(wheel.getCycle());
+                    SCSequence subSeq = new SCSequence();
+                    pubSeq.then(subSeq).then(pubSeq);
 
-                new Thread(() -> {
-                    long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                    DirectByteCharSequence dbcs = new DirectByteCharSequence();
-                    try {
-                        barrier.await();
-                        for (int i = 0; i < N; i++) {
-                            // All keys should not be found, but we keep looking them up because
-                            // we pretend we don't know this upfront. The aim is to cause
-                            // race condition between lookup and table writer
-                            copyUtf8StringChars(rndCache.nextString(5), mem, dbcs);
-                            symbolCache.keyOf(constDbcs);
-                            symbolCache.keyOf(dbcs);
-                            final long cursor = pubSeq.nextBully();
-                            final Holder h = wheel.get(cursor);
-                            // publish the value2 to the table writer
-                            h.value1 = constValue;
-                            h.value2 = Chars.toString(dbcs);
-                            pubSeq.done(cursor);
-                        }
-                    } catch (Throwable e) {
-                        cacheInError.set(true);
-                        e.printStackTrace();
-                    } finally {
-                        Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
-                        haltLatch.countDown();
-                    }
-                }).start();
-
-                try (TableWriter w = getWriter("x")) {
-                    barrier.await();
-
-                    OUT:
-                    for (int i = 0; i < N; i++) {
-                        long cursor;
-                        while (true) {
-                            cursor = subSeq.next();
-                            if (cursor < 0) {
-                                // we should exist main loop even if we did not receive N values
-                                // the publishing thread could get successful cache lookups and not publish value
-                                // due to random generator producing duplicate strings
-                                if (haltLatch.getCount() < 1) {
-                                    break OUT;
-                                }
-                            } else {
-                                break;
+                    new Thread(() -> {
+                        long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                        DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                        try {
+                            barrier.await();
+                            for (int i = 0; i < N; i++) {
+                                // All keys should not be found, but we keep looking them up because
+                                // we pretend we don't know this upfront. The aim is to cause
+                                // race condition between lookup and table writer
+                                copyUtf8StringChars(rndCache.nextString(5), mem, dbcs);
+                                symbolCache.keyOf(constDbcs);
+                                symbolCache.keyOf(dbcs);
+                                final long cursor = pubSeq.nextBully();
+                                final Holder h = wheel.get(cursor);
+                                // publish the value2 to the table writer
+                                h.value1 = constValue;
+                                h.value2 = Chars.toString(dbcs);
+                                pubSeq.done(cursor);
                             }
+                        } catch (Throwable e) {
+                            cacheInError.set(true);
+                            e.printStackTrace();
+                        } finally {
+                            Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                            haltLatch.countDown();
                         }
-                        Holder h = wheel.get(cursor);
-                        TableWriter.Row r = w.newRow(ts);
-                        r.putSym(0, h.value1);
-                        r.putInt(1, 0);
-                        r.putSym(2, h.value2);
-                        r.append();
-                        subSeq.done(cursor);
+                    }).start();
 
-                        if (i % 256 == 0) {
-                            w.commit();
+                    try (TableWriter w = getWriter("x")) {
+                        barrier.await();
+
+                        OUT:
+                        for (int i = 0; i < N; i++) {
+                            long cursor;
+                            while (true) {
+                                cursor = subSeq.next();
+                                if (cursor < 0) {
+                                    // we should exist main loop even if we did not receive N values
+                                    // the publishing thread could get successful cache lookups and not publish value
+                                    // due to random generator producing duplicate strings
+                                    if (haltLatch.getCount() < 1) {
+                                        break OUT;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            Holder h = wheel.get(cursor);
+                            TableWriter.Row r = w.newRow(ts);
+                            r.putSym(0, h.value1);
+                            r.putInt(1, 0);
+                            r.putSym(2, h.value2);
+                            r.append();
+                            subSeq.done(cursor);
+
+                            if (i % 256 == 0) {
+                                w.commit();
+                            }
+                            ts += incrementUs;
                         }
-                        ts += incrementUs;
+                        w.commit();
+                    } finally {
+                        haltLatch.await();
                     }
-                    w.commit();
-                } finally {
-                    haltLatch.await();
+                    Assert.assertFalse(cacheInError.get());
                 }
-                Assert.assertFalse(cacheInError.get());
             } finally {
                 Unsafe.free(constMem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
@@ -769,7 +770,15 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        public void addColumn(CharSequence columnName, int columnType) {
+        }
+
+        @Override
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity) {
+        }
+
+        @Override
+        public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
             return 0;
         }
 
@@ -832,6 +841,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
         @Override
         public void rollback() {
+        }
+
+        @Override
+        public boolean supportsMultipleWriters() {
+            return true;
         }
 
         @Override

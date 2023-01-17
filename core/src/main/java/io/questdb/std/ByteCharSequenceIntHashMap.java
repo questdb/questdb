@@ -109,7 +109,7 @@ public class ByteCharSequenceIntHashMap implements Mutable {
 
     public int keyIndex(DirectByteCharSequence key) {
         int hashCode = Hash.hashMem32(key);
-        int index = Hash.spread(hashCode) & mask;
+        int index = hashCode & mask;
 
         if (keys[index] == null) {
             return index;
@@ -124,7 +124,7 @@ public class ByteCharSequenceIntHashMap implements Mutable {
 
     public int keyIndex(ByteCharSequence key) {
         int hashCode = Hash.hashMem32(key);
-        int index = Hash.spread(hashCode) & mask;
+        int index = hashCode & mask;
 
         if (keys[index] == null) {
             return index;
@@ -180,7 +180,7 @@ public class ByteCharSequenceIntHashMap implements Mutable {
                     from = (from + 1) & mask, key = keys[from]
             ) {
                 int hashCode = Hash.hashMem32(key);
-                int idealHit = Hash.spread(hashCode) & mask;
+                int idealHit = hashCode & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
@@ -224,6 +224,10 @@ public class ByteCharSequenceIntHashMap implements Mutable {
         keys[index] = null;
         hashCodes[index] = 0;
         values[index] = noEntryValue;
+    }
+
+    private int hash(CharSequence k) {
+        return Chars.hashCode(k) & mask;
     }
 
     private void move(int from, int to) {

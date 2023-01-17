@@ -33,7 +33,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
-import io.questdb.cairo.wal.seq.SequencerMetadataChangeSPI;
+import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -46,13 +46,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.SingleCharCharSequence;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
+import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class WalWriter implements TableWriterAPI {
     public static final int NEW_COL_RECORD_SIZE = 6;
@@ -61,26 +61,29 @@ public class WalWriter implements TableWriterAPI {
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
     private static final Runnable NOOP = () -> {
     };
+    private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
     private final WalWriterEvents events;
     private final FilesFacade ff;
     private final AtomicIntList initialSymbolCounts;
+    private final IntList localSymbolIds;
+    private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
+    private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
-    private final MetadataValidator metadataValidator = new MetadataValidator();
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
     private final int rootLen;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
+    private final TableSequencerAPI sequencer;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final TableSequencerAPI tableSequencerAPI;
+    private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final int walId;
-    private final SequencerMetadataChangeSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final String walName;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -101,7 +104,7 @@ public class WalWriter implements TableWriterAPI {
 
     public WalWriter(CairoConfiguration configuration, TableToken tableToken, TableSequencerAPI tableSequencerAPI) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
-        this.tableSequencerAPI = tableSequencerAPI;
+        this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
@@ -125,6 +128,7 @@ public class WalWriter implements TableWriterAPI {
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
             initialSymbolCounts = new AtomicIntList(columnCount);
+            localSymbolIds = new IntList(columnCount);
 
             events = new WalWriterEvents(ff);
             events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
@@ -139,61 +143,52 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+    public void addColumn(CharSequence columnName, int columnType) {
+        addColumn(
+                columnName,
+                columnType,
+                configuration.getDefaultSymbolCapacity(),
+                configuration.getDefaultSymbolCacheFlag(),
+                false,
+                configuration.getIndexValueBlockSize()
+        );
+    }
+
+    @Override
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableToken,
+                0,
+                columnName,
+                0,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity
+        );
+        apply(alterOp, true);
+    }
+
+    @Override
+    public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
         }
-        if (operation.isStructureChange()) {
-            long txn;
-
-
-            do {
-                boolean retry = true;
-                try {
-                    metadataValidator.startAlterValidation();
-                    operation.apply(metadataValidator, true);
-                    if (metadataValidator.structureVersion != metadata.getStructureVersion() + 1) {
-                        retry = false;
-                        throw CairoException.nonCritical()
-                                .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
-                                        " are currently not supported for WAL tables [table=").put(tableToken.getTableName())
-                                .put(", oldStructureVersion=").put(metadata.getStructureVersion())
-                                .put(", newStructureVersion=").put(metadataValidator.structureVersion).put(']');
-                    }
-                } catch (CairoException e) {
-                    if (retry) {
-                        // Table schema (metadata) changed and this Alter is not valid anymore.
-                        // Try to update WAL metadata to latest and repeat one more time.
-                        goActive();
-                        operation.apply(metadataValidator, true);
-                    } else {
-                        throw e;
-                    }
-                }
-
-                try {
-                    txn = tableSequencerAPI.nextStructureTxn(tableToken, metadata.getStructureVersion(), operation);
-                    if (txn == NO_TXN) {
-                        applyMetadataChangeLog(Long.MAX_VALUE);
-                    }
-                } catch (CairoException e) {
-                    distressed = true;
-                    throw e;
-                }
-            } while (txn == NO_TXN);
-
-            // Apply to itself.
-            try {
-                operation.apply(walMetadataUpdater, true);
-            } catch (Throwable th) {
-                // Transaction successful, but writing using this WAL writer should not be possible.
-                LOG.error().$("Exception during alter [ex=").$(th).I$();
-                distressed = true;
-            }
-            return txn;
+        if (alterOp.isStructural()) {
+            return applyStructural(alterOp);
         } else {
-            return applyNonStructuralOperation(operation, false);
+            return applyNonStructural(alterOp, false);
         }
     }
 
@@ -207,7 +202,7 @@ public class WalWriter implements TableWriterAPI {
 
         // it is guaranteed that there is no join in UPDATE statement
         // because SqlCompiler rejects the UPDATE if it contains join
-        return applyNonStructuralOperation(operation, true);
+        return applyNonStructural(operation, true);
 
         // when join is allowed in UPDATE we have 2 options
         // 1. we could write the updated partitions into WAL.
@@ -242,7 +237,7 @@ public class WalWriter implements TableWriterAPI {
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
-                lastSegmentTxn = events.data(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
@@ -262,20 +257,22 @@ public class WalWriter implements TableWriterAPI {
     }
 
     public void doClose(boolean truncate) {
-        open = false;
-        metadata.close(Vm.TRUNCATE_TO_POINTER);
-        Misc.free(events);
-        freeSymbolMapReaders();
-        Misc.free(symbolMapMem);
-        freeColumns(truncate);
+        if (open) {
+            open = false;
+            metadata.close(Vm.TRUNCATE_TO_POINTER);
+            Misc.free(events);
+            freeSymbolMapReaders();
+            Misc.free(symbolMapMem);
+            freeColumns(truncate);
 
-        releaseSegmentLock();
+            releaseSegmentLock();
 
-        try {
-            releaseWalLock();
-        } finally {
-            Misc.free(path);
-            LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            try {
+                releaseWalLock();
+            } finally {
+                Misc.free(path);
+                LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            }
         }
     }
 
@@ -472,6 +469,11 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
+    public boolean supportsMultipleWriters() {
+        return true;
+    }
+
+    @Override
     public String toString() {
         return "WalWriter{" +
                 "name=" + walName +
@@ -565,18 +567,18 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
-        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableToken, metadata.getStructureVersion())) {
-            long metadataVersion = getStructureVersion();
-            while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
-                TableMetadataChange tableMetadataChange = structureChangeCursor.next();
+        try (TableMetadataChangeLog log = sequencer.getMetadataChangeLog(tableToken, metadata.getStructureVersion())) {
+            long structVer = getStructureVersion();
+            while (log.hasNext() && structVer < structureVersionHi) {
+                TableMetadataChange chg = log.next();
                 try {
-                    tableMetadataChange.apply(walMetadataUpdater, true);
+                    chg.apply(metaWriterSvc, true);
                 } catch (CairoException e) {
                     distressed = true;
                     throw e;
                 }
 
-                if (++metadataVersion != getStructureVersion()) {
+                if (++structVer != getStructureVersion()) {
                     distressed = true;
                     throw CairoException.critical(0)
                             .put("could not apply table definition changes to the current transaction, version unchanged");
@@ -585,24 +587,72 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private long applyNonStructuralOperation(AbstractOperation operation, boolean verifyStructureVersion) {
-        if (operation.getSqlExecutionContext() == null) {
+    private long applyNonStructural(AbstractOperation op, boolean verifyStructureVersion) {
+        if (op.getSqlExecutionContext() == null) {
             throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableToken.getTableName()).put(']');
         }
         if (
-                (verifyStructureVersion && operation.getTableVersion() != getStructureVersion())
-                        || operation.getTableId() != metadata.getTableId()) {
-            throw TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), operation.getTableId(), getStructureVersion(), operation.getTableVersion());
+                (verifyStructureVersion && op.getTableVersion() != getStructureVersion())
+                        || op.getTableId() != metadata.getTableId()) {
+            throw TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), op.getTableId(), getStructureVersion(), op.getTableVersion());
         }
 
         try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
+            lastSegmentTxn = events.appendSql(op.getCmdType(), op.getSqlText(), op.getSqlExecutionContext());
             return getSequencerTxn();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
             throw th;
         }
+    }
+
+    private long applyStructural(AlterOperation alterOp) {
+        long txn;
+        do {
+            boolean retry = true;
+            try {
+                metaValidatorSvc.startAlterValidation();
+                alterOp.apply(metaValidatorSvc, true);
+                if (metaValidatorSvc.structureVersion != metadata.getStructureVersion() + 1) {
+                    retry = false;
+                    throw CairoException.nonCritical()
+                            .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
+                                    " are currently not supported for WAL tables [table=").put(tableToken.getTableName())
+                            .put(", oldStructureVersion=").put(metadata.getStructureVersion())
+                            .put(", newStructureVersion=").put(metaValidatorSvc.structureVersion).put(']');
+                }
+            } catch (CairoException e) {
+                if (retry) {
+                    // Table schema (metadata) changed and this Alter is not valid anymore.
+                    // Try to update WAL metadata to latest and repeat one more time.
+                    goActive();
+                    alterOp.apply(metaValidatorSvc, true);
+                } else {
+                    throw e;
+                }
+            }
+
+            try {
+                txn = sequencer.nextStructureTxn(tableToken, metadata.getStructureVersion(), alterOp);
+                if (txn == NO_TXN) {
+                    applyMetadataChangeLog(Long.MAX_VALUE);
+                }
+            } catch (CairoException e) {
+                distressed = true;
+                throw e;
+            }
+        } while (txn == NO_TXN);
+
+        // Apply to itself.
+        try {
+            alterOp.apply(metaWriterSvc, true);
+        } catch (Throwable th) {
+            // Transaction successful, but writing using this WAL writer should not be possible.
+            LOG.error().$("Exception during alter [ex=").$(th).I$();
+            distressed = true;
+        }
+        return txn;
     }
 
     private void checkDistressed() {
@@ -667,8 +717,10 @@ public class WalWriter implements TableWriterAPI {
     private void configureEmptySymbol(int columnWriterIndex) {
         symbolMapReaders.extendAndSet(columnWriterIndex, EmptySymbolMapReader.INSTANCE);
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
+        localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
     private void configureSymbolMapWriter(
@@ -757,7 +809,9 @@ public class WalWriter implements TableWriterAPI {
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
+        localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
     }
 
@@ -774,6 +828,7 @@ public class WalWriter implements TableWriterAPI {
                     // here since we already filled it with -1 and false initially
                     symbolMapReaders.extendAndSet(i, null);
                     symbolMaps.extendAndSet(i, null);
+                    utf8SymbolMaps.extendAndSet(i, null);
                 } else {
                     if (txReader == null) {
                         txReader = new TxReader(ff);
@@ -784,6 +839,7 @@ public class WalWriter implements TableWriterAPI {
                         MillisecondClock milliClock = configuration.getMillisecondClock();
                         long spinLockTimeout = configuration.getSpinLockTimeout();
 
+                        // todo: use own path
                         Path path = Path.PATH2.get();
                         path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
 
@@ -890,7 +946,7 @@ public class WalWriter implements TableWriterAPI {
     private long getSequencerTxn() {
         long seqTxn;
         do {
-            seqTxn = tableSequencerAPI.nextTxn(tableToken, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            seqTxn = sequencer.nextTxn(tableToken, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
             if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
@@ -990,9 +1046,10 @@ public class WalWriter implements TableWriterAPI {
                     if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.set(i, reader.getSymbolCount());
+                        localSymbolIds.set(i, 0);
                         symbolMapNullFlags.set(i, reader.containsNullValue());
-                        CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
-                        symbolMap.clear();
+                        symbolMaps.getQuick(i).clear();
+                        utf8SymbolMaps.getQuick(i).clear();
                     }
                 } else {
                     rowValueIsNotNull.setQuick(i, COLUMN_DELETED_NULL_FLAG);
@@ -1024,7 +1081,9 @@ public class WalWriter implements TableWriterAPI {
     private void removeSymbolMapReader(int index) {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         symbolMaps.setQuick(index, null);
+        utf8SymbolMaps.setQuick(index, null);
         initialSymbolCounts.set(index, -1);
+        localSymbolIds.set(index, 0);
         symbolMapNullFlags.set(index, false);
         cleanupSymbolMapFiles(path, rootLen, metadata.getColumnName(index));
     }
@@ -1066,9 +1125,16 @@ public class WalWriter implements TableWriterAPI {
             if (symbolMap != null) {
                 symbolMap.clear();
             }
+
+            final ByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
+            if (dbcsSymbolMap != null) {
+                dbcsSymbolMap.clear();
+            }
+
             final SymbolMapReader reader = symbolMapReaders.getQuick(i);
             if (reader != null) {
                 initialSymbolCounts.set(i, reader.getSymbolCount());
+                localSymbolIds.set(i, 0);
                 symbolMapNullFlags.set(i, reader.containsNullValue());
             }
         }
@@ -1078,7 +1144,7 @@ public class WalWriter implements TableWriterAPI {
         events.rollback();
         path.trimTo(rootLen).slash().put(newSegmentId);
         events.openEventFile(path, path.length());
-        lastSegmentTxn = events.data(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+        lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
     }
 
     private void rolloverSegmentLock() {
@@ -1257,7 +1323,7 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private class MetadataValidator implements SequencerMetadataChangeSPI {
+    private class MetadataValidatorService implements MetadataServiceStub {
         public long structureVersion;
 
         @Override
@@ -1335,198 +1401,7 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private class RowImpl implements TableWriter.Row {
-        private long timestamp;
-
-        @Override
-        public void append() {
-            rowAppend(nullSetters, timestamp);
-        }
-
-        @Override
-        public void cancel() {
-            setAppendPosition(segmentRowCount);
-        }
-
-        @Override
-        public void putBin(int columnIndex, long address, long len) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(address, len));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBin(int columnIndex, BinarySequence sequence) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBool(int columnIndex, boolean value) {
-            getPrimaryColumn(columnIndex).putBool(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putByte(int columnIndex, byte value) {
-            getPrimaryColumn(columnIndex).putByte(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putChar(int columnIndex, char value) {
-            getPrimaryColumn(columnIndex).putChar(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putDouble(int columnIndex, double value) {
-            getPrimaryColumn(columnIndex).putDouble(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putFloat(int columnIndex, float value) {
-            getPrimaryColumn(columnIndex).putFloat(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, value, type, this);
-        }
-
-        @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
-        }
-
-        @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            final int type = metadata.getColumnType(index);
-            WriterRowUtils.putGeoStr(index, hash, type, this);
-        }
-
-        @Override
-        public void putInt(int columnIndex, int value) {
-            getPrimaryColumn(columnIndex).putInt(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong(int columnIndex, long value) {
-            getPrimaryColumn(columnIndex).putLong(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
-            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(lo);
-            primaryColumn.putLong(hi);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
-            getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, Long256 value) {
-            getPrimaryColumn(columnIndex).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, CharSequence hexString) {
-            getPrimaryColumn(columnIndex).putLong256(hexString);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
-            getPrimaryColumn(columnIndex).putLong256(hexString, start, end);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putShort(int columnIndex, short value) {
-            getPrimaryColumn(columnIndex).putShort(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, CharSequence value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, char value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putSym(int columnIndex, CharSequence value) {
-            final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
-            if (symbolMapReader != null) {
-                int key = symbolMapReader.keyOf(value);
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    getPrimaryColumn(columnIndex).putInt(key);
-                    setRowValueNotNull(columnIndex);
-                    return;
-                }
-                putSym0(columnIndex, value);
-            } else {
-                throw new UnsupportedOperationException();
-            }
-        }
-
-        @Override
-        public void putSym(int columnIndex, char value) {
-            CharSequence str = SingleCharCharSequence.get(value);
-            putSym(columnIndex, str);
-        }
-
-        private MemoryA getPrimaryColumn(int columnIndex) {
-            return columns.getQuick(getPrimaryColumnIndex(columnIndex));
-        }
-
-        private MemoryA getSecondaryColumn(int columnIndex) {
-            return columns.getQuick(getSecondaryColumnIndex(columnIndex));
-        }
-
-        private void putSym0(int columnIndex, CharSequence value) {
-            int key;
-            if (value != null) {
-                // Add it to in-memory symbol map
-                CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
-                key = symbolMap.get(value);
-                if (key == SymbolTable.VALUE_NOT_FOUND) {
-                    int initialSymCount = initialSymbolCounts.get(columnIndex);
-                    key = initialSymCount + symbolMap.size();
-                    symbolMap.put(value, key);
-                }
-            } else {
-                key = SymbolTable.VALUE_IS_NULL;
-                symbolMapNullFlags.set(columnIndex, true);
-            }
-            getPrimaryColumn(columnIndex).putInt(key);
-            setRowValueNotNull(columnIndex);
-        }
-    }
-
-    private class WalMetadataUpdaterBackend implements SequencerMetadataChangeSPI {
+    private class MetadataWriterService implements MetadataServiceStub {
 
         @Override
         public void addColumn(
@@ -1681,6 +1556,243 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
             }
+        }
+    }
+
+    private class RowImpl implements TableWriter.Row {
+        private final StringSink tempSink = new StringSink();
+        private long timestamp;
+
+        @Override
+        public void append() {
+            rowAppend(nullSetters, timestamp);
+        }
+
+        @Override
+        public void cancel() {
+            setAppendPosition(segmentRowCount);
+        }
+
+        @Override
+        public void putBin(int columnIndex, long address, long len) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(address, len));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putBin(int columnIndex, BinarySequence sequence) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putBool(int columnIndex, boolean value) {
+            getPrimaryColumn(columnIndex).putBool(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putByte(int columnIndex, byte value) {
+            getPrimaryColumn(columnIndex).putByte(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putChar(int columnIndex, char value) {
+            getPrimaryColumn(columnIndex).putChar(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDouble(int columnIndex, double value) {
+            getPrimaryColumn(columnIndex).putDouble(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putFloat(int columnIndex, float value) {
+            getPrimaryColumn(columnIndex).putFloat(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            WriterRowUtils.putGeoHash(index, value, type, this);
+        }
+
+        @Override
+        public void putGeoHashDeg(int index, double lat, double lon) {
+            final int type = metadata.getColumnType(index);
+            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
+        }
+
+        @Override
+        public void putGeoStr(int index, CharSequence hash) {
+            final int type = metadata.getColumnType(index);
+            WriterRowUtils.putGeoStr(index, hash, type, this);
+        }
+
+        @Override
+        public void putInt(int columnIndex, int value) {
+            getPrimaryColumn(columnIndex).putInt(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong(int columnIndex, long value) {
+            getPrimaryColumn(columnIndex).putLong(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+            primaryColumn.putLong(lo);
+            primaryColumn.putLong(hi);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
+            getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, Long256 value) {
+            getPrimaryColumn(columnIndex).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, CharSequence hexString) {
+            getPrimaryColumn(columnIndex).putLong256(hexString);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
+            getPrimaryColumn(columnIndex).putLong256(hexString, start, end);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putShort(int columnIndex, short value) {
+            getPrimaryColumn(columnIndex).putShort(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStr(int columnIndex, char value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8AsUtf16(value, hasNonAsciiChars));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSym(int columnIndex, CharSequence value) {
+            final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
+            if (symbolMapReader != null) {
+                putSym0(columnIndex, value, symbolMapReader);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override
+        public void putSym(int columnIndex, char value) {
+            CharSequence str = SingleCharCharSequence.get(value);
+            putSym(columnIndex, str);
+        }
+
+        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            // this method will write column name to the buffer if it has to be utf8 decoded
+            // otherwise it will write nothing.
+            final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
+            if (symbolMapReader != null) {
+                ByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
+                int index = utf8Map.keyIndex(value);
+                if (index < 0) {
+                    getPrimaryColumn(columnIndex).putInt(utf8Map.valueAt(index));
+                    setRowValueNotNull(columnIndex);
+                } else {
+                    // slow path, symbol is not in utf8 cache
+                    utf8Map.putAt(
+                            index,
+                            ByteCharSequence.newInstance(value),
+                            putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
+                    );
+                }
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        private MemoryA getPrimaryColumn(int columnIndex) {
+            return columns.getQuick(getPrimaryColumnIndex(columnIndex));
+        }
+
+        private MemoryA getSecondaryColumn(int columnIndex) {
+            return columns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+
+        private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
+            final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+            int key;
+            if (utf16Value != null) {
+                int index = utf16Map.keyIndex(utf16Value);
+                if (index > -1) {
+                    key = symbolMapReader.keyOf(utf16Value);
+                    if (key == SymbolTable.VALUE_NOT_FOUND) {
+                        // Add it to in-memory symbol map
+                        // Locally added symbols must have a continuous range of keys
+                        final int initialSymCount = initialSymbolCounts.get(columnIndex);
+                        key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
+                    }
+                    // Chars.toString used as value is a parser buffer memory slice or mapped memory of symbolMapReader
+                    utf16Map.putAt(index, Chars.toString(utf16Value), key);
+                } else {
+                    key = utf16Map.valueAt(index);
+                }
+            } else {
+                key = SymbolTable.VALUE_IS_NULL;
+                symbolMapNullFlags.set(columnIndex, true);
+            }
+
+            getPrimaryColumn(columnIndex).putInt(key);
+            setRowValueNotNull(columnIndex);
+            return key;
+        }
+
+        private int putSymUtf8Slow(
+                int columnIndex,
+                DirectByteCharSequence utf8Value,
+                boolean hasNonAsciiChars,
+                SymbolMapReader symbolMapReader
+        ) {
+            return putSym0(
+                    columnIndex,
+                    utf8ToUtf16(utf8Value, tempSink, hasNonAsciiChars),
+                    symbolMapReader
+            );
         }
     }
 }

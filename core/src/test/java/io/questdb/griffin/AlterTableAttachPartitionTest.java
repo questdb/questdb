@@ -348,9 +348,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             engine.releaseAllWriters();
             engine.releaseInactive();
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-                while (purgeJob.run(0)) {
-                    Os.pause();
-                }
+                purgeJob.drain(0);
             }
 
             // verify cold storage folder still exists
