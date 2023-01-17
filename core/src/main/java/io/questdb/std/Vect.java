@@ -118,6 +118,16 @@ public final class Vect {
         }
     }
 
+    public static boolean memeq(long a, long b, long len) {
+        // the split length was determined experimentally
+        // using 'MemEqBenchmark' bench
+        if (len < 128) {
+            return memeq0(a, b, len);
+        } else {
+            return memcmp(a, b, len) == 0;
+        }
+    }
+
     public static native void memmove(long dst, long src, long len);
 
     public static native void memset(long dst, long len, int value);
@@ -240,7 +250,30 @@ public final class Vect {
 
     private static native void freeMergedIndex(long pIndex);
 
+    private static native int memcmp(long src, long dst, long len);
+
     private static native void memcpy0(long src, long dst, long len);
+
+    private static boolean memeq0(long a, long b, long len) {
+        int i = 0;
+        for (; i + 7 < len; i += 8) {
+            if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
+                return false;
+            }
+        }
+        if (i + 3 < len) {
+            if (Unsafe.getUnsafe().getInt(a + i) != Unsafe.getUnsafe().getInt(b + i)) {
+                return false;
+            }
+            i += 4;
+        }
+        for (; i < len; i++) {
+            if (Unsafe.getUnsafe().getByte(a + i) != Unsafe.getUnsafe().getByte(b + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     // accept externally allocated memory for merged index of proper size
     private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);

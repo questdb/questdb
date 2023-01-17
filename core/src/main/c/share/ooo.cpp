@@ -534,6 +534,19 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
     );
 }
 
+DECLARE_DISPATCHER(platform_memcmp);
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
+        (JNIEnv *e, jclass cl, jlong a, jlong b, jlong len) {
+    int res;
+    platform_memcmp(
+            reinterpret_cast<void *>(a),
+            reinterpret_cast<void *>(b),
+            __JLONG_REINTERPRET_CAST__(int64_t, len),
+            &res
+    );
+    return res;
+}
+
 DECLARE_DISPATCHER(platform_memmove);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
         (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
