@@ -542,20 +542,22 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             TableToken tableToken = createPopulateTable(tableName, 5);
             makeAllPartitionsReadOnly(tableToken);
 
-            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                     "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
-                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
-                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
+                            "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
+                            "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
+                            "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
+                            "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
+                            "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n");
 
             // silently ignored as the partition is read only
+            String firstPartitionName = "2022-10-17";
             String lastPartitionName = "2022-10-21";
             String newPartitionName = "2022-10-22";
             String multiInsertStmt = "INSERT INTO " + tableName + " (l, i, s, ts) VALUES";
-            multiInsertStmt += "(0, 0, 'ø', '" + lastPartitionName + "T23:59:59.500001Z'),";
-            multiInsertStmt += "(0, 1, 'ø', '" + lastPartitionName + "T23:59:59.500002Z'),";
+            multiInsertStmt += "(0, 0, 'ø', '" + firstPartitionName + "T23:59:59.900003Z'),";
+            multiInsertStmt += "(0, 0, 'ø', '" + lastPartitionName + "T23:59:59.500003Z'),";
+            multiInsertStmt += "(0, 1, 'ø', '" + lastPartitionName + "T23:59:59.500004Z'),";
             multiInsertStmt += "(1, 0, 'µ', '" + newPartitionName + "T01:00:27.202901Z'),";
             multiInsertStmt += "(1, 1, 'µ', '" + newPartitionName + "T01:00:27.202902Z');";
             executeInsert(multiInsertStmt);
@@ -564,13 +566,13 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "1\t0\tµ\t2022-10-22T01:00:27.202901Z\n" +
                             "1\t1\tµ\t2022-10-22T01:00:27.202902Z\n");
 
-            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                     "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
-                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
-                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
+                            "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
+                            "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
+                            "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
+                            "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n" +
                             "2022-10-22T01:00:27.202901Z\t2022-10-22T01:00:27.202902Z\t2\n");
         });
     }
@@ -583,13 +585,13 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             TableToken tableToken = createPopulateTable(tableName, 5);
             makeAllPartitionsReadOnly(tableToken);
 
-            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                     "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
-                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
-                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
+                            "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
+                            "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
+                            "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
+                            "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
+                            "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n");
 
             // silently ignored as the partition is read only
             String firstPartitionName = "2022-10-17";
@@ -599,7 +601,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             multiInsertStmt += "(31, 10, 'ø', '" + lastPartitionName + "T23:59:59.500002Z'),";
             multiInsertStmt += "(31, 0, 'ø', '" + lastPartitionName + "T23:59:59.500001Z'),";
             multiInsertStmt += "(1, 1, 'µø', '" + newPartitionName + "T01:00:27.202901Z'),";
-            multiInsertStmt += "(137, -3, 'P', '" + firstPartitionName + "T00:00:09.103056Z'),";
+            multiInsertStmt += "(137, -3, 'P', '" + firstPartitionName + "T00:03:09.103056Z'),";
             multiInsertStmt += "(1, 0, 'µ', '" + newPartitionName + "T01:00:26.453476Z');";
             executeInsert(multiInsertStmt);
             assertSql(tableName + " WHERE ts in '" + newPartitionName + "'",
@@ -607,13 +609,13 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "1\t0\tµ\t2022-10-22T01:00:26.453476Z\n" +
                             "1\t1\tµø\t2022-10-22T01:00:27.202901Z\n");
 
-            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
                     "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
-                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
-                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
+                            "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
+                            "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
+                            "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
+                            "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n" +
                             "2022-10-22T01:00:26.453476Z\t2022-10-22T01:00:27.202901Z\t2\n");
         });
     }

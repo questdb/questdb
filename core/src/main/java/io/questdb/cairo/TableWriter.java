@@ -79,6 +79,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final Runnable NOOP = () -> {
     };
+    private static final Row NOOP_ROW = new NoOpRow();
     private static final int PARTITION_UPDATE_SINK_ENTRY_SIZE = 8;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
@@ -174,6 +175,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
     private int indexCount;
+    private boolean lastOpenPartitionIsReadOnly;
+    private long lastOpenPartitionTs = -1L;
     private long lastPartitionTimestamp;
     private LifecycleManager lifecycleManager;
     private int lockFd = -1;
@@ -181,6 +184,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
+    private long noOpRowCount;
     private DirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
@@ -1253,19 +1257,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     }
 
                     if (timestamp > partitionTimestampHi && PartitionBy.isPartitioned(partitionBy)) {
-                        if (!hasO3()) {
-                            int pIndex = txWriter.getPartitionIndex(partitionTimestampHi);
-                            if (txWriter.isPartitionReadOnly(pIndex)) {
-                                LOG.critical()
-                                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
-                                        .$(", timestamp=").$ts(partitionFloorMethod.floor(partitionTimestampHi))
-                                        .$(", numRows=").$(txWriter.getTransientRowCount() - txWriter.getPartitionSizeByIndex(pIndex))
-                                        .$();
-                                rollback();
-                            }
-                        }
                         switchPartition(timestamp);
                     }
+                }
+                if (lastOpenPartitionIsReadOnly) {
+                    masterRef--;
+                    noOpRowCount++;
+                    return NOOP_ROW;
                 }
                 updateMaxTimestamp(timestamp);
                 break;
@@ -2570,20 +2568,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         openLastPartition();
                     }
                 }
-            } else if (partitionBy != PartitionBy.NONE) {
-                // check that we can write to the partition
-
-                long activePartitionTs = partitionFloorMethod.floor(txWriter.getMaxTimestamp());
-                int pIndex = txWriter.getPartitionIndex(activePartitionTs);
-                if (pIndex > -1 && txWriter.isPartitionReadOnly(pIndex)) {
-                    LOG.critical()
-                            .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
-                            .$(", timestamp=").$ts(activePartitionTs)
-                            .$(", numRows=").$(txWriter.unsafeCommittedTransientRowCount())
-                            .$();
-                    rollback();
-                    return TableSequencer.NO_TXN;
-                }
+            } else if (noOpRowCount > 0) {
+                LOG.critical()
+                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                        .$(", timestamp=").$ts(lastOpenPartitionTs)
+                        .$(", numRows=").$(noOpRowCount)
+                        .$();
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -2609,6 +2599,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 addPhysicallyWrittenRows(rowsAdded);
             }
 
+            noOpRowCount = 0L;
             return getTxn();
         }
         return TableSequencer.NO_TXN;
@@ -2922,6 +2913,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         Misc.free(commandQueue);
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
+        noOpRowCount = 0L;
+        lastOpenPartitionTs = -1L;
+        lastOpenPartitionIsReadOnly = false;
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -4276,11 +4270,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
             assert columnCount > 0;
 
-            long partitionTimestamp = txWriter.getPartitionTimestampLo(timestamp);
+            lastOpenPartitionTs = txWriter.getPartitionTimestampLo(timestamp);
+            lastOpenPartitionIsReadOnly = partitionBy != PartitionBy.NONE && txWriter.isPartitionReadOnlyByPartitionTimestamp(lastOpenPartitionTs);
+
             for (int i = 0; i < columnCount; i++) {
                 if (metadata.getColumnType(i) > 0) {
                     final CharSequence name = metadata.getColumnName(i);
-                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, i);
                     final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
                     final long columnTop;
 
@@ -4293,7 +4289,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);
-                    columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, i);
+                    columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
                     columnTops.extendAndSet(i, columnTop);
 
                     if (indexer != null) {
@@ -6361,6 +6357,148 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         default void putTimestamp(int columnIndex, long value) {
             putLong(columnIndex, value);
+        }
+    }
+
+    private static class NoOpRow implements Row {
+        @Override
+        public void append() {
+            // no-op
+        }
+
+        @Override
+        public void cancel() {
+            // no-op
+        }
+
+        @Override
+        public void putBin(int columnIndex, long address, long len) {
+            // no-op
+        }
+
+        @Override
+        public void putBin(int columnIndex, BinarySequence sequence) {
+            // no-op
+        }
+
+        @Override
+        public void putBool(int columnIndex, boolean value) {
+            // no-op
+        }
+
+        @Override
+        public void putByte(int columnIndex, byte value) {
+            // no-op
+        }
+
+        @Override
+        public void putChar(int columnIndex, char value) {
+            // no-op
+        }
+
+        @Override
+        public void putDate(int columnIndex, long value) {
+            // no-op
+        }
+
+        @Override
+        public void putDouble(int columnIndex, double value) {
+            // no-op
+        }
+
+        @Override
+        public void putFloat(int columnIndex, float value) {
+            // no-op
+        }
+
+        @Override
+        public void putGeoHash(int columnIndex, long value) {
+            // no-op
+        }
+
+        @Override
+        public void putGeoHashDeg(int index, double lat, double lon) {
+            // no-op
+        }
+
+        @Override
+        public void putGeoStr(int columnIndex, CharSequence value) {
+
+        }
+
+        @Override
+        public void putInt(int columnIndex, int value) {
+            // no-op
+        }
+
+        @Override
+        public void putLong(int columnIndex, long value) {
+            // no-op
+        }
+
+        @Override
+        public void putLong128LittleEndian(int columnIndex, long first, long second) {
+            // no-op
+        }
+
+        @Override
+        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
+            // no-op
+        }
+
+        @Override
+        public void putLong256(int columnIndex, Long256 value) {
+            // no-op
+        }
+
+        @Override
+        public void putLong256(int columnIndex, CharSequence hexString) {
+            // no-op
+        }
+
+        @Override
+        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
+            // no-op
+        }
+
+        @Override
+        public void putShort(int columnIndex, short value) {
+            // no-op
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value) {
+            // no-op
+        }
+
+        @Override
+        public void putStr(int columnIndex, char value) {
+            // no-op
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            // no-op
+        }
+
+        @Override
+        public void putSym(int columnIndex, CharSequence value) {
+            // no-op
+        }
+
+        @Override
+        public void putSym(int columnIndex, char value) {
+            // no-op
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int key) {
+            // no-op
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            // no-op
         }
     }
 
