@@ -28,10 +28,17 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
+/**
+ * Returns rows from current data frame in order of cursors list :
+ * - first fetches and returns all records from first cursor
+ * - then from second cursors,
+ * until all cursors are exhausted .
+ */
 public class SequentialRowCursorFactory implements RowCursorFactory {
     private final SequentialRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
@@ -62,6 +69,14 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
         RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Cursor-order scan");//postgres uses 'Append' node  
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            sink.child(cursorFactories.getQuick(i));
+        }
     }
 
     private class SequentialRowCursor implements RowCursor {

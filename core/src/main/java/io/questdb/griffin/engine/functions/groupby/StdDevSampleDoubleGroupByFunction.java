@@ -101,6 +101,11 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
     }
 
     @Override
+    public String getName() {
+        return "stddev_samp";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

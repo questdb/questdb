@@ -71,5 +71,10 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
             }
             return Timestamps.getHourOfDay(value);
         }
+
+        @Override
+        public String getName() {
+            return "hour";
+        }
     }
 }

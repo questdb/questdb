@@ -28,6 +28,12 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
 
+/**
+ * Returns rows from current data frame in table (physical) order :
+ * - fetches first record index per cursor into priority queue
+ * - then returns record with smallest index and adds next record from related cursor into queue
+ * until all cursors are exhausted .
+ */
 class HeapRowCursor implements RowCursor {
     private final IntLongPriorityQueue heap;
     private ObjList<RowCursor> cursors;

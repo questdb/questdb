@@ -95,6 +95,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
+        this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
@@ -473,6 +474,28 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             metrics.jsonQuery().markComplete();
         } else {
             readyForNextRequest(context);
+        }
+    }
+
+    //same as for select new but disallows caching of explain plans  
+    private void executeExplain(JsonQueryProcessorState state,
+                                CompiledQuery cq,
+                                CharSequence keepAliveHeader)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+        state.logExecuteNew();
+        final RecordCursorFactory factory = cq.getRecordCursorFactory();
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        try {
+            if (state.of(factory, false, sqlExecutionContext)) {
+                header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
+                doResumeSend(state, context, sqlExecutionContext);
+                metrics.jsonQuery().markComplete();
+            } else {
+                readyForNextRequest(context);
+            }
+        } catch (CairoException ex) {
+            state.setQueryCacheable(ex.isCacheable());
+            throw ex;
         }
     }
 

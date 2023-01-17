@@ -36,8 +36,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -60,6 +62,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     private static final int VAL_SLAVE_NEXT = 3;
     private static final int VAL_SLAVE_PREV = 2;
     private final SpliceJoinLightRecordCursor cursor;
+    private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
     private final RecordCursorFactory slaveFactory;
@@ -74,13 +77,15 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             @Transient ColumnTypes valueTypes,
             RecordSink masterSink,
             RecordSink slaveSink,
-            int columnSplit
+            int columnSplit,
+            JoinContext context
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.masterKeySink = masterSink;
         this.slaveKeySink = slaveSink;
+        this.joinContext = context;
 
         Map joinKeyMap = MapFactory.createMap(
                 cairoConfiguration,
@@ -120,6 +125,14 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Splice Join");
+        sink.optAttr("condition", joinContext);
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
     }
 
     @Override

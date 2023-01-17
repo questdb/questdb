@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -76,6 +77,15 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByDeferredListValuesFiltered");
+        sink.optAttr("filter", filter);
+        sink.optAttr("includedSymbols", includedSymbolFuncs);
+        sink.optAttr("excludedSymbols", excludedSymbolFuncs);
+        sink.child(dataFrameCursorFactory);
     }
 
     private void lookupDeferredSymbols(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {

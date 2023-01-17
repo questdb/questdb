@@ -32,7 +32,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -99,6 +98,11 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
+    public String getName() {
+        return "min";
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return accumulator.longValue();
     }
@@ -127,11 +131,6 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinTimestampVector(").put(columnIndex).put(')');
     }
 
     @Override

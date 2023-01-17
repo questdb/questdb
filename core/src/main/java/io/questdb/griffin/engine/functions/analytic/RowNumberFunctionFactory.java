@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
@@ -46,10 +47,11 @@ import io.questdb.std.Unsafe;
 public class RowNumberFunctionFactory implements FunctionFactory {
 
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
+    private static final String SIGNATURE = "row_number()";
 
     @Override
     public String getSignature() {
-        return "row_number()";
+        return SIGNATURE;
     }
 
     @Override
@@ -137,6 +139,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
     }
 
     private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -210,6 +217,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
     }
 
     private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -257,6 +269,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
 
         @Override

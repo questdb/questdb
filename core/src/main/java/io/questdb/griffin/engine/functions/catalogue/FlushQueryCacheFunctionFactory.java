@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -41,9 +42,11 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("flush-query-cache");
 
+    private static final String SIGNATURE = "flush_query_cache()";
+
     @Override
     public String getSignature() {
-        return "flush_query_cache()";
+        return SIGNATURE;
     }
 
     @Override
@@ -85,6 +88,11 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

@@ -66,6 +66,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     // create as select tag
     public static final String TAG_CTAS = "CTAS";
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
+    public static final String TAG_EXPLAIN = "EXPLAIN";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_OK = "OK";
     public static final String TAG_ROLLBACK = "ROLLBACK";
@@ -1146,7 +1147,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             }
 
             // not cached - compile to see what it is
-            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
             processCompiledQuery(cc);
         } else {
             isEmptyQuery = true;
@@ -1390,7 +1391,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 }
                 LOG.info().$(e.getFlyweightMessage()).$();
                 typesAndUpdate = Misc.free(typesAndUpdate);
-                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+                CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                 processCompiledQuery(cc);
             } catch (Throwable e) {
                 typesAndUpdate = Misc.free(typesAndUpdate);
@@ -1632,7 +1633,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 sendRNQ = true;
                 processQuery(msgLo, msgLimit, compiler);
                 break;
-            case 'd': // COPY data
+            case 'd': // COPY data 
                 break;
             default:
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
@@ -1998,6 +1999,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 queryTag = TAG_CTAS;
                 rowCount = cq.getAffectedRowsCount();
                 break;
+            case CompiledQuery.EXPLAIN:
+                //explain results should not be cached 
+                typesAndSelectIsCached = false;
+                typesAndSelect = typesAndSelectPool.pop();
+                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                queryTag = TAG_EXPLAIN;
             case CompiledQuery.SELECT:
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);

@@ -73,6 +73,11 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
+    public String getName() {
+        return "isOrdered";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.flagIndex = columnTypes.getColumnCount();
         this.valueIndex = flagIndex + 1;

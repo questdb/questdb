@@ -32,7 +32,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -89,6 +88,11 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
+    public String getName() {
+        return "sum";
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         if (count.sum() > 0) {
             return sum.sum();
@@ -122,11 +126,6 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.LONG);
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("SumTimestampVector(").put(columnIndex).put(')');
     }
 
     @Override

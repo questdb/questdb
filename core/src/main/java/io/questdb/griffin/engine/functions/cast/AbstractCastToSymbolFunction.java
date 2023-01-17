@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -39,14 +40,14 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractToSymbolCastFunction extends SymbolFunction implements UnaryFunction {
+public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements UnaryFunction {
     protected final Function arg;
     protected final StringSink sink = new StringSink();
     protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
     protected final ObjList<String> symbols = new ObjList<>();
     protected int next = 1;
 
-    public AbstractToSymbolCastFunction(Function arg) {
+    public AbstractCastToSymbolFunction(Function arg) {
         this.arg = arg;
         symbols.add(null);
     }
@@ -77,12 +78,17 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
 
     @Override
     public @Nullable SymbolTable newSymbolTable() {
-        AbstractToSymbolCastFunction copy = newFunc();
+        AbstractCastToSymbolFunction copy = newFunc();
         copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
         copy.symbols.clear();
         copy.symbols.addAll(this.symbols);
         copy.next = this.next;
         return copy;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(arg).val("::symbol");
     }
 
     @Override
@@ -123,5 +129,5 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
         return str;
     }
 
-    protected abstract AbstractToSymbolCastFunction newFunc();
+    protected abstract AbstractCastToSymbolFunction newFunc();
 }
