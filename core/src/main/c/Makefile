@@ -15,8 +15,6 @@ az    ?= az
 jq    ?= jq
 git   ?= git
 
-
-
 ifeq (, $(shell which aws))
 $(error "No aws cli in $(PATH)")
 endif
@@ -52,6 +50,7 @@ az_trigger_pipeline:
 	@ $(MAKE) wait ID=$(pipeline_id)
 	@ $(MAKE) s3_download_cbinaries ID=$(pipeline_id)
 
+test: export AWS_PROFILE=questdb-dev
 s3_download_cbinaries: ID=$(ID)
 s3_download_cbinaries:
 	@ echo "Updating local binaries"
