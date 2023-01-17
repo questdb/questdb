@@ -98,7 +98,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         return true;
     }
 
-    /**
+    /*
      * 1. "limit L" means we only need to keep :
      * L >=0 - first L records
      * L < 0 - last L records
