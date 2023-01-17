@@ -237,6 +237,10 @@ void MULTI_VERSION_NAME (platform_memcpy)(void *dst, const void *src, const size
     __MEMCPY(dst, src, len);
 }
 
+void MULTI_VERSION_NAME (platform_memcmp)(const void *a, const void *b, const size_t len, int *res) {
+    *res = __MEMCMP(a, b, len);
+}
+
 void MULTI_VERSION_NAME (platform_memset)(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
 }

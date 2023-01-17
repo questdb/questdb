@@ -26,11 +26,13 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 
 public class CompactMapValue implements MapValue {
-
     private final long[] columnOffsets;
     private final MemoryARW entries;
+    private final Long256Impl long256 = new Long256Impl();
     private boolean _new;
     private long currentValueOffset;
     private CompactMapRecord record;
@@ -72,7 +74,13 @@ public class CompactMapValue implements MapValue {
 
     @Override
     public void addLong256(int index, Long256 value) {
-
+        Long256 acc = getLong256A(index);
+        Long256Util.add(acc, value);
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, acc.getLong0());
+        entries.putLong(o + Long.BYTES, acc.getLong1());
+        entries.putLong(o + 2 * Long.BYTES, acc.getLong2());
+        entries.putLong(o + 3 * Long.BYTES, acc.getLong3());
     }
 
     @Override
@@ -147,6 +155,18 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public Long256 getLong256A(int index) {
+        final long o = getValueColumnOffset(index);
+        long256.setAll(
+                entries.getLong(o),
+                entries.getLong(o + Long.BYTES),
+                entries.getLong(o + 2 * Long.BYTES),
+                entries.getLong(o + 3 * Long.BYTES)
+        );
+        return long256;
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         return entries.getShort(getValueColumnOffset(columnIndex));
     }
@@ -203,7 +223,11 @@ public class CompactMapValue implements MapValue {
 
     @Override
     public void putLong256(int index, Long256 value) {
-
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, value.getLong0());
+        entries.putLong(o + Long.BYTES, value.getLong1());
+        entries.putLong(o + 2 * Long.BYTES, value.getLong2());
+        entries.putLong(o + 3 * Long.BYTES, value.getLong3());
     }
 
     @Override
