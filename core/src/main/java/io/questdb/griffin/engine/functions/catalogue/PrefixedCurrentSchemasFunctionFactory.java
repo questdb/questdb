@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.IntList;
@@ -81,6 +82,11 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("pg_catalog.current_schemas()");
         }
     }
 }

@@ -61,6 +61,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return baseFactory;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = baseFactory.getCursor(executionContext);
         try {
@@ -90,11 +95,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("VirtualRecordCursorFactory");
-        sink.attr("supportsRandomAccess");
-        sink.val(supportsRandomAccess);
-        sink.attr("functions");
-        sink.val(functions);
+        sink.type("VirtualRecord");
+        sink.optAttr("functions", functions, true);
         sink.child(baseFactory);
     }
 

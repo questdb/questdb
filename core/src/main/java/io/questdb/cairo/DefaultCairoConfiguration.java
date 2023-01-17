@@ -238,6 +238,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getExplainPoolCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }

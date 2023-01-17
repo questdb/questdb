@@ -64,6 +64,11 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public String getName() {
+        return "first";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

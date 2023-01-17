@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -46,9 +47,11 @@ import io.questdb.std.Unsafe;
 
 public class RankFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "rank()";
+
     @Override
     public String getSignature() {
-        return "rank()";
+        return SIGNATURE;
     }
 
     @Override
@@ -155,6 +158,11 @@ public class RankFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
     }
 
     private static class RankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -256,6 +264,11 @@ public class RankFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
     }
 
     private static class SequenceRankFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -308,6 +321,11 @@ public class RankFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

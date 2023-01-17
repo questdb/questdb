@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
@@ -60,6 +61,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -74,6 +80,13 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Distinct");
+        sink.attr("keys").val(getMetadata());
+        sink.child(base);
     }
 
     @Override

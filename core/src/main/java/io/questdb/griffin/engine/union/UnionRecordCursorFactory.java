@@ -70,4 +70,9 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
+
+    @Override
+    protected CharSequence getOperation() {
+        return "Union";
+    }
 }

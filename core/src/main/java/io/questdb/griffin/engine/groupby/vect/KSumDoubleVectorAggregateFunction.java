@@ -32,7 +32,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -117,6 +116,11 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public String getName() {
+        return "ksum";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -144,11 +148,6 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         types.add(ColumnType.DOUBLE); // sum
         types.add(ColumnType.DOUBLE); // c
         types.add(ColumnType.LONG); // count
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("KSumDoubleVector(").put(columnIndex).put(')');
     }
 
     @Override

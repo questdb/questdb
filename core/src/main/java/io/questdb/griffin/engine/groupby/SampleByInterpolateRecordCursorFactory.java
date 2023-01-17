@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -147,6 +148,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
         this.cursor = new SampleByInterpolateRecordCursor(recordFunctions, configuration, keyTypes, valueTypes);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -376,6 +382,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleBy");
+        sink.attr("fill").val("linear");
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
+        sink.child(base);
     }
 
     @Override

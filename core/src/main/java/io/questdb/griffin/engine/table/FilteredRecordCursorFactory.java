@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -44,6 +45,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -71,6 +77,13 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Filter");
+        sink.meta("filter").val(filter);
+        sink.child(base);
     }
 
     @Override

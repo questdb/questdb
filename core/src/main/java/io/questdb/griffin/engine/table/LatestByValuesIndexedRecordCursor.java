@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -37,7 +39,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
@@ -74,6 +76,11 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public long size() {
         return rows.size();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
     }
 
     @Override

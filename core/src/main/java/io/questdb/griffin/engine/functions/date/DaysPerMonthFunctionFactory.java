@@ -74,5 +74,10 @@ public class DaysPerMonthFunctionFactory implements FunctionFactory {
             final int month = Timestamps.getMonthOfYear(value, year, isLeap);
             return Timestamps.getDaysPerMonth(month, isLeap);
         }
+
+        @Override
+        public String getName() {
+            return "days_in_month";
+        }
     }
 }

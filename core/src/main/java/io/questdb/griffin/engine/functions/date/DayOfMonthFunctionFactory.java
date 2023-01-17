@@ -73,5 +73,10 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
             final int month = Timestamps.getMonthOfYear(value, year, isLeap);
             return Timestamps.getDayOfMonth(value, year, month, isLeap);
         }
+
+        @Override
+        public String getName() {
+            return "day";
+        }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -99,6 +100,11 @@ public class Base64FunctionFactory implements FunctionFactory {
             sinkB.clear();
             Chars.base64Encode(sequence, this.maxLength, sinkB);
             return sinkB;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("base64(").val(data).val(',').val(maxLength).val(')');
         }
     }
 }

@@ -30,11 +30,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 
 public class ListFunctionFactory implements FunctionFactory {
     @Override
@@ -88,6 +90,11 @@ public class ListFunctionFactory implements FunctionFactory {
         @Override
         public boolean isSymbolTableStatic() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("list(").val((Sinkable) symbols).val(')');
         }
 
         @Override

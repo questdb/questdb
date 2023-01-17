@@ -60,6 +60,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 symbols[i] = rnd.nextChars(8).toString();
             }
 
+            GenericRecordMetadata metadata;
             // prepare the data
             long timestamp = 0;
             try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
@@ -72,9 +73,10 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                     row.append();
                 }
                 writer.commit();
+                metadata = GenericRecordMetadata.copyOf(writer.getMetadata());
             }
 
-            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, 0)) {
+            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_ID, 0, metadata)) {
                 long count = 0;
                 try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC)) {
                     DataFrame frame;

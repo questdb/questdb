@@ -32,7 +32,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -116,6 +115,11 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public String getName() {
+        return "nsum";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -143,11 +147,6 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         types.add(ColumnType.DOUBLE);
         types.add(ColumnType.DOUBLE);
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("NSumDoubleVector(").put(columnIndex).put(')');
     }
 
     @Override

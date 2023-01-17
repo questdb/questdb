@@ -31,8 +31,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
 
-    public FullBwdDataFrameCursorFactory(TableToken tableToken, int tableId, long tableVersion) {
-        super(tableToken, tableVersion);
+    public FullBwdDataFrameCursorFactory(TableToken tableToken, int tableId, long tableVersion, GenericRecordMetadata metadata) {
+        super(tableToken, tableVersion, metadata);
     }
 
     @Override
@@ -51,7 +51,7 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("FullBwdDataFrame");
+        sink.type("Frame backward scan");
         super.toPlan(sink);
     }
 }

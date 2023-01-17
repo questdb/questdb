@@ -166,7 +166,7 @@ public class InterpolationUtil {
                     boundaryTimestamp,
                     isEndOfBoundary);
         } catch (UnsupportedOperationException e) {
-            throw SqlException.position(0).put("interpolation is not supported for function: ").put(function);
+            throw SqlException.position(0).put("interpolation is not supported for function: ").put(function.getClass().getName());
         }
     }
 
@@ -204,7 +204,7 @@ public class InterpolationUtil {
                     mapValue1, mapValue2,
                     x);
         } catch (UnsupportedOperationException e) {
-            throw SqlException.position(0).put("interpolation is not supported for function: ").put(function);
+            throw SqlException.position(0).put("interpolation is not supported for function: ").put(function.getClass().getName());
         }
     }
 

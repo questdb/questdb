@@ -72,6 +72,14 @@ class RndStringMemory implements Closeable {
         Misc.free(idxMem);
     }
 
+    public int getHi() {
+        return hi;
+    }
+
+    public int getLo() {
+        return lo;
+    }
+
     private long getStrAddress(long index) {
         return idxMem.getLong(index * Long.BYTES);
     }
