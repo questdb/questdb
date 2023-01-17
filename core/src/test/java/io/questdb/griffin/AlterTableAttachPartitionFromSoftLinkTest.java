@@ -379,19 +379,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
-            TableToken tableToken;
-            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                tableToken = createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-10-17",
-                        5 // "2022-10-17" .. "2022-10-21", 2K-ish rows each
-                );
-            }
+            TableToken tableToken = createPopulateTable(tableName, 5);
 
             // make all partitions, but last, read-only
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
@@ -429,7 +417,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
                             "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
-
 
             String lastReadOnlyPartitionName = "2022-10-20";
             assertSql(tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT 5",
@@ -544,50 +531,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n" +
                             "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n");
-
         });
     }
 
     @Test
-    public void testInsertLastPartitionIsReadOnlyMultiRow() throws Exception {
+    public void testInsertMultiRowAllPartitionsAreReadOnlyNo03() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
-            TableToken tableToken;
-            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                tableToken = createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
-                        10000,
-                        "2022-10-17",
-                        5 // "2022-10-17" .. "2022-10-21", 2K-ish rows each
-                );
-            }
-
-            // make all partitions read-only
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
-                TxWriter txWriter = writer.getTxWriter();
-                int partitionCount = txWriter.getPartitionCount();
-                Assert.assertEquals(5, partitionCount);
-                for (int i = 0, n = partitionCount; i < n; i++) {
-                    txWriter.setPartitionReadOnly(i, true);
-                }
-                txWriter.bumpTruncateVersion();
-                txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
-            }
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
-                TxReader txFile = reader.getTxFile();
-                int partitionCount = txFile.getPartitionCount();
-                Assert.assertEquals(5, partitionCount);
-                for (int i = 0, n = partitionCount; i < n; i++) {
-                    Assert.assertTrue(txFile.isPartitionReadOnly(i));
-                }
-            }
+            TableToken tableToken = createPopulateTable(tableName, 5);
+            makeAllPartitionsReadOnly(tableToken);
 
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
                     "min\tmax\tcount\n" +
@@ -619,6 +572,49 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
                             "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n" +
                             "2022-10-22T01:00:27.202901Z\t2022-10-22T01:00:27.202902Z\t2\n");
+        });
+    }
+
+    @Test
+    public void testInsertMultiRowAllPartitionsAreReadOnlyWith03() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createPopulateTable(tableName, 5);
+            makeAllPartitionsReadOnly(tableToken);
+
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
+                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
+                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n");
+
+            // silently ignored as the partition is read only
+            String firstPartitionName = "2022-10-17";
+            String lastPartitionName = "2022-10-21";
+            String newPartitionName = "2022-10-22";
+            String multiInsertStmt = "INSERT INTO " + tableName + " (l, i, s, ts) VALUES";
+            multiInsertStmt += "(31, 10, 'ø', '" + lastPartitionName + "T23:59:59.500002Z'),";
+            multiInsertStmt += "(31, 0, 'ø', '" + lastPartitionName + "T23:59:59.500001Z'),";
+            multiInsertStmt += "(1, 1, 'µø', '" + newPartitionName + "T01:00:27.202901Z'),";
+            multiInsertStmt += "(137, -3, 'P', '" + firstPartitionName + "T00:00:09.103056Z'),";
+            multiInsertStmt += "(1, 0, 'µ', '" + newPartitionName + "T01:00:26.453476Z');";
+            executeInsert(multiInsertStmt);
+            assertSql(tableName + " WHERE ts in '" + newPartitionName + "'",
+                    "l\ti\ts\tts\n" +
+                            "1\t0\tµ\t2022-10-22T01:00:26.453476Z\n" +
+                            "1\t1\tµø\t2022-10-22T01:00:27.202901Z\n");
+
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d",
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
+                            "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
+                            "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
+                            "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
+                            "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n" +
+                            "2022-10-22T01:00:26.453476Z\t2022-10-22T01:00:27.202901Z\t2\n");
         });
     }
 
@@ -1038,6 +1034,29 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         });
     }
 
+    private static void makeAllPartitionsReadOnly(TableToken tableToken) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
+            TxWriter txWriter = writer.getTxWriter();
+            int partitionCount = txWriter.getPartitionCount();
+            Assert.assertEquals(5, partitionCount);
+            for (int i = 0, n = partitionCount; i < n; i++) {
+                txWriter.setPartitionReadOnly(i, true);
+            }
+            txWriter.bumpTruncateVersion();
+            txWriter.commit(configuration.getCommitMode(), writer.getDenseSymbolMapWriters());
+        }
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
+            TxReader txFile = reader.getTxFile();
+            int partitionCount = txFile.getPartitionCount();
+            Assert.assertEquals(5, partitionCount);
+            for (int i = 0, n = partitionCount; i < n; i++) {
+                Assert.assertTrue(txFile.isPartitionReadOnly(i));
+            }
+        }
+    }
+
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -1063,7 +1082,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Function<TableToken, Void> test) throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-            TableToken tableToken = createTable(tableName);
+            TableToken tableToken = createPopulateTable(tableName, 2);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
@@ -1134,9 +1153,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         Assert.assertEquals(0, ff.softLink(other, path));
     }
 
-    private TableToken createTable(String tableName) throws NumericException, SqlException {
+    private TableToken createPopulateTable(String tableName, int partitionCount) throws Exception {
+        TableToken tableToken;
         try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-            return createPopulateTable(
+            tableToken = createPopulateTable(
                     1,
                     src.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
@@ -1144,14 +1164,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             .timestamp("ts"),
                     10000,
                     "2022-10-17",
-                    2
+                    partitionCount
             );
         }
+        return tableToken;
     }
 
     private void createTableWithReadOnlyPartition(String tableName, Function<TableToken, Void> test) throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-            TableToken tableToken = createTable(tableName);
+            TableToken tableToken = createPopulateTable(tableName, 2);
             // the read-only flag is only set when a partition is attached from soft link
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-flag")) {
                 TxWriter txWriter = writer.getTxWriter();

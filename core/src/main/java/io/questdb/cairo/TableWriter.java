@@ -1253,14 +1253,16 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     }
 
                     if (timestamp > partitionTimestampHi && PartitionBy.isPartitioned(partitionBy)) {
-                        int pIndex = txWriter.getPartitionIndex(partitionTimestampHi);
-                        if (txWriter.isPartitionReadOnly(pIndex)) {
-                            LOG.critical()
-                                    .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
-                                    .$(", timestamp=").$ts(partitionFloorMethod.floor(partitionTimestampHi))
-                                    .$(", numRows=").$(txWriter.getTransientRowCount() - txWriter.getPartitionSizeByIndex(pIndex))
-                                    .$();
-                            rollback();
+                        if (!hasO3()) {
+                            int pIndex = txWriter.getPartitionIndex(partitionTimestampHi);
+                            if (txWriter.isPartitionReadOnly(pIndex)) {
+                                LOG.critical()
+                                        .$("o3 ignoring write on read-only partition [table=").utf8(tableToken.getTableName())
+                                        .$(", timestamp=").$ts(partitionFloorMethod.floor(partitionTimestampHi))
+                                        .$(", numRows=").$(txWriter.getTransientRowCount() - txWriter.getPartitionSizeByIndex(pIndex))
+                                        .$();
+                                rollback();
+                            }
                         }
                         switchPartition(timestamp);
                     }
