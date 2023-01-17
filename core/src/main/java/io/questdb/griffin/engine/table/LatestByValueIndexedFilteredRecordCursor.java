@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -81,6 +82,12 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        sink.optAttr("filter", filter);
     }
 
     @Override

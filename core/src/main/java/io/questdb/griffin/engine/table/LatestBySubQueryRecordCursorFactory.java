@@ -188,6 +188,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            delegate.toPlan(sink);
+        }
+
+        @Override
         public void toTop() {
             delegate.toTop();
         }

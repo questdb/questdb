@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -37,7 +36,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
+class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;

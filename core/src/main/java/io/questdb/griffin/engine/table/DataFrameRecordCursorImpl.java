@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -111,6 +112,11 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Data frame scan");
     }
 
     @Override

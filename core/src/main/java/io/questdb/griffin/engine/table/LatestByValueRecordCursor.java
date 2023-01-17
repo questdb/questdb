@@ -28,12 +28,11 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
+class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final int symbolKey;

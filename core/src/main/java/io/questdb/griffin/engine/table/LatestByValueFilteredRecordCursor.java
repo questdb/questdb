@@ -29,13 +29,12 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
+class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final Function filter;

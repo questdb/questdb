@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -150,6 +151,11 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public long size() {
         return areRecordsFound ? rowIds.size() : -1;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnValueList").meta("on").putColumnName(columnIndex);
     }
 
     @Override

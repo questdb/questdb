@@ -28,14 +28,13 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
+class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;

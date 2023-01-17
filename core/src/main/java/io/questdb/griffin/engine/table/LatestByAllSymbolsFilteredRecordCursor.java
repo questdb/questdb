@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -43,7 +42,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
+class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
     private final Function filter;
