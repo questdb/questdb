@@ -214,6 +214,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 ) {
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
+                    ff.rmdir(Path.getThreadLocal(configuration.getRoot()).concat(tableToken));
                     engine.removeTableToken(tableToken);
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();

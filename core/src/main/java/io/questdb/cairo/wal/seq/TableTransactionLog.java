@@ -398,6 +398,22 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public boolean reset() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                final long oldSize = getMappedLen();
+                txnCount = newTxnCount;
+                final long newSize = getMappedLen();
+                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+
+                this.txnLo = txn - 1;
+                this.txnOffset -= RECORD_SIZE;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
         public void toTop() {
             if (txnCount > -1L) {
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;

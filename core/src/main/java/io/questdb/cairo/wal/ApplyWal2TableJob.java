@@ -270,13 +270,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Job.RunStatus runStatus
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+        boolean isTerminating;
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
 
             try {
 
-                int transactionCount = 0;
+                int iTransaction = 0;
+                int totalTransactionCount = 0;
                 long rowsAdded = 0;
                 long insertTimespan = 0;
 
@@ -288,7 +290,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 LongList transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen);
                 transactionLogCursor.toTop();
 
-                boolean isTerminating = runStatus.isTerminating();
+                isTerminating = runStatus.isTerminating();
                 WHILE_TRANSACTION_CURSOR:
                 while (transactionLogCursor.hasNext() && !isTerminating) {
                     final int walId = transactionLogCursor.getWalId();
@@ -350,6 +352,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             final long start = microClock.getTicks();
 
+                            if (iTransaction > 0 && transactionMeta.size() < (iTransaction + 2) * TXN_METADATA_LONGS_SIZE) {
+                                // Last few transactions left to process from the list
+                                // of observed transactions built upfront in the beginning of the loop.
+                                // Check if more transaction exist, exit restart the loop to have better picture
+                                // of the future transactions and optimise the application.
+                                if (transactionLogCursor.reset()) {
+                                    transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen);
+                                    transactionLogCursor.toTop();
+                                    totalTransactionCount += iTransaction;
+                                    iTransaction = 0;
+                                    continue;
+                                }
+                            }
+
                             isTerminating = runStatus.isTerminating();
                             final long added = processWalCommit(
                                     writer,
@@ -359,23 +375,24 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     seqTxn,
                                     isTerminating,
                                     transactionMeta,
-                                    transactionCount * TXN_METADATA_LONGS_SIZE
+                                    iTransaction * TXN_METADATA_LONGS_SIZE
                             );
 
                             if (added > -1L) {
                                 insertTimespan += microClock.getTicks() - start;
                                 rowsAdded += added;
-                                transactionCount++;
+                                iTransaction++;
                             }
                             if (added == -2L || isTerminating) {
-                                // transaction cursor goes beyond prepared transactionMeta. Re-run the loop.
+                                // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
                                 break WHILE_TRANSACTION_CURSOR;
                             }
                     }
                 }
-                if (transactionCount > 0) {
+                totalTransactionCount += iTransaction;
+                if (totalTransactionCount > 0) {
                     LOG.info().$("WAL apply job finished [table=").$(writer.getTableToken())
-                            .$(", transactions=").$(transactionCount)
+                            .$(", transactions=").$(totalTransactionCount)
                             .$(", rows=").$(rowsAdded)
                             .$(", time=").$(insertTimespan / 1000)
                             .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))

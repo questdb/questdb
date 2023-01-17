@@ -1364,7 +1364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, symbolRowLo);
                 MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
 
-                if (commitToTimestamp < 0) {
+                if (commitToTimestamp < o3TimestampMin) {
                     // Don't commit anything, move everything to memory instead.
                     // This usually happens when WAL transactions are very small, so it's faster
                     // to squash several of them together before writing anything to disk.
@@ -1491,7 +1491,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         txWriter.beginPartitionSizeUpdate();
-        LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo).$(", roHi=").$(rowHi)
+        LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo)
+                .$(", seqTxn").$(seqTxn)
+                .$(", roHi=").$(rowHi)
                 .$(", tsMin=").$ts(o3TimestampMin).$(", tsMax=").$ts(o3TimestampMax)
                 .$(", commitToTimestamp=").$ts(commitToTimestamp)
                 .I$();

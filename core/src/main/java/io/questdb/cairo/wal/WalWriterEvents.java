@@ -214,7 +214,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(-1);
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(0, txn);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
     }
 
@@ -257,9 +257,8 @@ class WalWriterEvents implements Closeable {
     void rollback() {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn);
-        // here it's +2 because for transaction 0 size should be 16 bytes and for transaction 1 size should be 24 bytes
-        ff.truncate(indexFd, (txn + 2L) << 3);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn - 1);
+        ff.truncate(indexFd, (txn + 1L) << 3);
     }
 
     int truncate() {
