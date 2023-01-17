@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.std.Long128;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -33,9 +34,10 @@ public class Long128ConstantTest {
     @Test
     public void testReadWrite() {
         try (Long128Constant l = new Long128Constant(1, 2)) {
-            long loc = l.getLong128Location(null);
-            assertEquals(1, l.getLong128Lo(null, loc));
-            assertEquals(2, l.getLong128Hi(null, loc));
+            Long128 actualLong128 = l.getLong128A(null);
+            Long128 expectedLong128 = new Long128();
+            expectedLong128.setAll(1, 2);
+            assertEquals(expectedLong128, actualLong128);
         }
     }
 

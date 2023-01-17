@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Long128;
 import io.questdb.std.ObjList;
 
 public final class EqUuidFunctionFactory implements FunctionFactory {
@@ -68,29 +69,23 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     }
 
     private static BooleanConstant createConstant(Function a, Function b) {
-        long aLoc = a.getLong128Location(null);
-        long bLoc = b.getLong128Location(null);
-        long aHi = a.getLong128Hi(null, aLoc);
-        long aLo = a.getLong128Lo(null, aLoc);
-        long bHi = b.getLong128Hi(null, bLoc);
-        long bLo = b.getLong128Lo(null, bLoc);
-        return BooleanConstant.of(aHi == bHi && aLo == bLo);
+        Long128 aLong128 = a.getLong128A(null);
+        Long128 bLong128 = b.getLong128A(null);
+        return BooleanConstant.of(aLong128.equals(bLong128));
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        long loc = constFunc.getLong128Location(null);
-        return new ConstCheckFunc(varFunc, constFunc.getLong128Hi(null, loc), constFunc.getLong128Lo(null, loc));
+        Long128 long128const = constFunc.getLong128A(null);
+        return new ConstCheckFunc(varFunc, long128const);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final long hiConstant;
-        private final long loConstant;
+        private final Long128 long128const;
 
-        public ConstCheckFunc(Function arg, long hiConstant, long loConstant) {
+        public ConstCheckFunc(Function arg, Long128 long128const) {
             this.arg = arg;
-            this.hiConstant = hiConstant;
-            this.loConstant = loConstant;
+            this.long128const = long128const;
         }
 
         @Override
@@ -100,10 +95,8 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long loc = arg.getLong128Location(rec);
-            long hi = arg.getLong128Hi(rec, loc);
-            long lo = arg.getLong128Lo(rec, loc);
-            return negated != (hi == hiConstant && lo == loConstant);
+            Long128 long128 = arg.getLong128A(rec);
+            return negated != (long128const.equals(long128));
         }
     }
 
@@ -118,13 +111,9 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long leftLoc = left.getLong128Location(rec);
-            long rightLoc = right.getLong128Location(rec);
-            final long leftHi = left.getLong128Hi(rec, leftLoc);
-            final long leftLo = left.getLong128Lo(rec, leftLoc);
-            final long rightHi = right.getLong128Hi(rec, rightLoc);
-            final long rightLo = right.getLong128Lo(rec, rightLoc);
-            return negated != (leftHi == rightHi && leftLo == rightLo);
+            Long128 leftLong128 = left.getLong128A(rec);
+            Long128 rightLong128 = right.getLong128B(rec);
+            return negated != (leftLong128.equals(rightLong128));
         }
 
         @Override

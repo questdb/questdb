@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Unsafe;
 
@@ -31,6 +32,8 @@ final class FastMapValue implements MapValue {
     private final int[] valueOffsets;
     private boolean _new;
     private long address;
+    private Long128 long128A = new Long128();
+    private Long128 long128B = new Long128();
     private FastMapRecord record; // double-linked
 
     public FastMapValue(int[] valueOffsets) {
@@ -144,19 +147,17 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public long getLong128Hi(int index, long location) {
-        long address0 = address0(index);
-        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
+    public Long128 getLong128A(int col) {
+        long address = address0(col);
+        long128A.setAll(Unsafe.getUnsafe().getLong(address), Unsafe.getUnsafe().getLong(address + Long.BYTES));
+        return long128A;
     }
 
     @Override
-    public long getLong128Lo(int index, long location) {
-        return Unsafe.getUnsafe().getLong(location);
-    }
-
-    @Override
-    public long getLong128Location(int index) {
-        return address0(index);
+    public Long128 getLong128B(int col) {
+        long address = address0(col);
+        long128B.setAll(Unsafe.getUnsafe().getLong(address), Unsafe.getUnsafe().getLong(address + Long.BYTES));
+        return long128B;
     }
 
     @Override

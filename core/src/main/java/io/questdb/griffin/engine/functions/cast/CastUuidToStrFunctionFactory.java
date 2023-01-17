@@ -50,8 +50,8 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            long loc = func.getLong128Location(null);
-            if (SqlUtil.implicitCastUuidAsStr(func.getLong128Lo(null, loc), func.getLong128Hi(null, loc), sink)) {
+            Long128 long128A = func.getLong128A(null);
+            if (SqlUtil.implicitCastUuidAsStr(long128A.getLo(), long128A.getHi(), sink)) {
                 return new StrConstant(Chars.toString(sink));
             } else {
                 return StrConstant.NULL;
@@ -77,29 +77,27 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             sinkA.clear();
-            long loc = arg.getLong128Location(rec);
-            return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec, loc), arg.getLong128Hi(rec, loc), sinkA) ? sinkA : null;
+            Long128 long128 = arg.getLong128A(rec);
+            return SqlUtil.implicitCastUuidAsStr(long128.getLo(), long128.getLo(), sinkA) ? sinkA : null;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            long loc = arg.getLong128Location(rec);
-            SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec, loc), arg.getLong128Hi(rec, loc), sink);
+            Long128 long128 = arg.getLong128A(rec);
+            SqlUtil.implicitCastUuidAsStr(long128.getLo(), long128.getHi(), sink);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            long loc = arg.getLong128Location(rec);
-            return SqlUtil.implicitCastUuidAsStr(arg.getLong128Lo(rec, loc), arg.getLong128Hi(rec, loc), sinkB) ? sinkB : null;
+            Long128 long128 = arg.getLong128A(rec);
+            return SqlUtil.implicitCastUuidAsStr(long128.getLo(), long128.getLo(), sinkB) ? sinkB : null;
         }
 
         @Override
         public int getStrLen(Record rec) {
-            long loc = arg.getLong128Location(rec);
-            long lo = arg.getLong128Lo(rec, loc);
-            long hi = arg.getLong128Hi(rec, loc);
-            return Uuid.isNull(lo, hi) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
+            Long128 long128 = arg.getLong128A(rec);
+            return Uuid.isNull(long128.getLo(), long128.getHi()) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
         }
     }
 }

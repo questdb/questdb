@@ -583,9 +583,9 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                        long loc = value.getLong128Location(9);
-                        Assert.assertEquals(rnd2.nextLong(), value.getLong128Lo(9, loc));
-                        Assert.assertEquals(rnd2.nextLong(), value.getLong128Hi(9, loc));
+                        Long128 long128 = value.getLong128A(9);
+                        Assert.assertEquals(rnd2.nextLong(), long128.getLo());
+                        Assert.assertEquals(rnd2.nextLong(), long128.getHi());
                         Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(10));
                         Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
                         Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
@@ -709,9 +709,9 @@ public class CompactMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-            long loc = record.getLong128Location(9);
-            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9, loc));
-            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9, loc));
+            Long128 long128 = record.getLong128A(9);
+            Assert.assertEquals(rnd2.nextLong(), long128.getLo());
+            Assert.assertEquals(rnd2.nextLong(), long128.getHi());
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -778,13 +778,12 @@ public class CompactMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
-            loc = record.getLong128Location(keyColumnOffset + 12);
+            long128 = record.getLong128A(keyColumnOffset + 12);
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12, loc));
-                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Long128.NULL, long128);
             } else {
-                Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12, loc));
-                Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), long128.getLo());
+                Assert.assertEquals(rnd.nextLong(), long128.getHi());
             }
 
         }

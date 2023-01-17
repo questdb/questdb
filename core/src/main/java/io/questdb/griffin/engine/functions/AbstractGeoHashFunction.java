@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -90,17 +91,12 @@ public abstract class AbstractGeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec, long location) {
+    public Long128 getLong128A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong128Lo(Record rec, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Location(Record rec) {
+    public Long128 getLong128B(Record rec) {
         throw new UnsupportedOperationException();
     }
 

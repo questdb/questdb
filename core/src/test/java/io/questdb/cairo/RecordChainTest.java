@@ -286,10 +286,9 @@ public class RecordChainTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected.getBin(i), actual.getBin(i), actual.getBinLen(i));
                     break;
                 case ColumnType.UUID:
-                    long expectedLoc = expected.getLong128Location(i);
-                    long actualLoc = actual.getLong128Location(i);
-                    Assert.assertEquals(expected.getLong128Hi(i, expectedLoc), actual.getLong128Hi(i, actualLoc));
-                    Assert.assertEquals(expected.getLong128Lo(i, expectedLoc), actual.getLong128Lo(i, actualLoc));
+                    Long128 expectedLong128 = expected.getLong128A(i);
+                    Long128 actualLong128 = actual.getLong128A(i);
+                    Assert.assertEquals(expectedLong128, actualLong128);
                     break;
                 default:
                     throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));

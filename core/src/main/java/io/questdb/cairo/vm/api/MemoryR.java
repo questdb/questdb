@@ -24,10 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Acceptor;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -59,6 +56,18 @@ public interface MemoryR extends Closeable {
     int getInt(long offset);
 
     long getLong(long offset);
+
+    default void getLong128(long offset, Long128 sink) {
+        long addr = addressOf(offset + Long.BYTES * 2);
+        sink.setAll(
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
+        );
+    }
+
+    Long128 getLong128A(long offset);
+
+    Long128 getLong128B(long offset);
 
     void getLong256(long offset, CharSink sink);
 

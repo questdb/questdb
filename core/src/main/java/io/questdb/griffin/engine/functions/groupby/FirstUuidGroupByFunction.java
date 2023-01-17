@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.std.Long128;
 import io.questdb.std.Numbers;
 
 public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFunction, UnaryFunction {
@@ -45,8 +46,8 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        long loc = arg.getLong128Location(record);
-        mapValue.putLong128(valueIndex, arg.getLong128Lo(record, loc), arg.getLong128Hi(record, loc));
+        Long128 value = arg.getLong128A(record);
+        mapValue.putLong128(valueIndex, value.getLo(), value.getHi());
     }
 
     @Override
@@ -60,18 +61,13 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public long getLong128Hi(Record rec, long location) {
-        return rec.getLong128Hi(valueIndex, location);
+    public Long128 getLong128A(Record rec) {
+        return rec.getLong128A(valueIndex);
     }
 
     @Override
-    public long getLong128Lo(Record rec, long location) {
-        return rec.getLong128Lo(valueIndex, location);
-    }
-
-    @Override
-    public long getLong128Location(Record rec) {
-        return rec.getLong128Location(valueIndex);
+    public Long128 getLong128B(Record rec) {
+        return rec.getLong128B(valueIndex);
     }
 
     @Override

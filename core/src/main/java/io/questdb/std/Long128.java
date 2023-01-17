@@ -22,40 +22,51 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.Long128;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
+public final class Long128 {
+    public static final int BYTES = Long.BYTES * 2;
+    public static final Long128 NULL = new Long128();
 
-public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable {
-    final Long128 value;
+    private long hi;
+    private long lo;
 
-    public UuidBindVariable() {
-        value = new Long128();
-        clear();
+    @Override
+    public boolean equals(Object obj) {
+        if (obj == this) {
+            return true;
+        }
+        if (obj instanceof Long128) {
+            Long128 that = (Long128) obj;
+            return this.lo == that.lo && this.hi == that.hi;
+        }
+        return false;
+    }
+
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
     }
 
     @Override
-    public void clear() {
-        value.setAll(Numbers.LONG_NaN, Numbers.LONG_NaN);
+    public int hashCode() {
+        return Hash.hash(lo, hi);
     }
 
-    @Override
-    public Long128 getLong128A(Record rec) {
-        return value;
+    public void ofNull() {
+        this.lo = Numbers.LONG_NaN;
+        this.hi = Numbers.LONG_NaN;
     }
 
-    @Override
-    public Long128 getLong128B(Record rec) {
-        return value;
+    public void setAll(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
     }
 
-
-    void set(long lo, long hi) {
-        value.setAll(lo, hi);
+    static {
+        NULL.setAll(Numbers.LONG_NaN, Numbers.LONG_NaN);
     }
 }

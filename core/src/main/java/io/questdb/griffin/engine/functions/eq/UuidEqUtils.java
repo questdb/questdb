@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.Numbers;
+import io.questdb.std.Long128;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import org.jetbrains.annotations.Nullable;
@@ -54,37 +54,35 @@ final class UuidEqUtils {
     @Nullable
     static BooleanFunction eqStrUuid(Function strFun, Function uuidFun) {
         if (strFun.isConstant()) {
-            CharSequence uuidStr = strFun.getStr(null);
-            long lo;
-            long hi;
-            if (uuidStr == null) {
-                lo = Numbers.LONG_NaN;
-                hi = Numbers.LONG_NaN;
+            CharSequence str = strFun.getStr(null);
+            Long128 uuidStr;
+            if (str == null) {
+                uuidStr = Long128.NULL;
             } else {
                 try {
-                    Uuid.checkDashesAndLength(uuidStr);
-                    lo = Uuid.parseLo(uuidStr);
-                    hi = Uuid.parseHi(uuidStr);
+                    Uuid.checkDashesAndLength(str);
+                    uuidStr = new Long128();
+                    long lo = Uuid.parseLo(str);
+                    long hi = Uuid.parseHi(str);
+                    uuidStr.setAll(lo, hi);
                 } catch (NumericException e) {
                     // ok, so the constant string is not a UUID format -> it cannot be equal to any UUID
                     return BooleanConstant.FALSE;
                 }
             }
             if (uuidFun.isConstant()) {
-                long loc = uuidFun.getLong128Location(null);
-                return BooleanConstant.of(hi == uuidFun.getLong128Hi(null, loc) && lo == uuidFun.getLong128Hi(null, loc));
+                Long128 uuid = uuidFun.getLong128A(null);
+                return BooleanConstant.of(uuidStr.equals(uuid));
             } else {
-                return new ConstStrFun(lo, hi, uuidFun);
+                return new ConstStrFun(uuidStr, uuidFun);
             }
         } else {
             if (uuidFun.isConstant()) {
-                long loc = uuidFun.getLong128Location(null);
-                long lo = uuidFun.getLong128Lo(null, loc);
-                long hi = uuidFun.getLong128Hi(null, loc);
-                if (Uuid.isNull(lo, hi)) {
+                Long128 uuid = uuidFun.getLong128A(null);
+                if (Long128.NULL.equals(uuid)) {
                     return new EqStrFunctionFactory.NullCheckFunc(strFun);
                 } else {
-                    return new ConstUuidFun(lo, hi, strFun);
+                    return new ConstUuidFun(uuid, strFun);
                 }
             } else {
                 return new Fun(strFun, uuidFun);
@@ -96,13 +94,11 @@ final class UuidEqUtils {
      * The string function is constant and the UUID function is not constant.
      */
     private static class ConstStrFun extends NegatableBooleanFunction implements UnaryFunction {
-        private final long constStrHi;
-        private final long constStrLo;
+        private final Long128 constStrUuid;
         private final Function fun;
 
-        private ConstStrFun(long constStrLo, long constStrHi, Function fun) {
-            this.constStrLo = constStrLo;
-            this.constStrHi = constStrHi;
+        private ConstStrFun(Long128 constStrUuid, Function fun) {
+            this.constStrUuid = constStrUuid;
             this.fun = fun;
         }
 
@@ -113,8 +109,8 @@ final class UuidEqUtils {
 
         @Override
         public boolean getBool(Record rec) {
-            long loc = fun.getLong128Location(rec);
-            return negated != (constStrHi == fun.getLong128Hi(rec, loc) && constStrLo == fun.getLong128Lo(rec, loc));
+            Long128 uuid = fun.getLong128A(rec);
+            return negated != uuid.equals(constStrUuid);
         }
     }
 
@@ -126,9 +122,9 @@ final class UuidEqUtils {
         private final long constUuidLo;
         private final Function fun;
 
-        private ConstUuidFun(long constUuidLo, long constUuidHi, Function fun) {
-            this.constUuidLo = constUuidLo;
-            this.constUuidHi = constUuidHi;
+        private ConstUuidFun(Long128 constUuid, Function fun) {
+            this.constUuidLo = constUuid.getLo();
+            this.constUuidHi = constUuid.getHi();
             this.fun = fun;
         }
 
@@ -142,7 +138,7 @@ final class UuidEqUtils {
         public boolean getBool(Record rec) {
             CharSequence uuidStr = fun.getStr(rec);
             if (uuidStr == null) {
-                return negated != (constUuidHi == Numbers.LONG_NaN && constUuidLo == Numbers.LONG_NaN);
+                return negated;
             }
             try {
                 Uuid.checkDashesAndLength(uuidStr);
@@ -168,15 +164,13 @@ final class UuidEqUtils {
         @Override
         public boolean getBool(Record rec) {
             CharSequence str = strFunction.getStr(rec);
-            long loc = uuidFunction.getLong128Location(rec);
-            long lo = uuidFunction.getLong128Lo(rec, loc);
-            long hi = uuidFunction.getLong128Hi(rec, loc);
+            Long128 uuid = uuidFunction.getLong128A(rec);
             if (str == null) {
-                return negated != Uuid.isNull(lo, hi);
+                return negated != Long128.NULL.equals(uuid);
             }
             try {
                 Uuid.checkDashesAndLength(str);
-                return negated != (hi == Uuid.parseHi(str) && lo == Uuid.parseLo(str));
+                return negated != (uuid.getHi() == Uuid.parseHi(str) && uuid.getLo() == Uuid.parseLo(str));
             } catch (NumericException e) {
                 return negated;
             }

@@ -26,33 +26,26 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long128Function;
+import io.questdb.std.Long128;
 import io.questdb.std.Numbers;
 
 public class Long128Constant extends Long128Function implements ConstantFunction {
 
     public static final Long128Constant NULL = new Long128Constant(Numbers.LONG_NaN, Numbers.LONG_NaN);
 
-    private final long hi;
-    private final long lo;
+    private final Long128 value = new Long128();
 
     public Long128Constant(long lo, long hi) {
-        this.lo = lo;
-        this.hi = hi;
+        value.setAll(lo, hi);
     }
 
     @Override
-    public long getLong128Hi(Record rec, long location) {
-        return hi;
+    public Long128 getLong128A(Record rec) {
+        return value;
     }
 
     @Override
-    public long getLong128Lo(Record rec, long location) {
-        return lo;
+    public Long128 getLong128B(Record rec) {
+        return value;
     }
-
-    @Override
-    public long getLong128Location(Record rec) {
-        return 1;
-    }
-
 }

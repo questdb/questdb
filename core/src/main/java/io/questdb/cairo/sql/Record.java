@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -181,24 +182,11 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default long getLong128Hi(int col, long location) {
+    default Long128 getLong128A(int col) {
         throw new UnsupportedOperationException();
     }
 
-    default long getLong128Lo(int col, long location) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Returns a location where the value of a given long128 column is stored.
-     * The location is an opaque value and callers should not access it directly,
-     * because it does not have to directly map to a memory address.
-     * It is used to pass the location to {@link #getLong128Hi(int, long)} and {@link #getLong128Lo(int, long)}.
-     *
-     * @param col numeric index of the column
-     * @return location of the UUID value
-     */
-    default long getLong128Location(int col) {
+    default Long128 getLong128B(int col) {
         throw new UnsupportedOperationException();
     }
 

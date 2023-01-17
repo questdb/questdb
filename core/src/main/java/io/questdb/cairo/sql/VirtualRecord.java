@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -129,18 +130,13 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
-        return getFunction(col).getLong128Hi(base, location);
+    public Long128 getLong128A(int col) {
+        return getFunction(col).getLong128A(base);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
-        return getFunction(col).getLong128Lo(base, location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        return getFunction(col).getLong128Location(base);
+    public Long128 getLong128B(int col) {
+        return getFunction(col).getLong128B(base);
     }
 
     @Override

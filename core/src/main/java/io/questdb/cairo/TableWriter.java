@@ -110,6 +110,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
+    private final Long128 long128 = new Long128();
     // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus it must not free it up.
     // On other hand when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
@@ -152,7 +153,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final TxWriter txWriter;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
-    private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
@@ -6293,6 +6293,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         void putLong128(int columnIndex, long lo, long hi);
 
+        void putLong128(int columnIndex, Long128 value);
+
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
         void putLong256(int columnIndex, Long256 value);
@@ -6410,8 +6412,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         @Override
         public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(lo);
-            primaryColumn.putLong(hi);
+            primaryColumn.putLong128(lo, hi);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong128(int columnIndex, Long128 value) {
+            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+            primaryColumn.putLong128(value.getLo(), value.getHi());
             setRowValueNotNull(columnIndex);
         }
 
@@ -6477,8 +6485,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         @Override
         public void putUuid(int columnIndex, CharSequence uuidStr) {
-            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
+            SqlUtil.implicitCastStrAsUuid(uuidStr, long128);
+            putLong128(columnIndex, long128.getLo(), long128.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

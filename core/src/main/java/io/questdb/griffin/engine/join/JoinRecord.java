@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -151,27 +152,19 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
+    public Long128 getLong128A(int col) {
         if (col < split) {
-            return master.getLong128Hi(col, location);
+            return master.getLong128A(col);
         }
-        return slave.getLong128Hi(col - split, location);
+        return slave.getLong128A(col - split);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
+    public Long128 getLong128B(int col) {
         if (col < split) {
-            return master.getLong128Lo(col, location);
+            return master.getLong128B(col);
         }
-        return slave.getLong128Lo(col - split, location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        if (col < split) {
-            return master.getLong128Location(col);
-        }
-        return slave.getLong128Location(col - split);
+        return slave.getLong128B(col - split);
     }
 
     @Override

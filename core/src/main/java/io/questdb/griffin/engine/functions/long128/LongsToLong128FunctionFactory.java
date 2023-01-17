@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.std.IntList;
+import io.questdb.std.Long128;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -57,6 +58,9 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
     private static class LongsToLong128Function extends Long128Function implements BinaryFunction {
         private final Function hi;
         private final Function lo;
+        private final Long128 long128A = new Long128();
+        private final Long128 long128B = new Long128();
+
 
         public LongsToLong128Function(Function lo, Function hi) {
             this.lo = lo;
@@ -75,18 +79,19 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
-            return hi.getLong(rec);
+        public Long128 getLong128A(Record rec) {
+            long loValue = lo.getLong(rec);
+            long hiValue = hi.getLong(rec);
+            long128A.setAll(loValue, hiValue);
+            return long128A;
         }
 
         @Override
-        public long getLong128Lo(Record rec, long location) {
-            return lo.getLong(rec);
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
-            return 1;
+        public Long128 getLong128B(Record rec) {
+            long loValue = lo.getLong(rec);
+            long hiValue = hi.getLong(rec);
+            long128B.setAll(loValue, hiValue);
+            return long128B;
         }
 
         @Override

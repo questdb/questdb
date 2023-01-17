@@ -29,6 +29,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import org.junit.Test;
@@ -119,18 +120,13 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
-            return 0;
+        public Long128 getLong128A(Record rec) {
+            return null;
         }
 
         @Override
-        public long getLong128Lo(Record rec, long location) {
-            return 0;
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
-            return 1;
+        public Long128 getLong128B(Record rec) {
+            return null;
         }
 
         @Override

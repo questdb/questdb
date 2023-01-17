@@ -27,23 +27,18 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.Numbers;
+import io.questdb.std.Long128;
 
 public class UuidTypeConstant extends UuidFunction implements TypeConstant {
     public static final UuidTypeConstant INSTANCE = new UuidTypeConstant();
 
     @Override
-    public long getLong128Hi(Record rec, long location) {
-        return Numbers.LONG_NaN;
+    public Long128 getLong128A(Record rec) {
+        return Long128.NULL;
     }
 
     @Override
-    public long getLong128Lo(Record rec, long location) {
-        return Numbers.LONG_NaN;
-    }
-
-    @Override
-    public long getLong128Location(Record rec) {
-        return 0;
+    public Long128 getLong128B(Record rec) {
+        return Long128.NULL;
     }
 }
