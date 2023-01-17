@@ -354,9 +354,11 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
 
+            GenericRecordMetadata metadata;
             final int timestampIndex;
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableToken)) {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
+                metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
             final TableReaderRecord record = new TableReaderRecord();
             try (
@@ -365,7 +367,8 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                             -1,
                             0,
                             new RuntimeIntervalModel(intervals),
-                            timestampIndex);
+                            timestampIndex,
+                            metadata);
                     final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC)
             ) {
 

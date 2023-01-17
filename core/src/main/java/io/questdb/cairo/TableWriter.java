@@ -48,6 +48,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -69,7 +70,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
+public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -90,7 +91,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
-    private final AlterOperation alterTableStatement = new AlterOperation();
+    private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final LongList columnTops;
     private final ColumnVersionWriter columnVersionWriter;
@@ -356,9 +357,37 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
     }
 
-    public void addColumn(CharSequence name, int type) {
-        checkColumnName(name);
-        addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
+    @Override
+    public void addColumn(CharSequence columnName, int columnType) {
+        addColumn(
+                columnName,
+                columnType,
+                configuration.getDefaultSymbolCapacity(),
+                configuration.getDefaultSymbolCacheFlag(),
+                false,
+                0,
+                false
+        );
+    }
+
+    @Override
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                false
+        );
     }
 
     /**
@@ -381,20 +410,19 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param name                    of column either ASCII or UTF8 encoded.
-     * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
+     * @param columnName              of column either ASCII or UTF8 encoded.
+     * @param symbolCapacity          when column columnType is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param type                    {@link ColumnType}
+     * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
-    @Override
     public void addColumn(
-            CharSequence name,
-            int type,
+            CharSequence columnName,
+            int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
@@ -406,41 +434,41 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
 
         checkDistressed();
-        checkColumnName(name);
+        checkColumnName(columnName);
 
-        if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
-            throw CairoException.duplicateColumn(name);
+        if (getColumnIndexQuiet(metaMem, columnName, columnCount) != -1) {
+            throw CairoException.duplicateColumn(columnName);
         }
 
         commit();
 
         long columnNameTxn = getTxn();
-        LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
+        LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(name, type, isIndexed, indexValueBlockCapacity, isSequential);
+        this.metaSwapIndex = addColumnToMeta(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential);
 
         // close _meta so we can rename it
         metaMem.close();
 
         // validate new meta
-        validateSwapMeta(name);
+        validateSwapMeta(columnName);
 
         // rename _meta to _meta.prev
-        renameMetaToMetaPrev(name);
+        renameMetaToMetaPrev(columnName);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(name);
+        writeRestoreMetaTodo(columnName);
 
         // rename _meta.swp to _meta
-        renameSwapMetaToMeta(name);
+        renameSwapMetaToMeta(columnName);
 
-        if (ColumnType.isSymbol(type)) {
+        if (ColumnType.isSymbol(columnType)) {
             try {
-                createSymbolMapWriter(name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+                createSymbolMapWriter(columnName, columnNameTxn, symbolCapacity, symbolCacheFlag);
             } catch (CairoException e) {
-                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, name, e);
+                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, columnName, e);
             }
         } else {
             // maintain sparse list of symbol writers
@@ -448,7 +476,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         // add column objects
-        configureColumn(type, isIndexed, columnCount);
+        configureColumn(columnType, isIndexed, columnCount);
         if (isIndexed) {
             populateDenseIndexerList();
         }
@@ -467,9 +495,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
-                openNewColumnFiles(name, isIndexed, indexValueBlockCapacity);
+                openNewColumnFiles(columnName, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
-                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
+                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, columnName, e);
             }
         }
 
@@ -485,9 +513,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity, columnIndex);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex);
 
-        LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
+        LOG.info().$("ADDED column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
     @Override
@@ -602,8 +630,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
-    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        return operation.apply(this, contextAllowsAnyStructureChanges);
+    public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        return alterOp.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
@@ -1281,7 +1309,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         if (cmd.getTableId() == getMetadata().getTableId()) {
             switch (cmd.getType()) {
                 case CMD_ALTER_TABLE:
-                    processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
+                    processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
                     break;
                 case CMD_UPDATE_TABLE:
                     processAsyncWriterCommand(cmd.getAsyncWriterCommand(), cmd, cursor, commandSubSeq, false);
@@ -1855,6 +1883,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     public long size() {
         // This is uncommitted row count
         return txWriter.getRowCount() + getO3RowCount();
+    }
+
+    @Override
+    public boolean supportsMultipleWriters() {
+        return false;
     }
 
     /**
@@ -6613,12 +6646,28 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         void putStr(int columnIndex, CharSequence value, int pos, int len);
 
+        /**
+         * Writes UTF8-encoded string to WAL. As the name of the function suggest the storage format is
+         * expected to be UTF16. The function must re-encode string from UTF8 to UTF16 before storing.
+         *
+         * @param columnIndex      index of the column we are writing to
+         * @param value            UTF8 bytes represented as CharSequence interface.
+         *                         On this interface getChar() returns a byte, not complete character.
+         * @param hasNonAsciiChars helper flag to indicate implementation if all bytes can be assumed as ASCII.
+         *                         "true" here indicates that UTF8 decoding is compulsory.
+         */
+        void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars);
+
         void putSym(int columnIndex, CharSequence value);
 
         void putSym(int columnIndex, char value);
 
         default void putSymIndex(int columnIndex, int key) {
             putInt(columnIndex, key);
+        }
+
+        default void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            throw new UnsupportedOperationException();
         }
 
         default void putTimestamp(int columnIndex, long value) {
@@ -6762,6 +6811,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8AsUtf16(value, hasNonAsciiChars));
             setRowValueNotNull(columnIndex);
         }
 

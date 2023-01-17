@@ -30,6 +30,14 @@ public interface Job {
     RunStatus RUNNING_STATUS = () -> false;
     RunStatus TERMINATING_STATUS = () -> true;
 
+    default void drain(int workerId) {
+        while (true) {
+            if (!run(workerId)) {
+                return;
+            }
+        }
+    }
+
     /**
      * Runs and returns true if it should be rescheduled ASAP.
      *

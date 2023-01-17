@@ -62,4 +62,14 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
         Misc.free(this.cursor);
         super._close();
     }
+
+    @Override
+    protected CharSequence getOperation() {
+        return "Except";
+    }
+
+    @Override
+    protected boolean isSecondFactoryHashed() {
+        return true;
+    }
 }

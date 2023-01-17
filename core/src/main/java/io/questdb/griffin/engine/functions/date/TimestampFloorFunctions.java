@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
@@ -57,7 +58,14 @@ final class TimestampFloorFunctions {
             return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : floor(micros);
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_floor('").val(getUnit()).val("',").val(getArg()).val(')');
+        }
+
         abstract protected long floor(long timestamp);
+
+        abstract CharSequence getUnit();
     }
 
     static class TimestampFloorCenturyFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
@@ -68,6 +76,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorCentury(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "century";
         }
     }
 
@@ -80,6 +93,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorDD(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "day";
+        }
     }
 
     static class TimestampFloorDayOfWeekFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
@@ -90,6 +108,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorDOW(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "week";
         }
     }
 
@@ -102,6 +125,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorDecade(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "decade";
+        }
     }
 
     static class TimestampFloorHHFunction extends AbstractTimestampFloorFunction {
@@ -112,6 +140,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorHH(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "hour";
         }
     }
 
@@ -124,6 +157,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorMI(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "minute";
+        }
     }
 
     static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
@@ -134,6 +172,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorMM(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "month";
         }
     }
 
@@ -146,6 +189,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorMS(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "millisecond";
+        }
     }
 
     static class TimestampFloorMillenniumFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
@@ -156,6 +204,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorMillennium(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "millennium";
         }
     }
 
@@ -168,6 +221,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorQuarter(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "quarter";
+        }
     }
 
     static class TimestampFloorSSFunction extends AbstractTimestampFloorFunction {
@@ -178,6 +236,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorSS(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "second";
         }
     }
 
@@ -190,6 +253,11 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorWW(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "week";
+        }
     }
 
     static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
@@ -200,6 +268,11 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorYYYY(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "year";
         }
     }
 }

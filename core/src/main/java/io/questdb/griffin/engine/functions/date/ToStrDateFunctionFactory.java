@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -67,7 +68,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
 
-        DateFormat dateFormat = tlCompiler.get().compile(fmt.getStr(null));
+        DateFormat dateFormat = tlCompiler.get().compile(format);
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getDate(null);
@@ -81,22 +82,24 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             return new StrConstant(sink);
         }
 
-        return new ToCharDateVCFFunc(args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale());
+        return new ToCharDateVCFFunc(args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale(), format);
     }
 
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
         final Function arg;
         final DateFormat format;
+        final CharSequence formatStr;
         final DateLocale locale;
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale) {
+        public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale, CharSequence formatStr) {
             this.arg = arg;
             this.format = format;
             this.locale = locale;
-            sink1 = new StringSink();
-            sink2 = new StringSink();
+            this.sink1 = new StringSink();
+            this.sink2 = new StringSink();
+            this.formatStr = formatStr;
         }
 
         @Override
@@ -132,6 +135,11 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             sink1.clear();
             toSink(value, sink1);
             return sink1.length();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("to_str(").val(arg).val(',').val(formatStr).val(')');
         }
 
         @Nullable

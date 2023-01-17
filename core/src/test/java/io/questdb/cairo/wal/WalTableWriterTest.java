@@ -983,11 +983,11 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             }
         }
 
-        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
-        //noinspection StatementWithEmptyBody
-        while (job.run(0)) {
-            // run until empty
+        final AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1, null);
+        try {
+            job.drain(0);
+        } finally {
+            ((Closeable) job).close();
         }
-        ((Closeable) job).close();
     }
 }

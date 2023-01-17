@@ -54,7 +54,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends AbstractToSymbolCastFunction {
+    private static class Func extends AbstractCastToSymbolFunction {
         public Func(Function arg) {
             super(arg);
         }
@@ -78,7 +78,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected AbstractToSymbolCastFunction newFunc() {
+        protected AbstractCastToSymbolFunction newFunc() {
             return new Func(arg);
         }
     }

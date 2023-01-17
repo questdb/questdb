@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -39,6 +40,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -59,34 +61,28 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final MicrosecondClock microClock;
-    private final SqlToOperation sqlToOperation;
+    private final OperationCompiler operationCompiler;
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
     private long rowsSinceLastCommit;
 
-    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
-        this.sqlToOperation = new SqlToOperation(engine, workerCount, sharedWorkerCount);
+        this.operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);
         this.microClock = engine.getConfiguration().getMicrosecondClock();
         walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
         commitSquashRowLimit = engine.getConfiguration().getWalCommitSquashRowLimit();
     }
 
-    @Override
-    public void close() {
-        Misc.free(sqlToOperation);
-        Misc.free(walEventReader);
-    }
-
-    public long processWalTxnNotification(
+    public long applyWAL(
             TableToken tableToken,
             CairoEngine engine,
-            SqlToOperation sqlToOperation,
+            OperationCompiler operationCompiler,
             Job.RunStatus runStatus
     ) {
-        long lastSeqTxn = -1;
-        long lastAppliedSeqTxn = -1;
+        long lastSequencerTxn = -1;
+        long lastWriterTxn = -1;
         Path tempPath = Path.PATH.get();
 
         try {
@@ -110,8 +106,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 rowsSinceLastCommit = 0;
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON, false)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    applyOutstandingWalTransactions(tableToken, writer, engine, sqlToOperation, tempPath, runStatus);
-                    lastAppliedSeqTxn = writer.getSeqTxn();
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
+                    lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
@@ -121,8 +117,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     break;
                 }
 
-                lastSeqTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
-            } while (lastAppliedSeqTxn < lastSeqTxn && !runStatus.isTerminating());
+                lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+            } while (lastWriterTxn < lastSequencerTxn && !runStatus.isTerminating());
         } catch (CairoException ex) {
             if (engine.isTableDropped(tableToken)) {
                 // Table is dropped, and we received cairo exception in the middle of apply
@@ -135,9 +131,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .I$();
             return WAL_APPLY_FAILED;
         }
-        assert lastAppliedSeqTxn == lastSeqTxn || runStatus.isTerminating();
+        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
 
-        return lastAppliedSeqTxn;
+        return lastWriterTxn;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(operationCompiler);
+        Misc.free(walEventReader);
     }
 
     private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
@@ -192,18 +194,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    private static AlterOperation compileAlter(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
+    private static AlterOperation compileAlter(TableWriter tableWriter, OperationCompiler compiler, CharSequence sql, long seqTxn) throws SqlException {
         try {
-            return sqlToOperation.toAlterOperation(sql, tableWriter.getTableToken());
+            return compiler.compileAlterSql(sql, tableWriter.getTableToken());
         } catch (SqlException ex) {
             tableWriter.markSeqTxnCommitted(seqTxn);
             throw ex;
         }
     }
 
-    private static UpdateOperation compileUpdate(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
+    private static UpdateOperation compileUpdate(TableWriter tableWriter, OperationCompiler compiler, CharSequence sql, long seqTxn) throws SqlException {
         try {
-            return sqlToOperation.toUpdateOperation(sql, tableWriter.getTableToken());
+            return compiler.compileUpdateSql(sql, tableWriter.getTableToken());
         } catch (SqlException ex) {
             tableWriter.markSeqTxnCommitted(seqTxn);
             throw ex;
@@ -263,7 +265,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableToken tableToken,
             TableWriter writer,
             CairoEngine engine,
-            SqlToOperation sqlToOperation,
+            OperationCompiler operationCompiler,
             Path tempPath,
             Job.RunStatus runStatus
     ) {
@@ -316,7 +318,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             boolean hasNext;
                             if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                                 Misc.free(structuralChangeCursor);
-                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableToken, newStructureVersion - 1);
+                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLog(tableToken, newStructureVersion - 1);
                                 hasNext = structuralChangeCursor.hasNext();
                             }
 
@@ -344,7 +346,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                         default:
                             // Always set full path when using thread static path
-                            sqlToOperation.setNowAndFixClock(commitTimestamp);
+                            operationCompiler.setNowAndFixClock(commitTimestamp);
                             tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             final long start = microClock.getTicks();
 
@@ -353,7 +355,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     writer,
                                     tempPath,
                                     segmentTxn,
-                                    sqlToOperation,
+                                    operationCompiler,
                                     seqTxn,
                                     isTerminating,
                                     transactionMeta,
@@ -389,7 +391,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableWriter writer,
             @Transient Path walPath,
             long segmentTxn,
-            SqlToOperation sqlToOperation,
+            OperationCompiler operationCompiler,
             long seqTxn,
             boolean isTerminating,
             LongList minTimestamps,
@@ -438,9 +440,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 case SQL:
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    processWalSql(writer, sqlInfo, sqlToOperation, seqTxn);
+                    processWalSql(writer, sqlInfo, operationCompiler, seqTxn);
                     return -1L;
-
                 case TRUNCATE:
                     writer.setSeqTxn(seqTxn);
                     writer.removeAllPartitions();
@@ -451,15 +452,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation, long seqTxn) {
+    private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationCompiler operationCompiler, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
-        sqlToOperation.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
-        sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
+        operationCompiler.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
+        sqlInfo.populateBindVariableService(operationCompiler.getBindVariableService());
         try {
             switch (cmdType) {
                 case CMD_ALTER_TABLE:
-                    AlterOperation alterOperation = compileAlter(tableWriter, sqlToOperation, sql, seqTxn);
+                    AlterOperation alterOperation = compileAlter(tableWriter, operationCompiler, sql, seqTxn);
                     try {
                         tableWriter.apply(alterOperation, seqTxn);
                     } finally {
@@ -467,7 +468,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     break;
                 case CMD_UPDATE_TABLE:
-                    UpdateOperation updateOperation = compileUpdate(tableWriter, sqlToOperation, sql, seqTxn);
+                    UpdateOperation updateOperation = compileUpdate(tableWriter, operationCompiler, sql, seqTxn);
                     try {
                         tableWriter.apply(updateOperation, seqTxn);
                     } finally {
@@ -523,7 +524,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (walTxnType == DATA) {
                         recordAdded = true;
                         var commitInfo = walEventCursor.getDataInfo();
-                        transactionMeta.add(-1); // commit to timestamp 
+                        transactionMeta.add(-1); // commit to timestamp
                         transactionMeta.add(commitInfo.getMaxTimestamp());
                         transactionMeta.add(commitInfo.getMinTimestamp());
                     }
@@ -581,9 +582,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final long seqTxn;
 
         try {
-            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            tableToken = walTxnNotificationTask.getTableToken();
-            seqTxn = walTxnNotificationTask.getTxn();
+            WalTxnNotificationTask task = queue.get(cursor);
+            tableToken = task.getTableToken();
+            seqTxn = task.getTxn();
         } finally {
             // Don't hold the queue until the all the transactions applied to the table
             subSeq.done(cursor);
@@ -592,7 +593,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final int tableId = tableToken.getTableId();
         if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
             // Check, maybe we already processed this table to higher txn.
-            final long lastAppliedSeqTxn = processWalTxnNotification(tableToken, engine, sqlToOperation, runStatus);
+            final long lastAppliedSeqTxn = applyWAL(tableToken, engine, operationCompiler, runStatus);
             if (lastAppliedSeqTxn > -1L) {
                 lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
             } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {

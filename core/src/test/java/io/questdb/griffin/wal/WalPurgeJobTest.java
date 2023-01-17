@@ -27,11 +27,9 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
@@ -533,9 +531,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(false, tableName, 1);
-            try (TableWriterAPI ignored = getTableWriterAPI(tableName)) {
-                // No-op. We just want to create a WAL.
-            }
+            getTableWriterAPI(tableName).close();
 
             assertWalExistence(true, tableName, 1);
             assertWalLockExistence(true, tableName, 1);
@@ -624,10 +620,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 final SimpleWaitingLock lock = job.getRunLock();
                 try {
                     lock.lock();
-                    //noinspection StatementWithEmptyBody
-                    while (job.run(0)) {
-                        // run until empty
-                    }
+                    job.drain(0);
                 } finally {
                     lock.unlock();
                     assertSegmentExistence(true, tableName, 1, 0);
@@ -635,10 +628,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 }
 
                 currentMicros += 2 * interval;
-                //noinspection StatementWithEmptyBody
-                while (job.run(0)) {
-                    // run until empty
-                }
+                job.drain(0);
 
                 assertSegmentExistence(false, tableName, 1, 0);
                 assertWalExistence(false, tableName, 1);
@@ -678,10 +668,8 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         });
     }
 
-    static void addColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
-        addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
+    static void addColumn(WalWriter writer, String columnName) {
+        writer.addColumn(columnName, ColumnType.INT);
     }
 
     static class TracingFilesFacade extends FilesFacadeImpl {

@@ -76,8 +76,18 @@ public class RemLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "%";
+        }
+
+        @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
     }
 }

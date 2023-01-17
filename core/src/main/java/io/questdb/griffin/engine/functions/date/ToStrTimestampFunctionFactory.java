@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -132,6 +133,11 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             sink1.clear();
             toSink(value, sink1);
             return sink1.length();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("to_str(").val(arg).val(')');
         }
 
         @Nullable

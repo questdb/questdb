@@ -49,41 +49,8 @@ import java.util.concurrent.locks.LockSupport;
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
-    protected final NetworkIOJob NO_NETWORK_IO_JOB = new NetworkIOJob() {
-        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
-
-        @Override
-        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
-            localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
-            return localTableUpdateDetailsByTableName.get(tableName);
-        }
-
-        @Override
-        public ObjList<SymbolCache> getUnusedSymbolCaches() {
-            return unusedSymbolCaches;
-        }
-
-        @Override
-        public int getWorkerId() {
-            return 0;
-        }
-
-        @Override
-        public boolean run(int workerId, @NotNull RunStatus runStatus) {
-            Assert.fail("This is a mock job, not designed to run in a worker pool");
-            return false;
-        }
-    };
     protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+    protected NoNetworkIOJob NO_NETWORK_IO_JOB = new NoNetworkIOJob();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -262,6 +229,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
         }
+        scheduler.commitWalTables(NO_NETWORK_IO_JOB.localTableUpdateDetailsByTableName, Long.MAX_VALUE);
+        scheduler.doMaintenance(NO_NETWORK_IO_JOB.localTableUpdateDetailsByTableName, NO_NETWORK_IO_JOB.getWorkerId(), Long.MAX_VALUE);
         return false;
     }
 
@@ -390,6 +359,41 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         Os.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
     }
 
+    static class NoNetworkIOJob implements NetworkIOJob {
+        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
+        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+
+        @Override
+        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+            localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
+            return localTableUpdateDetailsByTableName.get(tableName);
+        }
+
+        @Override
+        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+            return unusedSymbolCaches;
+        }
+
+        @Override
+        public int getWorkerId() {
+            return 0;
+        }
+
+        @Override
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
+            Assert.fail("This is a mock job, not designed to run in a worker pool");
+            return false;
+        }
+    }
+
     class LineTcpNetworkFacade extends NetworkFacadeImpl {
         @Override
         public int recv(int fd, long buffer, int bufferLen) {
@@ -411,4 +415,5 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             return recvBuffer.getBytes(StandardCharsets.UTF_8);
         }
     }
+
 }

@@ -121,6 +121,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
+    public String getName() {
+        return "sum";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }

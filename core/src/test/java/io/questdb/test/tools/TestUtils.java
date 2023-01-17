@@ -43,10 +43,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.MutableCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -874,9 +871,7 @@ public final class TestUtils {
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
         try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            while (processingJob.run(0)) {
-                Os.pause();
-            }
+            processingJob.drain(0);
         }
     }
 
@@ -1169,6 +1164,26 @@ public final class TestUtils {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
             }
+        }
+    }
+
+    public static void putUtf8(TableWriter.Row r, String s, int columnIndex, boolean symbol) {
+        byte[] bytes = s.getBytes(Files.UTF_8);
+        long len = bytes.length;
+        long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            DirectByteCharSequence seq = new DirectByteCharSequence();
+            seq.of(p, p + len);
+            if (symbol) {
+                r.putSymUtf8(columnIndex, seq, true);
+            } else {
+                r.putStrUtf8AsUtf16(columnIndex, seq, true);
+            }
+        } finally {
+            Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

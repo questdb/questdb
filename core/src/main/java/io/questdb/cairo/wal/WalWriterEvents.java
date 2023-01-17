@@ -174,15 +174,25 @@ class WalWriterEvents implements Closeable {
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
+                    long appendAddress = eventMem.getAppendOffset();
                     eventMem.putInt(size);
 
+                    int symbolCount = 0;
                     for (int j = 0; j < size; j++) {
                         final CharSequence symbol = symbolMap.keys().getQuick(j);
                         final int value = symbolMap.get(symbol);
-
-                        eventMem.putInt(value);
-                        eventMem.putStr(symbol);
+                        // Ignore symbols cached from symbolMapReader
+                        if (value >= initialCount) {
+                            eventMem.putInt(value);
+                            eventMem.putStr(symbol);
+                            symbolCount += 1;
+                        }
                     }
+                    // Update the size with the exact symbolCount
+                    // An empty SymbolMapDiff can be created because symbolCount can be 0
+                    // in case all cached symbols come from symbolMapReader.
+                    // Alternatively, two-pass approach can be used.
+                    eventMem.putInt(appendAddress, symbolCount);
                     eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
                 }
             }
@@ -190,7 +200,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
@@ -205,6 +215,26 @@ class WalWriterEvents implements Closeable {
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(0, txn);
+        return txn++;
+    }
+
+    int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.SQL);
+        eventMem.putInt(cmdType); // byte would be enough probably
+        eventMem.putStr(sqlText);
+        final Rnd rnd = sqlExecutionContext.getRandom();
+        eventMem.putLong(rnd.getSeed0());
+        eventMem.putLong(rnd.getSeed1());
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        writeIndexedVariables(bindVariableService);
+        writeNamedVariables(bindVariableService);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
     }
 
@@ -230,26 +260,6 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn);
         // here it's +2 because for transaction 0 size should be 16 bytes and for transaction 1 size should be 24 bytes
         ff.truncate(indexFd, (txn + 2L) << 3);
-    }
-
-    int sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.SQL);
-        eventMem.putInt(cmdType); // byte would be enough probably
-        eventMem.putStr(sql);
-        final Rnd rnd = sqlExecutionContext.getRandom();
-        eventMem.putLong(rnd.getSeed0());
-        eventMem.putLong(rnd.getSeed1());
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        writeIndexedVariables(bindVariableService);
-        writeNamedVariables(bindVariableService);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        return txn++;
     }
 
     int truncate() {

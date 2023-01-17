@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
@@ -91,6 +92,15 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public @Nullable SymbolTable newSymbolTable() {
         return this;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        if (value == null) {
+            sink.val("null::symbol");
+        } else {
+            sink.val('\'').val(value).val('\'');
+        }
     }
 
     @Override

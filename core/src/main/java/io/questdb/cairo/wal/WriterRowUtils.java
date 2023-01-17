@@ -76,4 +76,5 @@ public class WriterRowUtils {
         }
         putGeoHash(index, val, type, row);
     }
+
 }

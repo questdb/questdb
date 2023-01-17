@@ -99,6 +99,11 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
+    public String getName() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

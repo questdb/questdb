@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -77,6 +78,11 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     @Override
     public boolean isSymbolTableStatic() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("?::symbol");
     }
 
     @Override

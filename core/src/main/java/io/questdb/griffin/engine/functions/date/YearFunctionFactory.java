@@ -50,7 +50,6 @@ public class YearFunctionFactory implements FunctionFactory {
     }
 
     public static final class YearFunction extends IntFunction implements UnaryFunction {
-
         private final Function arg;
 
         public YearFunction(Function arg) {
@@ -70,6 +69,11 @@ public class YearFunctionFactory implements FunctionFactory {
                 return Timestamps.getYear(value);
             }
             return Numbers.INT_NaN;
+        }
+
+        @Override
+        public String getName() {
+            return "year";
         }
     }
 }

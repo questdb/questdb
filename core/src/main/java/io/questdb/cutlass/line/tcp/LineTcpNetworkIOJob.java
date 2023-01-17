@@ -52,6 +52,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     private LineTcpConnectionContext busyContext = null;
     private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
     private long maintenanceJobDeadline;
+    private long nextCommitTime;
 
     LineTcpNetworkIOJob(
             LineTcpReceiverConfiguration configuration,
@@ -63,6 +64,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         this.maintenanceInterval = configuration.getMaintenanceInterval();
         this.scheduler = scheduler;
         this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
+        this.nextCommitTime = millisecondClock.getTicks();
         this.dispatcher = dispatcher;
         this.workerId = workerId;
     }
@@ -80,6 +82,15 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busyContext = null;
         }
         Misc.freeObjList(unusedSymbolCaches);
+
+        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
+            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (tud.getWriterThreadId() == -1) {
+                tud.releaseWriter(true);
+                tud.close();
+            }
+        }
     }
 
     @Override
@@ -113,6 +124,13 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
         if (dispatcher.processIOQueue(onRequest)) {
             busy = true;
+        }
+
+        if (!busy) {
+            final long wallClockMillis = millisecondClock.getTicks();
+            if (wallClockMillis > nextCommitTime) {
+                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);
+            }
         }
 
         final long millis = millisecondClock.getTicks();

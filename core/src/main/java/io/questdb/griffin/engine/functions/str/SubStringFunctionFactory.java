@@ -97,6 +97,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "substring";
+        }
+
+        @Override
         public Function getRight() {
             return lenFunc;
         }

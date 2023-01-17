@@ -530,7 +530,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         try {
             int i = 0;
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
-            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
+            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1, null)) {
                 while (done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
                     //noinspection StatementWithEmptyBody

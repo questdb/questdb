@@ -222,7 +222,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static class TableMetadataChangeLogImpl implements TableMetadataChangeLog {
-        private final AlterOperation tableMetadataChange = new AlterOperation();
+        private final AlterOperation alterOp = new AlterOperation();
         private final MemoryFCRImpl txnMetaMem = new MemoryFCRImpl();
         private FilesFacade ff;
         private MemorySerializer serializer;
@@ -258,9 +258,9 @@ public class TableTransactionLog implements Closeable {
                 throw CairoException.critical(0).put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
             }
             txnMetaOffset += Integer.BYTES;
-            serializer.fromSink(tableMetadataChange, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
+            serializer.fromSink(alterOp, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
             txnMetaOffset += recordSize;
-            return tableMetadataChange;
+            return alterOp;
         }
 
         public void of(

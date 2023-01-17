@@ -54,6 +54,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -213,6 +214,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
     private final int sqlDoubleToStrCastScale;
+    private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
     private final int sqlFloatToStrCastScale;
@@ -755,6 +757,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE, 4 * Numbers.SIZE_1MB);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
+            this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 4 * Numbers.SIZE_1MB);
@@ -1658,6 +1661,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDoubleToStrCastScale() {
             return sqlDoubleToStrCastScale;
+        }
+
+        @Override
+        public int getExplainPoolCapacity() {
+            return sqlExplainModelPoolCapacity;
         }
 
         @Override
@@ -2809,6 +2817,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return lineTcpIOWorkerPoolConfiguration;
         }
@@ -3420,11 +3433,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        @NotNull
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
         }
 
         @Override
+        @NotNull
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }

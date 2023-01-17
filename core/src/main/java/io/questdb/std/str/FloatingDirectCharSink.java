@@ -67,6 +67,10 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
         return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
     }
 
+    public long getLo() {
+        return lo;
+    }
+
     @Override
     public int hashCode() {
         return Chars.hashCode(this);

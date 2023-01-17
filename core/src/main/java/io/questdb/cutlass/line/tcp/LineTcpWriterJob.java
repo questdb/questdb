@@ -148,33 +148,33 @@ class LineTcpWriterJob implements Job, Closeable {
                 // we check the event's writer thread ID to avoid consuming
                 // incomplete events
 
-                final TableUpdateDetails tab = event.getTableUpdateDetails();
+                final TableUpdateDetails tud = event.getTableUpdateDetails();
                 boolean closeWriter = false;
                 if (event.getWriterWorkerId() == workerId) {
                     try {
-                        if (tab.isWriterInError()) {
+                        if (tud.isWriterInError()) {
                             closeWriter = true;
                         } else {
-                            if (!tab.isAssignedToJob()) {
-                                assignedTables.add(tab);
-                                tab.setAssignedToJob(true);
+                            if (!tud.isAssignedToJob()) {
+                                assignedTables.add(tud);
+                                tud.setAssignedToJob(true);
                                 nextCommitTime = millisecondClock.getTicks();
                                 LOG.info()
-                                        .$("assigned table to writer thread [tableName=").$(tab.getTableToken())
+                                        .$("assigned table to writer thread [tableName=").$(tud.getTableToken())
                                         .$(", threadId=").$(workerId)
                                         .I$();
                             }
                             event.append();
                         }
                     } catch (Throwable ex) {
-                        tab.setWriterInError();
+                        tud.setWriterInError();
                         LOG.critical()
-                                .$("closing writer because of error [table=").$(tab.getTableToken())
+                                .$("closing writer because of error [table=").$(tud.getTableToken())
                                 .$(",ex=").$(ex)
                                 .I$();
                         metrics.health().incrementUnhandledErrors();
                         closeWriter = true;
-                        event.createWriterReleaseEvent(tab, false);
+                        event.createWriterReleaseEvent(tud, false);
                         // This is a critical error, so we treat it as an unhandled one.
                     }
                 } else {
@@ -183,10 +183,10 @@ class LineTcpWriterJob implements Job, Closeable {
                     }
                 }
 
-                if (closeWriter && tab.getWriter() != null) {
+                if (closeWriter && tud.getWriter() != null) {
                     scheduler.processWriterReleaseEvent(event, workerId);
-                    assignedTables.remove(tab);
-                    tab.setAssignedToJob(false);
+                    assignedTables.remove(tud);
+                    tud.setAssignedToJob(false);
                     nextCommitTime = millisecondClock.getTicks();
                 }
             } catch (Throwable ex) {

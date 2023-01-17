@@ -76,6 +76,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
@@ -175,9 +180,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("GroupByNotKeyed");
+        sink.type("GroupBy");
         sink.meta("vectorized").val(true);
-        sink.attr("groupByFunctions").val(vafList);
+        sink.optAttr("values", vafList, true);
         sink.child(base);
     }
 
