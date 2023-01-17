@@ -68,6 +68,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAllowTableRegistrySharedWrite() {
+        return false;
+    }
+
+    @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
     }
@@ -230,6 +235,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
+    }
+
+    @Override
+    public int getExplainPoolCapacity() {
+        return 32;
     }
 
     @Override
@@ -562,7 +572,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getSqlFastMapLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -691,6 +701,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallMapPageSize() {
+        return 4 * 1024;
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return 128;
     }
@@ -728,6 +743,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getSystemTableNamePrefix() {
         return "__sys";
+    }
+
+    @Override
+    public long getTableRegistryAutoReloadFrequency() {
+        return 500;
     }
 
     @Override
@@ -835,6 +855,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isReadOnlyInstance() {
+        return false;
+    }
+
+    @Override
     public boolean isSnapshotRecoveryEnabled() {
         return true;
     }
@@ -856,6 +881,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalSupported() {
+        return false;
+    }
+
+    @Override
+    public boolean mangleTableDirNames() {
         return false;
     }
 }

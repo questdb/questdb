@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -832,7 +833,8 @@ public class RetryIODispatcherTest {
         TableWriter writer = null;
         for (int i = 0; i < 10; i++) {
             try {
-                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing");
+                TableToken tt = engine.getTableToken(tableName);
+                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt, "testing");
                 break;
             } catch (EntryUnavailableException e) {
                 Os.sleep(10);

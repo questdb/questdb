@@ -141,7 +141,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 cursor.hasNext();
                 Assert.fail();
             } catch (CairoException e) {
-                Assert.assertEquals("[-1] interpolation is not supported for function: MinStr(StrColumn(2))", e.getMessage());
+                Assert.assertEquals("[-1] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunction", e.getMessage());
             }
         });
     }

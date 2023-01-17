@@ -308,7 +308,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     assertCursor(
                             expected,
                             true,
-                            true,
                             false,
                             true,
                             cursor,
@@ -362,7 +361,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                 new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
-                    public @NotNull MillisecondClock getClock() {
+                    @NotNull
+                    public MillisecondClock getClock() {
                         return () -> Long.MAX_VALUE;
                     }
 

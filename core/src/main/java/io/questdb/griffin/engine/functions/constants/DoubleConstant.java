@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.std.str.CharSink;
 
 public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     public static final DoubleConstant NULL = new DoubleConstant(Double.NaN);
@@ -47,7 +47,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put(value);
+    public void toPlan(PlanSink sink) {
+        sink.val(value);
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -83,6 +84,11 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return baseAggregatorFactory;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return baseAggregatorFactory.getCursor(executionContext);
     }
@@ -90,6 +96,12 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return baseAggregatorFactory.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DistinctKey");
+        sink.child(baseAggregatorFactory);
     }
 
     @Override

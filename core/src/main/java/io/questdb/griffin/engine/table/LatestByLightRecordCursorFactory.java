@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -71,6 +72,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
@@ -81,6 +87,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestBy light");
+        sink.meta("order_by_timestamp").val(orderedByTimestampAsc);
+        sink.child(base);
     }
 
     @Override

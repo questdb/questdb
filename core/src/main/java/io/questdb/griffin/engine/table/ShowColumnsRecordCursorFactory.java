@@ -27,6 +27,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -39,11 +40,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_SYMBOL_CAPACITY_COL = 5;
     private static final int N_TYPE_COL = 1;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
-    private final CharSequence tableName;
+    private final TableToken tableToken;
 
-    public ShowColumnsRecordCursorFactory(CharSequence tableName) {
+    public ShowColumnsRecordCursorFactory(TableToken tableToken) {
         super(METADATA);
-        this.tableName = tableName.toString();
+        this.tableToken = tableToken;
     }
 
     @Override
@@ -54,6 +55,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("show_columns");
+        sink.meta("of").val(tableToken);
     }
 
     private class ShowColumnsCursor implements RecordCursor {
@@ -105,7 +112,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {
-            reader = executionContext.getCairoEngine().getReader(executionContext.getCairoSecurityContext(), tableName);
+            reader = executionContext.getReader(tableToken);
             toTop();
             return this;
         }

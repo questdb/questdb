@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
@@ -34,21 +35,21 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     AsyncWriterCommand deserialize(TableWriterTask task);
 
-    String getCommandName();
+    int getCmdType();
 
-    int getCommandType();
+    String getCommandName();
 
     long getCorrelationId();
 
     int getTableId();
 
-    @Nullable String getTableName();
-
     int getTableNamePosition();
+
+    @Nullable TableToken getTableToken();
 
     long getTableVersion();
 
-    boolean isStructureChange();
+    boolean isStructural();
 
     void serialize(TableWriterTask task);
 

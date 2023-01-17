@@ -42,7 +42,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
 
         compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -66,7 +66,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
         compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
             r.append();
             for (int i = 100; i > 10; i--) {
@@ -93,7 +93,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
         compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putLong(0, rnd.nextLong());
@@ -116,7 +116,7 @@ public class FirstTimestampGroupByFunctionFactoryTest extends AbstractGriffinTes
 
         compiler.compile("create table tab (f timestamp)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 if (i % 4 == 0) {

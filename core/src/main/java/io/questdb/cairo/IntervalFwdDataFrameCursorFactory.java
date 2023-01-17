@@ -37,13 +37,14 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     private IntervalBwdDataFrameCursor bwdCursor;
 
     public IntervalFwdDataFrameCursorFactory(
-            String tableName,
+            TableToken tableToken,
             int tableId,
             long tableVersion,
             RuntimeIntrinsicIntervalModel intervals,
-            int timestampIndex
+            int timestampIndex,
+            GenericRecordMetadata metadata
     ) {
-        super(tableName, tableId, tableVersion);
+        super(tableToken, tableVersion, metadata);
         this.cursor = new IntervalFwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }
@@ -74,7 +75,11 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("IntervalFwdDataFrame");
+        if (sink.getOrder() == ORDER_DESC) {
+            sink.type("Interval backward scan");
+        } else {
+            sink.type("Interval forward scan");
+        }
         super.toPlan(sink);
         sink.attr("intervals").val(intervals);
     }

@@ -31,7 +31,6 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,11 +45,13 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     protected static final int PORT = RCVR_CONF.getPort();
 
     protected static void assertReader(String tableName, String expected) {
+        refreshTablesInBaseEngine();
         assertReader(tableName, expected, (String[]) null);
     }
 
     protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
-        try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
+        refreshTablesInBaseEngine();
+        try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), tableName)) {
             TestUtils.assertReader(expected, reader, sink);
             if (expectedExtraStringColumns != null) {
                 TableReaderMetadata meta = reader.getMetadata();
@@ -69,17 +70,18 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                                      Consumer<AbstractLineSender> senderConsumer,
                                      String... expectedExtraStringColumns) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration, metrics, 2)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                    if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         waitForData.countDown();
                     }
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
                         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
+                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
                         }
                     }
                     receiver.start();

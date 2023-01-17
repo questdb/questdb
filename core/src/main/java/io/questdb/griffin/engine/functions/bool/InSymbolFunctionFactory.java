@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -162,6 +163,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 }
                 testFunc = strTest;
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" in ").val(set);
         }
 
         private boolean testAsInt(Record rec) {

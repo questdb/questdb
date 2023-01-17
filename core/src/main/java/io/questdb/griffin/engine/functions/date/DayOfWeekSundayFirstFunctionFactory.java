@@ -71,5 +71,10 @@ public class DayOfWeekSundayFirstFunctionFactory implements FunctionFactory {
             }
             return Timestamps.getDayOfWeekSundayFirst(value);
         }
+
+        @Override
+        public String getName() {
+            return "day_of_week_sunday_first";
+        }
     }
 }

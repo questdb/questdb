@@ -53,6 +53,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAllowTableRegistrySharedWrite() {
+        return conf.getAllowTableRegistrySharedWrite();
+    }
+
+    @Override
     public int getAnalyticColumnPoolCapacity() {
         return conf.getAnalyticColumnPoolCapacity();
     }
@@ -215,6 +220,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
+    }
+
+    @Override
+    public int getExplainPoolCapacity() {
+        return conf.getExplainPoolCapacity();
     }
 
     @Override
@@ -683,6 +693,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallMapPageSize() {
+        return conf.getSqlSmallMapPageSize();
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return conf.getSqlSortKeyMaxPages();
     }
@@ -720,6 +735,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
+    }
+
+    @Override
+    public long getTableRegistryAutoReloadFrequency() {
+        return conf.getTableRegistryAutoReloadFrequency();
     }
 
     @Override
@@ -823,6 +843,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isReadOnlyInstance() {
+        return conf.isReadOnlyInstance();
+    }
+
+    @Override
     public boolean isSnapshotRecoveryEnabled() {
         return conf.isSnapshotRecoveryEnabled();
     }
@@ -845,5 +870,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalSupported() {
         return conf.isWalSupported();
+    }
+
+    @Override
+    public boolean mangleTableDirNames() {
+        return conf.mangleTableDirNames();
     }
 }

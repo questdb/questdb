@@ -36,13 +36,13 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    protected final int columnIndex;
+    protected final ObjList<Function> deferredSymbolFuncs;
     protected final IntHashSet deferredSymbolKeys;
     // the following two instances are shared between factory and cursor
     // factory will be resolving symbols for cursor and if successful
     // symbol keys will be added to this hash set
     protected final IntHashSet symbolKeys;
-    private final int columnIndex;
-    private final ObjList<Function> deferredSymbolFuncs;
 
     public AbstractDeferredTreeSetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -93,7 +93,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStr(null);

@@ -40,10 +40,14 @@ public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(0, wApi.getTableName(), wApi.getMetadata().getTableId());
+        AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(
+                0,
+                wApi.getTableToken(),
+                wApi.getMetadata().getTableId()
+        );
         builder.ofRenameColumn(columName, newColName);
-        AlterOperation alter = builder.build();
-        wApi.apply(alter, true);
+        AlterOperation alterOp = builder.build();
+        wApi.apply(alterOp, true);
         return true;
     }
 }

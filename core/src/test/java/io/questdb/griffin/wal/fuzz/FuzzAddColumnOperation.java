@@ -25,8 +25,6 @@
 package io.questdb.griffin.wal.fuzz;
 
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
@@ -47,10 +45,7 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, wApi.getTableName(), wApi.getMetadata().getTableId());
-        builder.ofAddColumn(newColName, 14, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
-        AlterOperation alter = builder.build();
-        wApi.apply(alter, true);
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
         return true;
     }
 }

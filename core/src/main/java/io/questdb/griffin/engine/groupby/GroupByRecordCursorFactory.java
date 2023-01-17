@@ -77,6 +77,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
@@ -98,16 +103,30 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("GroupByRecord");
+        sink.type("GroupBy");
         sink.meta("vectorized").val(false);
-        sink.attr("groupByFunctions").val(groupByFunctions);
-        sink.attr("recordFunctions").val(recordFunctions);
+        sink.optAttr("keys", getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
     }
 
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
+        ObjList<String> keyFuncs = null;
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            if (!(recordFunctions.get(i) instanceof GroupByFunction)) {
+                if (keyFuncs == null) {
+                    keyFuncs = new ObjList<>();
+                }
+                keyFuncs.add(metadata.getColumnName(i));
+            }
+        }
+
+        return keyFuncs;
     }
 
     @Override

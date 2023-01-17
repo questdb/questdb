@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 /**
@@ -52,5 +53,10 @@ public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GenericRecord");
     }
 }

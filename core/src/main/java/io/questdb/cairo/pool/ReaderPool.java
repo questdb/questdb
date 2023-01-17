@@ -27,6 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
@@ -50,14 +51,14 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
-    protected R newTenant(String tableName, Entry<R> entry, int index) {
+    protected R newTenant(TableToken tableName, Entry<R> entry, int index) {
         return new R(this, entry, index, tableName, messageBus, readerListener);
     }
 
     @TestOnly
     @FunctionalInterface
     public interface ReaderListener {
-        void onOpenPartition(String tableName, int partitionIndex);
+        void onOpenPartition(TableToken tableToken, int partitionIndex);
     }
 
     public static class R extends TableReader implements PoolTenant {
@@ -70,11 +71,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 AbstractMultiTenantPool<R> pool,
                 Entry<R> entry,
                 int index,
-                CharSequence name,
+                TableToken tableToken,
                 MessageBus messageBus,
                 ReaderListener readerListener
         ) {
-            super(pool.getConfiguration(), name, messageBus);
+            super(pool.getConfiguration(), tableToken, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -114,7 +115,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         @Override
         public long openPartition(int partitionIndex) {
             if (readerListener != null) {
-                readerListener.onOpenPartition(tableName, partitionIndex);
+                readerListener.onOpenPartition(getTableToken(), partitionIndex);
             }
             return super.openPartition(partitionIndex);
         }

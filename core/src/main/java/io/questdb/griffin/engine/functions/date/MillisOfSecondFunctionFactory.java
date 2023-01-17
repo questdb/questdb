@@ -70,5 +70,10 @@ public class MillisOfSecondFunctionFactory implements FunctionFactory {
             }
             return Timestamps.getMillisOfSecond(value);
         }
+
+        @Override
+        public String getName() {
+            return "millis";
+        }
     }
 }

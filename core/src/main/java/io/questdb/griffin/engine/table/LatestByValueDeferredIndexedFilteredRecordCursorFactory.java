@@ -25,13 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
-
-    private final IntList columnIndexes;
 
     public LatestByValueDeferredIndexedFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -41,8 +42,7 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
             @NotNull Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter);
-        this.columnIndexes = columnIndexes;
+        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes);
     }
 
     @Override
@@ -51,13 +51,14 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     }
 
     @Override
-    protected DataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
-        assert filter != null;
-        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        super.toPlan(sink);
     }
 
     @Override
-    protected StaticSymbolTable getSymbolTable(DataFrameCursor dataFrameCursor, int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+    protected DataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
+        assert filter != null;
+        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
     }
 }

@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.ClassRule;
@@ -35,7 +35,7 @@ import org.junit.rules.TemporaryFolder;
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
 
 public class TableUtilsTest {
-    private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
+    private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
 

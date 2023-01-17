@@ -29,6 +29,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -52,9 +53,9 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader);
         if (filter != null) {
-            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
+            cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
         } else {
-            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
+            cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
         }
         this.filter = filter;
     }
@@ -62,6 +63,23 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        sink.optAttr("filter", filter);
+        sink.attr("symbolFilter").putColumnName(columnIndex).val(" in ");
+        if (symbolKeys.size() > 0) {
+            sink.val(symbolKeys);
+        }
+        if (deferredSymbolFuncs != null && deferredSymbolFuncs.size() > 0) {
+            if (symbolKeys.size() > 0) {
+                sink.val(" or ").putColumnName(columnIndex).val(" in ");
+            }
+            sink.val(deferredSymbolFuncs);
+        }
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

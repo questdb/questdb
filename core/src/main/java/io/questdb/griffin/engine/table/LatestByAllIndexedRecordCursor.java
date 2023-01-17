@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -47,8 +49,7 @@ import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
-
+class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
     protected final long indexShift = 0;
     protected final DirectLongList prefixes;
     protected final DirectLongList rows;
@@ -107,6 +108,12 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public long size() {
         return isTreeMapBuilt ? aLimit - indexShift : -1;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        sink.meta("parallel").val(true);
     }
 
     @Override

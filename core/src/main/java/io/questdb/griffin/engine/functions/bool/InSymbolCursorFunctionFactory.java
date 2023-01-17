@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -163,6 +164,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 }
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(valueArg).val(" in ").val(cursorArg);
+        }
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -240,6 +246,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                     symbolKeys.add(key + 1);
                 }
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(valueArg).val(" in ").val(cursorArg);
         }
     }
 }

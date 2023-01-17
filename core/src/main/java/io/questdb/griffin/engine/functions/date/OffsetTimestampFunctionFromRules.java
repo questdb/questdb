@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -50,5 +51,10 @@ class OffsetTimestampFunctionFromRules extends TimestampFunction implements Unar
     public long getTimestamp(Record rec) {
         final long utc = timestamp.getTimestamp(rec);
         return utc + multiplier * rules.getOffset(utc);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("to_utc(").val(timestamp).val(',').val(multiplier).val(')');
     }
 }

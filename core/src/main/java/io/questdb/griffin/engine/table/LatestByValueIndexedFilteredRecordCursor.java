@@ -33,9 +33,9 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
-    private final int columnIndex;
+    protected final int columnIndex;
+    protected final int symbolKey;
     private final Function filter;
-    private final int symbolKey;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean found;
     private boolean hasNext;

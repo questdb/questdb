@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
@@ -42,8 +43,8 @@ import java.io.Closeable;
 import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
     public final static int HEADER_RESERVED = 8 * Long.BYTES;
@@ -162,9 +163,9 @@ public class TableTransactionLog implements Closeable {
     }
 
     @NotNull
-    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
+    TableMetadataChangeLog getTableMetadataChangeLog(TableToken tableToken, long structureVersionLo, MemorySerializer serializer) {
         final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
+        cursor.of(ff, tableToken, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
         return cursor;
     }
 
@@ -221,10 +222,11 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static class TableMetadataChangeLogImpl implements TableMetadataChangeLog {
-        private final AlterOperation tableMetadataChange = new AlterOperation();
+        private final AlterOperation alterOp = new AlterOperation();
         private final MemoryFCRImpl txnMetaMem = new MemoryFCRImpl();
         private FilesFacade ff;
         private MemorySerializer serializer;
+        private TableToken tableToken;
         private long txnMetaAddress;
         private long txnMetaOffset;
         private long txnMetaOffsetHi;
@@ -240,6 +242,11 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public TableToken getTableToken() {
+            return tableToken;
+        }
+
+        @Override
         public boolean hasNext() {
             return txnMetaOffset < txnMetaOffsetHi;
         }
@@ -251,17 +258,19 @@ public class TableTransactionLog implements Closeable {
                 throw CairoException.critical(0).put("invalid sequencer txn metadata [offset=").put(txnMetaOffset).put(", recordSize=").put(recordSize).put(']');
             }
             txnMetaOffset += Integer.BYTES;
-            serializer.fromSink(tableMetadataChange, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
+            serializer.fromSink(alterOp, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
             txnMetaOffset += recordSize;
-            return tableMetadataChange;
+            return alterOp;
         }
 
         public void of(
                 FilesFacade ff,
+                TableToken tableToken,
                 long structureVersionLo,
                 MemorySerializer serializer,
                 @Transient final Path path
         ) {
+            this.tableToken = tableToken;
 
             // deallocates current state
             close();
@@ -318,6 +327,11 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private static final long WAL_ID_OFFSET = 0;
+        // @formatter:off
+        private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
+        private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Integer.BYTES;
+        // @formatter:on
         private long address;
         private int fd;
         private FilesFacade ff;

@@ -55,7 +55,7 @@ public abstract class AbstractIntHashSet implements Mutable {
     @Override
     public void clear() {
         Arrays.fill(keys, noEntryKeyValue);
-        free = this.capacity;
+        free = capacity;
     }
 
     public boolean excludes(int key) {

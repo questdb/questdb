@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -43,6 +45,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final CairoConfiguration configuration;
     private final Function hiFunction;
     private final Function loFunction;
+    private final ListColumnFilter sortColumnFilter;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
 
@@ -52,7 +55,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             RecordCursorFactory base,
             RecordComparator comparator,
             Function loFunc,
-            @Nullable Function hiFunc
+            @Nullable Function hiFunc,
+            ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
         this.base = base;
@@ -60,6 +64,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.hiFunction = hiFunc;
         this.configuration = configuration;
         this.comparator = comparator;
+        this.sortColumnFilter = sortColumnFilter;
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -169,6 +179,17 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Sort light");
+        sink.meta("lo").val(loFunction);
+        if (hiFunction != null) {
+            sink.meta("hi").val(hiFunction);
+        }
+        SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
+        sink.child(base);
     }
 
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)

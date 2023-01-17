@@ -216,16 +216,17 @@ public class DirectLongListTest {
 
     @Test
     public void testToString() {
-        DirectLongList list = new DirectLongList(1001, MemoryTag.NATIVE_LONG_LIST);
-        final int N = 1000;
-        for (int i = 0; i < N; ++i) {
-            list.add(i);
-        }
-        String str1 = list.toString();
-        list.add(1001);
-        String str2 = list.toString();
+        try (DirectLongList list = new DirectLongList(1001, MemoryTag.NATIVE_LONG_LIST)) {
+            final int N = 1000;
+            for (int i = 0; i < N; ++i) {
+                list.add(i);
+            }
+            String str1 = list.toString();
+            list.add(1001);
+            String str2 = list.toString();
 
-        Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. }", str2);
+            Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. }", str2);
+        }
     }
 
     private void testBinarySearchFuzz0(int N, int skipRate, int dupeRate, int dupeCountBound) {

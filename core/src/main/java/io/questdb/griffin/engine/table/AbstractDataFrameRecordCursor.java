@@ -52,6 +52,11 @@ public abstract class AbstractDataFrameRecordCursor implements DataFrameRecordCu
     }
 
     @Override
+    public IntList getColumnIndexes() {
+        return columnIndexes;
+    }
+
+    @Override
     public DataFrameCursor getDataFrameCursor() {
         return dataFrameCursor;
     }

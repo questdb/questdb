@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -66,6 +67,12 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    public void toPlan(PlanSink sink) {
+        sink.type("SortedSymbolIndex");
+        sink.child(cursor.getRowCursorFactory());
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

@@ -107,6 +107,11 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "to_utc";
+        }
+
+        @Override
         public Function getRight() {
             return timezone;
         }

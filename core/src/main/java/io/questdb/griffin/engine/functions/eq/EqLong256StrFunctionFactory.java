@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -93,6 +94,16 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
                     value.getLong1() == long1 &&
                     value.getLong2() == long2 &&
                     value.getLong3() == long3);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=');
+            sink.val(long0, long1, long2, long3);
         }
     }
 

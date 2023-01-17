@@ -63,6 +63,11 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
+    public String getName() {
+        return "first";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -84,6 +85,11 @@ public interface MultiArgFunction extends Function {
             }
         }
         return true;
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val('(').val(getArgs()).val(')');
     }
 
     @Override

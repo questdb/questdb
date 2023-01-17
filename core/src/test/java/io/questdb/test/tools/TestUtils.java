@@ -43,10 +43,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.MutableCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -264,12 +261,12 @@ public final class TestUtils {
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            int fda = Files.openRO(path);
+            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
                 path.of(b.getAbsolutePath()).$();
-                int fdb = Files.openRO(path);
+                int fdb = TestFilesFacadeImpl.INSTANCE.openRO(path);
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -301,10 +298,10 @@ public final class TestUtils {
                         Unsafe.free(bufb, 4096, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Files.close(fdb);
+                    TestFilesFacadeImpl.INSTANCE.close(fdb);
                 }
             } finally {
-                Files.close(fda);
+                TestFilesFacadeImpl.INSTANCE.close(fda);
             }
         }
     }
@@ -312,7 +309,7 @@ public final class TestUtils {
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
-            int fda = Files.openRO(path);
+            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -353,7 +350,7 @@ public final class TestUtils {
                     Unsafe.free(str, actual.length(), MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Files.close(fda);
+                TestFilesFacadeImpl.INSTANCE.close(fda);
             }
         }
     }
@@ -506,7 +503,8 @@ public final class TestUtils {
     public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
 
         engine.releaseAllReaders();
-        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+        TableToken tt = engine.getTableToken(tableName);
+        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tt)) {
             TableReaderMetadata metadata = rdr.getMetadata();
             int symIndex = metadata.getColumnIndex(columnName);
 
@@ -709,7 +707,7 @@ public final class TestUtils {
         if (Files.mkdirs(dst, dirMode) != 0) {
             Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         Assert.assertEquals(0, ff.copyRecursive(src, dst, dirMode));
     }
 
@@ -872,9 +870,7 @@ public final class TestUtils {
 
     public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
         try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            while (processingJob.run(0)) {
-                Os.pause();
-            }
+            processingJob.drain(0);
         }
     }
 
@@ -887,7 +883,7 @@ public final class TestUtils {
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics, 2);
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
@@ -1168,6 +1164,26 @@ public final class TestUtils {
         }
     }
 
+    public static void putUtf8(TableWriter.Row r, String s, int columnIndex, boolean symbol) {
+        byte[] bytes = s.getBytes(Files.UTF_8);
+        long len = bytes.length;
+        long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            DirectByteCharSequence seq = new DirectByteCharSequence();
+            seq.of(p, p + len);
+            if (symbol) {
+                r.putSymUtf8(columnIndex, seq, true);
+            } else {
+                r.putStrUtf8AsUtf16(columnIndex, seq, true);
+            }
+        } finally {
+            Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     public static String readStringFromFile(File file) {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -1188,7 +1204,7 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         final Path path = Path.getThreadLocal(root);
-        final int rc = Files.rmdir(path.slash$());
+        final int rc = TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$());
         MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
     }
 

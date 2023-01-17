@@ -26,6 +26,7 @@ package io.questdb.cairo.vm.api;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -88,6 +89,8 @@ public interface MemoryA extends Closeable {
     long putStr(char value);
 
     long putStr(CharSequence value, int pos, int len);
+
+    long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars);
 
     void skip(long bytes);
 

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -39,11 +40,12 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    protected final DataFrameRecordCursor cursor;
     protected final int pageFrameMaxRows;
     protected final int pageFrameMinRows;
+    protected final RowCursorFactory rowCursorFactory;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private final DataFrameRecordCursorImpl cursor;
     private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
@@ -66,20 +68,31 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     ) {
         super(metadata, dataFrameCursorFactory);
 
-        this.cursor = new DataFrameRecordCursorImpl(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
+        this.rowCursorFactory = rowCursorFactory;
+        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
-        this.pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
+        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
+        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
         this.supportsRandomAccess = supportsRandomAccess;
     }
 
     @Override
     public boolean followedOrderByAdvice() {
         return followsOrderByAdvice;
+    }
+
+    @Override
+    public String getBaseColumnName(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(idx));
+    }
+
+    @Override
+    public String getBaseColumnNameNoRemap(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
     }
 
     @Override
@@ -109,17 +122,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return dataFrameCursorFactory.supportTableRowId(tableToken);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("DataFrameRecordCursorFactory");
-        if (filter != null) {
-            sink.attr("filter").val(filter);
-        }
-        sink.child(dataFrameCursorFactory);
+        sink.type("DataFrame");
+        toPlanInner(sink);
     }
 
     @Override
@@ -177,5 +187,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             );
         }
         return fwdPageFrameCursor.of(dataFrameCursor);
+    }
+
+    protected void toPlanInner(PlanSink sink) {
+        sink.child(rowCursorFactory);
+        sink.child(dataFrameCursorFactory);
     }
 }

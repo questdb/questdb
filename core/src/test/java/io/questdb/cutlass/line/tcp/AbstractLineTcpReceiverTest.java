@@ -89,6 +89,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
+    protected boolean autoCreateNewColumns = true;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -165,11 +166,17 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
         }
+
+        @Override
+        public boolean getAutoCreateNewColumns() {
+            return autoCreateNewColumns;
+        }
     };
 
     public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
         try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
+            TableToken tt = engine.getTableTokenIfExists(tableName);
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt));
         }
     }
 
@@ -181,7 +188,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = getReader(tableName)) {
                 long size = reader.getCursor().size();
                 assertEquals(expectedSize, size);
             } catch (EntryLockedException e) {
@@ -215,7 +222,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
@@ -283,11 +290,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+        final CharSequence t = tableName;
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equalsNc(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (Chars.equalsNc(name.getTableName(), tableName) && Chars.equals(name.getTableName(), tableName)) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t)) {
                             releaseLatch.countDown();
                         }
                     }
@@ -295,7 +303,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 break;
             case WAIT_ILP_TABLE_RELEASE:
                 receiver.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equalsNc(tableName, tableName1)) {
+                    if (Chars.equalsNc(tableName, tableName1.getTableName())) {
                         releaseLatch.countDown();
                     }
                 });

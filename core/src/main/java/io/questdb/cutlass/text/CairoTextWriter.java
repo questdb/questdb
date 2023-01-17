@@ -199,19 +199,22 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
-    private void createTable(
+    private TableToken createTable(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
             CairoSecurityContext cairoSecurityContext,
             Path path
     ) throws TextException {
-        engine.createTable(
+        TableToken tableToken = engine.createTable(
                 cairoSecurityContext,
                 ddlMem,
                 path,
-                tableStructureAdapter.of(names, detectedTypes)
+                false,
+                tableStructureAdapter.of(names, detectedTypes),
+                false
         );
         this.types = detectedTypes;
+        return tableToken;
     }
 
     private void logError(long line, int i, DirectByteCharSequence dbcs) {
@@ -250,13 +253,13 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     private TableWriter openWriterAndOverrideImportTypes(
+            TableToken tableToken,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
             CairoSecurityContext cairoSecurityContext,
             TypeManager typeManager
     ) {
-
-        TableWriter writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+        TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
 
         // now, compare column count.
@@ -328,22 +331,24 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         boolean canUpdateMetadata = true;
-        switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
+        TableToken tableToken = engine.getTableTokenIfExists(tableName);
+
+        switch (engine.getStatus(cairoSecurityContext, path, tableToken)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                createTable(names, detectedTypes, cairoSecurityContext, path);
-                writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+                tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);
+                writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
                 designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                 partitionBy = writer.getPartitionBy();
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
-                    engine.remove(cairoSecurityContext, path, tableName);
-                    createTable(names, detectedTypes, cairoSecurityContext, path);
-                    writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+                    engine.drop(cairoSecurityContext, path, tableToken);
+                    tableToken = createTable(names, detectedTypes, cairoSecurityContext, path);
+                    writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);
                 } else {
                     canUpdateMetadata = false;
-                    writer = openWriterAndOverrideImportTypes(names, detectedTypes, cairoSecurityContext, typeManager);
+                    writer = openWriterAndOverrideImportTypes(tableToken, names, detectedTypes, cairoSecurityContext, typeManager);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     if (importedTimestampColumnName != null &&

@@ -28,7 +28,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.*;
@@ -114,7 +114,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                     }
                 }
                 return;
-            } catch (ReaderOutOfDateException ex) {
+            } catch (TableReferenceOutOfDateException ex) {
                 // retry, e.g. continue
             } catch (SqlException ex) {
                 if (Chars.contains(ex.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed")) {
@@ -129,7 +129,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         if (columnsCache.containsKey(tableName)) {
             return columnsCache.get(tableName);
         }
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             final TableReaderMetadata metadata = reader.getMetadata();
             final ArrayList<ColumnNameType> columns = new ArrayList<>();
             for (int i = metadata.getColumnCount() - 1; i > -1L; i--) {

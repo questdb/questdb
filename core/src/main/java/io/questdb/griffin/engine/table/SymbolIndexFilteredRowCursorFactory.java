@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 
 public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCursorFactory {
@@ -83,4 +85,11 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     public void prepareCursor(TableReader tableReader) {
         this.cursor.prepare(tableReader);
     }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putColumnName(cursor.getColumnIndex());
+        sink.attr("filter").putColumnName(cursor.getColumnIndex()).val('=').val(cursor.getSymbolKey()).val(" and ").val(cursor.getFilter());
+    }
 }
+

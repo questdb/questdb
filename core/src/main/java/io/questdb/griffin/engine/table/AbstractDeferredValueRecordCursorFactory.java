@@ -25,16 +25,19 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
 
     protected final int columnIndex;
+    protected final IntList columnIndexes;
     protected final Function filter;
     private final Function symbolFunc;
     private DataFrameRecordCursor cursor;
@@ -44,17 +47,26 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             Function symbolFunc,
-            @Nullable Function filter
+            @Nullable Function filter,
+            IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         this.filter = filter;
+        this.columnIndexes = columnIndexes;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.optAttr("filter", filter);
+        sink.attr("symbolFilter").putColumnName(columnIndex).val('=').val(symbolFunc);
+        sink.child(dataFrameCursorFactory);
     }
 
     private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
         final CharSequence symbol = symbolFunc.getStr(null);
-        int symbolKey = getSymbolTable(dataFrameCursor, columnIndex).keyOf(symbol);
+        int symbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             dataFrameCursor.close();
             return true;
@@ -88,6 +100,4 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         cursor.of(dataFrameCursor, executionContext);
         return cursor;
     }
-
-    protected abstract StaticSymbolTable getSymbolTable(DataFrameCursor dataFrameCursor, int columnIndex);
 }

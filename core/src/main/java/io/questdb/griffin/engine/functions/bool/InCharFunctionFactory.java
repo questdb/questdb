@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -99,6 +100,11 @@ public class InCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return set.contains(arg.getChar(rec));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" in ").val(set);
         }
     }
 }

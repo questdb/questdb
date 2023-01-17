@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
@@ -70,6 +69,16 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
+    public String getName() {
+        return "max";
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);
@@ -83,10 +92,5 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.INT_NaN);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxInt(").put(arg).put(')');
     }
 }

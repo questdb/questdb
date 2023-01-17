@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -60,6 +61,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return baseFactory;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = baseFactory.getCursor(executionContext);
         try {
@@ -83,17 +89,14 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return baseFactory.supportsUpdateRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return baseFactory.supportsUpdateRowId(tableToken);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("VirtualRecordCursorFactory");
-        sink.attr("supportsRandomAccess");
-        sink.val(supportsRandomAccess);
-        sink.attr("functions");
-        sink.val(functions);
+        sink.type("VirtualRecord");
+        sink.optAttr("functions", functions, true);
         sink.child(baseFactory);
     }
 

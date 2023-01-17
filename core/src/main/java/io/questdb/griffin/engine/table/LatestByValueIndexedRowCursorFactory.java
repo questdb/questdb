@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
 
 public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     private final boolean cachedIndexReaderCursor;
@@ -64,5 +65,11 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     @Override
     public boolean isUsingIndex() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnNameNoRemap(columnIndex);
+        sink.attr("filter").putBaseColumnNameNoRemap(columnIndex).val('=').val(symbolKey);
     }
 }

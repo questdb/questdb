@@ -28,12 +28,14 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
@@ -58,6 +60,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
+    private final int workerCount;
     private DirectLongList negativeLimitRows;
 
     public AsyncJitFilteredRecordCursorFactory(
@@ -71,7 +74,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            boolean preTouchColumns
+            boolean preTouchColumns,
+            int workerCount
     ) {
         super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
@@ -102,6 +106,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+        this.workerCount = workerCount;
     }
 
     @Override
@@ -112,6 +117,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean followedLimitAdvice() {
         return limitLoFunction != null;
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -160,8 +170,40 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return base.supportsUpdateRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return base.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Async JIT Filter");
+        //calc order and limit if possible 
+        long rowsRemaining;
+        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;
+        int order;
+        if (limitLoFunction != null) {
+            try {
+                limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
+                rowsRemaining = limitLoFunction.getLong(null);
+            } catch (Exception e) {
+                rowsRemaining = Long.MAX_VALUE;
+            }
+            if (rowsRemaining > -1) {
+                order = baseOrder;
+            } else {
+                order = reverse(baseOrder);
+                rowsRemaining = -rowsRemaining;
+            }
+        } else {
+            rowsRemaining = Long.MAX_VALUE;
+            order = baseOrder;
+        }
+        if (rowsRemaining != Long.MAX_VALUE) {
+            sink.attr("limit").val(rowsRemaining);
+        }
+        sink.attr("filter").val(filterAtom);
+        sink.attr("workers").val(workerCount);
+        sink.child(base, order);
     }
 
     @Override

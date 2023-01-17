@@ -54,6 +54,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -88,6 +89,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
+    private final long cairoTableRegistryAutoReloadFrequency;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final long circuitBreakerTimeout;
@@ -127,6 +129,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean ioURingEnabled;
+    private final boolean isReadOnlyInstance;
     private final boolean isWalSupported;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final int latestByQueueCapacity;
@@ -211,6 +214,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
     private final int sqlDoubleToStrCastScale;
+    private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
     private final int sqlFloatToStrCastScale;
@@ -247,6 +251,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final int sqlRenameTableModelPoolCapacity;
     private final int sqlSmallMapKeyCapacity;
+    private final int sqlSmallMapPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortKeyPageSize;
     private final int sqlSortLightValueMaxPages;
@@ -440,6 +445,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
+        this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
+        this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -741,14 +748,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
             this.sqlCompactMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR, 0.7);
             this.sqlExpressionPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, 8192);
-            this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, 0.5);
+            this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, 0.7);
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY, 2048 * 1024);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 1024);
+            this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
             this.sqlMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE, 4 * Numbers.SIZE_1MB);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
+            this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 4 * Numbers.SIZE_1MB);
@@ -1485,6 +1494,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getAllowTableRegistrySharedWrite() {
+            return false;
+        }
+
+        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }
@@ -1647,6 +1661,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDoubleToStrCastScale() {
             return sqlDoubleToStrCastScale;
+        }
+
+        @Override
+        public int getExplainPoolCapacity() {
+            return sqlExplainModelPoolCapacity;
         }
 
         @Override
@@ -2105,6 +2124,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlSmallMapPageSize() {
+            return sqlSmallMapPageSize;
+        }
+
+        @Override
         public int getSqlSortKeyMaxPages() {
             return sqlSortKeyMaxPages;
         }
@@ -2142,6 +2166,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getSystemTableNamePrefix() {
             return systemTableNamePrefix;
+        }
+
+        @Override
+        public long getTableRegistryAutoReloadFrequency() {
+            return cairoTableRegistryAutoReloadFrequency;
         }
 
         public TelemetryConfiguration getTelemetryConfiguration() {
@@ -2244,6 +2273,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isReadOnlyInstance() {
+            return isReadOnlyInstance;
+        }
+
+        @Override
         public boolean isSnapshotRecoveryEnabled() {
             return snapshotRecoveryEnabled;
         }
@@ -2265,6 +2299,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public boolean isWalSupported() {
             return isWalSupported;
+        }
+
+        @Override
+        public boolean mangleTableDirNames() {
+            return false;
         }
     }
 
@@ -2337,7 +2376,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return httpReadOnlySecurityContext;
+            return httpReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -2775,6 +2814,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return lineTcpReceiverDispatcherConfiguration;
+        }
+
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -3285,7 +3329,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return pgReadOnlySecurityContext;
+            return pgReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -3389,11 +3433,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        @NotNull
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
         }
 
         @Override
+        @NotNull
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }

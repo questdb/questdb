@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.Mutable;
 
 public interface TableRecordMetadataSink extends Mutable {
@@ -38,7 +39,7 @@ public interface TableRecordMetadataSink extends Mutable {
     );
 
     void of(
-            String tableName,
+            TableToken tableToken,
             int tableId,
             int timestampIndex,
             int compressedTimestampIndex,

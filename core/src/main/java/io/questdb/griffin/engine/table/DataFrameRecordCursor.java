@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 
 public interface DataFrameRecordCursor extends RecordCursor {
+
+    IntList getColumnIndexes();
 
     DataFrameCursor getDataFrameCursor();
 

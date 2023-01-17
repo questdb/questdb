@@ -87,7 +87,9 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     int getFd();
 
     /**
-     * Returns true if time was reset/powered up (for current sql command) and false otherwise.
+     * Checks if timer is due.
+     *
+     * @return true if time was reset/powered up (for current sql command) and false otherwise
      */
     boolean isTimerSet();
 

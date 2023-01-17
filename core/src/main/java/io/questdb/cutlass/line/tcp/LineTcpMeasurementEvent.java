@@ -26,9 +26,9 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -41,13 +41,10 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
-    private final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
     private final MicrosecondClock clock;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final boolean defaultSymbolCacheFlag;
-    private final int defaultSymbolCapacity;
     private final int maxColumnNameLength;
     private final boolean stringToCharCastAllowed;
     private final LineProtoTimestampAdapter timestampAdapter;
@@ -63,9 +60,7 @@ class LineTcpMeasurementEvent implements Closeable {
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
             int maxColumnNameLength,
-            boolean autoCreateNewColumns,
-            int defaultSymbolCapacity,
-            boolean defaultSymbolCacheFlag
+            boolean autoCreateNewColumns
     ) {
         this.maxColumnNameLength = maxColumnNameLength;
         this.autoCreateNewColumns = autoCreateNewColumns;
@@ -74,8 +69,37 @@ class LineTcpMeasurementEvent implements Closeable {
         this.timestampAdapter = timestampAdapter;
         this.defaultColumnTypes = defaultColumnTypes;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
-        this.defaultSymbolCapacity = defaultSymbolCapacity;
-        this.defaultSymbolCacheFlag = defaultSymbolCacheFlag;
+    }
+
+    public static CairoException boundsError(long entityValue, int columnIndex, int colType) {
+        return CairoException.critical(0)
+                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
+                .put(" bounds [columnIndex=").put(columnIndex)
+                .put(", value=").put(entityValue)
+                .put(']');
+    }
+
+    public static CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
+        return CairoException.critical(0)
+                .put("cast error for line protocol ").put(ilpType)
+                .put(" [columnWriterIndex=").put(columnWriterIndex)
+                .put(", columnType=").put(ColumnType.nameOf(colType))
+                .put(", name=").put(name)
+                .put(']');
+    }
+
+    public static CairoException invalidColNameError(TableUpdateDetails tud, CharSequence colName) {
+        return CairoException.critical(0)
+                .put("invalid column name [table=").put(tud.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
+    }
+
+    public static CairoException newColumnsNotAllowed(TableUpdateDetails tud, String colName) {
+        return CairoException.critical(0)
+                .put("column does not exist, creating new columns is disabled [table=").put(tud.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
     }
 
     @Override
@@ -94,37 +118,6 @@ class LineTcpMeasurementEvent implements Closeable {
 
     public void releaseWriter() {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
-    }
-
-    private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
-        return CairoException.critical(0)
-                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
-                .put(", value=").put(entityValue)
-                .put(']');
-    }
-
-    private CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
-        return CairoException.critical(0)
-                .put("cast error for line protocol ").put(ilpType)
-                .put(" [columnWriterIndex=").put(columnWriterIndex)
-                .put(", columnType=").put(ColumnType.nameOf(colType))
-                .put(", name=").put(name)
-                .put(']');
-    }
-
-    private CairoException invalidColNameError(CharSequence colName) {
-        return CairoException.critical(0)
-                .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
-                .put(", columnName=").put(colName)
-                .put(']');
-    }
-
-    private CairoException newColumnsNotAllowed(String colName) {
-        return CairoException.critical(0)
-                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
-                .put(", columnName=").put(colName)
-                .put(']');
     }
 
     void append() throws CommitFailedException {
@@ -186,11 +179,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
                         writer.commit();
                         try {
-                            alterOperationBuilder.clear();
-                            alterOperationBuilder
-                                    .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
-                                    .addColumnToList(columnName, 0, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
-                            writer.apply(alterOperationBuilder.build(), true);
+                            writer.addColumn(columnName, colType);
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
                             if (colIndex < 0) {
@@ -286,7 +275,7 @@ class LineTcpMeasurementEvent implements Closeable {
             throw commitFailedException;
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableNameUtf16())
+                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();
@@ -297,14 +286,14 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createMeasurementEvent(
-            TableUpdateDetails tableUpdateDetails,
+            TableUpdateDetails tud,
             LineTcpParser parser,
             int workerId
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
-        final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
+        final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tableUpdateDetails;
+        this.tableUpdateDetails = tud;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -321,7 +310,7 @@ class LineTcpMeasurementEvent implements Closeable {
             int columnWriterIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
-                if (columnWriterIndex == tableUpdateDetails.getTimestampIndex()) {
+                if (columnWriterIndex == tud.getTimestampIndex()) {
                     timestamp = timestampAdapter.getMicros(entity.getLongValue());
                     continue;
                 }
@@ -335,9 +324,9 @@ class LineTcpMeasurementEvent implements Closeable {
                     offset = buffer.addColumnName(offset, columnName);
                     colType = localDetails.getColumnType(columnName, entityType);
                 } else if (!autoCreateNewColumns) {
-                    throw newColumnsNotAllowed(columnName);
+                    throw newColumnsNotAllowed(tableUpdateDetails, columnName);
                 } else {
-                    throw invalidColNameError(columnName);
+                    throw invalidColNameError(tableUpdateDetails, columnName);
                 }
             } else {
                 // duplicate column, skip
@@ -368,7 +357,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addInt(offset, Numbers.INT_NaN);
                             } else {
-                                throw boundsError(entityValue, columnWriterIndex, ColumnType.INT);
+                                throw boundsError(entityValue, nEntity, ColumnType.INT);
                             }
                             break;
                         }
@@ -379,7 +368,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addShort(offset, (short) 0);
                             } else {
-                                throw boundsError(entityValue, columnWriterIndex, ColumnType.SHORT);
+                                throw boundsError(entityValue, nEntity, ColumnType.SHORT);
                             }
                             break;
                         }
@@ -390,7 +379,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else if (entityValue == Numbers.LONG_NaN) {
                                 offset = buffer.addByte(offset, (byte) 0);
                             } else {
-                                throw boundsError(entityValue, columnWriterIndex, ColumnType.BYTE);
+                                throw boundsError(entityValue, nEntity, ColumnType.BYTE);
                             }
                             break;
                         }
@@ -448,8 +437,15 @@ class LineTcpMeasurementEvent implements Closeable {
                                 break;
 
                             case ColumnType.CHAR:
-                                if (stringToCharCastAllowed || entityValue.length() == 1) {
+                                if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
                                     offset = buffer.addChar(offset, entityValue.charAt(0));
+                                } else if (stringToCharCastAllowed) {
+                                    int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                    if (Numbers.decodeLowShort(encodedResult) > 0) {
+                                        offset = buffer.addChar(offset, (char) Numbers.decodeHighShort(encodedResult));
+                                    } else {
+                                        throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    }
                                 } else {
                                     throw castError("string", columnWriterIndex, colType, entity.getName());
                                 }
@@ -559,7 +555,7 @@ class LineTcpMeasurementEvent implements Closeable {
         }
         buffer.addDesignatedTimestamp(buffer.getAddress() + Long.BYTES, timestamp);
         buffer.addNumOfColumns(buffer.getAddress() + 2 * Long.BYTES, entitiesWritten);
-        writerWorkerId = tableUpdateDetails.getWriterThreadId();
+        writerWorkerId = tud.getWriterThreadId();
     }
 
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {

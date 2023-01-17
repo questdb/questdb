@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -405,8 +406,8 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         }
 
         @Override
-        public void onOpenPartition(String tableName, int partitionIndex) {
-            final String key = tableName + "$" + partitionIndex;
+        public void onOpenPartition(TableToken tableToken, int partitionIndex) {
+            final String key = tableToken + "$" + partitionIndex;
             SuspendEvent computedEvent = suspendedPartitions.compute(key, (charSequence, prevEvent) -> {
                 if (prevEvent != null) {
                     // Success case.
@@ -420,7 +421,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
                 return nextEvent;
             });
             if (computedEvent != null) {
-                throw DataUnavailableException.instance(tableName, String.valueOf(partitionIndex), computedEvent);
+                throw DataUnavailableException.instance(tableToken, String.valueOf(partitionIndex), computedEvent);
             }
         }
     }

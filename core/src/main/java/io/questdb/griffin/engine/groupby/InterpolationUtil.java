@@ -166,7 +166,7 @@ public class InterpolationUtil {
                     boundaryTimestamp,
                     isEndOfBoundary);
         } catch (UnsupportedOperationException e) {
-            throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function);
+            throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function.getClass().getName());
         }
     }
 
@@ -206,7 +206,7 @@ public class InterpolationUtil {
                     x
             );
         } catch (UnsupportedOperationException e) {
-            throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function);
+            throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function.getClass().getName());
         }
     }
 

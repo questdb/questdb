@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -79,6 +80,11 @@ public interface TernaryFunction extends Function {
         boolean cc = getRight().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (arc || brc || crc);
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val('(').val(getLeft()).val(',').val(getCenter()).val(',').val(getRight()).val(')');
     }
 
     @Override

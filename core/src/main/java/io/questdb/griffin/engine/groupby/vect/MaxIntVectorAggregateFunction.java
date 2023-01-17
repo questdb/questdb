@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -93,6 +92,11 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
+    public String getName() {
+        return "max";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -116,11 +120,6 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.INT);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxIntVector(").put(columnIndex).put(')');
     }
 
     @Override

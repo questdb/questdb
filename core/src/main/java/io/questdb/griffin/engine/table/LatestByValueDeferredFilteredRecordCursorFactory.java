@@ -24,14 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
-
-    private final IntList columnIndexes;
 
     public LatestByValueDeferredFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -41,8 +42,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter);
-        this.columnIndexes = columnIndexes;
+        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes);
     }
 
     @Override
@@ -51,15 +51,16 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByValueDeferredFiltered");
+        super.toPlan(sink);
+    }
+
+    @Override
     protected DataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
         if (filter == null) {
             return new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
         }
         return new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
-    }
-
-    @Override
-    protected StaticSymbolTable getSymbolTable(DataFrameCursor dataFrameCursor, int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 }

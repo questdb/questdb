@@ -50,7 +50,7 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     @Override
     public void clear() {
         Arrays.fill(keys, noEntryKey);
-        free = this.capacity;
+        free = capacity;
     }
 
     public boolean contains(CharSequence key) {
@@ -63,6 +63,10 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
 
     public boolean excludes(CharSequence key, int lo, int hi) {
         return keyIndex(key, lo, hi) > -1;
+    }
+
+    public CharSequence keyAt(int index) {
+        return keys[-index - 1];
     }
 
     public int keyIndex(CharSequence key) {

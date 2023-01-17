@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -47,6 +48,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private final LongList crossFrameRow;
     private final int[] firstLastIndexByCol;
     private final int groupBySymbolColIndex;
+    private final boolean[] isKeyColumn;
     private final int maxSamplePeriodSize;
     private final int pageSize;
     private final int[] queryToFrameColumnMapping;
@@ -76,10 +78,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         groupBySymbolColIndex = symbolFilter.getColumnIndex();
         queryToFrameColumnMapping = new int[columns.size()];
         firstLastIndexByCol = new int[columns.size()];
+        isKeyColumn = new boolean[columns.size()];
         crossFrameRow = new LongList(columns.size());
         crossFrameRow.setPos(columns.size());
         this.timestampIndex = timestampIndex;
-        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex);
+        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
         pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
         maxSamplePeriodSize = pageSize * 4;
@@ -95,6 +98,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 offsetFunc,
                 offsetFuncPos
         );
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -124,6 +132,42 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleByFirstLast");
+        sink.attr("keys");
+        boolean first = true;
+        sink.val('[');
+        for (int i = 0; i < isKeyColumn.length; i++) {
+            if (isKeyColumn[i]) {
+                if (first) {
+                    first = false;
+                } else {
+                    sink.val(", ");
+                }
+                sink.putBaseColumnName(i);
+            }
+        }
+        sink.val(']');
+        sink.attr("values");
+        first = true;
+        sink.val('[');
+        for (int i = 0; i < isKeyColumn.length; i++) {
+            if (!isKeyColumn[i]) {
+                if (first) {
+                    first = false;
+                } else {
+                    sink.val(", ");
+                }
+                sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? "last" : "first").val('(');
+                sink.putBaseColumnName(i);
+                sink.val(')');
+            }
+        }
+        sink.val(']');
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
@@ -133,7 +177,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int[] queryToFrameColumnMapping,
             RecordMetadata metadata,
             ObjList<QueryColumn> columns,
-            int timestampIndex
+            int timestampIndex,
+            boolean[] isKeyColumn
     ) throws SqlException {
         for (int i = 0, n = firstLastIndex.length; i < n; i++) {
             QueryColumn column = columns.getQuick(i);
@@ -160,6 +205,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
             } else {
                 int underlyingColIndex = metadata.getColumnIndex(ast.token);
+                isKeyColumn[i] = true;
                 queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {
                     groupByTimestampIndex = i;

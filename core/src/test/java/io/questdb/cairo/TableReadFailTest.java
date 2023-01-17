@@ -39,7 +39,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
         spinLockTimeout = 1;
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
@@ -54,7 +54,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
         spinLockTimeout = 1;
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ path) {
                 if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
@@ -70,7 +70,8 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             spinLockTimeout = 1;
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+            String x = "x";
+            try (TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
                     .timestamp()) {
@@ -79,7 +80,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    TableReader reader = new TableReader(configuration, "x");
+                    TableReader reader = newTableReader(configuration, x);
                     MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
 
@@ -87,9 +88,10 @@ public class TableReadFailTest extends AbstractCairoTest {
                 final int N = 1000;
 
                 // home path at txn file
-                path.of(configuration.getRoot()).concat("x").concat(TableUtils.TXN_FILE_NAME).$();
+                TableToken tableToken = engine.getTableToken(x);
+                path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
+                try (TableWriter w = newTableWriter(configuration, x, metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -147,7 +149,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
+                try (TableWriter w = newTableWriter(configuration, x, metrics)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
@@ -178,7 +180,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testTxnFileCannotOpenConstructor() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME)) {
@@ -192,7 +194,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testTxnFileMissingConstructor() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
@@ -202,10 +204,10 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(FilesFacade ff) throws Exception {
-        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new TableReader(new DefaultCairoConfiguration(root) {
+                newTableReader(new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;

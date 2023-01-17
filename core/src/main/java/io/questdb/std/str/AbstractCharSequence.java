@@ -57,6 +57,9 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
         if (start == 0 && end == length()) {
             return this;
         }
+        if (start == end) {
+            return "";
+        }
         return _subSequence(start, end);
     }
 

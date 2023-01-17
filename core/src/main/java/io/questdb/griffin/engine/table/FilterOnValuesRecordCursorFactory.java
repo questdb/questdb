@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.QueryModel;
@@ -48,6 +49,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private final Function filter;
     private final boolean followedOrderByAdvice;
     private final int orderDirection;
+    private final RowCursorFactory rowCursorFactory;
 
     public FilterOnValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -80,9 +82,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             }
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         } else {
-            cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
     }
@@ -95,6 +99,13 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnValues");
+        sink.child(rowCursorFactory);
+        sink.child(dataFrameCursorFactory);
     }
 
     private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
@@ -190,7 +201,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
         }
-
+        //sorting here can produce order of cursorFactories different from one shown by explain command       
         if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {

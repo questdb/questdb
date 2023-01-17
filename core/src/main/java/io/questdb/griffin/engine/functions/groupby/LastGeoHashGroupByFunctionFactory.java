@@ -58,12 +58,22 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public void computeNext(MapValue mapValue, Record record) {
                         mapValue.putByte(this.valueIndex, this.function.getGeoByte(record));
                     }
+
+                    @Override
+                    public String getName() {
+                        return "last";
+                    }
                 };
             case ColumnType.GEOSHORT:
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
                         mapValue.putShort(this.valueIndex, this.function.getGeoShort(record));
+                    }
+
+                    @Override
+                    public String getName() {
+                        return "last";
                     }
                 };
             case ColumnType.GEOINT:
@@ -72,12 +82,22 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                     public void computeNext(MapValue mapValue, Record record) {
                         mapValue.putInt(this.valueIndex, this.function.getGeoInt(record));
                     }
+
+                    @Override
+                    public String getName() {
+                        return "last";
+                    }
                 };
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
                         mapValue.putLong(this.valueIndex, this.function.getGeoLong(record));
+                    }
+
+                    @Override
+                    public String getName() {
+                        return "last";
                     }
                 };
         }

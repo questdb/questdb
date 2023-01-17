@@ -30,9 +30,9 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
@@ -77,7 +77,7 @@ public class HttpServerConfigurationBuilder {
 
                 @Override
                 public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
+                    return TestFilesFacadeImpl.INSTANCE;
                 }
 
                 @Override
@@ -98,7 +98,7 @@ public class HttpServerConfigurationBuilder {
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
                 @Override
                 public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
+                    return TestFilesFacadeImpl.INSTANCE;
                 }
 
                 @Override

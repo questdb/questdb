@@ -226,7 +226,7 @@ public class JsonLexerTest {
                 p.of(path);
             }
             long l = Files.length(p.$());
-            int fd = Files.openRO(p);
+            int fd = TestFilesFacadeImpl.INSTANCE.openRO(p);
             JsonParser listener = new NoOpParser();
             try {
                 long buf = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
@@ -254,7 +254,7 @@ public class JsonLexerTest {
                     Unsafe.free(bufB, l, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Files.close(fd);
+                TestFilesFacadeImpl.INSTANCE.close(fd);
             }
         }
     }

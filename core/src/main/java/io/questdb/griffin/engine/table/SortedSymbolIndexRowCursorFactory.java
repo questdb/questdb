@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -94,6 +96,12 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         for (int i = 0; i < symbolKeyLimit; i++) {
             symbolKeys.add(entries.getQuick(i).key);
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putColumnName(columnIndex);
+        sink.attr("symbolOrder").val(columnOrderDirectionAsc ? "asc" : "desc");
     }
 
     private static class SortHelper {

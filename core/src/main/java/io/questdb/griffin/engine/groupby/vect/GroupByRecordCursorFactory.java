@@ -50,7 +50,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
-    private final static int ROSTI_MINIMIZED_SIZE = 16;//16 is the minimum size usable on arm 
+    private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
     private final ObjList<VectorAggregateEntry> activeEntries;
     private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
@@ -60,8 +60,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final long[] pRosti;
     private final RostiAllocFacade raf;
-    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final ObjList<VectorAggregateFunction> vafList;
+    private final int workerCount;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -75,6 +76,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
         super(metadata);
+        this.workerCount = workerCount;
         entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -151,6 +153,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         oomCounter.set(0);
         // clear maps
@@ -172,10 +179,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("GroupByRecord");
+        sink.type("GroupBy");
         sink.meta("vectorized").val(true);
-        sink.attr("groupByFunctions").val(vafList);
-        sink.attr("keyColumnIndex").val(keyColumnIndex);
+        sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
+        sink.optAttr("values", vafList, true);
+        sink.attr("workers").val(workerCount);
         sink.child(base);
     }
 

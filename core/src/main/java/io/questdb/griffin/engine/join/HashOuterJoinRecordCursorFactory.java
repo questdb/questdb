@@ -31,13 +31,16 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final HashOuterJoinRecordCursor cursor;
+    private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterSink;
     private final RecordCursorFactory slaveFactory;
@@ -53,7 +56,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
-            int columnSplit
+            int columnSplit,
+            JoinContext joinContext
 
     ) {
         super(metadata);
@@ -70,6 +74,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 slaveChain,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
+
+        this.joinContext = joinContext;
     }
 
     @Override
@@ -95,6 +101,14 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Hash Outer Join");
+        sink.optAttr("condition", joinContext);
+        sink.child(masterFactory);
+        sink.child("Hash", slaveFactory);
     }
 
     @Override

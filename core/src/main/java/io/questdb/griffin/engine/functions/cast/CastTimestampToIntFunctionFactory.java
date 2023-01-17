@@ -29,12 +29,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class CastTimestampToIntFunctionFactory implements FunctionFactory {
     @Override
@@ -47,27 +45,15 @@ public class CastTimestampToIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends IntFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToIntFunction implements UnaryFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
-        }
-
-        @Override
-        public void toSink(CharSink sink) {
-            sink.put("CastTimestampToInt(").put(arg).put(')');
         }
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
@@ -46,10 +47,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_CROSS = 3;
+    public static final int JOIN_CROSS_LEFT = 8;
     public static final int JOIN_INNER = 1;
     public static final int JOIN_LT = 6;
+    public static final int JOIN_MAX = JOIN_CROSS_LEFT;
     public static final int JOIN_ONE = 7;
-    public static final int JOIN_MAX = JOIN_ONE;
     public static final int JOIN_OUTER = 2;
     public static final int JOIN_SPLICE = 5;
     public static final int LATEST_BY_DEPRECATED = 1;
@@ -140,6 +142,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     //position of the order by clause token
     private int orderByPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
+    /* Expression clause that is actually part of left/outer join but not in join model.
+     *  Inner join expressions */
+    private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByOffset = null;
@@ -148,13 +153,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
     private int tableId = -1;
-    private ExpressionNode tableName;
+    private ExpressionNode tableNameExpr;
     private Function tableNameFunction;
     private long tableVersion = -1;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
     private QueryModel updateTableModel;
-    private String updateTableName;
+    private TableToken updateTableToken;
     private ExpressionNode whereClause;
 
     private QueryModel() {
@@ -324,7 +329,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         whereClause = null;
         constWhereClause = null;
         nestedModel = null;
-        tableName = null;
+        tableNameExpr = null;
         alias = null;
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
@@ -337,6 +342,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnAliasIndexes.clear();
         modelAliasIndexes.clear();
         postJoinWhereClause = null;
+        outerJoinExpressionClause = null;
         context = null;
         orderedJoinModels = orderedJoinModels2;
         limitHi = null;
@@ -370,7 +376,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableColumnTypes.clear();
         updateTableColumnNames.clear();
         updateTableModel = null;
-        updateTableName = null;
+        updateTableToken = null;
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
     }
@@ -541,9 +547,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(whereClause, that.whereClause)
                 && Objects.equals(backupWhereClause, that.backupWhereClause)
                 && Objects.equals(postJoinWhereClause, that.postJoinWhereClause)
+                && Objects.equals(outerJoinExpressionClause, that.outerJoinExpressionClause)
                 && Objects.equals(constWhereClause, that.constWhereClause)
                 && Objects.equals(nestedModel, that.nestedModel)
-                && Objects.equals(tableName, that.tableName)
+                && Objects.equals(tableNameExpr, that.tableNameExpr)
                 && Objects.equals(tableNameFunction, that.tableNameFunction)
                 && Objects.equals(alias, that.alias)
                 && Objects.equals(timestamp, that.timestamp)
@@ -558,7 +565,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(limitAdviceHi, that.limitAdviceHi)
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableName, that.updateTableName);
+                && Objects.equals(updateTableToken, that.updateTableToken);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -697,8 +704,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             return alias.token;
         }
 
-        if (tableName != null) {
-            return tableName.token;
+        if (tableNameExpr != null) {
+            return tableNameExpr.token;
         }
 
         return null;
@@ -740,12 +747,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderedJoinModels;
     }
 
+    public ExpressionNode getOuterJoinExpressionClause() {
+        return outerJoinExpressionClause;
+    }
+
     public ObjList<ExpressionNode> getParsedWhere() {
         return parsedWhere;
     }
 
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
+    }
+
+    @Override
+    public QueryModel getQueryModel() {
+        return this;
     }
 
     public ExpressionNode getSampleBy() {
@@ -780,8 +796,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableId;
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    public CharSequence getTableName() {
+        return tableNameExpr != null ? tableNameExpr.token : null;
+    }
+
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return tableNameExpr;
     }
 
     public Function getTableNameFunction() {
@@ -816,8 +837,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
     }
 
-    public String getUpdateTableName() {
-        return updateTableName;
+    public TableToken getUpdateTableToken() {
+        return updateTableToken;
     }
 
     public ExpressionNode getWhereClause() {
@@ -852,8 +873,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 withClauseModel, updateSetColumns, updateTableColumnTypes,
                 updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
                 latestByType, whereClause, backupWhereClause,
-                postJoinWhereClause, constWhereClause, nestedModel,
-                tableName, tableVersion, tableNameFunction,
+                postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
+                tableNameExpr, tableVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
                 sampleByUnit, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
@@ -863,7 +884,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableName, artificialStar
+                updateTableToken, artificialStar
         );
     }
 
@@ -1064,6 +1085,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.orderedJoinModels = that;
     }
 
+    public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
         this.postJoinWhereClause = postJoinWhereClause;
     }
@@ -1101,8 +1126,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.tableId = id;
     }
 
-    public void setTableName(ExpressionNode tableName) {
-        this.tableName = tableName;
+    public void setTableNameExpr(ExpressionNode tableNameExpr) {
+        this.tableNameExpr = tableNameExpr;
     }
 
     public void setTableNameFunction(Function function) {
@@ -1121,8 +1146,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public void setUpdateTableName(String tableName) {
-        this.updateTableName = tableName;
+    public void setUpdateTableToken(TableToken tableName) {
+        this.updateTableToken = tableName;
     }
 
     public void setWhereClause(ExpressionNode whereClause) {
@@ -1232,8 +1257,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
             sink.put(" from ");
         }
-        if (tableName != null) {
-            tableName.toSink(sink);
+        if (tableNameExpr != null) {
+            tableNameExpr.toSink(sink);
         } else {
             sink.put('(');
             nestedModel.toSink0(sink, false, showOrderBy);
@@ -1265,7 +1290,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 if (model != this) {
                     switch (model.getJoinType()) {
                         case JOIN_OUTER:
-                            sink.put(" outer join ");
+                            sink.put(" left join ");
                             break;
                         case JOIN_ASOF:
                             sink.put(" asof join ");
@@ -1291,7 +1316,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         if (model.getAlias() != null) {
                             aliasToSink(model.getAlias().token, sink);
                         } else if (model.getTableName() != null) {
-                            aliasToSink(model.getTableName().token, sink);
+                            aliasToSink(model.getTableName(), sink);
                         }
                     } else {
                         model.toSink0(sink, true, showOrderBy);
@@ -1309,6 +1334,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             sink.put(" = ");
                             jc.bNodes.getQuick(k).toSink(sink);
                         }
+                    }
+
+                    if (model.getOuterJoinExpressionClause() != null) {
+                        sink.put(" outer-join-expression ");
+                        model.getOuterJoinExpressionClause().toSink(sink);
                     }
 
                     if (model.getPostJoinWhereClause() != null) {
@@ -1332,6 +1362,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (!joinSlave && postJoinWhereClause != null) {
             sink.put(" post-join-where ");
             postJoinWhereClause.toSink(sink);
+        }
+
+        if (!joinSlave && outerJoinExpressionClause != null) {
+            sink.put(" outer-join-expressions ");
+            outerJoinExpressionClause.toSink(sink);
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {
@@ -1434,7 +1469,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     private void updateToSink(CharSink sink) {
         sink.put("update ");
-        tableName.toSink(sink);
+        tableNameExpr.toSink(sink);
         if (alias != null) {
             sink.put(" as");
             aliasToSink(alias.token, sink);

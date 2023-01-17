@@ -24,58 +24,77 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TxReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
+    private final TableSequencerAPI.RegisteredTable checkNotifyOutstandingTxnInWal;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
+    private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
+    private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
     private final TxReader txReader;
-    private final TableSequencerAPI.RegisteredTable callback = this::checkNotifyOutstandingTxnInWal;
-    private long lastProcessed = 0;
+    private long lastProcessedCount = 0;
+    private Path threadLocalPath;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
+        this.ff = engine.getConfiguration().getFilesFacade();
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
         dbRoot = engine.getConfiguration().getRoot();
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+        checkNotifyOutstandingTxnInWal = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
     }
 
     public void checkMissingWalTransactions() {
-        engine.getTableSequencerAPI().forAllWalTables(callback);
+        threadLocalPath = Path.PATH.get().of(dbRoot);
+        engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, checkNotifyOutstandingTxnInWal);
     }
 
-    public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
-        final Path rootPath = Path.PATH.get().of(dbRoot);
-        rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
-        try (TxReader txReader = this.txReader.ofRO(rootPath, PartitionBy.NONE)) {
-            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-            if (txReader.getSeqTxn() < txn && !engine.getTableSequencerAPI().isSuspended(tableName)) {
-                // table name should be immutable when in the notification message
-                final String tableNameStr = Chars.toString(tableName);
-                engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);
+    public void checkNotifyOutstandingTxnInWal(TableToken tableToken, long txn) {
+        if (
+                txn < 0 && TableUtils.exists(
+                        ff,
+                        threadLocalPath,
+                        dbRoot,
+                        tableToken.getDirName()
+                ) == TableUtils.TABLE_EXISTS
+        ) {
+            // Dropped table
+            engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
+        } else {
+            threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+            if (ff.exists(threadLocalPath)) {
+                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
+                    TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                    if (txReader2.getSeqTxn() < txn) {
+                        engine.notifyWalTxnCommitted(tableToken, txn);
+                    }
+                }
+            } else {
+                // table is dropped, notify the JOB to delete the data
+                engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);
             }
         }
     }
 
     @Override
     protected boolean runSerially() {
-        final long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
-        if (unpublishedWalTxnCount == lastProcessed) {
+        long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
+        if (unpublishedWalTxnCount == lastProcessedCount) {
             return false;
         }
         checkMissingWalTransactions();
-        lastProcessed = unpublishedWalTxnCount;
+        lastProcessedCount = unpublishedWalTxnCount;
         return true;
     }
 }

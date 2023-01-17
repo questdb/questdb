@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 import java.util.Iterator;
@@ -60,6 +61,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         return false;
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("reader_pool");
+    }
+
     private static class ReaderPoolCursor implements RecordCursor {
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
@@ -67,7 +73,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private long owner;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
         private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
-        private CharSequence tableName;
+        private TableToken tableToken;
         private long timestamp;
         private long txn;
 
@@ -110,7 +116,6 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             iterator = readerPoolEntries.entrySet().iterator();
             allocationIndex = 0;
             poolEntry = null;
-            tableName = null;
         }
 
         private boolean selectPoolEntry() {
@@ -123,7 +128,6 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                         return false;
                     }
                     Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
-                    tableName = mapEntry.getKey();
                     poolEntry = mapEntry.getValue();
                     return true;
                 } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {
@@ -156,6 +160,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                 allocationIndex++;
             } while (reader == null);
             txn = reader.getTxn();
+            tableToken = reader.getTableToken();
             return true;
         }
 
@@ -175,7 +180,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStr(int col) {
                 assert col == TABLE_COLUMN_INDEX;
-                return tableName;
+                return tableToken.getTableName();
             }
 
             @Override
