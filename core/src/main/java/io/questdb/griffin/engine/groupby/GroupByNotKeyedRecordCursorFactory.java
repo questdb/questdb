@@ -67,6 +67,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -84,9 +89,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("GroupByNotKeyed");
+        sink.type("GroupBy");
         sink.meta("vectorized").val(false);
-        sink.attr("groupByFunctions").val(groupByFunctions);
+        sink.optAttr("values", groupByFunctions, true);
         sink.child(base);
     }
 

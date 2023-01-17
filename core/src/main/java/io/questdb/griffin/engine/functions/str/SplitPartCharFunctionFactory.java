@@ -111,18 +111,23 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "split_part";
+        }
+
+        @Override
         public Function getRight() {
             return indexFunc;
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink, true);
+        public void getStr(Record rec, CharSink sink) {
+            getStr0(rec, sink, false);
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            getStr0(rec, sink, false);
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink, true);
         }
 
         @Override

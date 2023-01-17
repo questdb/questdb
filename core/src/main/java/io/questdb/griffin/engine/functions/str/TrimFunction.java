@@ -51,6 +51,18 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
+    public String getName() {
+        switch (type) {
+            case LTRIM:
+                return "ltrim";
+            case RTRIM:
+                return "rtrim";
+            default:
+                return "trim";
+        }
+    }
+
+    @Override
     public CharSequence getStr(final Record rec) {
         final CharSequence charSequence = getArg().getStr(rec);
         if (charSequence == null) {

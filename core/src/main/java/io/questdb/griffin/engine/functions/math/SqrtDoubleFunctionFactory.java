@@ -62,5 +62,10 @@ public class SqrtDoubleFunctionFactory implements FunctionFactory {
             double value = function.getDouble(rec);
             return Math.sqrt(value);
         }
+
+        @Override
+        public String getName() {
+            return "sqrt";
+        }
     }
 }

@@ -62,5 +62,10 @@ public class CeilDoubleFunctionFactory implements FunctionFactory {
             double value = function.getDouble(rec);
             return Math.ceil(value);
         }
+
+        @Override
+        public String getName() {
+            return "ceil";
+        }
     }
 }

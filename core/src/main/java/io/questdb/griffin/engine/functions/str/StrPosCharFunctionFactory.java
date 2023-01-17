@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -102,6 +103,11 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
             }
             return strpos(str, substr);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("strpos(").val(strFunc).val(",'").val(substr).val("')");
+        }
     }
 
     public static class Func extends IntFunction implements BinaryFunction {
@@ -130,6 +136,11 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return strFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "strpos";
         }
 
         @Override

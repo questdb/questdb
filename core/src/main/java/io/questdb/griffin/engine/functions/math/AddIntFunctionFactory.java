@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -83,6 +84,11 @@ public class AddIntFunctionFactory implements FunctionFactory {
             return left.isConstant() && right.isConstant()
                     || (left.isConstant() && left.getInt(null) == Numbers.INT_NaN)
                     || (right.isConstant() && right.getInt(null) == Numbers.INT_NaN);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val('+').val(right);
         }
     }
 }

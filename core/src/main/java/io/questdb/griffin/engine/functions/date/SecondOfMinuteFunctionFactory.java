@@ -71,5 +71,10 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NaN;
         }
+
+        @Override
+        public String getName() {
+            return "second";
+        }
     }
 }
