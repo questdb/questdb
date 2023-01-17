@@ -28,13 +28,15 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor {
+class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
@@ -56,6 +58,12 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
         this.deferredSymbolKeys = deferredSymbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
         this.filter = filter;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
+        sink.optAttr("filter", filter);
     }
 
     @Override

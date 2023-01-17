@@ -68,6 +68,11 @@ public class NullIfCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "nullif";
+        }
+
+        @Override
         public Function getRight() {
             return chrFunc2;
         }

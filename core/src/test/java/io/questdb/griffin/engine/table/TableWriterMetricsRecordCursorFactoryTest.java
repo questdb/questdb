@@ -98,7 +98,7 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     }
 
     @Test
-    public void testSanity() throws Exception {
+    public void testSanity() {
         // we want to make sure metrics in tests are enabled by default
         assertTrue(metrics.isEnabled());
         assertTrue(engine.getMetrics().isEnabled());

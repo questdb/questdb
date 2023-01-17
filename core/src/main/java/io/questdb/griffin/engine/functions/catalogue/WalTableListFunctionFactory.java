@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -46,6 +47,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 public class WalTableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
+    private static final String SIGNATURE = "wal_tables()";
     private static final int nameColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
@@ -53,7 +55,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "wal_tables()";
+        return SIGNATURE;
     }
 
     @Override
@@ -105,6 +107,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
+
+        @Override
         protected void _close() {
             this.rootPath = Misc.free(this.rootPath);
         }
@@ -117,6 +124,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
+                tableIndex = -1;
                 txReader.close();
             }
 

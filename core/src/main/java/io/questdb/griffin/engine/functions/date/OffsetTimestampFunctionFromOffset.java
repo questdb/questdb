@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
@@ -46,5 +47,10 @@ class OffsetTimestampFunctionFromOffset extends TimestampFunction implements Una
     @Override
     public long getTimestamp(Record rec) {
         return timestamp.getTimestamp(rec) + offset;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(timestamp).val('+').val(offset);
     }
 }

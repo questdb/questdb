@@ -90,10 +90,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            sinkA.clear();
-            getStr(rec, sinkA);
-            return sinkA;
+        public String getName() {
+            return "touch";
         }
 
         @Override
@@ -105,6 +103,13 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                     .put(indexKeyPages)
                     .put(", \"index_values_pages\": ")
                     .put(indexValuePages).put("}");
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            sinkA.clear();
+            getStr(rec, sinkA);
+            return sinkA;
         }
 
         @Override

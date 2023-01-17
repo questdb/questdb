@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
@@ -69,6 +68,11 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public String getName() {
+        return "min";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -82,10 +86,5 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinLong(").put(arg).put(')');
     }
 }

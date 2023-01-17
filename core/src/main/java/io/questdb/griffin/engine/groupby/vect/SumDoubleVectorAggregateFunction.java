@@ -32,7 +32,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
@@ -110,6 +109,11 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public String getName() {
+        return "sum";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -135,11 +139,6 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.DOUBLE);
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("SumDoubleVector(").put(columnIndex).put(')');
     }
 
     @Override

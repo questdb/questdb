@@ -93,6 +93,26 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    default String getBaseColumnName(int idx) {
+        return getBaseFactory().getMetadata().getColumnName(idx);
+    }
+
+    /**
+     * Method is necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
+     *
+     * @param idx idx of column
+     * @return name of base column (no remapping)
+     */
+    default String getBaseColumnNameNoRemap(int idx) {
+        return getBaseColumnName(idx);
+    }
+
+    default RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+    }
+
+    /* used for describing query execution plan */
+
     /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.

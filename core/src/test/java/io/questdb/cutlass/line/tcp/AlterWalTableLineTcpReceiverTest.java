@@ -177,13 +177,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         runInContext((server) -> {
             long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
-            TableToken tt;
             try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
                 tm.col("room", ColumnType.SYMBOL);
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
                 tm.wal();
-                tt = CairoTestUtils.create(engine, tm);
+                TableToken ignored = CairoTestUtils.create(engine, tm);
             }
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
@@ -739,8 +738,8 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-            AlterOperation alterOperation = cc.getAlterOperation();
-            assert alterOperation != null;
+            AlterOperation alterOp = cc.getAlterOperation();
+            assert alterOp != null;
 
             return cc.execute(scSequence);
         }

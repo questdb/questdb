@@ -62,5 +62,10 @@ public class CeilFloatFunctionFactory implements FunctionFactory {
             float value = function.getFloat(rec);
             return (float) Math.ceil(value);
         }
+
+        @Override
+        public String getName() {
+            return "ceil";
+        }
     }
 }

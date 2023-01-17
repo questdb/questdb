@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
@@ -37,9 +38,11 @@ import io.questdb.std.Rnd;
 
 public class RndDoubleFunctionFactory implements FunctionFactory {
 
+    static final String SIGNATURE = "rnd_double()";
+
     @Override
     public String getSignature() {
-        return "rnd_double()";
+        return SIGNATURE;
     }
 
     @Override
@@ -65,5 +68,11 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
     }
+
 }

@@ -40,11 +40,12 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    protected final DataFrameRecordCursor cursor;
     protected final int pageFrameMaxRows;
     protected final int pageFrameMinRows;
+    protected final RowCursorFactory rowCursorFactory;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private final DataFrameRecordCursor cursor;
     private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
@@ -66,7 +67,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
-
+        this.rowCursorFactory = rowCursorFactory;
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
@@ -81,6 +82,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     @Override
     public boolean followedOrderByAdvice() {
         return followsOrderByAdvice;
+    }
+
+    @Override
+    public String getBaseColumnName(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(idx));
+    }
+
+    @Override
+    public String getBaseColumnNameNoRemap(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
     }
 
     @Override
@@ -116,11 +127,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("DataFrameRecordCursorFactory");
-        if (filter != null) {
-            sink.attr("filter").val(filter);
-        }
-        sink.child(dataFrameCursorFactory);
+        sink.type("DataFrame");
+        toPlanInner(sink);
     }
 
     @Override
@@ -178,5 +186,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             );
         }
         return fwdPageFrameCursor.of(dataFrameCursor);
+    }
+
+    protected void toPlanInner(PlanSink sink) {
+        sink.child(rowCursorFactory);
+        sink.child(dataFrameCursorFactory);
     }
 }

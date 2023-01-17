@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.model.ExecutionModel;
@@ -2610,6 +2611,45 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
                 modelOf("t2").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testExplainWithBadFormat() throws Exception {
+        assertSyntaxError("explain (format xyz) select * from x", 16, "unexpected explain format found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithBadOption() throws Exception {
+        assertSyntaxError("explain (xyz) select * from x", 9, "unexpected explain option found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithDefaultFormat() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain select * from x", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithJsonFormat() throws Exception {
+        assertModel("EXPLAIN (FORMAT JSON) ",
+                "explain (format json) select * from x", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithMissingFormat() throws Exception {
+        assertSyntaxError("explain (format) select * from x", 15, "unexpected explain format found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithTextFormat() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain (format text ) select * from x", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
     }
 
     @Test
@@ -7155,7 +7195,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
         assertMemoryLeak(() -> {
             try (
-                    CairoEngine engine = new CairoEngine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration, Metrics.disabled());
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};

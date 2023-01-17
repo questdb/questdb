@@ -61,5 +61,10 @@ public class LengthBinFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             return arg.getBinLen(rec);
         }
+
+        @Override
+        public String getName() {
+            return "length";
+        }
     }
 }

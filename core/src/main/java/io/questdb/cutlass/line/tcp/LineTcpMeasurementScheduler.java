@@ -26,8 +26,11 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
@@ -48,11 +51,16 @@ import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReadWriteLock;
 
+import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
+import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
+import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
+
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
+    private final CairoConfiguration cairoConfiguration;
     private final LineTcpReceiverConfiguration configuration;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
@@ -65,6 +73,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
     private final CairoSecurityContext securityContext;
     private final StringSink[] tableNameSinks;
+    private final LowerCaseCharSequenceObjHashMap<TableToken> tableNamesUtf16;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
@@ -80,7 +89,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     ) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
-        CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        this.cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
         MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
         this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
@@ -99,6 +108,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         // in worker threads.
         tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
+        tableNamesUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
         autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
@@ -124,9 +134,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             defaultColumnTypes,
                             lineConfiguration.isStringToCharCastAllowed(),
                             lineConfiguration.getMaxFileNameLength(),
-                            lineConfiguration.getAutoCreateNewColumns(),
-                            engine.getConfiguration().getDefaultSymbolCapacity(),
-                            engine.getConfiguration().getDefaultSymbolCacheFlag()
+                            lineConfiguration.getAutoCreateNewColumns()
                     ),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
@@ -162,6 +170,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         try {
             closeLocals(tableUpdateDetailsUtf16);
             closeLocals(idleTableUpdateDetailsUtf16);
+            tableNamesUtf16.clear();
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
@@ -175,6 +184,36 @@ class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
+        for (int i = 0, n = netIoJobs.length; i < n; i++) {
+            netIoJobs[i].close();
+        }
+    }
+
+    public long commitWalTables(DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
+        long minTableNextCommitTime = Long.MAX_VALUE;
+        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
+            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            // WAL writer
+            if (tud.getWriterThreadId() == -1) {
+                final MillisecondClock millisecondClock = tud.getMillisecondClock();
+                try {
+                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
+                    // get current time again, commit is not instant and take quite some time.
+                    wallClockMillis = millisecondClock.getTicks();
+                    if (tableNextCommitTime < minTableNextCommitTime) {
+                        // taking the earliest commit time
+                        minTableNextCommitTime = tableNextCommitTime;
+                    }
+                } catch (Throwable ex) {
+                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                    engine.getMetrics().health().incrementUnhandledErrors();
+                }
+            }
+        }
+        // if no tables, just use the default commit interval
+        long commitIntervalDefault = configuration.getCommitIntervalDefault();
+        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
     }
 
     public boolean doMaintenance(
@@ -184,32 +223,42 @@ class LineTcpMeasurementScheduler implements Closeable {
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
-            final TableUpdateDetails tab = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            if (millis - tab.getLastMeasurementMillis() >= writerIdleTimeout) {
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (millis - tud.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
                 try {
-                    if (tab.getNetworkIOOwnerCount() == 1) {
-                        final int writerWorkerId = tab.getWriterThreadId();
+                    if (tud.getNetworkIOOwnerCount() == 1) {
+                        final int writerWorkerId = tud.getWriterThreadId();
                         final long seq = getNextPublisherEventSequence(writerWorkerId);
                         if (seq > -1) {
                             LineTcpMeasurementEvent event = queue[writerWorkerId].get(seq);
-                            event.createWriterReleaseEvent(tab, true);
+                            event.createWriterReleaseEvent(tud, true);
                             tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                            final CharSequence tableNameUtf16 = tab.getTableNameUtf16();
+                            final CharSequence tableNameUtf16 = tud.getTableNameUtf16();
                             tableUpdateDetailsUtf16.remove(tableNameUtf16);
-                            idleTableUpdateDetailsUtf16.put(tableNameUtf16, tab);
-                            tab.removeReference(readerWorkerId);
+                            idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);
+                            tud.removeReference(readerWorkerId);
                             pubSeq[writerWorkerId].done(seq);
                             if (listener != null) {
                                 // table going idle
-                                listener.onEvent(tab.getTableToken(), 1);
+                                listener.onEvent(tud.getTableToken(), 1);
                             }
                             LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
                         }
                         return true;
                     } else {
                         tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                        tab.removeReference(readerWorkerId);
+                        tud.removeReference(readerWorkerId);
+
+                        // WAL writer
+                        if (tud.getWriterThreadId() == -1) {
+                            if (listener != null) {
+                                // table going idle
+                                listener.onEvent(tud.getTableToken(), 1);
+                            }
+                            tud.releaseWriter(true);
+                            tud.close();
+                        }
                     }
                     return sz > 1;
                 } finally {
@@ -223,17 +272,17 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void processWriterReleaseEvent(LineTcpMeasurementEvent event, int workerId) {
         tableUpdateDetailsLock.readLock().lock();
         try {
-            final TableUpdateDetails tab = event.getTableUpdateDetails();
-            if (tab.getWriterThreadId() != workerId) {
+            final TableUpdateDetails tub = event.getTableUpdateDetails();
+            if (tub.getWriterThreadId() != workerId) {
                 return;
             }
-            if (!event.getTableUpdateDetails().isWriterInError() && tableUpdateDetailsUtf16.keyIndex(tab.getTableNameUtf16()) < 0) {
+            if (!event.getTableUpdateDetails().isWriterInError() && tableUpdateDetailsUtf16.keyIndex(tub.getTableNameUtf16()) < 0) {
                 // Table must have been re-assigned to an IO thread
                 return;
             }
             LOG.info()
-                    .$("releasing writer, its been idle since ").$ts(tab.getLastMeasurementMillis() * 1_000)
-                    .$("[tableName=").$(tab.getTableNameUtf16())
+                    .$("releasing writer, its been idle since ").$ts(tub.getLastMeasurementMillis() * 1_000)
+                    .$("[tableName=").$(tub.getTableNameUtf16())
                     .I$();
 
             event.releaseWriter();
@@ -242,8 +291,317 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+
     private static long getEventSlotSize(int maxMeasurementSize) {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
+    }
+
+    private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+        final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
+        LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
+        // pass 1: create all columns that do not exist
+        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
+        ld.resetStateIfNecessary();
+        ld.clearColumnTypes();
+
+        WalWriter ww = (WalWriter) tud.getWriter();
+        TableRecordMetadata metadata = ww.getMetadata();
+
+        if (ld.getStructureVersion() > ww.getStructureVersion()) {
+            ww.commit();
+        }
+
+        long timestamp = parser.getTimestamp();
+        if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
+            timestamp = timestampAdapter.getMicros(timestamp);
+        } else {
+            timestamp = configuration.getMicrosecondClock().getTicks();
+        }
+
+        final int entCount = parser.getEntityCount();
+        for (int i = 0; i < entCount; i++) {
+            final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
+            int columnIndex = ld.getColumnIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
+            int columnType = ColumnType.UNDEFINED;
+            if (columnIndex == COLUMN_NOT_FOUND) {
+                final String columnNameUtf16 = ld.getColName();
+                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
+                    if (metadata.getColumnIndexQuiet(columnNameUtf16) < 0) {
+                        ww.commit();
+                        try {
+                            ww.addColumn(columnNameUtf16, ld.getColumnType(columnNameUtf16, ent.getType()));
+                        } catch (CairoException e) {
+                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                            if (columnIndex < 0) {
+                                // the column is still not there, something must be wrong
+                                throw e;
+                            }
+                            // all good, someone added the column concurrently
+                        }
+                    }
+                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                    columnType = metadata.getColumnType(columnIndex);
+                } else if (!autoCreateNewColumns) {
+                    throw newColumnsNotAllowed(tud, columnNameUtf16);
+                } else {
+                    throw invalidColNameError(tud, columnNameUtf16);
+                }
+            } else if (columnIndex > -1) {
+                if (columnIndex == tud.getTimestampIndex()) {
+                    timestamp = timestampAdapter.getMicros(ent.getLongValue());
+                    columnIndex = DUPLICATED_COLUMN;
+                }
+                columnType = columnIndex < 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);
+            }
+            ld.addColumnType(columnIndex, columnType);
+        }
+
+        TableWriter.Row r = ww.newRow(timestamp);
+        try {
+            for (int i = 0; i < entCount; i++) {
+                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
+
+                short entType = ent.getType();
+                int colTypeAndIndex = ld.getColumnType(i);
+                int colType = Numbers.decodeLowShort(colTypeAndIndex);
+                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
+
+                if (columnIndex < 0) {
+                    continue;
+                }
+
+                switch (entType) {
+                    case LineTcpParser.ENTITY_TYPE_TAG: {
+                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
+                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                        } else {
+                            throw castError("tag", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_INTEGER: {
+                        switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.LONG:
+                                r.putLong(columnIndex, ent.getLongValue());
+                                break;
+
+                            case ColumnType.INT: {
+                                final long entityValue = ent.getLongValue();
+                                if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
+                                    r.putInt(columnIndex, (int) entityValue);
+                                } else if (entityValue == Numbers.LONG_NaN) {
+                                    r.putInt(columnIndex, Numbers.INT_NaN);
+                                } else {
+                                    throw boundsError(entityValue, i, ColumnType.INT);
+                                }
+                                break;
+                            }
+                            case ColumnType.SHORT: {
+                                final long entityValue = ent.getLongValue();
+                                if (entityValue >= Short.MIN_VALUE && entityValue <= Short.MAX_VALUE) {
+                                    r.putShort(columnIndex, (short) entityValue);
+                                } else if (entityValue == Numbers.LONG_NaN) {
+                                    r.putShort(columnIndex, (short) 0);
+                                } else {
+                                    throw boundsError(entityValue, i, ColumnType.SHORT);
+                                }
+                                break;
+                            }
+                            case ColumnType.BYTE: {
+                                final long entityValue = ent.getLongValue();
+                                if (entityValue >= Byte.MIN_VALUE && entityValue <= Byte.MAX_VALUE) {
+                                    r.putByte(columnIndex, (byte) entityValue);
+                                } else if (entityValue == Numbers.LONG_NaN) {
+                                    r.putByte(columnIndex, (byte) 0);
+                                } else {
+                                    throw boundsError(entityValue, i, ColumnType.BYTE);
+                                }
+                                break;
+                            }
+                            case ColumnType.TIMESTAMP:
+                                r.putTimestamp(columnIndex, ent.getLongValue());
+                                break;
+
+                            case ColumnType.DATE:
+                                r.putDate(columnIndex, ent.getLongValue());
+                                break;
+
+                            case ColumnType.DOUBLE:
+                                r.putDouble(columnIndex, ent.getLongValue());
+                                break;
+
+                            case ColumnType.FLOAT:
+                                r.putFloat(columnIndex, ent.getLongValue());
+                                break;
+
+                            case ColumnType.SYMBOL:
+                                r.putSym(columnIndex, ent.getValue());
+                                break;
+
+                            default:
+                                throw castError("integer", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_FLOAT: {
+                        switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.DOUBLE:
+                                r.putDouble(columnIndex, ent.getFloatValue());
+                                break;
+
+                            case ColumnType.FLOAT:
+                                r.putFloat(columnIndex, (float) ent.getFloatValue());
+                                break;
+
+                            case ColumnType.SYMBOL:
+                                r.putSym(columnIndex, ent.getValue());
+                                break;
+
+                            default:
+                                throw castError("float", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_STRING: {
+                        final int geoHashBits = ColumnType.getGeoHashBits(colType);
+                        final DirectByteCharSequence entityValue = ent.getValue();
+                        if (geoHashBits == 0) { // not geohash
+                            switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.STRING:
+                                    r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    break;
+
+                                case ColumnType.CHAR:
+                                    if (entityValue.length() == 1 && entityValue.byteAt(0) > -1) {
+                                        r.putChar(columnIndex, entityValue.charAt(0));
+                                    } else if (stringToCharCastAllowed) {
+                                        int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());
+                                        if (Numbers.decodeLowShort(encodedResult) > 0) {
+                                            r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));
+                                        } else {
+                                            throw castError("string", i, colType, ent.getName());
+                                        }
+                                    } else {
+                                        throw castError("string", i, colType, ent.getName());
+                                    }
+                                    break;
+
+                                case ColumnType.SYMBOL:
+                                    r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
+                                    break;
+
+                                default:
+                                    throw castError("string", i, colType, ent.getName());
+                            }
+                        } else {
+                            long geoHash;
+                            try {
+                                DirectByteCharSequence value = ent.getValue();
+                                geoHash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), geoHashBits);
+                            } catch (NumericException e) {
+                                geoHash = GeoHashes.NULL;
+                            }
+                            r.putGeoHash(columnIndex, geoHash);
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_LONG256: {
+                        switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.LONG256:
+                                r.putLong256(columnIndex, ent.getValue());
+                                break;
+
+                            case ColumnType.SYMBOL:
+                                r.putSym(columnIndex, ent.getValue());
+                                break;
+
+                            default:
+                                throw castError("long256", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
+                        switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.BOOLEAN:
+                                r.putBool(columnIndex, ent.getBooleanValue());
+                                break;
+
+                            case ColumnType.BYTE:
+                                r.putByte(columnIndex, (byte) (ent.getBooleanValue() ? 1 : 0));
+                                break;
+
+                            case ColumnType.SHORT:
+                                r.putShort(columnIndex, (short) (ent.getBooleanValue() ? 1 : 0));
+                                break;
+
+                            case ColumnType.INT:
+                                r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);
+                                break;
+
+                            case ColumnType.LONG:
+                                r.putLong(columnIndex, ent.getBooleanValue() ? 1 : 0);
+                                break;
+
+                            case ColumnType.FLOAT:
+                                r.putFloat(columnIndex, ent.getBooleanValue() ? 1 : 0);
+                                break;
+
+                            case ColumnType.DOUBLE:
+                                r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
+                                break;
+
+                            case ColumnType.SYMBOL:
+                                r.putSym(columnIndex, ent.getValue());
+                                break;
+
+                            default:
+                                throw castError("boolean", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
+                        switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.TIMESTAMP:
+                                r.putTimestamp(columnIndex, ent.getLongValue());
+                                break;
+
+                            case ColumnType.DATE:
+                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);
+                                break;
+
+                            case ColumnType.SYMBOL:
+                                r.putSym(columnIndex, ent.getValue());
+                                break;
+
+                            default:
+                                throw castError("timestamp", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    // parser would reject this condition based on config
+                    case LineTcpParser.ENTITY_TYPE_SYMBOL: {
+                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
+                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());
+                        } else {
+                            throw castError("symbol", i, colType, ent.getName());
+                        }
+                        break;
+                    }
+                    default:
+                        // unsupported types are ignored
+                        break;
+                }
+            }
+            r.append();
+            tud.commitIfMaxUncommittedRowsCountReached();
+        } catch (CommitFailedException commitFailedException) {
+            throw commitFailedException;
+        } catch (Throwable th) {
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
+            if (r != null) {
+                r.cancel();
+            }
+        }
     }
 
     private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {
@@ -254,6 +612,24 @@ class LineTcpMeasurementScheduler implements Closeable {
         tudUtf16.clear();
     }
 
+    private boolean dispatchEvent(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) {
+        final int writerThreadId = tud.getWriterThreadId();
+        long seq = getNextPublisherEventSequence(writerThreadId);
+        if (seq > -1) {
+            try {
+                if (tud.isWriterInError()) {
+                    throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
+                }
+                queue[writerThreadId].get(seq).createMeasurementEvent(tud, parser, netIoJob.getWorkerId());
+            } finally {
+                pubSeq[writerThreadId].done(seq);
+            }
+            tud.incrementEventsProcessedSinceReshuffle();
+            return false;
+        }
+        return true;
+    }
+
     private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
@@ -262,10 +638,13 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            TableUpdateDetails tab;
+            TableUpdateDetails tud;
+            // check if the global cache has the table
             final int tudKeyIndex = tableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
             if (tudKeyIndex < 0) {
-                tab = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
+                // it does, which means that table is non-WAL
+                // we should not have "shared" WAL tables
+                tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
                 TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
                 int status = engine.getStatus(securityContext, path, tableToken);
@@ -288,26 +667,52 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
+                // by the time we get here, definitely exists on disk
+                // check the global idle cache - TUD can be there
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
                 if (idleTudKeyIndex < 0) {
-                    tab = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
-                    LOG.info().$("idle table going active [tableName=").$(tab.getTableNameUtf16()).I$();
-                    if (tab.getWriter() == null) {
-                        tab.closeNoLock();
+                    // TUD is found in global idle cache - this meant it is non-WAL
+                    tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
+                    LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
+                    if (tud.getWriter() == null) {
+                        tud.closeNoLock();
                         // Use actual table name from the "details" to avoid case mismatches in the
                         // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
                         // to identify the cause
-                        tab = unsafeAssignTableToWriterThread(tudKeyIndex, tab.getTableNameUtf16());
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16());
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
-                        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tab.getTableNameUtf16(), tab);
+                        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
                     }
                 } else {
                     TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
-                    tab = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
+                    // check if table on disk is WAL
+                    path.of(engine.getConfiguration().getRoot());
+                    final int keyIndex = tableNamesUtf16.keyIndex(tableNameUtf16);
+                    tableToken = keyIndex < 0 ? tableNamesUtf16.valueAt(keyIndex) : tableToken;
+                    final CharSequence tableName = keyIndex < 0 ? tableToken.getTableName() : tableNameUtf16;
+                    if (engine.isWalTable(tableToken)) {
+                        // create WAL-oriented TUD and NOT add it to the global cache
+                        tud = new TableUpdateDetails(
+                                configuration,
+                                engine,
+                                engine.getWalWriter(
+                                        securityContext,
+                                        tableToken
+                                ),
+                                -1,
+                                netIoJobs,
+                                defaultColumnTypes
+                        );
+                        if (keyIndex > -1) {
+                            tableNamesUtf16.putAt(keyIndex, tableName.toString(), tableToken);
+                        }
+                    } else {
+                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
+                    }
                 }
             }
 
@@ -317,8 +722,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             tableNameUtf16.put(tableNameUtf8);
 
             // at this point this is not UTF16 string
-            netIoJob.addTableUpdateDetails(tableNameUtf16.toString(), tab);
-            return tab;
+            netIoJob.addTableUpdateDetails(tableNameUtf16.toString(), tud);
+            return tud;
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
@@ -341,7 +746,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
         TableToken tableToken = engine.getTableToken(tableNameUtf16);
-        final TableUpdateDetails tableUpdateDetails = new TableUpdateDetails(
+        final TableUpdateDetails tud = new TableUpdateDetails(
                 configuration,
                 engine,
                 // get writer here to avoid constructing
@@ -352,9 +757,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                 netIoJobs,
                 defaultColumnTypes
         );
-        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tableUpdateDetails.getTableNameUtf16(), tableUpdateDetails);
+        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
         LOG.info().$("assigned ").$(tableToken).$(" to thread ").$(threadId).$();
-        return tableUpdateDetails;
+        return tud;
     }
 
     private void unsafeCalcThreadLoad() {
@@ -385,15 +790,19 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
-        TableUpdateDetails tab;
+        TableUpdateDetails tud;
         try {
-            tab = netIoJob.getLocalTableDetails(parser.getMeasurementName());
-            if (tab == null) {
-                tab = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
+            tud = netIoJob.getLocalTableDetails(parser.getMeasurementName());
+            if (tud == null) {
+                tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(parser.getMeasurementName()).$(", ex=`").$(ex.getFlyweightMessage()).$("`]").$();
+            LOG.info().$("could not get table writer [tableName=").$(parser.getMeasurementName())
+                    .$(", ex=`")
+                    .$(ex.getFlyweightMessage())
+                    .$("`]")
+                    .$();
             return true;
         } catch (CairoException ex) {
             // Table could not be created
@@ -404,25 +813,21 @@ class LineTcpMeasurementScheduler implements Closeable {
             throw ex;
         }
 
-        final int writerThreadId = tab.getWriterThreadId();
-        long seq = getNextPublisherEventSequence(writerThreadId);
-        if (seq > -1) {
+        if (tud.getWriterThreadId() == -1) {
+            // this is a WAL TUD
             try {
-                if (tab.isWriterInError()) {
-                    throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
-                }
-                queue[writerThreadId].get(seq).createMeasurementEvent(
-                        tab,
-                        parser,
-                        netIoJob.getWorkerId()
-                );
-            } finally {
-                pubSeq[writerThreadId].done(seq);
+                appendToWal(netIoJob, parser, tud);
+            } catch (Throwable ex) {
+                tud.setWriterInError();
+                LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
+                        .$(",ex=")
+                        .$(ex)
+                        .I$();
+                engine.getMetrics().health().incrementUnhandledErrors();
             }
-            tab.incrementEventsProcessedSinceReshuffle();
             return false;
         }
-        return true;
+        return dispatchEvent(netIoJob, parser, tud);
     }
 
     @TestOnly

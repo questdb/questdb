@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -41,6 +42,11 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     public CountRecordCursorFactory(RecordMetadata metadata, RecordCursorFactory base) {
         super(metadata);
         this.base = base;
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -63,6 +69,12 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Count");
+        sink.child(base);
     }
 
     @Override

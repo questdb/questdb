@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -43,6 +44,8 @@ import java.lang.management.ThreadMXBean;
 public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-thread-stacks");
+
+    private static final String SIGNATURE = "dump_thread_stacks()";
 
     public static void dumpThreadStacks() {
         final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
@@ -69,7 +72,7 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "dump_thread_stacks()";
+        return SIGNATURE;
     }
 
     @Override
@@ -92,6 +95,11 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }
