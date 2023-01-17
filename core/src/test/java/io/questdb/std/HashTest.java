@@ -27,18 +27,15 @@ package io.questdb.std;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
+import java.io.*;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Arrays;
+import java.util.zip.ZipFile;
 
 public class HashTest {
 
     @Test
-    public void testHashMem32EnglishWordsCorpus() throws URISyntaxException, IOException {
+    public void testHashMem32EnglishWordsCorpus() throws IOException, URISyntaxException {
         testHashMemEnglishWordsCorpus(Hash::hashMem32);
     }
 
@@ -48,7 +45,7 @@ public class HashTest {
     }
 
     @Test
-    public void testHashMem64EnglishWordsCorpus() throws URISyntaxException, IOException {
+    public void testHashMem64EnglishWordsCorpus() throws IOException, URISyntaxException {
         testHashMemEnglishWordsCorpus(Hash::hashMem64);
     }
 
@@ -57,22 +54,25 @@ public class HashTest {
         testHashMemRandomCorpus(Hash::hashMem64);
     }
 
-    private void testHashMemEnglishWordsCorpus(HashFunction hashFunction) throws URISyntaxException, IOException {
+    private void testHashMemEnglishWordsCorpus(HashFunction hashFunction) throws IOException, URISyntaxException {
         final int maxLen = 128;
         LongHashSet hashes = new LongHashSet(500000);
 
-        Path p = Paths.get(HashTest.class.getResource("/hash/words.txt").toURI());
+        File file = new File(HashTest.class.getResource("/hash/words.zip").toURI());
         long address = Unsafe.malloc(maxLen, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Files.lines(p)
-                    .flatMap(line -> Arrays.stream(line.split(",")))
-                    .forEach(str -> {
-                        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-                        for (int i = 0; i < bytes.length; i++) {
-                            Unsafe.getUnsafe().putByte(address + i, bytes[i]);
-                        }
-                        hashes.add(hashFunction.hash(address, bytes.length));
-                    });
+        try (
+                ZipFile zipFile = new ZipFile(file);
+                InputStream input = zipFile.getInputStream(zipFile.entries().nextElement());
+                BufferedReader br = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+        ) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
+                for (int i = 0; i < bytes.length; i++) {
+                    Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+                }
+                hashes.add(hashFunction.hash(address, bytes.length));
+            }
             // 466189 is the number of unique values of String#hashCode() on the same corpus.
             Assert.assertTrue("hash function distribution on English words corpus dropped", hashes.size() >= 466189);
         } finally {
