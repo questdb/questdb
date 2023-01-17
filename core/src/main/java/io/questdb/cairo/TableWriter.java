@@ -6531,6 +6531,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
+        public void putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+            // no-op
+        }
+
+        @Override
         public void putSym(int columnIndex, CharSequence value) {
             // no-op
         }
@@ -6542,6 +6547,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSymIndex(int columnIndex, int key) {
+            // no-op
+        }
+
+        @Override
+        public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
             // no-op
         }
 
