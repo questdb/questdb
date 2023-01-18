@@ -24,8 +24,10 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
@@ -84,6 +86,12 @@ public interface FilesFacade {
 
     boolean isCrossDeviceCopyError(int errno);
 
+    boolean isDirOrSoftLinkDir(Path path);
+
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
+
+    boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
+
     boolean isRestrictedFileSystem();
 
     boolean isSoftLink(LPSZ softLink);
@@ -140,7 +148,13 @@ public interface FilesFacade {
 
     boolean truncate(int fd, long size);
 
+    int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink);
+
     int unlink(LPSZ softLink);
+
+    int unlinkOrRemove(Path path, Log LOG);
+
+    int unlinkOrRemove(Path path, int checkedType, Log LOG);
 
     void walk(Path src, FindVisitor func);
 

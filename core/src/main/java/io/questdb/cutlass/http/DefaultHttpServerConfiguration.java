@@ -113,7 +113,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration, IODispatcherConfiguration ioDispatcherConfiguration) {
         String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
             // with OS file open methods.
             defaultFilePath = defaultFilePath.substring(1);
