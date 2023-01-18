@@ -89,6 +89,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
+    protected boolean autoCreateNewColumns = true;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -164,6 +165,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean getAutoCreateNewColumns() {
+            return autoCreateNewColumns;
         }
     };
 

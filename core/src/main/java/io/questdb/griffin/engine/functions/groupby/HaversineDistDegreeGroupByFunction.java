@@ -97,6 +97,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public String getName() {
+        return "haversine_dist_deg";
+    }
+
+    @Override
     public Function getRight() {
         return this.timestamp;
     }

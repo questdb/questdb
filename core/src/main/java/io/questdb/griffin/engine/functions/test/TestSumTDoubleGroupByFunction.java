@@ -72,6 +72,11 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
+    public String getName() {
+        return "sum_t";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);

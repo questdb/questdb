@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
@@ -89,8 +90,15 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_shuffle(").val(start).val(',').val(end).val(')');
+        }
+
+        @Override
         public void toTop() {
             rnd.reset();
         }
+
+
     }
 }

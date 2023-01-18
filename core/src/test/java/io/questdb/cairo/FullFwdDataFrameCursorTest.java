@@ -767,16 +767,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceIndexedWithUnindexedByWeek() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
-    }
-
-    @Test
-    public void testReplaceIndexedWithUnindexedByWeekR() throws Exception {
-        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
-    }
-
-    @Test
     public void testReplaceIndexedWithUnindexedByMonth() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
     }
@@ -784,6 +774,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testReplaceIndexedWithUnindexedByMonthR() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByWeek() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByWeekR() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.WEEK, 1000000 * 60 * 5 * 7L, 2, true);
     }
 
     @Test
@@ -1278,7 +1278,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 public int openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name, opts);
+                        this.fd = super.openRW(name, opts);
+                        return this.fd;
                     }
                     return super.openRW(name, opts);
                 }
@@ -1312,15 +1313,15 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
             try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
-                // first batch without problems
                 try {
-                    for (int i = 0; i < (long) N; i++) {
-                        TableWriter.Row r = writer.newRow(timestamp += increment);
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow(timestamp);
                         r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
                         r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
                         r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
                         r.putDouble(3, rnd.nextDouble());
                         r.append();
+                        timestamp += increment;
                     }
                     writer.commit();
                     Assert.fail();
@@ -2611,12 +2612,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
                 // first batch without problems
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(timestamp += increment);
+                    TableWriter.Row r = writer.newRow(timestamp);
                     r.putSym(0, symA[rnd.nextPositiveInt() % S]);
                     r.putSym(1, symB[rnd.nextPositiveInt() % S]);
                     r.putSym(2, symC[rnd.nextPositiveInt() % S]);
                     r.putDouble(3, rnd.nextDouble());
                     r.append();
+                    timestamp += increment;
                 }
                 writer.commit();
             }

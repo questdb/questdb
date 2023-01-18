@@ -44,8 +44,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
-    private AlterOperation alterOperation;
-    private InsertOperation insertOperation;
+    private AlterOperation alterOp;
+    private InsertOperation insertOp;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
@@ -80,13 +80,13 @@ public class CompiledQueryImpl implements CompiledQuery {
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
         switch (type) {
             case INSERT:
-                return insertOperation.execute(sqlExecutionContext);
+                return insertOp.execute(sqlExecutionContext);
             case UPDATE:
                 updateOperation.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
-                alterOperation.withSqlStatement(sqlStatement);
-                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
+                alterOp.withSqlStatement(sqlStatement);
+                return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             default:
                 return doneFuture.of(0);
         }
@@ -99,12 +99,12 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @Override
     public AlterOperation getAlterOperation() {
-        return alterOperation;
+        return alterOp;
     }
 
     @Override
     public InsertOperation getInsertOperation() {
-        return insertOperation;
+        return insertOp;
     }
 
     @Override
@@ -184,7 +184,7 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofAlter(AlterOperation statement) {
         of(ALTER);
-        alterOperation = statement;
+        alterOp = statement;
         return this;
     }
 
@@ -231,8 +231,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(DROP);
     }
 
+    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
+        return of(EXPLAIN, recordCursorFactory);
+    }
+
     CompiledQuery ofInsert(InsertOperation insertOperation) {
-        this.insertOperation = insertOperation;
+        this.insertOp = insertOperation;
         return of(INSERT);
     }
 

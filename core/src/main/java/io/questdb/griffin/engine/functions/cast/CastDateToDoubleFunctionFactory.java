@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -51,7 +49,7 @@ public class CastDateToDoubleFunctionFactory implements FunctionFactory {
         return new CastDateToDoubleFunction(args.getQuick(0));
     }
 
-    public static class CastDateToDoubleFunction extends DoubleFunction implements UnaryFunction {
+    public static class CastDateToDoubleFunction extends AbstractCastToDoubleFunction {
         private final Function arg;
 
         public CastDateToDoubleFunction(Function arg) {

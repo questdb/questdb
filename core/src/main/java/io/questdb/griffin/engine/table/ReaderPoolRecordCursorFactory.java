@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 import java.util.Iterator;
@@ -58,6 +59,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("reader_pool");
     }
 
     private static class ReaderPoolCursor implements RecordCursor {

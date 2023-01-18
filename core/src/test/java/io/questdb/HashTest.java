@@ -24,7 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.map.FastMap;
+import io.questdb.cairo.map.CompactMap;
 import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,11 +33,11 @@ public class HashTest {
 
     @Test
     public void testStringHash() {
-        FastMap.HashFunction hashFunction = Hash::hashMem;
+        CompactMap.HashFunction hashFunction = Hash::hashMem;
         testHash(hashFunction);
     }
 
-    private void testHash(FastMap.HashFunction hashFunction) {
+    private void testHash(CompactMap.HashFunction hashFunction) {
         Rnd rnd = new Rnd();
         LongHashSet hashes = new LongHashSet(100000);
         final int LEN = 64;

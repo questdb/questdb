@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
@@ -45,7 +46,6 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
         byte lo = (byte) args.getQuick(0).getInt(null);
         byte hi = (byte) args.getQuick(1).getInt(null);
 
@@ -83,6 +83,11 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_byte(").val(lo).val(',').val(range).val(')');
         }
     }
 }

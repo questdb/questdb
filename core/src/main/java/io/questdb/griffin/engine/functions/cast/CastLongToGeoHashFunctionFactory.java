@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.IntList;
@@ -84,6 +85,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? (byte) value : GeoHashes.BYTE_NULL;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value).val("::geobyte");
+        }
     }
 
     private static class CastGeoIntFunc extends GeoIntFunction implements UnaryFunction {
@@ -105,6 +111,10 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             return value != Numbers.LONG_NaN ? (int) value : GeoHashes.INT_NULL;
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value).val("::geoint");
+        }
     }
 
     private static class CastGeoLongFunc extends GeoLongFunction implements UnaryFunction {
@@ -125,6 +135,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? value : GeoHashes.NULL;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value).val("::geoshort");
+        }
     }
 
     private static class CastGeoShortFunc extends GeoShortFunction implements UnaryFunction {
@@ -144,6 +159,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         public short getGeoShort(Record rec) {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? (short) value : GeoHashes.SHORT_NULL;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value).val("::geolong");
         }
     }
 }

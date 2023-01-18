@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -53,13 +51,12 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
         return new CastLongToStrFunction(args.getQuick(0));
     }
 
-    public static class CastLongToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastLongToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastLongToStrFunction(Function arg) {
-            this.arg = arg;
+            super(arg);
         }
 
         @Override

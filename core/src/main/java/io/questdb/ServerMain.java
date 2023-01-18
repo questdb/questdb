@@ -119,7 +119,7 @@ public class ServerMain implements Closeable {
                             sharedPool.freeOnExit(walPurgeJob);
 
                             if (!config.getWalApplyPoolConfiguration().isEnabled()) {
-                                WalUtils.setupWorkerPool(sharedPool, engine, getSharedWorkerCount());
+                                WalUtils.setupWorkerPool(sharedPool, engine, getSharedWorkerCount(), ffCache);
                             }
                         }
 
@@ -157,7 +157,7 @@ public class ServerMain implements Closeable {
                     metrics.health(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+            WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
         }
 
         // http

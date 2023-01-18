@@ -133,7 +133,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowSnapshotComplete() throws Exception {
-        // snapshot is not supported on windows at all
+        // snapshot is not supported on Windows at all
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
@@ -148,7 +148,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowSnapshotPrepare() throws Exception {
-        // snapshot is not supported on windows at all
+        // snapshot is not supported on Windows at all
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             assertQueryDisallowed("snapshot prepare");

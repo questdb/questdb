@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -92,6 +93,15 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != isInIntervals(intervals, left.getTimestamp(rec));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(intervals);
         }
     }
 

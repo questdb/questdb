@@ -52,6 +52,7 @@ public final class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
+    private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
@@ -90,6 +91,7 @@ public final class SqlParser {
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertPoolCapacity());
         this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
+        this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
@@ -876,7 +878,7 @@ public final class SqlParser {
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
                 func.paramCount = 1;
                 func.rhs = ONE;
-                nestedModel.setTableName(func);
+                nestedModel.setTableNameExpr(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
                 lexer.unparseLast();
@@ -933,12 +935,12 @@ public final class SqlParser {
 
             // create nestedModel QueryModel to source rowids for the update
             QueryModel nestedModel = queryModelPool.next();
-            nestedModel.setTableName(fromModel.getTableName());
+            nestedModel.setTableNameExpr(fromModel.getTableNameExpr());
             nestedModel.setAlias(updateQueryModel.getAlias());
             nestedModel.setIsUpdate(true);
 
             // nest nestedModel inside fromModel
-            fromModel.setTableName(null);
+            fromModel.setTableNameExpr(null);
             fromModel.setNestedModel(nestedModel);
 
             // Add WITH clauses if they exist into fromModel
@@ -982,6 +984,58 @@ public final class SqlParser {
         return updateQueryModel;
     }
 
+    //doesn't allow copy, rename  
+    private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
+
+        if (isSelectKeyword(tok)) {
+            return parseSelect(lexer);
+        }
+
+        if (isCreateKeyword(tok)) {
+            return parseCreateStatement(lexer, executionContext);
+        }
+
+        if (isUpdateKeyword(tok)) {
+            return parseUpdate(lexer);
+        }
+
+        if (isInsertKeyword(tok)) {
+            return parseInsert(lexer);
+        }
+
+        if (isWithKeyword(tok)) {
+            return parseWith(lexer);
+        }
+
+        return parseSelect(lexer);
+    }
+
+    private int parseExplainOptions(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
+        if (Chars.equals(tok, '(')) {
+            tok = tok(lexer, "'format'");
+            if (isFormatKeyword(tok)) {
+                tok = tok(lexer, "'text' or 'json'");
+                if (SqlKeywords.isTextKeyword(tok) || SqlKeywords.isJsonKeyword(tok)) {
+                    int format = SqlKeywords.isJsonKeyword(tok) ? ExplainModel.FORMAT_JSON : ExplainModel.FORMAT_TEXT;
+                    tok = tok(lexer, "')'");
+                    if (!Chars.equals(tok, ')')) {
+                        throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+                    }
+                    return format;
+                } else {
+                    throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain format found");
+                }
+            } else {
+                throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+            }
+        } else {
+            lexer.unparseLast();
+            return ExplainModel.FORMAT_TEXT;
+        }
+    }
+
     private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
         // expect "(" in case of sub-query
@@ -1008,7 +1062,7 @@ public final class SqlParser {
                                 && proposedNested.getLimitLo() == null
                                 && proposedNested.getLimitHi() == null
                 ) {
-                    model.setTableName(target.getTableName());
+                    model.setTableNameExpr(target.getTableNameExpr());
                     model.setAlias(target.getAlias());
                     model.setTimestamp(target.getTimestamp());
 
@@ -1631,11 +1685,11 @@ public final class SqlParser {
                     model.setNestedModel(parseWith(lexer, withClause, masterModel));
                     model.setAlias(literal);
                 } else {
-                    model.setTableName(literal);
+                    model.setTableNameExpr(literal);
                 }
                 break;
             case ExpressionNode.FUNCTION:
-                model.setTableName(expr);
+                model.setTableNameExpr(expr);
                 break;
             default:
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
@@ -1673,8 +1727,8 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "table name or alias");
         CharSequence tableName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
-        updateQueryModel.setTableName(tableNameExpr);
-        fromModel.setTableName(tableNameExpr);
+        updateQueryModel.setTableNameExpr(tableNameExpr);
+        fromModel.setTableNameExpr(tableNameExpr);
 
         tok = tok(lexer, "AS, SET or table alias expected");
         if (isAsKeyword(tok)) {
@@ -2069,6 +2123,7 @@ public final class SqlParser {
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
+        explainModelPool.clear();
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -2091,6 +2146,15 @@ public final class SqlParser {
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+
+        if (isExplainKeyword(tok)) {
+            int format = parseExplainOptions(lexer);
+            ExecutionModel model = parseExplain(lexer, executionContext);
+            ExplainModel explainModel = explainModelPool.next();
+            explainModel.setFormat(format);
+            explainModel.setModel(model);
+            return explainModel;
+        }
 
         if (isSelectKeyword(tok)) {
             return parseSelect(lexer);

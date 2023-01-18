@@ -32,7 +32,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -104,6 +103,11 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
+    public String getName() {
+        return "min";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -127,11 +131,6 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     public void pushValueTypes(ArrayColumnTypes types) {
         valueOffset = types.getColumnCount();
         types.add(ColumnType.INT);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinIntVector(").put(columnIndex).put(')');
     }
 
     @Override

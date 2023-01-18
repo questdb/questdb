@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -57,20 +55,14 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         return new CastDoubleToStrFunction(args.getQuick(0), configuration.getDoubleToStrCastScale());
     }
 
-    public static class CastDoubleToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastDoubleToStrFunction extends AbstractCastToStrFunction {
         private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastDoubleToStrFunction(Function arg, int scale) {
-            this.arg = arg;
+            super(arg);
             this.scale = scale;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override

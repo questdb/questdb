@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -52,16 +50,9 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         return new CastSymbolToStrFunction(args.getQuick(0));
     }
 
-    public static class CastSymbolToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
-
+    public static class CastSymbolToStrFunction extends AbstractCastToStrFunction {
         public CastSymbolToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

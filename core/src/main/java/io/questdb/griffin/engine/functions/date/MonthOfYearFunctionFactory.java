@@ -72,5 +72,10 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NaN;
         }
+
+        @Override
+        public String getName() {
+            return "month";
+        }
     }
 }

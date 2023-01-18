@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -56,6 +57,15 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public String getBaseColumnName(int idx) {
+        if (idx < factoryA.getMetadata().getColumnCount()) {
+            return factoryA.getMetadata().getColumnName(idx);
+        } else {
+            return factoryB.getMetadata().getColumnName(idx);
+        }
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursorA = null;
         RecordCursor cursorB = null;
@@ -79,10 +89,27 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type(getOperation());
+        sink.child(factoryA);
+        if (isSecondFactoryHashed()) {
+            sink.child("Hash", factoryB);
+        } else {
+            sink.child(factoryB);
+        }
+    }
+
+    @Override
     protected void _close() {
         Misc.free(factoryA);
         Misc.free(factoryB);
         Misc.freeObjListAndClear(castFunctionsA);
         Misc.freeObjListAndClear(castFunctionsB);
+    }
+
+    protected abstract CharSequence getOperation();
+
+    protected boolean isSecondFactoryHashed() {
+        return false;
     }
 }

@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 
 public class IntConstant extends IntFunction implements ConstantFunction {
 
@@ -50,7 +50,7 @@ public class IntConstant extends IntFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put(value);
+    public void toPlan(PlanSink sink) {
+        sink.val(value);
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -123,6 +124,11 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void setNull(MapValue mapValue) {
             setNull();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("string_agg(").val(arg).val(',').val(delimiter).val(')');
         }
 
         private void append(CharSequence str) {

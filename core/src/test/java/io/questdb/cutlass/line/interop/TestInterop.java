@@ -49,7 +49,7 @@ public class TestInterop {
         URL testCasesUrl = TestInterop.class.getResource("/io/questdb/cutlass/line/interop/ilp-client-interop-test.json");
         Assert.assertNotNull("interop test cases missing", testCasesUrl);
         String pp = testCasesUrl.getFile();
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
             // with OS file open methods.
             pp = pp.substring(1);

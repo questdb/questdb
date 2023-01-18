@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
@@ -94,6 +95,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_geohash(").val(bits).val(')');
+        }
     }
 
     private static class RndIntFunction extends GeoIntFunction implements Function {
@@ -124,6 +130,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 
@@ -156,6 +167,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_geohash(").val(bits).val(')');
+        }
     }
 
     private static class RndShortFunction extends GeoShortFunction implements Function {
@@ -181,6 +197,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_geohash(").val(bits).val(')');
         }
     }
 }

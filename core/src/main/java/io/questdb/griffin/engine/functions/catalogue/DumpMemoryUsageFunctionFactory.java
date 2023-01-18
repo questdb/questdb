@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -38,10 +39,11 @@ import io.questdb.std.*;
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-memory-usage");
+    private static final String SIGNATURE = "dump_memory_usage()";
 
     @Override
     public String getSignature() {
-        return "dump_memory_usage()";
+        return SIGNATURE;
     }
 
     @Override
@@ -75,6 +77,11 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

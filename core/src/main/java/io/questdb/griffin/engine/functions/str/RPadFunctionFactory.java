@@ -81,6 +81,11 @@ public class RPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "rpad";
+        }
+
+        @Override
         public Function getRight() {
             return lenFunc;
         }

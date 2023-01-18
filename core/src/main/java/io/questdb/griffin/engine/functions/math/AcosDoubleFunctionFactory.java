@@ -36,9 +36,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class AcosDoubleFunctionFactory implements FunctionFactory {
+
+    private static final String SYMBOL = "acos";
+
     @Override
     public String getSignature() {
-        return "acos(D)";
+        return SYMBOL + "(D)";
     }
 
     @Override
@@ -66,6 +69,11 @@ public class AcosDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return StrictMath.acos(x.getDouble(rec));
+        }
+
+        @Override
+        public String getName() {
+            return SYMBOL;
         }
     }
 }

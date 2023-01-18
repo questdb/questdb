@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.DoubleAdder;
@@ -115,6 +114,11 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
+    public String getName() {
+        return "avg";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -142,11 +146,6 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.DOUBLE);
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("AvgIntVector(").put(columnIndex).put(')');
     }
 
     @Override

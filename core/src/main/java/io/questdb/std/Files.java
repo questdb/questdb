@@ -27,6 +27,8 @@ package io.questdb.std;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.nio.charset.Charset;
@@ -37,6 +39,8 @@ public final class Files {
 
     public static final int DT_DIR = 4;
     public static final int DT_FILE = 8;
+    public static final int DT_LNK = 10; // soft link
+    public static final int DT_UNKNOWN = 0;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
@@ -160,8 +164,6 @@ public final class Files {
 
     public native static int findType(long findPtr);
 
-    public native static boolean findTypeIsSoftLink(long lpszName);
-
     public static long floorPageSize(long size) {
         return size - size % PAGE_SIZE;
     }
@@ -213,17 +215,25 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
-        if (type == DT_DIR) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            return notDots(nameSink);
+    public static boolean isDirOrSoftLinkDir(Path path) {
+        long ptr = findFirst(path);
+        if (ptr < 1L) {
+            return false;
         }
-        return false;
+        try {
+            int type = findType(ptr);
+            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+        } finally {
+            findClose(ptr);
+        }
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type) {
-        return type == DT_DIR && notDots(pUtf8NameZ);
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
+    }
+
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull StringSink nameSink) {
+        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
     }
 
     public static boolean isDots(CharSequence name) {
@@ -262,7 +272,7 @@ public final class Files {
             if (c == Files.SEPARATOR) {
 
                 // do not attempt to create '/' on linux or 'C:\' on Windows
-                if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
+                if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.charAt(1) == ':')) {
                     continue;
                 }
 
@@ -357,11 +367,11 @@ public final class Files {
 
     public native static byte readNonNegativeByte(int fd, long offset);
 
-    public native static short readNonNegativeShort(int fd, long offset);
-
     public native static int readNonNegativeInt(int fd, long offset);
 
     public native static long readNonNegativeLong(int fd, long offset);
+
+    public native static short readNonNegativeShort(int fd, long offset);
 
     public static boolean remove(LPSZ lpsz) {
         return remove(lpsz.address());
@@ -432,6 +442,34 @@ public final class Files {
 
     public native static boolean truncate(int fd, long size);
 
+    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        if (!notDots(pUtf8NameZ)) {
+            return DT_UNKNOWN;
+        }
+
+        if (type == DT_DIR) {
+            if (nameSink != null) {
+                nameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            }
+            path.trimTo(rootLen).concat(pUtf8NameZ).$();
+            return DT_DIR;
+        }
+
+        if (type == DT_LNK) {
+            if (nameSink != null) {
+                nameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            }
+            path.trimTo(rootLen).concat(pUtf8NameZ).$();
+            if (isDir(path.address())) {
+                return DT_LNK;
+            }
+        }
+
+        return DT_UNKNOWN;
+    }
+
     public native static int unlink(long lpszSoftLink);
 
     public static int unlink(LPSZ softLink) {
@@ -459,6 +497,8 @@ public final class Files {
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
+
+    private native static boolean isDir(long pUtf8PathZ);
 
     private native static long length0(long lpszName);
 

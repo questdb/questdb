@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.*;
@@ -79,6 +80,11 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
             for (int i = 0, n = values.length; i < n; i++) {
                 values[i] = rnd.nextLong();
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_long256(").val(values.length / 4).val(')');
         }
 
         @NotNull

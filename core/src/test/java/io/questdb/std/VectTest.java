@@ -41,6 +41,34 @@ public class VectTest {
     }
 
     @Test
+    public void testMemeq() {
+        int maxSize = 1024 * 1024;
+        int[] sizes = {16, 1024, maxSize};
+        long a = Unsafe.malloc(maxSize, MemoryTag.NATIVE_DEFAULT);
+        long b = Unsafe.malloc(maxSize, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            for (int i = 0; i < maxSize; i += Integer.BYTES) {
+                Unsafe.getUnsafe().putInt(a + i, i);
+                Unsafe.getUnsafe().putInt(b + i, i);
+            }
+
+            for (int size : sizes) {
+                Assert.assertTrue(Vect.memeq(a, b, size));
+            }
+
+            Unsafe.getUnsafe().putInt(b, -1);
+
+            for (int size : sizes) {
+                Assert.assertFalse(Vect.memeq(a, b, size));
+            }
+        } finally {
+            Unsafe.free(a, maxSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(b, maxSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testMemmove() {
         int maxSize = 1024 * 1024;
         int[] sizes = {1024, 4096, maxSize};

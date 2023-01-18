@@ -25,9 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import org.jetbrains.annotations.Nullable;
 
-public class TableColumnMetadata {
+public class TableColumnMetadata implements Plannable {
     @Nullable
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
@@ -124,5 +126,10 @@ public class TableColumnMetadata {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(name);
     }
 }
