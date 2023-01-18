@@ -1315,28 +1315,34 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         };
 
         runInContext(filesFacade, (receiver) -> {
-            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            String lineData = "weather,location=west1 temperature=10 1465839830100400200\n" +
+                    "weather,location=west2 temperature=20 1465839830100500200\n" +
+                    "weather,location=east3 temperature=30 1465839830100600200\n";
             sendNoWait(receiver, lineData, "weather");
 
-            lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
-                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
-            send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
+            lineData = "weather,location=west4,source=sensor1 temp=40 1465839830100700200\n" +
+                    "weather,location=east5,source=sensor2 temp=50 1465839830100800200\n" +
+                    "weather,location=west6,source=sensor3 temp=60 1465839830100900200\n";
+            send(receiver, lineData, "weather");
+
+            lineData = "weather,location=north,source=sensor4 temp=70 1465839830101000200\n";
+            send(receiver, lineData, "weather");
+            lineData = "meteorology,location=south temperature=80 1465839830101000200\n";
+            send(receiver, lineData, "meteorology");
 
             mayDrainWalQueue();
-            String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t\tNaN\n" +
-                    "us-midwest\tNaN\t2016-06-13T17:43:50.102300Z\tsensor1\t85.0\n" +
-                    "us-eastcoast\tNaN\t2016-06-13T17:43:50.102400Z\tsensor2\t89.0\n";
-
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
+                    "south\t80.0\t2016-06-13T17:43:50.101000Z\n";
             assertTable(expected, "meteorology");
 
             expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+                    "west4\tsensor1\t40.0\t2016-06-13T17:43:50.100700Z\n" +
+                    "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
+                    "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
+                    "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
             assertTable(expected, "weather");
 
         }, false, 250);
@@ -1359,30 +1365,37 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         };
 
         runInContext(filesFacade, (receiver) -> {
-            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            String lineData = "weather,location=west1 temperature=10 1465839830100400200\n" +
+                    "weather,location=west2 temperature=20 1465839830100500200\n" +
+                    "weather,location=east3 temperature=30 1465839830100600200\n";
             sendNoWait(receiver, lineData, "weather");
 
-            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-midwest temperature=89 1465839830102400200\n" +
-                    "weather,location=us-eastcoast temperature=82 1465839830102500200\n";
+            lineData = "weather,location=west4 temperature=40 1465839830100700200\n" +
+                    "weather,location=west5 temperature=50 1465839830100800200\n" +
+                    "weather,location=east6 temperature=60 1465839830100900200\n";
 
-            send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
+            send(receiver, lineData, "weather");
+
+            lineData = "weather,location=south7 temperature=70 1465839830101000200\n";
+            send(receiver, lineData, "weather");
+            lineData = "meteorology,location=south8 temperature=80 1465839830101000200\n";
+            send(receiver, lineData, "meteorology");
 
             mayDrainWalQueue();
             // two of the three commits go to the renamed table
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n";
+                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
+                    "west4\t40.0\t2016-06-13T17:43:50.100700Z\n" +
+                    "south8\t80.0\t2016-06-13T17:43:50.101000Z\n";
             assertTable(expected, "meteorology");
 
             // last commit goes to the recreated table
             expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t82.0\t2016-06-13T17:43:50.102500Z\n";
+                    "west5\t50.0\t2016-06-13T17:43:50.100800Z\n" +
+                    "east6\t60.0\t2016-06-13T17:43:50.100900Z\n" +
+                    "south7\t70.0\t2016-06-13T17:43:50.101000Z\n";
             assertTable(expected, "weather");
 
         }, false, 250);
