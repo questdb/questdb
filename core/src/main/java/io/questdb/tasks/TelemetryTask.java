@@ -65,7 +65,7 @@ public class TelemetryTask extends AbstractTelemetryTask {
         }
     }
 
-    public static final Telemetry.TelemetryType<TelemetryTask> TYPE = new Telemetry.TelemetryType<>() {
+    public static final Telemetry.TelemetryType<TelemetryTask> TYPE = new Telemetry.TelemetryType<TelemetryTask>() {
         private final TelemetryTask systemStatusTask = new TelemetryTask();
 
         @Override

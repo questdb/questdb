@@ -82,7 +82,7 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
         }
     }
 
-    public static final Telemetry.TelemetryType<TelemetryWalTask> TYPE = new Telemetry.TelemetryType<>() {
+    public static final Telemetry.TelemetryType<TelemetryWalTask> TYPE = new Telemetry.TelemetryType<TelemetryWalTask>() {
         @Override
         public String getTableName() {
             return TABLE_NAME;
