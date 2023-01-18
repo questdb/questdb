@@ -24,13 +24,20 @@
 
 package io.questdb.std.str;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class PathTest {
 
@@ -50,8 +57,26 @@ public class PathTest {
     }
 
     @Test
+    public void testCheckClosed() {
+        try (Path p0 = new Path().put("root")) {
+            p0.close();
+            p0.of("pigeon");
+            Assert.assertEquals("pigeon", p0.toString());
+        }
+    }
+
+    @Test
     public void testConcatNoSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").concat("123").$());
+    }
+
+    @Test
+    public void testConcatWithExtend() {
+        try (Path p0 = new Path().put("sumerians").$();
+             Path p1 = new Path(1)) {
+            p1.concat(p0.address());
+            Assert.assertEquals(p0.toString(), p1.toString());
+        }
     }
 
     @Test
@@ -60,10 +85,24 @@ public class PathTest {
     }
 
     @Test
+    public void testDollarAt() {
+        String name = "header";
+        try (Path p = new Path(1)) {
+            p.put(name).concat("footer").flush();
+            Assert.assertEquals(name + Files.SEPARATOR + "footer", p.toString());
+            for (int i = name.length(); i < p.length(); i++) {
+                p.$at(i);
+            }
+            Assert.assertEquals(name + "\u0000\u0000\u0000\u0000\u0000\u0000\u0000", p.toString());
+            Assert.assertEquals(name.length() + 7, p.length());
+        }
+    }
+
+    @Test
     public void testDollarIdempotent() {
         final CharSequence tableName = "table_name";
         final AtomicInteger extendCount = new AtomicInteger();
-        try (Path path = new Path(0) {
+        try (Path path = new Path(1) {
             @Override
             void extend(int len) {
                 super.extend(len);
@@ -71,7 +110,7 @@ public class PathTest {
             }
         }) {
             path.of(tableName).$();
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 5; i++) {
                 path.$();
                 Assert.assertEquals(1, extendCount.get());
             }
@@ -86,6 +125,13 @@ public class PathTest {
                 p.of("/xyz/").concat(p1.address()).$();
                 Assert.assertEquals(separator + "xyz" + separator + "abc" + separator + "123", p.toString());
             }
+        }
+    }
+
+    @Test
+    public void testOfCharSequence() {
+        try (Path p0 = new Path().of("sumerians", 2, 7).$()) {
+            Assert.assertEquals("meria", p0.toString());
         }
     }
 
@@ -155,10 +201,37 @@ public class PathTest {
     }
 
     @Test
+    public void testPathSizeMustBeGreaterThanZero() {
+        try (Path ignore = new Path()) {
+            Assert.fail();
+        } catch (AssertionError ignore) {
+            // expected
+        }
+    }
+
+    @Test
     public void testPathThreadLocalDoesNotAllocateOnRelease() {
         final long count = Unsafe.getMallocCount();
         Path.clearThreadLocals();
         Assert.assertEquals(count, Unsafe.getMallocCount());
+    }
+
+    @Test
+    public void testPutWithExtension0() {
+        try (Path p0 = new Path(1)) {
+            p0.put("sumerians".toCharArray(), 2, 5);
+            p0.$();
+            Assert.assertEquals("meria", p0.toString());
+        }
+    }
+
+    @Test
+    public void testPutWithExtension1() {
+        try (Path p0 = new Path(1)) {
+            p0.put("sumerians", 2, 7);
+            p0.$();
+            Assert.assertEquals("meria", p0.toString());
+        }
     }
 
     @Test
@@ -174,14 +247,124 @@ public class PathTest {
             Assert.assertSame(path, path.seekZ());
             TestUtils.assertEquals("hello", path);
 
-            path.chop$().concat("next");
+            path.concat("next");
             TestUtils.assertEquals("hello" + Files.SEPARATOR + "next", path);
+        }
+    }
+
+    @Test
+    public void testSelfPath() {
+        try (Path p0 = new Path().put("root")) {
+            p0.flush();
+            p0.of((CharSequence) p0);
+            Assert.assertEquals("root", p0.toString());
         }
     }
 
     @Test
     public void testSimple() {
         TestUtils.assertEquals("xyz", path.of("xyz").$());
+    }
+
+    @Test
+    public void testThreadLocal() {
+        String root = "" + Files.SEPARATOR;
+        Path path = Path.getThreadLocal(root);
+        path.concat("banana");
+        Assert.assertEquals(7, path.length());
+        Assert.assertEquals("" + Files.SEPARATOR + "banana", path.toString());
+        path.$();
+        Assert.assertEquals(7, path.length());
+        Assert.assertEquals("" + Files.SEPARATOR + "banana", path.toString());
+    }
+
+    @Test
+    public void testThreadLocalMultiThreaded() {
+        int numThreads = 9;
+        SOCountDownLatch started = new SOCountDownLatch(numThreads);
+        SOCountDownLatch completed = new SOCountDownLatch(numThreads);
+        AtomicBoolean keepRunning = new AtomicBoolean(true);
+        AtomicInteger failCount = new AtomicInteger();
+        ExecutorService executor = null;
+        ConcurrentHashMap<Integer, AtomicLong> stats = new ConcurrentHashMap<>();
+        ThreadFactory threadFactory = Executors.defaultThreadFactory();
+        executor = Executors.newFixedThreadPool(numThreads, runnable -> {
+            Thread thread = threadFactory.newThread(runnable);
+            thread.setDaemon(true);
+            return thread;
+        });
+        for (int i = 0; i < numThreads; i++) {
+            int threadId = i;
+            executor.submit(() -> {
+                String threadName = "thread" + threadId;
+                Thread.currentThread().setName(threadName);
+                String root = Files.SEPARATOR + threadName + Files.SEPARATOR + "dbRoot"; // 15
+                String expected1 = root + Files.SEPARATOR + "table" + Files.SEPARATOR; // 22
+                String expected2 = expected1 + "partition" + Files.SEPARATOR; // 32
+                started.countDown();
+                try {
+                    while (keepRunning.get()) {
+                        Path path = Path.getThreadLocal(root);
+                        path.concat("table").slash$();
+                        Assert.assertEquals(expected1, path.toString());
+                        Assert.assertEquals(22, path.length());
+                        Assert.assertFalse(Files.exists(path));
+                        path.concat("partition").slash$();
+                        Assert.assertEquals(expected2, path.toString());
+                        Assert.assertEquals(32, path.length());
+                        AtomicLong count = stats.get(threadId);
+                        if (count == null) {
+                            stats.put(threadId, count = new AtomicLong());
+                        }
+                        count.incrementAndGet();
+                        Os.pause();
+                    }
+                } catch (Throwable err) {
+                    failCount.incrementAndGet();
+                    err.printStackTrace();
+                    Assert.fail(err.getMessage());
+                } finally {
+                    completed.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+        }
+        started.await();
+
+        try {
+            String root = "" + Files.SEPARATOR;
+            String expected1 = root + "banana" + Files.SEPARATOR;
+            String expected2 = expected1 + "party" + Files.SEPARATOR;
+            for (int i = 0; i < 10; i++) {
+                Path path = Path.getThreadLocal(root);
+                path.concat("banana").slash$();
+                Assert.assertEquals(expected1, path.toString());
+                Assert.assertEquals(8, path.length());
+                Assert.assertFalse(Files.exists(path));
+                path.concat("party").slash$();
+                Assert.assertEquals(expected2, path.toString());
+                Assert.assertEquals(14, path.length());
+                Os.sleep(20L);
+            }
+        } finally {
+            keepRunning.set(false);
+            completed.await();
+            executor.shutdown();
+            Assert.assertEquals(0, failCount.get());
+            for (int i = 0; i < numThreads; i++) {
+                AtomicLong count = stats.get(i);
+                Assert.assertNotNull(count);
+                Assert.assertTrue(count.get() > 0);
+            }
+        }
+    }
+
+    @Test
+    public void testToStringOfClosedPath() {
+        try (Path p0 = new Path(1)) {
+            p0.close();
+            Assert.assertEquals("", p0.toString());
+        }
     }
 
     @Test

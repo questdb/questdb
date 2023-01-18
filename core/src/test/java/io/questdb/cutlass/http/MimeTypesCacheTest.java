@@ -129,7 +129,7 @@ public class MimeTypesCacheTest {
             public void run() {
                 try (Path path = new Path()) {
                     String filePath;
-                    if (Os.type == Os.WINDOWS) {
+                    if (Os.isWindows()) {
                         filePath = this.getClass().getResource("/mime.types").getFile().substring(1);
                     } else {
                         filePath = this.getClass().getResource("/mime.types").getFile();

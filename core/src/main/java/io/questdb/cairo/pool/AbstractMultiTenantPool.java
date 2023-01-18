@@ -86,7 +86,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             LOG.info()
                                     .$("open '").utf8(tableToken.getDirName())
                                     .$("' [at=").$(e.index).$(':').$(i)
-                                    .$(']').$();
+                                    .I$();
                             tenant = newTenant(tableToken, e, i);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
