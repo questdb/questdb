@@ -26,12 +26,11 @@ package io.questdb.cliutil;
 
 import java.util.ArrayList;
 
-import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
 
 class TxFileStruct {
+    // Gson serializable class
     public ArrayList<AttachedPartition> ATTACHED_PARTITIONS;
-    public int ATTACHED_PARTITION_SIZE;
+    public int ATTACHED_PARTITIONS_COUNT;
     public ArrayList<SymbolInfo> SYMBOLS;
     public long TX_OFFSET_COLUMN_VERSION;
     public long TX_OFFSET_DATA_VERSION;
@@ -46,19 +45,54 @@ class TxFileStruct {
     public long TX_OFFSET_TRUNCATE_VERSION;
     public long TX_OFFSET_TXN;
 
-    public long calculateFileSize() {
-        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * 4) + TX_BASE_HEADER_SIZE;
+    @Override
+    public String toString() {
+        return "TxFileStruct{" +
+                "TX_OFFSET_TXN=" + TX_OFFSET_TXN +
+                ", TX_OFFSET_COLUMN_VERSION=" + TX_OFFSET_COLUMN_VERSION +
+                ", TX_OFFSET_FIXED_ROW_COUNT=" + TX_OFFSET_FIXED_ROW_COUNT +
+                ", TX_OFFSET_TRANSIENT_ROW_COUNT=" + TX_OFFSET_TRANSIENT_ROW_COUNT +
+                ", TX_OFFSET_STRUCT_VERSION=" + TX_OFFSET_STRUCT_VERSION +
+                ", TX_OFFSET_DATA_VERSION=" + TX_OFFSET_DATA_VERSION +
+                ", TX_OFFSET_PARTITION_TABLE_VERSION=" + TX_OFFSET_PARTITION_TABLE_VERSION +
+                ", TX_OFFSET_TRUNCATE_VERSION=" + TX_OFFSET_TRUNCATE_VERSION +
+                ", TX_OFFSET_MAP_WRITER_COUNT=" + TX_OFFSET_MAP_WRITER_COUNT +
+                ", SYMBOLS=" + SYMBOLS +
+                ", TX_OFFSET_MAX_TIMESTAMP=" + TX_OFFSET_MAX_TIMESTAMP +
+                ", TX_OFFSET_MIN_TIMESTAMP=" + TX_OFFSET_MIN_TIMESTAMP +
+                ", ATTACHED_PARTITIONS=" + ATTACHED_PARTITIONS +
+                ", ATTACHED_PARTITIONS_COUNT=" + ATTACHED_PARTITIONS_COUNT +
+                ", TX_OFFSET_SEQ_TXN=" + TX_OFFSET_SEQ_TXN +
+                '}';
     }
 
     static class AttachedPartition {
         long DATA_TX;
+        long MASK;
         long NAME_TX;
         long SIZE;
         long TS;
+
+        @Override
+        public String toString() {
+            return "AttachedPartition{" +
+                    "TS=" + TS +
+                    ", MASK=" + MASK +
+                    ", SIZE=" + SIZE +
+                    ", NAME_TX=" + NAME_TX +
+                    ", DATA_TX=" + DATA_TX +
+                    '}';
+        }
     }
 
     static class SymbolInfo {
         int COUNT;
         int UNCOMMITTED_COUNT;
+
+        @Override
+        public String toString() {
+            return "SymbolInfo{COUNT=" + COUNT + ", UNCOMMITTED_COUNT=" + UNCOMMITTED_COUNT + '}';
+        }
     }
 }
+
