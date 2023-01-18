@@ -48,12 +48,11 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
 
     private final boolean enabled;
-
-    private TelemetryType<T> telemetryType;
-    private RingQueue<T> telemetryQueue;
-    private MPSequence telemetryPubSeq;
-    private SCSequence telemetrySubSeq;
     private MicrosecondClock clock;
+    private MPSequence telemetryPubSeq;
+    private RingQueue<T> telemetryQueue;
+    private SCSequence telemetrySubSeq;
+    private TelemetryType<T> telemetryType;
     private TableWriter writer;
 
     private final QueueConsumer<T> taskConsumer = this::consume;
@@ -71,10 +70,6 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
     }
 
-    public boolean isEnabled() {
-        return enabled;
-    }
-
     @Override
     public void close() {
         if (writer == null) {
@@ -86,6 +81,16 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
         telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
         writer = Misc.free(writer);
+    }
+
+    public void consume(T task) {
+        task.writeTo(writer);
+    }
+
+    public void consumeAll() {
+        if (enabled && telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {
+            writer.commit();
+        }
     }
 
     public void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -109,10 +114,8 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());
     }
 
-    public void consumeAll() {
-        if (enabled && telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {
-            writer.commit();
-        }
+    public boolean isEnabled() {
+        return enabled;
     }
 
     public T nextTask() {
@@ -138,22 +141,20 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         telemetryPubSeq.done(telemetryPubSeq.current());
     }
 
-    public void consume(T task) {
-        task.writeTo(writer);
-    }
-
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        String getTableName();
         String getCreateSql();
-        ObjectFactory<T> getTaskFactory();
 
-        default void logStatus(TableWriter writer, short systemStatus, long micros) {
-        }
+        String getTableName();
+
+        ObjectFactory<T> getTaskFactory();
 
         //todo: we could tailor the config for each telemetry type
         //we could set different queue sizes or disable telemetry per type, for example
         default TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
             return configuration.getTelemetryConfiguration();
+        }
+
+        default void logStatus(TableWriter writer, short systemStatus, long micros) {
         }
     }
 }

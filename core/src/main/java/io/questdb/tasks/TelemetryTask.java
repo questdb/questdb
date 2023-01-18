@@ -33,9 +33,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 
 public class TelemetryTask extends AbstractTelemetryTask {
-    private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
-
     public static final String TABLE_NAME = "telemetry";
+
+    private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
 
     private short event;
 

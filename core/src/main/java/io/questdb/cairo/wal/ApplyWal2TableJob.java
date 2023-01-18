@@ -44,13 +44,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.TelemetryOrigin.WAL_APPLY;
+import static io.questdb.TelemetrySystemEvent.*;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
-import static io.questdb.TelemetryOrigin.WAL_APPLY;
-import static io.questdb.TelemetrySystemEvent.*;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
@@ -58,11 +58,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final int WAL_APPLY_FAILED = -2;
     private final CairoEngine engine;
-    private final TableSequencerAPI tableSequencerAPI;
-    private final Telemetry<TelemetryWalTask> telemetryWal;
-    private final TelemetryFacade telemetryFacade;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
     private final OperationCompiler operationCompiler;
+    private final TableSequencerAPI tableSequencerAPI;
+    private final TelemetryFacade telemetryFacade;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final WalEventReader walEventReader;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
@@ -265,19 +265,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    private long storeTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
-        return -1L;
-    }
-
-    private long doStoreTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
-        return TelemetryWalTask.store(telemetryWal, WAL_APPLY, event, tableToken.getTableId(), walId, seqTxn, rowCount, referenceTimestamp);
-    }
-
-    @FunctionalInterface
-    private interface TelemetryFacade {
-        long store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp);
-    }
-
     private void applyOutstandingWalTransactions(
             TableToken tableToken,
             TableWriter writer,
@@ -359,6 +346,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    private long doStoreTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
+        return TelemetryWalTask.store(telemetryWal, WAL_APPLY, event, tableToken.getTableId(), walId, seqTxn, rowCount, referenceTimestamp);
+    }
+
     private void processWalCommit(TableWriter writer, int walId, @Transient Path walPath, long segmentTxn, OperationCompiler operationCompiler, long seqTxn, long commitTimestamp) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
@@ -437,6 +428,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    private long storeTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
+        return -1L;
+    }
+
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final TableToken tableToken;
@@ -468,5 +463,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableToken).$(", txn=").$(seqTxn).I$();
         }
         return true;
+    }
+
+    @FunctionalInterface
+    private interface TelemetryFacade {
+        long store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp);
     }
 }

@@ -46,7 +46,6 @@ public interface CompiledQuery {
     short DEALLOCATE = 24;
     short DROP = 7;
     short EXPLAIN = 25;
-    short TYPES_COUNT = EXPLAIN;
     short INSERT = 2;
     short INSERT_AS_SELECT = 10;
     short LOCK = 15;
@@ -57,8 +56,9 @@ public interface CompiledQuery {
     short SET = 6;
     short SNAPSHOT_DB_COMPLETE = 23;
     short SNAPSHOT_DB_PREPARE = 22;
-    short TABLE_RESUME = TYPES_COUNT + 1; //this is an odd one (covered by ALTER), do not include it in TYPES_COUNT
     short TRUNCATE = 3;
+    short TYPES_COUNT = EXPLAIN;
+    short TABLE_RESUME = TYPES_COUNT + 1; //this is an odd one (covered by ALTER), do not include it in TYPES_COUNT
     short UNLOCK = 16;
     short UPDATE = 14;
     short VACUUM = 17;

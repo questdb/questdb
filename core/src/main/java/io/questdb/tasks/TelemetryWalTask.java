@@ -33,9 +33,9 @@ import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
 public class TelemetryWalTask extends AbstractTelemetryTask {
-    private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
- 
     public static final String TABLE_NAME = "telemetry_wal";
+
+    private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
 
     private short event;
     private int tableId;

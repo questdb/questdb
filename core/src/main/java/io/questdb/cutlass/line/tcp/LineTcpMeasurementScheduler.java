@@ -67,7 +67,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
-    private final Telemetry<TelemetryTask> telemetry;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
     private final long[] loadByWriterThread;
     private final NetworkIOJob[] netIoJobs;
@@ -80,6 +79,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
+    private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
 
