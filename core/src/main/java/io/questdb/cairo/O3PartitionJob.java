@@ -99,7 +99,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             if (!last) {
                 try {
-                    LOG.debug().$("would create [path=").$(path.chop$().slash$()).$(']').$();
+                    LOG.debug().$("would create [path=").utf8(path.slash$()).I$();
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -900,7 +900,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         : srcDataMax + srcOooBatchRowSize
         );
 
-        LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
+        LOG.debug().$("partition [ts=").$ts(oooTimestampLo).I$();
 
         final long timestampMergeIndexAddr;
         final long timestampMergeIndexSize;
@@ -1085,7 +1085,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         } finally {
             final int delta = columnsInFlight - columnCount;
-            LOG.debug().$("idle [delta=").$(delta).$(']').$();
+            LOG.debug().$("idle [delta=").$(delta).I$();
             if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
                 O3CopyJob.closeColumnIdleQuick(
                         timestampMergeIndexAddr,

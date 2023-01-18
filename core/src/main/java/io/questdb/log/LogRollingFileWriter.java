@@ -32,9 +32,11 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.Comparator;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -51,21 +53,34 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long _wptr;
     private long buf;
     private String bufferSize;
+    private long currentLogSizeSum;
     private long currentSize;
     private int fd = -1;
     private long idleSpinCount = 0;
+    private String lifeDuration;
     private long lim;
     // can be set via reflection
     private String location;
+    private String logDir;
+    private final NativeLPSZ logFileName = new NativeLPSZ();
+    private String logFileTemplate;
     private int nBufferSize;
+    private long nLifeDuration;
+    private final FindVisitor removeExpiredLogsVisitor = this::removeExpiredLogsVisitor;
     private long nRollSize;
+    private long nSizeLimit;
+    private final FindVisitor removeExcessiveLogsVisitor = this::removeExcessiveLogsVisitor;
     private long nSpinBeforeFlush;
     private long rollDeadline;
     private NextDeadline rollDeadlineFunction;
-    private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String rollEvery;
     private String rollSize;
+    private String sizeLimit;
+    private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String spinBeforeFlush;
+    private ObjList<FileTimestamp> sortedFiles = new ObjList<>(); 
+    private Comparator<FileTimestamp> fileComparator = new FileOrderComparator();
+    
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
@@ -108,6 +123,25 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             nRollSize = Long.MAX_VALUE;
         }
 
+        if (this.sizeLimit != null) {
+            try {
+                nSizeLimit = Numbers.parseLongSize(this.sizeLimit);
+                if (nSizeLimit < nRollSize) {
+                    throw new LogError("sizeLimit must be larger than rollSize");
+                }
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for sizeLimit");
+            }
+        }
+
+        if (this.lifeDuration != null) {
+            try {
+                nLifeDuration = Numbers.parseLongDuration(lifeDuration);
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for lifeDuration");
+            }
+        }
+
         if (spinBeforeFlush != null) {
             try {
                 nSpinBeforeFlush = Numbers.parseLong(spinBeforeFlush);
@@ -147,6 +181,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
         this.lim = buf + nBufferSize;
         openFile();
+        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR) + 1, location.indexOf('$'));
+        logDir = location.substring(0, location.indexOf(logFileTemplate) - 1);
     }
 
     @Override
@@ -183,6 +219,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.bufferSize = bufferSize;
     }
 
+    public void setLifeDuration(String lifeDuration) {
+        this.lifeDuration = lifeDuration;
+    }
+
     public void setLocation(String location) {
         this.location = location;
     }
@@ -193,6 +233,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public void setRollSize(String rollSize) {
         this.rollSize = rollSize;
+    }
+
+    public void setSizeLimit(String sizeLimit) {
+        this.sizeLimit = sizeLimit;
     }
 
     public void setSpinBeforeFlush(String spinBeforeFlush) {
@@ -229,6 +273,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         long ticks = Long.MIN_VALUE;
         if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline) {
             ff.close(fd);
+            removeOldLogs();
             if (ticks > rollDeadline) {
                 rollDeadline = rollDeadlineFunction.getDeadline();
                 locationParser.setDateValue(ticks);
@@ -324,6 +369,69 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
+    private void removeExcessiveLogsVisitor(long filePointer, int type) {
+        path.trimTo(logDir.length());
+        path.concat(filePointer).$();
+        logFileName.of(filePointer);
+        if (type == Files.DT_FILE && Chars.contains(logFileName, logFileTemplate) && Files.notDots(filePointer)) {
+            sortedFiles.add(new FileTimestamp(path.toString(), ff.getLastModified(path)));
+        }
+    }
+    
+    private void removeExcessiveLogs() {
+        for (int i = 0; i < sortedFiles.size(); i++) {
+            path.of(sortedFiles.get(i).filePath);
+            if ((currentLogSizeSum += Files.length(path)) > nSizeLimit) {
+                if (!ff.remove(path)) {
+                    throw new LogError("cannot remove: " + path.$());
+                }
+            }
+        }
+    }
+
+    private void removeExpiredLogsVisitor(long filePointer, int type) {
+        path.trimTo(logDir.length());
+        path.concat(filePointer).$();
+        logFileName.of(filePointer);
+        if (Files.notDots(filePointer) && type == Files.DT_FILE && Chars.contains(logFileName, logFileTemplate)
+                && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
+            if (!ff.remove(path)) {
+                throw new LogError("cannot remove: " + path.$());
+            }
+        }
+    }
+
+    private void removeOldLogs() {
+        if (this.lifeDuration != null) {
+            ff.iterateDir(path.of(logDir).$(), removeExpiredLogsVisitor);
+        }
+        if (this.sizeLimit != null) {
+            currentLogSizeSum = 0;
+            sortedFiles.clear();
+            ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
+            sortedFiles.sort(fileComparator);
+            removeExcessiveLogs();
+        }
+    }
+
+    private class FileOrderComparator implements Comparator<FileTimestamp> {
+        @Override
+        public int compare(FileTimestamp f1, FileTimestamp f2) {
+            return (int)(f2.lastModified - f1.lastModified);
+        }
+    }
+    
+    private class FileTimestamp {
+        
+        private String filePath;
+        private long lastModified;
+        
+        private FileTimestamp(String filePath, long lastModified) {
+            this.filePath = filePath;
+            this.lastModified = lastModified;
+        }
+    }
+    
     @FunctionalInterface
     private interface NextDeadline {
         long getDeadline();

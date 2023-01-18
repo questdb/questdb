@@ -165,7 +165,7 @@ public final class Services {
         }
 
         // The pool is always the SHARED pool
-        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+        if (Os.isLinux()) {
             return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
         }
         return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());

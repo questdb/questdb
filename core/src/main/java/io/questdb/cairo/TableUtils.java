@@ -54,6 +54,7 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 public final class TableUtils {
     public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
+    public static final String ATTACHABLE_DIR_MARKER = ".attachable";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -152,6 +153,10 @@ public final class TableUtils {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
+    }
+
+    public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
+        return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
     public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
@@ -343,7 +348,7 @@ public final class TableUtils {
                     LOG.error()
                             .$("could not fsync [fd=").$(dirFd)
                             .$(", errno=").$(ff.errno())
-                            .$(']').$();
+                            .I$();
                 }
                 ff.close(dirFd);
             }
@@ -450,8 +455,7 @@ public final class TableUtils {
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
         path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
-            // prepare to replace trailing \0
-            if (ff.exists(path.chop$().concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
                 return TABLE_RESERVED;

@@ -155,14 +155,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 do {
                     long pUtf8NameZ = ff.findName(p);
                     int type = ff.findType(p);
-                    if (Files.isDir(pUtf8NameZ, type)) {
-                        tempPath.trimTo(rootLen);
-                        tempPath.concat(pUtf8NameZ).$();
-
+                    if (ff.isDirOrSoftLinkDirNoDots(tempPath, rootLen, pUtf8NameZ, type)) {
                         if (!Chars.endsWith(tempPath, SEQ_DIR) && !Chars.equals(tempPath, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
-                            if (ff.rmdir(tempPath) != 0) {
+                            if (ff.unlinkOrRemove(tempPath, LOG) != 0) {
                                 allClean = false;
-                                LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
                             }
                         }
 
@@ -176,7 +172,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                         if (!ff.remove(tempPath.$())) {
                             allClean = false;
-                            LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
+                            LOG.info().$("could not remove [tempPath=").utf8(tempPath).$(", errno=").$(ff.errno()).I$();
                         }
                     }
                 } while (ff.findNext(p) > 0);
