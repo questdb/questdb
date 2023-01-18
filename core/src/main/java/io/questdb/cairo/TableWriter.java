@@ -1387,7 +1387,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void processWalData(
+    public long processWalData(
             @Transient Path walPath,
             boolean inOrder,
             long rowLo,
@@ -1428,6 +1428,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         metrics.tableWriter().incrementCommits();
         metrics.tableWriter().addCommittedRows(rowsAdded);
+        return rowsAdded;
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {

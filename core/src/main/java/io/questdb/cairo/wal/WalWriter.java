@@ -1759,10 +1759,10 @@ public class WalWriter implements TableWriterAPI {
         }
 
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
-            final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
             int key;
             if (utf16Value != null) {
-                int index = utf16Map.keyIndex(utf16Value);
+                final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+                final int index = utf16Map.keyIndex(utf16Value);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
                     if (key == SymbolTable.VALUE_NOT_FOUND) {

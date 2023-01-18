@@ -62,7 +62,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void createWalAndInsertFromSql() throws Exception {
+    public void testCreateWalAndInsertFromSql() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName() + "_लаблअца";
             compile("create table " + tableName + " as (" +
@@ -689,7 +689,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropedTableHappendIntheMiddleOfWalApplication() throws Exception {
+    public void testDroppedTableHappendIntheMiddleOfWalApplication() throws Exception {
         String tableName = testName.getMethodName();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -731,7 +731,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropedTableSequencerRecreated() throws Exception {
+    public void testDroppedTableSequencerRecreated() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +

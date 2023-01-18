@@ -46,8 +46,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
     @Test
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
-
-        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TelemetryConfiguration getTelemetryConfiguration() {
                 return new DefaultTelemetryConfiguration() {
@@ -84,27 +83,27 @@ public class TelemetryTest extends AbstractCairoTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                 compiler.compile(
-                        "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
+                        "CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)",
                         sqlExecutionContext);
                 InsertOperation ist = compiler.compile(
-                        "INSERT INTO " + TelemetryJob.configTableName + " values(CAST('0x01' AS LONG256), true)",
+                        "INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)",
                         sqlExecutionContext).getInsertOperation();
                 InsertMethod im = ist.createMethod(sqlExecutionContext);
                 im.execute();
                 im.commit();
                 im.close();
-                TelemetryJob telemetryJob = new TelemetryJob(engine, null);
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
                 String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
                         "id	LONG256	false	0	false	0	false\n" +
                         "enabled	BOOLEAN	false	0	false	0	false\n" +
                         "version	SYMBOL	false	256	true	128	false\n" +
                         "os	SYMBOL	false	256	true	128	false\n" +
                         "package	SYMBOL	false	256	true	128	false\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 expectedSql = "id\tversion\n" +
                         "0x01\t\n" +
                         "0x01\tUnknown Version\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryJob.configTableName, sink,
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink,
                         expectedSql);
                 Misc.free(telemetryJob);
             }
@@ -116,7 +115,7 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                final TelemetryJob telemetryJob = new TelemetryJob(engine, null);
+                final TelemetryJob telemetryJob = new TelemetryJob(engine);
 
                 try (Path path = new Path()) {
                     TableToken telemetry = engine.getTableToken("telemetry");
@@ -190,31 +189,30 @@ public class TelemetryTest extends AbstractCairoTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                 refVersion.set("1.0");
-                TelemetryJob telemetryJob = new TelemetryJob(engine, null);
-                String os = System.getProperty(TelemetryJob.OS_NAME);
+                TelemetryJob telemetryJob = new TelemetryJob(engine);
+                String os = System.getProperty(TelemetryConfigLogger.OS_NAME);
 
                 String expectedSql = "count\n1\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 expectedSql = "version\tos\n" +
                         "1.0\t" + os + "\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 Misc.free(telemetryJob);
 
-                telemetryJob = new TelemetryJob(engine, null);
+                telemetryJob = new TelemetryJob(engine);
                 expectedSql = "count\n1\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 Misc.free(telemetryJob);
 
                 refVersion.set("1.1");
-                telemetryJob = new TelemetryJob(engine, null);
+                telemetryJob = new TelemetryJob(engine);
                 expectedSql = "count\n2\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
                 expectedSql = "version\tos\n" +
                         "1.1\t" + os + "\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryJob.configTableName + " LIMIT -1", sink, expectedSql);
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sink, expectedSql);
                 Misc.free(telemetryJob);
             }
-
         });
     }
 
@@ -229,5 +227,4 @@ public class TelemetryTest extends AbstractCairoTest {
             TestUtils.assertEquals(expected, sink);
         }
     }
-
 }

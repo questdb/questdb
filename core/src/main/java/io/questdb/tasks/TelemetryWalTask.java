@@ -25,30 +25,42 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
-import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
-public class TelemetryTask extends AbstractTelemetryTask {
-    private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
-
-    public static final String TABLE_NAME = "telemetry";
+public class TelemetryWalTask extends AbstractTelemetryTask {
+    private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
+ 
+    public static final String TABLE_NAME = "telemetry_wal";
 
     private short event;
+    private int tableId;
+    private int walId;
+    private long seqTxn;
+    private long rowCount;
+    private long latency; //micros
 
-    private TelemetryTask() {
+    private TelemetryWalTask() {
     }
 
-    public static void store(Telemetry<TelemetryTask> telemetry, short origin, short event) {
-        final TelemetryTask task = telemetry.nextTask();
+    public static long store(@NotNull Telemetry<TelemetryWalTask> telemetry, short origin, short event, int tableId, int walId, long seqTxn, long rowCount, long start) {
+        final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
             task.origin = origin;
             task.event = event;
+            task.tableId = tableId;
+            task.walId = walId;
+            task.seqTxn = seqTxn;
+            task.rowCount = rowCount;
+            task.latency = task.created - start;
             telemetry.store();
+            return task.created;
         }
+        return -1L;
     }
 
     @Override
@@ -57,6 +69,11 @@ public class TelemetryTask extends AbstractTelemetryTask {
             final TableWriter.Row row = writer.newRow(created);
             row.putShort(1, event);
             row.putShort(2, origin);
+            row.putInt(3, tableId);
+            row.putInt(4, walId);
+            row.putLong(5, seqTxn);
+            row.putLong(6, rowCount);
+            row.putLong(7, latency);
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
@@ -65,9 +82,7 @@ public class TelemetryTask extends AbstractTelemetryTask {
         }
     }
 
-    public static final Telemetry.TelemetryType<TelemetryTask> TYPE = new Telemetry.TelemetryType<>() {
-        private final TelemetryTask systemStatusTask = new TelemetryTask();
-
+    public static final Telemetry.TelemetryType<TelemetryWalTask> TYPE = new Telemetry.TelemetryType<>() {
         @Override
         public String getTableName() {
             return TABLE_NAME;
@@ -78,22 +93,18 @@ public class TelemetryTask extends AbstractTelemetryTask {
             return "CREATE TABLE IF NOT EXISTS " + TABLE_NAME + " (" +
                     "created timestamp, " +
                     "event short, " +
-                    "origin short" +
+                    "origin short, " +
+                    "tableId int, " +
+                    "walId int, " +
+                    "seqTxn long, " +
+                    "rowCount long," +
+                    "latency long" +
                     ") timestamp(created)";
         }
 
         @Override
-        public ObjectFactory<TelemetryTask> getTaskFactory() {
-            return TelemetryTask::new;
-        }
-
-        @Override
-        public void logStatus(TableWriter writer, short systemStatus, long micros) {
-            systemStatusTask.created = micros;
-            systemStatusTask.origin = TelemetryOrigin.INTERNAL;
-            systemStatusTask.event = systemStatus;
-            systemStatusTask.writeTo(writer);
-            writer.commit();
+        public ObjectFactory<TelemetryWalTask> getTaskFactory() {
+            return TelemetryWalTask::new;
         }
     };
 }
