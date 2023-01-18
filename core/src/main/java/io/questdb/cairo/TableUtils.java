@@ -486,12 +486,12 @@ public final class TableUtils {
         return tableExists(ff, path.of(root).concat(name, 0, name.length()).$());
     }
 
-    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
-        return tableExists(ff, path.of(root).concat(name, lo, hi).$());
+    public static int exists(FilesFacade ff, Path path, CharSequence name) {
+        return tableExists(ff, path.concat(name, 0, name.length()).$());
     }
 
-    public static int exists(FilesFacade ff, Path path, CharSequence name) {
-        return tableExists(ff, path.concat(name).$());
+    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
+        return tableExists(ff, path.of(root).concat(name, lo, hi).$());
     }
 
     public static void freeTransitionIndex(long address) {
