@@ -28,13 +28,11 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class AnalyticFunctionTest extends AbstractGriffinTest {
 
     @Test
-    @Ignore
     public void testAnalyticContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table trades as " +
@@ -68,7 +66,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankFailsInNonAnalyticContext() throws Exception {
         assertFailure(
                 "select rank(), * from trades",
@@ -86,7 +83,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithNoPartitionByAndNoOrderByWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
@@ -116,7 +112,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithNoPartitionByAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "3\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
@@ -146,7 +141,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionAndOrderByNonSymbol() throws Exception {
         assertQuery("rank\tprice\tts\n" +
                         "1\t42\t1970-01-01T00:00:00.000000Z\n" +
@@ -176,7 +170,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
         assertQuery("rank\n" +
                         "1\n" +
@@ -206,7 +199,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
         assertQuery("price\tsymbol\tts\trank\n" +
                         "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -236,7 +228,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
@@ -266,7 +257,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionBySymbolAndMultiOrderWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
@@ -296,7 +286,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionBySymbolAndNoOrderWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
@@ -326,7 +315,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionBySymbolAndOrderByIntPriceDescWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "2\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
@@ -356,7 +344,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionBySymbolAndOrderByIntPriceWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "1\t1\tBB\t1970-01-01T00:00:00.000000Z\n" +
@@ -386,7 +373,6 @@ public class AnalyticFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testRankWithPartitionBySymbolAndOrderByPriceWildcardLast() throws Exception {
         assertQuery("rank\tprice\tsymbol\tts\n" +
                         "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
