@@ -250,6 +250,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getWalPurgeInterval() {
+        return overrides.getWalPurgeInterval() < 0 ? super.getWalPurgeInterval() : overrides.getWalPurgeInterval();
+    }
+
+    @Override
     public int getWalRecreateDistressedSequencerAttempts() {
         return overrides.getRecreateDistressedSequencerAttempts();
     }

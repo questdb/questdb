@@ -77,6 +77,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
+    private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private int walTxnNotificationQueueCapacity = -1;
     private long writerAsyncCommandBusyWaitTimeout = -1;
@@ -275,6 +276,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public long getWalPurgeInterval() {
+        return walPurgeInterval;
+    }
+
+    @Override
     public long getWalSegmentRolloverRowCount() {
         return walSegmentRolloverRowCount;
     }
@@ -374,6 +380,7 @@ public class Overrides implements ConfigurationOverrides {
         o3QuickSortEnabled = false;
         walSegmentRolloverRowCount = -1;
         mangleTableDirNames = true;
+        walPurgeInterval = -1;
     }
 
     @Override
@@ -594,6 +601,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         this.testMicrosClock = testMicrosClock;
+    }
+
+    @Override
+    public void setWalPurgeInterval(long walPurgeInterval) {
+        this.walPurgeInterval = walPurgeInterval;
     }
 
     @Override

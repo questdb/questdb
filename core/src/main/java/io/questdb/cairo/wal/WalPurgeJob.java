@@ -45,21 +45,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final TableSequencerAPI.RegisteredTable broadSweepIter;
     private final long checkInterval;
     private final MicrosecondClock clock;
-    private final LongList committedWalSegments = new LongList();
     private final CairoConfiguration configuration;
     private final StringSink debugBuffer = new StringSink();
+    private final IntHashSet discoveredWalIds = new IntHashSet();
     private final LongList discoveredWalSegments = new LongList();
-    private final IntHashSet discoveredWals = new IntHashSet();
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final IntHashSet lockedWalIds = new IntHashSet();
     private final MillisecondClock millisecondClock;
+    private final LongList nextToApplyWalSegments = new LongList();
     private final Path path = new Path();
     private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final long spinLockTimeout;
     private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
     private final TxReader txReader;
     private final NativeLPSZ walName = new NativeLPSZ();
-    private final IntHashSet walsInUse = new IntHashSet();
     private long last = 0;
     private TableToken tableToken;
 
@@ -155,7 +155,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 debugBuffer.put(')');
             } else {
                 debugBuffer.put("(wal").put(walId);
-                if (walsInUse.contains(walId)) {
+                if (lockedWalIds.contains(walId)) {
                     debugBuffer.put(":locked");
                 }
                 debugBuffer.put(')');
@@ -166,9 +166,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        debugBuffer.put("], committed=[");
-        for (int i = 0, n = committedWalSegments.size(); i < n; i++) {
-            long walSegment = committedWalSegments.getQuick(i);
+        debugBuffer.put("], nextToApply=[");
+        for (int i = 0, n = nextToApplyWalSegments.size(); i < n; i++) {
+            long walSegment = nextToApplyWalSegments.getQuick(i);
             int segmentId = Numbers.decodeLowInt(walSegment) >> 1;
             int walId = Numbers.decodeHighInt(walSegment);
 
@@ -192,14 +192,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         try {
             this.tableToken = tableToken;
             discoveredWalSegments.clear();
-            walsInUse.clear();
-            discoveredWals.clear();
-            committedWalSegments.clear();
+            lockedWalIds.clear();
+            discoveredWalIds.clear();
+            nextToApplyWalSegments.clear();
 
-            discoverWalDirectories();
+            discoverWalSegments();
             if (discoveredWalSegments.size() != 0) {
 
-                populateCommittedWalSegments();
+                populateNextToApplyWalSegments();
                 accumDebugState();
 
                 // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
@@ -252,24 +252,26 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void deleteOutstandingWalDirectories() {
-        // Merge join discoveredWalSegments and committedWalSegmentId
+        // Merge join discoveredWalSegments and nextToApplyWalSegments
         // Both are sorted by WalId and then SegmentId
-        // Delete those segments which are lower than first committed but not applied segment
+        // Delete those segments which are lower than first committed segment
+        // Keep locked segments and all segments higher than first locked segment
         int committedWalSegmentIndex = -1;
         int committedWalSegmentId = -1;
         int committedWalId = -1;
-        int committedSegmentSize = committedWalSegments.size();
+        int committedSegmentSize = nextToApplyWalSegments.size();
 
-        for (int i = 0; i < discoveredWalSegments.size(); i++) {
+        for (int i = 0, n = discoveredWalSegments.size(); i < n; i++) {
             long walSegment = discoveredWalSegments.get(i);
             int walId = Numbers.decodeHighInt(walSegment);
             int segmentIdLocked = Numbers.decodeLowInt(walSegment);
             int segmentId = segmentIdLocked >> 1;
             boolean segmentIdIsLocked = segmentIdLocked != Integer.MAX_VALUE && (segmentIdLocked & 1) == 1;
 
+            // If the current segment is locked, scroll to next wall id.
             int searchWalId = segmentIdIsLocked ? walId + 1 : walId;
             while (committedWalId < searchWalId && ++committedWalSegmentIndex < committedSegmentSize) {
-                long committedWalSegment = committedWalSegments.get(committedWalSegmentIndex);
+                long committedWalSegment = nextToApplyWalSegments.get(committedWalSegmentIndex);
                 committedWalId = Numbers.decodeHighInt(committedWalSegment);
                 committedWalSegmentId = Numbers.decodeLowInt(committedWalSegment) >> 1;
             }
@@ -277,11 +279,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (walId == committedWalId) {
                 // WAL is in use, there are committed transactions in Sequencer
                 if (committedWalSegmentId > segmentId) {
+                    // Segment already applied.
                     deleteSegmentDirectory(tableToken, walId, segmentId);
                 }
             } else if (!segmentIdIsLocked) {
-                // Nothing in Sequencer for this WAL, it can be deleted if not locked.
-                if (!walsInUse.contains(walId)) {
+                // Nothing in Sequencer for this WAL and no locked segment means WAL can be deleted if it was not locked.
+                if (!lockedWalIds.contains(walId)) {
                     deleteWalDirectory(walId);
                 } else {
                     // WAL is locked but the segment in it is not in outstanding commits, delete it.
@@ -319,7 +322,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void discoverWalDirectories() {
+    private void discoverWalSegments() {
         Path path = setTablePath(tableToken);
         long p = ff.findFirst(path);
         int rootPathLen = path.length();
@@ -334,9 +337,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             int walId = Numbers.parseInt(walName, 3, walName.length());
                             if (walIsInUse(tableToken, walId)) {
-                                walsInUse.add(walId);
+                                lockedWalIds.add(walId);
                             }
-                            discoveredWals.add(walId);
+                            discoveredWalIds.add(walId);
                             // SegmentId of Integer.MAX_VALUE is to track WAL directory itself.
                             discoveredWalSegments.add(Numbers.encodeLowHighInts(Integer.MAX_VALUE, walId));
 
@@ -384,7 +387,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void populateCommittedWalSegments() {
+    private void populateNextToApplyWalSegments() {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
@@ -394,15 +397,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, lastAppliedTxn)) {
-                    while (discoveredWals.size() > 0 && transactionLogCursor.hasNext()) {
+                    while (discoveredWalIds.size() > 0 && transactionLogCursor.hasNext()) {
                         int walId = transactionLogCursor.getWalId();
-                        if (discoveredWals.contains(walId)) {
+                        if (discoveredWalIds.contains(walId)) {
                             int segmentId = transactionLogCursor.getSegmentId();
-                            committedWalSegments.add(Numbers.encodeLowHighInts(segmentId << 1, walId));
-                            discoveredWals.remove(walId);
+                            nextToApplyWalSegments.add(Numbers.encodeLowHighInts(segmentId << 1, walId));
+                            discoveredWalIds.remove(walId);
                         }
                     }
-                    committedWalSegments.sort();
+                    nextToApplyWalSegments.sort();
                 }
             } finally {
                 txReader.close();

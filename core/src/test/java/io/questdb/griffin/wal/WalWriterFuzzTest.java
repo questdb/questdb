@@ -27,6 +27,7 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -268,6 +269,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             applyThreads.add(applyThread);
         }
 
+        Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
+        purgeJobThread.start();
+        applyThreads.add(purgeJobThread);
+
         for (int i = 0; i < threads.length; i++) {
             try {
                 threads[i].join();
@@ -390,6 +395,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         Thread applyThread = new Thread(() -> runApplyThread(done, errors));
         applyThread.start();
 
+        Thread walPurgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
+        walPurgeJobThread.start();
+
         for (int i = 0; i < threads.length; i++) {
             try {
                 threads[i].join();
@@ -407,6 +415,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
         try {
             applyThread.join();
+            walPurgeJobThread.join();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -660,6 +669,22 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
             }
         });
+    }
+
+    private void runWalPurgeJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
+        try {
+            node1.getConfigurationOverrides().setWalPurgeInterval(0L);
+            try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                while (done.get() == 0 && errors.size() == 0) {
+                    job.drain(0);
+                    Os.sleep(1);
+                }
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Path.clearThreadLocals();
+        }
     }
 
     private void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
