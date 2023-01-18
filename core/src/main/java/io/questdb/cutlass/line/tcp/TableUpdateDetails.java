@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -184,10 +185,6 @@ public class TableUpdateDetails implements Closeable {
         return writerThreadId;
     }
 
-    public void commit() throws CommitFailedException {
-        commit(false);
-    }
-
     public void incrementEventsProcessedSinceReshuffle() {
         ++eventsProcessedSinceReshuffle;
     }
@@ -249,12 +246,12 @@ public class TableUpdateDetails implements Closeable {
                 }
                 throw CommitFailedException.instance(ex);
             }
-            if (isWal()) {
-                try {
-                    engine.verifyTableToken(tableToken);
-                } catch (Throwable ignore) {
-                    setWriterInError();
-                }
+        }
+        if (isWal()) {
+            try {
+                engine.verifyTableToken(tableToken);
+            } catch (CairoException | TableReferenceOutOfDateException ignore) {
+                setWriterInError();
             }
         }
     }

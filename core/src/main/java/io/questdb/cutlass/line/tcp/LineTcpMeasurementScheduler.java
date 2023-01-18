@@ -303,10 +303,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         WalWriter ww = (WalWriter) tud.getWriter();
         TableRecordMetadata metadata = ww.getMetadata();
 
-        if (ld.getStructureVersion() > ww.getStructureVersion()) {
-            tud.commit();
-        }
-
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -323,7 +319,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 final String columnNameUtf16 = ld.getColName();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                     if (metadata.getColumnIndexQuiet(columnNameUtf16) < 0) {
-                        tud.commit();
+                        ww.commit();
                         try {
                             ww.addColumn(columnNameUtf16, ld.getColumnType(columnNameUtf16, ent.getType()));
                         } catch (CairoException e) {

@@ -1326,18 +1326,63 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
 
             mayDrainWalQueue();
-            // two of the three commits go to the renamed table
             String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t\tNaN\n" +
-                    "us-midwest\tNaN\t2016-06-13T17:43:50.102300Z\tsensor1\t85.0\n";
+                    "us-midwest\tNaN\t2016-06-13T17:43:50.102300Z\tsensor1\t85.0\n" +
+                    "us-eastcoast\tNaN\t2016-06-13T17:43:50.102400Z\tsensor2\t89.0\n";
+
+            assertTable(expected, "meteorology");
+
+            expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+
+        }, false, 250);
+    }
+
+    @Test
+    public void testRenameTableSameMeta() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        configOverrideMaxUncommittedRows(2);
+        configOverrideWalSegmentRolloverRowCount(2);
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "weather~2" + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                    mayDrainWalQueue();
+                    renameTable("weather", "meteorology");
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        runInContext(filesFacade, (receiver) -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            sendNoWait(receiver, lineData, "weather");
+
+            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-midwest temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=82 1465839830102500200\n";
+
+            send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
+
+            mayDrainWalQueue();
+            // two of the three commits go to the renamed table
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n";
             assertTable(expected, "meteorology");
 
             // last commit goes to the recreated table
-            expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");
 
         }, false, 250);
