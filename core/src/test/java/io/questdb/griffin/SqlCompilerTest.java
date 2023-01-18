@@ -40,6 +40,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -2262,6 +2263,81 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "Could not create table. See log for details"
 
         );
+    }
+
+    @Test
+    public void testCreateAsSelectInVolumeFail() throws Exception {
+        try {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c)) in volume 'niza'",
+                    null,
+                    "insert into geohash " +
+                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                    "geohash\n" +
+                            "q\n" +
+                            "q\n" +
+                            "u\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "u\n" +
+                            "q\n" +
+                            "u\n",
+                    true,
+                    true,
+                    true
+            );
+            Assert.fail();
+        } catch (CairoException e) {
+            if (Os.isWindows()) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+            } else {
+                TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
+            }
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectInVolumeNotAllowed() throws Exception {
+        File volume = temp.newFolder("other_folder");
+        try {
+            String volumeAlias = "manzana";
+            String volumePath = volume.getAbsolutePath();
+            configuration.getAllowedVolumePaths().of(volumeAlias + "->" + volumePath, path);
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c)) in volume '" + volume + "'",
+                    null,
+                    "insert into geohash " +
+                            "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                    "geohash\n" +
+                            "q\n" +
+                            "q\n" +
+                            "u\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "u\n" +
+                            "q\n" +
+                            "u\n",
+                    true,
+                    true,
+                    true);
+            Assert.fail();
+        } catch (CairoException e) {
+            if (Os.isWindows()) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+            } else {
+                TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=" + volume + ']');
+            }
+        } finally {
+            Assert.assertTrue(volume.delete());
+        }
     }
 
     @Test

@@ -200,8 +200,8 @@ public final class TableUtils {
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         final Function function = functionParser.parseFunction(
-                tableNameExpr, 
-                AnyRecordMetadata.INSTANCE, 
+                tableNameExpr,
+                AnyRecordMetadata.INSTANCE,
                 executionContext
         );
         if (!ColumnType.isCursor(function.getType())) {
@@ -261,14 +261,48 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(tableDir).$(']').$();
-        path.of(root).concat(tableDir);
+        createTable(ff, root, mkDirMode, memory, path, false, tableDir, structure, tableVersion, tableId);
+    }
 
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            boolean pathIsLoadedWithVolume,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        Path normalPath = null;
+        if (!pathIsLoadedWithVolume) {
+            path.of(root).concat(tableDir).$();
+            LOG.info().$("create table [name=").utf8(tableDir).I$();
+        } else {
+            // path has been set by CREATE TABLE ... [IN VOLUME 'path'].
+            // it is a valid folder, or link to a folder, checked at bootstrap
+            normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
+            LOG.info().$("create table in volume [path=").utf8(normalPath).I$();
+            if (ff.isDirOrSoftLinkDir(normalPath)) {
+                throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(normalPath).put(']');
+            }
         }
 
         final int rootLen = path.length();
+        if (ff.isDirOrSoftLinkDir(path)) {
+            throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(path).put(']');
+        }
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+        }
+        if (pathIsLoadedWithVolume && ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
+            if (ff.rmdir(path.slash$()) != 0) {
+                LOG.error().$("cannot remove table folder in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
+            }
+            throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path).put(", tableName=").put(tableDir).put(']');
+        }
 
         final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -449,20 +483,15 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
-        return exists(ff, path, root, name, 0, name.length());
+        return tableExists(ff, path.of(root).concat(name, 0, name.length()).$());
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
-        path.of(root).concat(name, lo, hi).$();
-        if (ff.exists(path)) {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return TABLE_EXISTS;
-            } else {
-                return TABLE_RESERVED;
-            }
-        } else {
-            return TABLE_DOES_NOT_EXIST;
-        }
+        return tableExists(ff, path.of(root).concat(name, lo, hi).$());
+    }
+
+    public static int exists(FilesFacade ff, Path path, CharSequence name) {
+        return tableExists(ff, path.concat(name).$());
     }
 
     public static void freeTransitionIndex(long address) {
@@ -1267,6 +1296,18 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
+    }
+
+    private static int tableExists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) {
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return TABLE_EXISTS;
+            } else {
+                return TABLE_RESERVED;
+            }
+        } else {
+            return TABLE_DOES_NOT_EXIST;
+        }
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

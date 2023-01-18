@@ -73,6 +73,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public AllowedVolumePaths getAllowedVolumePaths() {
+        return null;
+    }
+
+    @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
     }

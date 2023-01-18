@@ -24,10 +24,12 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.AllowedVolumePaths;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -55,6 +57,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return conf.getAllowTableRegistrySharedWrite();
+    }
+
+    @Override
+    public AllowedVolumePaths getAllowedVolumePaths() {
+        return null;
     }
 
     @Override

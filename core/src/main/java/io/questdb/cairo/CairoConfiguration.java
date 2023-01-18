@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.AllowedVolumePaths;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -51,6 +52,8 @@ public interface CairoConfiguration {
     boolean enableTestFactories();
 
     boolean getAllowTableRegistrySharedWrite();
+
+    AllowedVolumePaths getAllowedVolumePaths();
 
     int getAnalyticColumnPoolCapacity();
 

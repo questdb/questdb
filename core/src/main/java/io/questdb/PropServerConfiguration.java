@@ -70,6 +70,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    private final AllowedVolumePaths allowedVolumePaths = new AllowedVolumePaths();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -490,6 +491,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
+            allowedVolumePaths.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS), path);
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
@@ -1496,6 +1498,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getAllowTableRegistrySharedWrite() {
             return false;
+        }
+
+        @Override
+        public AllowedVolumePaths getAllowedVolumePaths() {
+            return allowedVolumePaths;
         }
 
         @Override

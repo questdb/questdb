@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.AllowedVolumePaths;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
@@ -34,6 +35,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
+    private final AllowedVolumePaths allowedVolumePaths = new AllowedVolumePaths();
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
 
@@ -46,6 +48,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean attachPartitionCopy() {
         return overrides.getCopyPartitionOnAttach() == null ? super.attachPartitionCopy() : overrides.getCopyPartitionOnAttach();
+    }
+
+    @Override
+    public AllowedVolumePaths getAllowedVolumePaths() {
+        return allowedVolumePaths;
     }
 
     @Override
