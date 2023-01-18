@@ -225,8 +225,8 @@ public class VacuumColumnVersions implements Closeable {
     }
 
     private void visitTablePartition(long pUtf8NameZ, int type) {
-        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-            path2.trimTo(tablePathLen);
+        if (ff.isDirOrSoftLinkDirNoDots(path2, tablePathLen, pUtf8NameZ, type, fileNameSink)) {
+            path2.trimTo(tablePathLen).$();
 
             int dotIndex = Chars.indexOf(fileNameSink, '.');
             if (dotIndex < 0) {

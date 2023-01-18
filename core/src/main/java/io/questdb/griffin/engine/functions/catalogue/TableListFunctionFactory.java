@@ -248,7 +248,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                     int pathLen = path.length();
                     try {
-                        path.chop$().concat(tableToken).concat(META_FILE_NAME).$();
+                        path.concat(tableToken).concat(META_FILE_NAME).$();
                         tableReaderMetadata.load(path.$());
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
