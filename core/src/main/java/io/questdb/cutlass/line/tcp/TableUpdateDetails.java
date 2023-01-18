@@ -655,7 +655,15 @@ public class TableUpdateDetails implements Closeable {
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
-                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+                try {
+                    latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+                } catch (CairoException | TableReferenceOutOfDateException ex) {
+                    if (isWal()) {
+                        setWriterInError();
+                    } else {
+                        throw ex;
+                    }
+                }
             }
         }
     }

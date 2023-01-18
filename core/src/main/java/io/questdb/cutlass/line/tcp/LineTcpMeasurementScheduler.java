@@ -297,7 +297,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());
-        ld.clearProcessedColumns();
+        ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
         WalWriter ww = (WalWriter) tud.getWriter();
