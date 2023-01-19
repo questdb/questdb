@@ -1317,10 +1317,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(filesFacade, (receiver) -> {
             String lineData = "weather,location=west1 temperature=10 1465839830100400200\n" +
                     "weather,location=west2 temperature=20 1465839830100500200\n" +
-                    "weather,location=east3 temperature=30 1465839830100600200\n";
-            sendNoWait(receiver, lineData, "weather");
-
-            lineData = "weather,location=west4,source=sensor1 temp=40 1465839830100700200\n" +
+                    "weather,location=east3 temperature=30 1465839830100600200\n" +
+                    "weather,location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
                     "weather,location=east5,source=sensor2 temp=50 1465839830100800200\n" +
                     "weather,location=west6,source=sensor3 temp=60 1465839830100900200\n";
             send(receiver, lineData, "weather");
@@ -1331,15 +1329,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send(receiver, lineData, "meteorology");
 
             mayDrainWalQueue();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
-                    "south\t80.0\t2016-06-13T17:43:50.101000Z\n";
+            String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
+                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
+                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
+                    "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
+                    "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
             assertTable(expected, "meteorology");
 
             expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "west4\tsensor1\t40.0\t2016-06-13T17:43:50.100700Z\n" +
                     "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
                     "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
                     "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";

@@ -319,7 +319,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 final String columnNameUtf16 = ld.getColName();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                     if (metadata.getColumnIndexQuiet(columnNameUtf16) < 0) {
-                        ww.commit();
+                        tud.commit(false);
                         try {
                             ww.addColumn(columnNameUtf16, ld.getColumnType(columnNameUtf16, ent.getType()));
                         } catch (CairoException e) {

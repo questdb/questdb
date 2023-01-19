@@ -227,7 +227,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private void commit(boolean withLag) throws CommitFailedException {
+    public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
                 LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
