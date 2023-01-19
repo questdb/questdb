@@ -21,33 +21,36 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+package io.questdb.griffin;
 
-package io.questdb;
-
-import io.questdb.cairo.map.CompactMap;
-import io.questdb.std.*;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class HashTest {
+public class SymbolTest extends AbstractGriffinTest {
 
     @Test
-    public void testStringHash() {
-        CompactMap.HashFunction hashFunction = Hash::hashMem;
-        testHash(hashFunction);
+    public void testSelectSymbolUsingBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table logs ( id symbol capacity 2)");
+            compile("insert into logs select x::string from long_sequence(10)");
+
+            for (int i = 1; i < 11; i++) {
+                assertQuery("id\n" + i + "\n", "select * from logs where id = '" + i + "'", null, true);
+            }
+        });
     }
 
-    private void testHash(CompactMap.HashFunction hashFunction) {
-        Rnd rnd = new Rnd();
-        LongHashSet hashes = new LongHashSet(100000);
-        final int LEN = 64;
+    @Test
+    public void testSelectSymbolUsingLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table logs ( id symbol capacity 2)");
+            compile("insert into logs select x::string from long_sequence(10)");
 
-        long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
+            for (int i = 1; i < 11; i++) {
+                bindVariableService.clear();
+                bindVariableService.setStr("id", String.valueOf(i));
 
-        for (int i = 0; i < 100000; i++) {
-            rnd.nextChars(address, LEN / 2);
-            hashes.add(hashFunction.hash(address, LEN));
-        }
-        Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
+                assertQuery("id\n" + i + "\n", "select * from logs where id = :id", null, true);
+            }
+        });
     }
 }
