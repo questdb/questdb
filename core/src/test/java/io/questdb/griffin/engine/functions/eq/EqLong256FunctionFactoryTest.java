@@ -53,6 +53,23 @@ public class EqLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testEqualitySameRecordDifferentColumns_negativeCase() throws Exception {
+        assertQuery("a\tb\n",
+                "select * from tab where a = b",
+                "create table tab as (select rnd_long256() as a, rnd_long256() as b from long_sequence(10))",
+                null, true);
+    }
+
+    @Test
+    public void testEqualitySameRecordDifferentColumns_positiveCase() throws Exception {
+        assertQuery("a\tb\n" +
+                        "0x11111111\t0x11111111\n",
+                "select * from tab where a = b",
+                "create table tab as (select 0x11111111 as a, 0x11111111 as b from long_sequence(1))",
+                null, true);
+    }
+
+    @Test
     public void testNotEqual() throws SqlException {
         CharSequence tok1 = "0x7ae65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
