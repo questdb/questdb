@@ -799,7 +799,7 @@ public class PropServerConfigurationTest {
         try {
             new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid syntax, missing alias declaration at offset 0");
+            TestUtils.assertContains(e.getMessage(), "invalid syntax, missing alias at offset 0");
         }
     }
 
