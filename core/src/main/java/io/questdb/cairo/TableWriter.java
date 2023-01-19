@@ -1016,7 +1016,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void dropIndex(CharSequence columnName) {
-
         checkDistressed();
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
@@ -1240,10 +1239,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
-    }
-
-    public boolean isDistressed() {
-        return distressed;
     }
 
     public boolean isOpen() {
@@ -1689,7 +1684,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void renameColumn(CharSequence currentName, CharSequence newName) {
-
         checkDistressed();
         checkColumnName(newName);
 
@@ -5881,7 +5875,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void throwDistressException(CairoException cause) {
         LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
-        this.distressed = true;
+        distressed = true;
         throw new CairoError(cause);
     }
 

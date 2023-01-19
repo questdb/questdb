@@ -269,7 +269,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, tableToken, tableId)
-                            .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
                         try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableToken, alterOp)) {
                             if (writer != null) {
@@ -844,14 +844,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 public boolean allocate(int fd, long size) {
                     return !fail && super.allocate(fd, size);
                 }
-
-                @Override
-                public long read(int fd, long buf, long len, long offset) {
-                    if (fail) {
-                        return -1;
-                    }
-                    return super.read(fd, buf, len, offset);
-                }
             }
 
             X ff = new X();
@@ -879,16 +871,25 @@ public class TableWriterTest extends AbstractCairoTest {
                 try {
                     r.cancel();
                     Assert.fail();
-                } catch (CairoException ignore) {
+                } catch (CairoException | CairoError ignore) {
                 }
-                ff.fail = false;
-                r.cancel();
+                // writer must be closed, we must not interact with writer anymore
 
-                populateProducts(writer, rnd, ts, N / 2, increment);
+                // test that we cannot commit
+                try {
+                    writer.commit();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
+                }
 
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
-                Assert.assertEquals(6, getDirCount());
+                // test that we cannot rollback
+                try {
+                    writer.rollback();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
+                }
             }
         });
     }
@@ -3129,6 +3130,11 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnCachedSymbol() {
+        testSymbolCacheFlag(false);
+    }
+
+    @Test
     public void testUtf8() {
         String name = "utf8";
         try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
@@ -3161,11 +3167,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(boring, r.getSym(1).toString());
             }
         }
-    }
-
-    @Test
-    public void testUnCachedSymbol() {
-        testSymbolCacheFlag(false);
     }
 
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
@@ -3790,6 +3791,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException e) {
                 LOG.info().$((Sinkable) e).$();
+            } catch (CairoError e) {
+                LOG.info().$(e.getFlyweightMessage()).$();
             }
         });
     }
@@ -4120,7 +4123,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                 }, "all", metrics).close();
                 Assert.fail();
-            } catch (CairoException ignore) {
+            } catch (CairoException | CairoError ignore) {
             }
         });
     }
