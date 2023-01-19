@@ -175,11 +175,33 @@ public final class Chars {
         return equalsChars(l, r, ll);
     }
 
+    public static boolean equals(@NotNull ByteCharSequence l, @NotNull ByteCharSequence r) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        return equalsChars(l, r, ll);
+    }
+
     public static boolean equals(@NotNull String l, @NotNull String r) {
         return l.equals(r);
     }
 
     public static boolean equals(@NotNull DirectByteCharSequence l, @NotNull String r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        return equalsChars(l, r, ll);
+    }
+
+    public static boolean equals(@NotNull DirectByteCharSequence l, @NotNull ByteCharSequence r) {
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;
@@ -714,6 +736,16 @@ public final class Chars {
         return b.toString();
     }
 
+    public static String stringFromUtf8Bytes(ByteSequence seq) {
+        if (seq.length() == 0) {
+            return "";
+        }
+
+        CharSink b = Misc.getThreadLocalBuilder();
+        utf8Decode(seq, b);
+        return b.toString();
+    }
+
     public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
         if (str != null) {
             final int len = str.length();
@@ -833,9 +865,12 @@ public final class Chars {
         }
     }
 
-    /* Decodes bytes between lo,hi addresses into sink.
-     *  Note: operation might fail in the middle and leave sink in inconsistent  state .
-     *  @return true if input is proper utf8 and false otherwise . */
+    /**
+     * Decodes bytes between lo,hi addresses into sink.
+     * Note: operation might fail in the middle and leave sink in inconsistent state.
+     *
+     * @return true if input is proper utf8 and false otherwise.
+     */
     public static boolean utf8Decode(long lo, long hi, CharSinkBase sink) {
         long p = lo;
         while (p < hi) {
@@ -855,6 +890,32 @@ public final class Chars {
         return true;
     }
 
+    /**
+     * Decodes bytes between lo,hi addresses into sink.
+     * Note: operation might fail in the middle and leave sink in inconsistent state.
+     *
+     * @return true if input is proper utf8 and false otherwise.
+     */
+    public static boolean utf8Decode(ByteSequence seq, CharSinkBase sink) {
+        int i = 0;
+        int len = seq.length();
+        while (i < len) {
+            byte b = seq.byteAt(i);
+            if (b < 0) {
+                int n = utf8DecodeMultiByte(seq, i, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    return false;
+                }
+                i += n;
+            } else {
+                sink.put((char) b);
+                ++i;
+            }
+        }
+        return true;
+    }
+
     public static int utf8DecodeMultiByte(long lo, long hi, int b, CharSinkBase sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(lo, hi, b, sink);
@@ -864,7 +925,19 @@ public final class Chars {
             return utf8Decode3Bytes(lo, hi, b, sink);
         }
 
-        return utf8Decode4Bytes(lo, b, hi, sink);
+        return utf8Decode4Bytes(lo, hi, b, sink);
+    }
+
+    public static int utf8DecodeMultiByte(ByteSequence seq, int index, int b, CharSinkBase sink) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return utf8Decode2Bytes(seq, index, b, sink);
+        }
+
+        if (b >> 4 == -2) {
+            return utf8Decode3Bytes(seq, index, b, sink);
+        }
+
+        return utf8Decode4Bytes(seq, index, b, sink);
     }
 
     public static int utf8DecodeMultiByteZ(long lo, int b, CharSink sink) {
@@ -935,6 +1008,51 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    private static boolean equalsChars(DirectByteCharSequence l, ByteCharSequence r, int len) {
+        final long lo = l.getLo();
+        int i = 0;
+        for (; i + 3 < len; i += 4) {
+            if (Unsafe.getUnsafe().getInt(lo + i) != r.intAt(i)) {
+                return false;
+            }
+        }
+        for (; i < len; i++) {
+            if (Unsafe.getUnsafe().getByte(lo + i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsChars(ByteCharSequence l, ByteCharSequence r, int len) {
+        int i = 0;
+        for (; i + 3 < len; i += 4) {
+            if (l.intAt(i) != r.intAt(i)) {
+                return false;
+            }
+        }
+        for (; i < len; i++) {
+            if (l.byteAt(i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int utf8Decode2Bytes(ByteSequence seq, int index, int b1, CharSinkBase sink) {
+        if (seq.length() - index < 2) {
+            return utf8error();
+        }
+
+        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
+        if (isNotContinuation(b2)) {
+            return utf8error();
+        }
+
+        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
+        return 2;
     }
 
     private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSinkBase sink) {
@@ -1025,6 +1143,17 @@ public final class Chars {
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
+    private static int utf8Decode3Bytes(ByteSequence seq, int index, int b1, CharSinkBase sink) {
+        if (seq.length() - index < 3) {
+            return utf8error();
+        }
+
+        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(index + 2);
+
+        return utf8Decode3Byte0(b1, sink, b2, b3);
+    }
+
     private static int utf8Decode3BytesZ(long lo, int b1, CharSink sink) {
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         if (b2 == 0) {
@@ -1039,7 +1168,7 @@ public final class Chars {
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
-    private static int utf8Decode4Bytes(long lo, int b, long hi, CharSinkBase sink) {
+    private static int utf8Decode4Bytes(long lo, long hi, int b, CharSinkBase sink) {
         if (b >> 3 != -2 || hi - lo < 4) {
             return utf8error();
         }
@@ -1047,6 +1176,18 @@ public final class Chars {
         byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
         byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
         byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+
+        return utf8Decode4Bytes0(b, sink, b2, b3, b4);
+    }
+
+    private static int utf8Decode4Bytes(ByteSequence seq, int index, int b, CharSinkBase sink) {
+        if (b >> 3 != -2 || seq.length() - index < 4) {
+            return utf8error();
+        }
+
+        byte b2 = Unsafe.getUnsafe().getByte(index + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(index + 2);
+        byte b4 = Unsafe.getUnsafe().getByte(index + 3);
 
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }

@@ -52,7 +52,7 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     @Before
     public void setUp() {
         // Windows-only tests.
-        Assume.assumeTrue(Os.type == Os.WINDOWS);
+        Assume.assumeTrue(Os.isWindows());
 
         super.setUp();
         path.of(configuration.getSnapshotRoot()).slash();

@@ -65,11 +65,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-        int position,
-        ObjList<Function> args,
-        IntList argPositions,
-        CairoConfiguration configuration,
-        SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return new CursorFunction(new WalTableListCursorFactory(configuration, sqlExecutionContext)) {
             @Override

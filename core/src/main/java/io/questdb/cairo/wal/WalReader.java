@@ -143,7 +143,6 @@ public class WalReader implements Closeable {
     public long openSegment() {
         try {
             if (ff.exists(path.$())) {
-                path.chop$();
                 openSegmentColumns();
                 return rowCount;
             }
