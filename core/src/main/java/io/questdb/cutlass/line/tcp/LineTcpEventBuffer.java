@@ -27,15 +27,14 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16Unchecked;
+import static io.questdb.std.Chars.utf8ToUtf16;
+import static io.questdb.std.Chars.utf8ToUtf16Unchecked;
 
 public class LineTcpEventBuffer {
     private final long bufLo;
@@ -190,7 +189,7 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putLong(address, structureVersion);
     }
 
-    public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
+    public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, DirectByteSymbolLookup symbolLookup) {
         final int maxLen = 2 * value.length();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         final long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
@@ -198,10 +197,7 @@ public class LineTcpEventBuffer {
         // via temp string the utf8 decoder will be writing directly to our buffer
         tempSink.of(strPos, strPos + maxLen);
 
-        // this method will write column name to the buffer if it has to be utf8 decoded
-        // otherwise it will write nothing.
-        CharSequence columnValue = utf8ToUtf16(value, tempSink, hasNonAsciiChars);
-        final int symIndex = symbolLookup.keyOf(columnValue);
+        final int symIndex = symbolLookup.keyOf(value);
         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
             // We know the symbol int value
             // Encode the int
@@ -212,7 +208,9 @@ public class LineTcpEventBuffer {
             // Symbol value cannot be resolved at this point
             // Encode whole string value into the message
             if (!hasNonAsciiChars) {
-                tempSink.put(columnValue);
+                tempSink.put(value);
+            } else {
+                utf8ToUtf16(value, tempSink, true);
             }
             final int length = tempSink.length();
             Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TAG);
@@ -334,8 +332,7 @@ public class LineTcpEventBuffer {
     }
 
     public CharSequence readUtf16Chars(long address, int length) {
-        tempSink.asCharSequence(address, address + length * 2L);
-        return tempSink;
+        return tempSink.asCharSequence(address, address + length * 2L);
     }
 
     private long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {

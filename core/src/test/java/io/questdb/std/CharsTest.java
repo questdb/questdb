@@ -200,6 +200,80 @@ public class CharsTest {
     }
 
     @Test
+    public void testUtf8CharDecode() {
+        long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            testUtf8Char("A", p, false); // 1 byte
+            testUtf8Char("Ч", p, false); // 2 bytes
+            testUtf8Char("∆", p, false); // 3 bytes
+            testUtf8Char("\uD83D\uDE00\"", p, true); // fail, cannot store it as one char
+        } finally {
+            Unsafe.free(p, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8CharMalformedDecode() {
+        long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // empty
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p));
+            // one byte
+            Unsafe.getUnsafe().putByte(p, (byte) 0xFF);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC0);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
+            Unsafe.getUnsafe().putByte(p, (byte) 0x80);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
+            // two bytes
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x80);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC1);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xBF);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC2);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x00);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0xC0);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xC0);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0xBF);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xA0);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0x7F);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xED);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xAE);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0x80);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+        } finally {
+            Unsafe.free(p, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void testUtf8Char(String x, long p, boolean failExpected) {
+        byte[] bytes = x.getBytes(Files.UTF_8);
+        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
+            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+        }
+        int res = Chars.utf8CharDecode(p, p + bytes.length);
+        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
+        Assert.assertTrue(failExpected != eq);
+    }
+
+    @Test
     public void testUtf8SupportZ() {
 
         StringBuilder expected = new StringBuilder();

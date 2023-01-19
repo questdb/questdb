@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -39,9 +40,13 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
+
+    private static final String SYMBOL = "round_half_even";
+    private static final String SIGNATURE = SYMBOL + "(DI)";
+
     @Override
     public String getSignature() {
-        return "round_half_even(DI)";
+        return SIGNATURE;
     }
 
     @Override
@@ -96,6 +101,11 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return SYMBOL;
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }
@@ -125,6 +135,10 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
             return Numbers.roundHalfEvenNegScale(l, scale);
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
+        }
     }
 
     private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
@@ -151,6 +165,10 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
             return Numbers.roundHalfEvenPosScale(l, scale);
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
+        }
     }
 
 

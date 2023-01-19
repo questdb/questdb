@@ -221,7 +221,7 @@ class FastDoubleSwar {
      */
     static long tryToParseEightHexDigitsUtf8(byte[] a, int offset) {
         return tryToParseEightHexDigitsUtf8(
-                Unsafe.swapEndianness(getChunk(a, offset))
+                Long.reverseBytes(getChunk(a, offset))
         );
     }
 

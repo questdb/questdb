@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -123,6 +124,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isConstant() {
             return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("replace(").val(value).val(',').val(oldSubStr).val(',').val(newSubStr).val(')');
         }
 
         private void checkLengthLimit(int length) {

@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
@@ -59,13 +58,12 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
-    public static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class Func extends AbstractCastToStrFunction implements UnaryFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public Func(Function arg) {
-            this.arg = arg;
+            super(arg);
         }
 
         @Override

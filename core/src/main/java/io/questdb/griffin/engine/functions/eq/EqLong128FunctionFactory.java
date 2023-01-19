@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -50,13 +48,9 @@ public class EqLong128FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+            super(left, right);
         }
 
         @Override
@@ -65,16 +59,6 @@ public class EqLong128FunctionFactory implements FunctionFactory {
                     left.getLong128Lo(rec) == right.getLong128Lo(rec)
                             && left.getLong128Hi(rec) == right.getLong128Hi(rec)
             );
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
         }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -97,6 +98,11 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getArg()).val("::uuid");
         }
     }
 }

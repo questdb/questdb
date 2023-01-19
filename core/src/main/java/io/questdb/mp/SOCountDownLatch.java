@@ -41,6 +41,7 @@ public class SOCountDownLatch implements CountDownLatchSPI {
     }
 
     public SOCountDownLatch() {
+        // no-op
     }
 
     public void await() {

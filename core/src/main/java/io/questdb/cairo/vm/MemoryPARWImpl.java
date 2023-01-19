@@ -30,8 +30,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
@@ -48,6 +47,8 @@ public class MemoryPARWImpl implements MemoryARW {
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
+    private final FloatingDirectCharSink utf8FloatingSink = new FloatingDirectCharSink();
+    private final StringSink utf8StrSink = new StringSink();
     protected int memoryTag;
     private long absolutePointer;
     private long appendPointer = -1;
@@ -672,6 +673,13 @@ public class MemoryPARWImpl implements MemoryARW {
         return putStr0(value, pos, len);
     }
 
+    public long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars) {
+        if (value != null && hasNonAsciiChars) {
+            return putStrUtf8AsUtf160(value);
+        }
+        return putStr(value);
+    }
+
     @Override
     public long size() {
         return getAppendOffset();
@@ -911,6 +919,22 @@ public class MemoryPARWImpl implements MemoryARW {
         while (at < end) {
             putSplitChar(value.charAt(at++));
         }
+    }
+
+    private long putStrUtf8AsUtf160(DirectByteCharSequence value) {
+        int estimatedLen = value.length() * 2;
+        if (pageHi - appendPointer < estimatedLen + 4) {
+            utf8StrSink.clear();
+            CharSequence utf16 = Chars.utf8ToUtf16(value, utf8StrSink, true);
+            putInt(utf16.length());
+            putStrSplit(utf8StrSink, 0, utf16.length());
+        } else {
+            utf8FloatingSink.of(appendPointer + 4, appendPointer + estimatedLen + 4); // shifted by 4 bytes of length
+            CharSequence utf16 = Chars.utf8ToUtf16(value, utf8FloatingSink, true);
+            putInt(utf16.length());
+            appendPointer = utf8FloatingSink.getLo();
+        }
+        return getAppendOffset();
     }
 
     private void skip0(long bytes) {

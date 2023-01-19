@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
@@ -96,15 +96,20 @@ public class EqStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(constant, arg.getStr(rec));
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").val(constant).val('\'');
+        }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+            super(left, right);
         }
 
         @Override
@@ -123,13 +128,13 @@ public class EqStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return left;
-        }
+        public String getName() {
+            if (negated) {
+                return "!=";
+            } else {
+                return "=";
+            }
 
-        @Override
-        public Function getRight() {
-            return right;
         }
     }
 
@@ -148,6 +153,16 @@ public class EqStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (arg.getStrLen(rec) == -1L);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val(" is not null ");
+            } else {
+                sink.val(" is null");
+            }
         }
     }
 }

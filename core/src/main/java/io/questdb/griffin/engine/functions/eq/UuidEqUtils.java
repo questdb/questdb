@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
@@ -134,7 +135,6 @@ final class UuidEqUtils {
             return fun;
         }
 
-
         @Override
         public boolean getBool(Record rec) {
             CharSequence uuidStr = fun.getStr(rec);
@@ -148,25 +148,30 @@ final class UuidEqUtils {
                 return negated;
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(fun);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").valUuid(constUuidLo, constUuidHi).val('\'');
+        }
     }
 
     /**
      * The string function is not constant and the UUID function is not constant either.
      */
-    private static class Fun extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function strFunction;
-        private final Function uuidFunction;
-
+    private static class Fun extends AbstractEqBinaryFunction implements BinaryFunction {
         private Fun(Function strFunction, Function uuidFunction) {
-            this.strFunction = strFunction;
-            this.uuidFunction = uuidFunction;
+            super(strFunction, uuidFunction);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence str = strFunction.getStr(rec);
-            long lo = uuidFunction.getLong128Lo(rec);
-            long hi = uuidFunction.getLong128Hi(rec);
+            CharSequence str = left.getStr(rec);
+            long lo = right.getLong128Lo(rec);
+            long hi = right.getLong128Hi(rec);
             if (str == null) {
                 return negated != Uuid.isNull(lo, hi);
             }
@@ -176,16 +181,6 @@ final class UuidEqUtils {
             } catch (NumericException e) {
                 return negated;
             }
-        }
-
-        @Override
-        public Function getLeft() {
-            return strFunction;
-        }
-
-        @Override
-        public Function getRight() {
-            return uuidFunction;
         }
     }
 }

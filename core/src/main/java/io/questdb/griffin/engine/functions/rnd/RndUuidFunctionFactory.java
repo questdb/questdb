@@ -53,7 +53,7 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         @Override
         public long getLong128Hi(Record rec) {
             long hi = rnd.nextLong();
-            // set version to 4  
+            // set version to 4
             hi &= 0xffffffffffff0fffL;
             hi |= 0x0000000000004000L;
             return hi;
@@ -66,6 +66,11 @@ public class RndUuidFunctionFactory implements FunctionFactory {
             lo &= 0x3fffffffffffffffL;
             lo |= 0x8000000000000000L;
             return lo;
+        }
+
+        @Override
+        public String getName() {
+            return "rnd_uuid4";
         }
 
         @Override

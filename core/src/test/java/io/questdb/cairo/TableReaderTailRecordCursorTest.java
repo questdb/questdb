@@ -210,7 +210,6 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                                         ss.put(",");
                                     }
                                     ss.put("]:").put(reader.getTxn());
-                                    int val = record.getInt(0);
                                     Assert.assertEquals(ss.toString(), count, record.getInt(0));
                                 }
                                 BinarySequence binarySequence = record.getBin(1);
@@ -303,7 +302,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );

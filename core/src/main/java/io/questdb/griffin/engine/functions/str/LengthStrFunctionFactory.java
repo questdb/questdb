@@ -61,5 +61,10 @@ public class LengthStrFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             return arg.getStrLen(rec);
         }
+
+        @Override
+        public String getName() {
+            return "length";
+        }
     }
 }

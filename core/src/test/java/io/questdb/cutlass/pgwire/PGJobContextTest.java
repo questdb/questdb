@@ -2195,6 +2195,114 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExplainPlan() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                    "select x," +
+                    " timestamp_sequence(0, 1000) ts" +
+                    " from long_sequence(100000)) timestamp (ts)")) {
+                pstmt.execute();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx limit 10")) {
+                statement.execute();
+                try (ResultSet rs = statement.getResultSet()) {
+                    assertResultSet(
+                            "QUERY PLAN[VARCHAR]\n" +
+                                    "Limit lo: 10\n" +
+                                    "    DataFrame\n" +
+                                    "        Row forward scan\n" +
+                                    "        Frame forward scan on: xx\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExplainPlanWithBindVariables() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary) -> {
+            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                    "select x," +
+                    " timestamp_sequence(0, 1000) ts" +
+                    " from long_sequence(100000)) timestamp (ts)")) {
+                pstmt.execute();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where x > ? and x < ?::double limit 10")) {
+                for (int i = 0; i < 3; i++) {
+                    statement.setLong(1, i);
+                    statement.setDouble(2, (i + 1) * 10);
+                    statement.execute();
+                    sink.clear();
+                    try (ResultSet rs = statement.getResultSet()) {
+                        assertResultSet(
+                                "QUERY PLAN[VARCHAR]\n" +
+                                        "Async Filter\n" +
+                                        "  limit: 10\n" +
+                                        "  filter: ($0::long<x and x<$1::double)\n" +
+                                        "  workers: 2\n" +
+                                        "    DataFrame\n" +
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: xx\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExplainPlanWithBindVariablesFailsIfAllValuesArentSet() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary) -> {
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from long_sequence(1) where x > ? and x < ? limit 10")) {
+                statement.setLong(1, 0);
+                try {
+                    statement.execute();
+                } catch (PSQLException e) {
+                    Assert.assertEquals("No value specified for parameter 2.", e.getMessage());
+                }
+            }
+        });
+    }
+
+
+    @Test
+    public void testExplainPlanWithWhitespaces() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                    "select x as x," +
+                    " 's' || x as str" +
+                    " from long_sequence(100000))")) {
+                pstmt.execute();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where str = '\b\f\n\r\t\u0005' order by str,x limit 10")) {
+                statement.execute();
+                try (ResultSet rs = statement.getResultSet()) {
+                    assertResultSet(
+                            "QUERY PLAN[VARCHAR]\n" +
+                                    "Sort light lo: 10\n" +
+                                    "  keys: [str, x]\n" +
+                                    "    Async Filter\n" +
+                                    "      filter: str='\\b\\f\\n\\r\\t\\u0005'\n" +
+                                    "      workers: 2\n" +
+                                    "        DataFrame\n" +
+                                    "            Row forward scan\n" +
+                                    "            Frame forward scan on: xx\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testExtendedQueryTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
             compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);

@@ -22,28 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.wal.WalSqlExecutionContextImpl;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class SqlToOperation implements Closeable {
+public class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
-    private final SqlCompiler compiler;
     private final Rnd rnd;
+    private final SqlCompiler sqlCompiler;
     private final WalSqlExecutionContextImpl sqlExecutionContext;
 
-    public SqlToOperation(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+    public OperationCompiler(
+            CairoEngine engine,
+            int workerCount,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new WalSqlExecutionContextImpl(
@@ -58,13 +67,29 @@ public class SqlToOperation implements Closeable {
                 -1,
                 null
         );
-        this.compiler = new SqlCompiler(engine);
+        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
     }
 
     @Override
     public void close() {
-        sqlExecutionContext.close();
-        compiler.close();
+        Misc.free(sqlCompiler);
+        Misc.free(sqlExecutionContext);
+    }
+
+    public AlterOperation compileAlterSql(CharSequence alterSql, TableToken tableToken) throws SqlException {
+        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
+        final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, sqlExecutionContext);
+        final AlterOperation alterOp = compiledQuery.getAlterOperation();
+        alterOp.withContext(sqlExecutionContext);
+        return alterOp;
+    }
+
+    public UpdateOperation compileUpdateSql(CharSequence updateSql, TableToken tableToken) throws SqlException {
+        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
+        final CompiledQuery compiledQuery = sqlCompiler.compile(updateSql, sqlExecutionContext);
+        final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+        updateOperation.withContext(sqlExecutionContext);
+        return updateOperation;
     }
 
     public BindVariableService getBindVariableService() {
@@ -77,21 +102,5 @@ public class SqlToOperation implements Closeable {
 
     public void setNowAndFixClock(long now) {
         sqlExecutionContext.setNowAndFixClock(now);
-    }
-
-    public AlterOperation toAlterOperation(CharSequence alterStatement, TableToken tableToken) throws SqlException {
-        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
-        final CompiledQuery compiledQuery = compiler.compile(alterStatement, sqlExecutionContext);
-        final AlterOperation alterOperation = compiledQuery.getAlterOperation();
-        alterOperation.withContext(sqlExecutionContext);
-        return alterOperation;
-    }
-
-    public UpdateOperation toUpdateOperation(CharSequence updateStatement, TableToken tableToken) throws SqlException {
-        sqlExecutionContext.remapTableNameResolutionTo(tableToken);
-        final CompiledQuery compiledQuery = compiler.compile(updateStatement, sqlExecutionContext);
-        final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
-        updateOperation.withContext(sqlExecutionContext);
-        return updateOperation;
     }
 }

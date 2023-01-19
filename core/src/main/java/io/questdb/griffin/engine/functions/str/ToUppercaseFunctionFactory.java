@@ -64,6 +64,11 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "to_uppercase";
+        }
+
+        @Override
         public CharSequence getStr(final Record rec) {
             CharSequence str = getArg().getStr(rec);
             if (str == null) {

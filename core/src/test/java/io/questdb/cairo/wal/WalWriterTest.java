@@ -1477,6 +1477,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
                     .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
+                    .col("symbol8", ColumnType.SYMBOL) // putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
+                    .col("string8", ColumnType.STRING) // putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
                     .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
                     .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .timestamp("ts")
@@ -1540,16 +1542,21 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                         row.putSym(24, String.valueOf(i));
                         row.putSym(25, (char) (65 + i % 26));
-                        row.putLong128(26, i, i + 1); // UUID
+
+                        TestUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 26, true);
+                        TestUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 27, false);
+
+                        row.putLong128(28, i, i + 1); // UUID
                         stringSink.clear();
                         Numbers.appendUuid(i, i + 1, stringSink);
-                        row.putUuid(27, stringSink);
+                        row.putUuid(29, stringSink);
 
                         row.append();
                     }
 
                     walSymbolCounts.add(walWriter.getSymbolMapReader(24).getSymbolCount());
                     walSymbolCounts.add(walWriter.getSymbolMapReader(25).getSymbolCount());
+                    walSymbolCounts.add(walWriter.getSymbolMapReader(26).getSymbolCount());
 
                     assertEquals(rowsToInsertTotal, walWriter.getSegmentRowCount());
                     assertEquals("WalWriter{name=" + walName + ", table=" + tableName + "}", walWriter.toString());
@@ -1557,7 +1564,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(29, reader.getColumnCount());
+                    assertEquals(31, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -1614,13 +1621,16 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals(String.valueOf(i), record.getSym(24));
                         assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
 
-                        assertEquals(i, record.getLong128Lo(26));
-                        assertEquals(i + 1, record.getLong128Hi(26));
+                        assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSym(26).toString());
+                        assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStr(27).toString());
 
-                        assertEquals(i, record.getLong128Lo(27));
-                        assertEquals(i + 1, record.getLong128Hi(27));
+                        assertEquals(i, record.getLong128Lo(28));
+                        assertEquals(i + 1, record.getLong128Hi(28));
 
-                        assertEquals(ts, record.getTimestamp(28));
+                        assertEquals(i, record.getLong128Lo(29));
+                        assertEquals(i + 1, record.getLong128Hi(29));
+
+                        assertEquals(ts, record.getTimestamp(30));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);
@@ -1995,10 +2005,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                 try {
                     row.putSym(1, "anything");
                     fail("UnsupportedOperationException expected");
-                } catch (UnsupportedOperationException e) {
-                    // ignore, this is expected
+                } catch (UnsupportedOperationException ignore) {
                 }
-                row.putSym(2, "symc");
+                try {
+                    TestUtils.putUtf8(row, "Щось", 1, true);
+                    fail("UnsupportedOperationException expected");
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                TestUtils.putUtf8(row, "Таке-Сяке", 2, true);
                 row.append();
                 walWriter.commit();
             }
@@ -2075,7 +2090,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     final Record record = cursor.getRecord();
                     assertTrue(cursor.hasNext());
                     assertEquals(133, record.getInt(0));
-                    assertEquals("symc", record.getSym(2));
+                    assertEquals("Таке-Сяке", record.getSym(2));
                     assertEquals(0, record.getRowId());
                     assertFalse(cursor.hasNext());
 
@@ -3039,6 +3054,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
+    }
+
+    static void addColumn(WalWriter writer, String columnName, int columnType) {
+        writer.addColumn(columnName, columnType);
     }
 
     static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {

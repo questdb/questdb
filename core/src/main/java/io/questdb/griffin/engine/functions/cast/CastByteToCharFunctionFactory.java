@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,7 +43,7 @@ public class CastByteToCharFunctionFactory implements FunctionFactory {
         return new CastByteToCharFunction(args.getQuick(0));
     }
 
-    public static class CastByteToCharFunction extends CharFunction implements UnaryFunction {
+    public static class CastByteToCharFunction extends AbstractCastToCharFunction {
         private final Function arg;
 
         public CastByteToCharFunction(Function arg) {

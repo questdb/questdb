@@ -171,11 +171,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final TableToken tableToken, long structureVersionLo) {
+    public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             TableMetadataChangeLog metadataChangeLog;
             try {
-                metadataChangeLog = tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
+                metadataChangeLog = tableSequencer.getMetadataChangeLog(structureVersionLo);
             } finally {
                 tableSequencer.unlockRead();
             }
@@ -230,11 +230,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation operation) {
+    public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
-                txn = tableSequencer.nextStructureTxn(structureVersion, operation);
+                txn = tableSequencer.nextStructureTxn(structureVersion, alterOp);
             } finally {
                 tableSequencer.unlockWrite();
             }

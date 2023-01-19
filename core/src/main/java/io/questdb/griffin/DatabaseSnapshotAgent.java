@@ -121,8 +121,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             srcPath.trimTo(snapshotRootLen).$();
             final int snapshotDbLen = srcPath.length();
             ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
-                if (Files.isDir(pUtf8NameZ, type)) {
-                    srcPath.trimTo(snapshotDbLen).concat(pUtf8NameZ);
+                if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
                     int srcPathLen = srcPath.length();
                     int dstPathLen = dstPath.length();
@@ -313,7 +312,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
     public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             throw SqlException.position(0).put("Snapshots are not supported on Windows");
         }
 

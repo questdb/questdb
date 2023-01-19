@@ -145,7 +145,7 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$(task.getTableName())
+                    .utf8(task.getTableName().getTableName())
                     .$(", txn=").$(updateTxn)
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno()).I$();
@@ -170,7 +170,7 @@ public class ColumnPurgeOperator implements Closeable {
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL || scoreboardUseMode == ScoreboardUseMode.EXCLUSIVE) {
             int tableId = readTableId(path);
             if (tableId != task.getTableId()) {
-                LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
+                LOG.info().$("cannot purge orphan table [path=").utf8(path.trimTo(pathTableLen)).I$();
                 return false;
             }
 
@@ -188,8 +188,8 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
 
-        LOG.info().$("purging [table=").$(task.getTableName())
-                .$(", column=").$(task.getColumnName())
+        LOG.info().$("purging [table=").utf8(task.getTableName().getTableName())
+                .$(", column=").utf8(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
                 .I$();
 
@@ -246,6 +246,16 @@ public class ColumnPurgeOperator implements Closeable {
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
                     setupScoreboard = false;
+                }
+
+                if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                    // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL
+                    // or it was open by openScoreboardAndTxn
+                    LOG.info().$("skipping purge of read-only partition [path=").utf8(path.$())
+                            .$(", column=").utf8(task.getColumnName())
+                            .I$();
+                    completedRowIds.add(updateRowId);
+                    continue;
                 }
 
                 if (columnVersion < minUnlockedTxnRangeStarts) {

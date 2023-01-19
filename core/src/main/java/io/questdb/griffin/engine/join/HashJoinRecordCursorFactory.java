@@ -31,13 +31,16 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final HashJoinRecordCursor cursor;
+    private final JoinContext joinContext;
     private final RecordCursorFactory masterFactory;
     private final RecordSink masterSink;
     private final RecordCursorFactory slaveFactory;
@@ -53,7 +56,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
-            int columnSplit
+            int columnSplit,
+            JoinContext joinContext
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
@@ -63,6 +67,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
+        this.joinContext = joinContext;
     }
 
     @Override
@@ -91,6 +96,14 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return masterFactory.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Hash Join");
+        sink.attr("condition").val(joinContext);
+        sink.child(masterFactory);
+        sink.child("Hash", slaveFactory);
     }
 
     @Override

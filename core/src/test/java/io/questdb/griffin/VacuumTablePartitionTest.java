@@ -49,10 +49,7 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
 
             // cleanup
             try (O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-                //noinspection StatementWithEmptyBody
-                while (purgeDiscoveryJob.run(0)) {
-
-                }
+                purgeDiscoveryJob.drain(0);
             }
         });
     }

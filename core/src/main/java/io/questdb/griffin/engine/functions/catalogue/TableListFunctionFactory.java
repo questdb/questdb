@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -43,6 +44,7 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 public class TableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
+    private static final String SIGNATURE = "tables()";
     private static final int designatedTimestampColumn;
     private static final int idColumn;
     private static final int maxUncommittedRowsColumn;
@@ -54,7 +56,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "tables()";
+        return SIGNATURE;
     }
 
     @Override
@@ -105,6 +107,11 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("tables()");
         }
 
         @Override
@@ -241,7 +248,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                     int pathLen = path.length();
                     try {
-                        path.chop$().concat(tableToken).concat(META_FILE_NAME).$();
+                        path.concat(tableToken).concat(META_FILE_NAME).$();
                         tableReaderMetadata.load(path.$());
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch

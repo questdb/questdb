@@ -24,14 +24,14 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
-import io.questdb.std.Sinkable;
 
 import java.io.Closeable;
 
-public interface RuntimeIntrinsicIntervalModel extends Closeable, Sinkable {
+public interface RuntimeIntrinsicIntervalModel extends Closeable, Plannable {
     boolean allIntervalsHitOnePartition(int partitionBy);
 
     LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException;

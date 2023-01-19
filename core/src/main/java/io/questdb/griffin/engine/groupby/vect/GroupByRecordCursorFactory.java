@@ -65,6 +65,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
     private final ObjList<VectorAggregateFunction> vafList;
+    private final int workerCount;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -78,6 +79,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
         super(metadata);
+        this.workerCount = workerCount;
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -154,6 +156,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
@@ -193,7 +200,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (thread instanceof Worker) {
             workerId = ((Worker) thread).getWorkerId();
         } else {
-            workerId = pRosti.length - 1;//to avoid clashing with other worker with id=0 in tests
+            workerId = pRosti.length - 1;//to avoid clashing with other worker with id=0 in tests 
         }
 
         try {
@@ -360,10 +367,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("GroupByRecord");
+        sink.type("GroupBy");
         sink.meta("vectorized").val(true);
-        sink.attr("groupByFunctions").val(vafList);
-        sink.attr("keyColumnIndex").val(keyColumnIndex);
+        sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
+        sink.optAttr("values", vafList, true);
+        sink.attr("workers").val(workerCount);
         sink.child(base);
     }
 

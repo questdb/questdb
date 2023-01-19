@@ -100,6 +100,11 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
+    public String getName() {
+        return "count_distinct";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

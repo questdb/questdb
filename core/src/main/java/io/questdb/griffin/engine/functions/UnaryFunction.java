@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -54,6 +55,15 @@ public interface UnaryFunction extends Function {
 
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        if (isOperator()) {
+            sink.val(getName()).val(getArg());
+        } else {
+            sink.val(getName()).val('(').val(getArg()).val(')');
+        }
     }
 
     @Override

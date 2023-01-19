@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.*;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -64,7 +65,7 @@ public abstract class AbstractCairoTest {
 
 
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
-    protected static final PlanSink planSink = new PlanSink();
+    protected static final PlanSink planSink = new TextPlanSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final StringSink sink = new StringSink();
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
@@ -376,11 +377,11 @@ public abstract class AbstractCairoTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBNode node) {
-        return new ApplyWal2TableJob(node.getEngine(), 1, 1);
+        return new ApplyWal2TableJob(node.getEngine(), 1, 1, null);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return new ApplyWal2TableJob(engine, 1, 1, null);
     }
 
     protected static void drainWalQueue(QuestDBNode node) {
@@ -394,19 +395,10 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
-        //noinspection StatementWithEmptyBody
-        while (walApplyJob.run(0)) {
-            // run until empty
-        }
-
-        final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        checkWalTransactionsJob.run(0);
-
+        walApplyJob.drain(0);
+        new CheckWalTransactionsJob(engine).run(0);
         // run once again as there might be notifications to handle now
-        //noinspection StatementWithEmptyBody
-        while (walApplyJob.run(0)) {
-            // run until empty
-        }
+        walApplyJob.drain(0);
     }
 
     protected static void drainWalQueue() {
@@ -520,10 +512,7 @@ public abstract class AbstractCairoTest {
     protected static void runWalPurgeJob(FilesFacade ff) {
         try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
             snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
-            //noinspection StatementWithEmptyBody
-            while (job.run(0)) {
-                // run until empty
-            }
+            job.drain(0);
         }
     }
 

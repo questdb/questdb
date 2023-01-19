@@ -26,14 +26,11 @@ package io.questdb.std;
 
 // @formatter:off
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -949,6 +946,94 @@ public final class Numbers {
     @NotNull
     public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
         return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
+    }
+
+    public static long parseLongDuration(CharSequence sequence) throws NumericException {
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+        if (negative){
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        EX:
+        for (int i = 0; i < lim; i++) {
+            int c = sequence.charAt(i);
+            if (c < '0' || c > '9') {
+                if (i == lim - 1) {
+                    switch (c) {
+                        case 's':
+                            r = val * Timestamps.SECOND_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'm':
+                            r = val * Timestamps.MINUTE_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'h':
+                            r = val * Timestamps.HOUR_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'd':
+                            r = val * Timestamps.DAY_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'w':
+                            r = val * Timestamps.WEEK_MICROS;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'M':
+                            r = val * Timestamps.DAY_MICROS*30;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'y':
+                            r = val * Timestamps.DAY_MICROS*365;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        default:
+                            break;
+                    }
+                }
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return -val;
     }
 
     public static long parseLongQuiet(CharSequence sequence) {

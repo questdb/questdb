@@ -22,32 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.map.FastMap;
-import io.questdb.std.*;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public class HashTest {
+public abstract class AbstractCastToFloatFunction extends FloatFunction implements UnaryFunction {
 
-    @Test
-    public void testStringHash() {
-        FastMap.HashFunction hashFunction = Hash::hashMem;
-        testHash(hashFunction);
-    }
-
-    private void testHash(FastMap.HashFunction hashFunction) {
-        Rnd rnd = new Rnd();
-        LongHashSet hashes = new LongHashSet(100000);
-        final int LEN = 64;
-
-        long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
-
-        for (int i = 0; i < 100000; i++) {
-            rnd.nextChars(address, LEN / 2);
-            hashes.add(hashFunction.hash(address, LEN));
-        }
-        Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(getArg()).val("::float");
     }
 }

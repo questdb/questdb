@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.IntList;
@@ -35,9 +36,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class SysdateFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "sysdate()";
+
     @Override
     public String getSignature() {
-        return "sysdate()";
+        return SIGNATURE;
     }
 
     @Override
@@ -61,6 +64,11 @@ public class SysdateFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

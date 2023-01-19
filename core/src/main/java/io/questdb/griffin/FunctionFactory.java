@@ -41,6 +41,7 @@ public interface FunctionFactory {
      * Argument types are represented by single character from this table:
      * <ul>
      * <li>B = byte</li>
+     * <li>C = cursor</li>
      * <li>E = short</li>
      * <li>I = int</li>
      * <li>L = long</li>

@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class MulIntFunctionFactory implements FunctionFactory {
     @Override
@@ -73,13 +72,18 @@ public class MulIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "*";
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }
 
         @Override
-        public void toSink(CharSink sink) {
-            sink.put("MulInt(").put(left).put(",").put(right).put(')');
+        public boolean isOperator() {
+            return true;
         }
     }
 }

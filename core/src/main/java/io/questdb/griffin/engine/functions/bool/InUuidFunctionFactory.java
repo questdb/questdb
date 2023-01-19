@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -111,6 +112,12 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                 return false;
             }
             return set.contains(lo, hi);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            //todo: implement sinking LongLongSet as UUID list
+            sink.val(arg).val(" in uuid_set");
         }
     }
 }

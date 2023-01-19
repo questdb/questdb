@@ -32,7 +32,7 @@ public interface TableSequencer extends QuietCloseable {
 
     void dropTable();
 
-    TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo);
+    TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo);
 
     int getNextWalId();
 

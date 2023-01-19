@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.ObjList;
 
@@ -61,8 +62,13 @@ public final class UuidColumn extends UuidFunction implements ScalarFunction {
         // the UUID column is thread-safe
 
         // it's only when casting to string (=common operation) then it's not thread-safe
-        // the CastUuidToStr function indicate it's not thead-safe 
+        // the CastUuidToStr function indicate it's not thead-safe
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 
     static {

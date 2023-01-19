@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -101,15 +102,20 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
             long lo = arg.getLong128Lo(rec);
             return negated != (hi == hiConstant && lo == loConstant);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").valUuid(loConstant, hiConstant).val('\'');
+        }
     }
 
-    public static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-
+    public static class Func extends AbstractEqBinaryFunction implements BinaryFunction {
         public Func(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+            super(left, right);
         }
 
         @Override
@@ -119,16 +125,6 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
             final long rightHi = right.getLong128Hi(rec);
             final long rightLo = right.getLong128Lo(rec);
             return negated != (leftHi == rightHi && leftLo == rightLo);
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
         }
     }
 }

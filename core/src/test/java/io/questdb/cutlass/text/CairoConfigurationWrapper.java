@@ -223,6 +223,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getExplainPoolCapacity() {
+        return conf.getExplainPoolCapacity();
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return conf.getFileOperationRetryCount();
     }
@@ -685,6 +690,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlSmallMapKeyCapacity() {
         return conf.getSqlSmallMapKeyCapacity();
+    }
+
+    @Override
+    public int getSqlSmallMapPageSize() {
+        return conf.getSqlSmallMapPageSize();
     }
 
     @Override

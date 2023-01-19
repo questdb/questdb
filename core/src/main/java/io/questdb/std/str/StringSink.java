@@ -106,6 +106,10 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         return this;
     }
 
+    public void setCharAt(int index, char ch) {
+        builder.setCharAt(index, ch);
+    }
+
     @Override
     public CharSequence subSequence(int lo, int hi) {
         return builder.subSequence(lo, hi);

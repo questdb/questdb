@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -51,5 +52,9 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     @Override
     public long getLong128Lo(Record rec) {
         return lo;
+    }
+
+    public void toPlan(PlanSink sink) {
+        sink.valUuid(hi, lo);
     }
 }

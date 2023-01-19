@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
@@ -160,5 +161,10 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
             sink.clear();
             sink.put(value);
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("?::string");
     }
 }

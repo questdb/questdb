@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.std.str.CharSink;
 
 public class ByteConstant extends ByteFunction implements ConstantFunction {
     public static final ByteConstant ZERO = new ByteConstant((byte) 0);
@@ -46,7 +46,7 @@ public class ByteConstant extends ByteFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put(value);
+    public void toPlan(PlanSink sink) {
+        sink.val(value);
     }
 }
