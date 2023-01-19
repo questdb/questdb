@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.AllowedVolumePaths;
+import io.questdb.FolderMapping;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
@@ -35,7 +35,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
-    private final AllowedVolumePaths allowedVolumePaths = new AllowedVolumePaths();
+    private final FolderMapping allowedVolumePaths = new FolderMapping();
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
 
@@ -51,7 +51,7 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
-    public AllowedVolumePaths getAllowedVolumePaths() {
+    public FolderMapping getAllowedVolumePaths() {
         return allowedVolumePaths;
     }
 

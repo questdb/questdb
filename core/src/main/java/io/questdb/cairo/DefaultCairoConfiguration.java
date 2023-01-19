@@ -73,7 +73,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public AllowedVolumePaths getAllowedVolumePaths() {
+    public FolderMapping getAllowedVolumePaths() {
         return null;
     }
 
