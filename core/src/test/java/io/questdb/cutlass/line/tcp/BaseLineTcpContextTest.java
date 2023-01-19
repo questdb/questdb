@@ -35,6 +35,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -360,11 +361,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     static class NoNetworkIOJob implements NetworkIOJob {
-        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
+        private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
-        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 
@@ -398,7 +399,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         @Override
         public int recv(int fd, long buffer, int bufferLen) {
             Assert.assertEquals(FD, fd);
-            if (null == recvBuffer) {
+            if (recvBuffer == null) {
                 return -1;
             }
 
@@ -415,5 +416,4 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             return recvBuffer.getBytes(StandardCharsets.UTF_8);
         }
     }
-
 }
