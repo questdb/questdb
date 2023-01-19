@@ -34,14 +34,16 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
-import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -262,8 +264,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
-            final Path path = new Path(4096);
-
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
                 if (needMaintenanceJob) {
@@ -282,8 +282,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             } catch (Throwable err) {
                 LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
                 throw err;
-            } finally {
-                Misc.free(path);
             }
         });
     }
