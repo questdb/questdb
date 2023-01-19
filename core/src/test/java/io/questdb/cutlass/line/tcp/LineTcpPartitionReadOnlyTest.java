@@ -52,6 +52,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     @Test
     public void testActivePartitionReadOnlyAndNoO3() throws Exception {
         String tableName = testName.getMethodName();
+        SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineTCP(
                 tableName,
                 () -> {
@@ -67,8 +68,11 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .at(timestampNano[tickerId]);
                         }
                         sender.flush();
+                    } finally {
+                        sendComplete.countDown();
                     }
                 },
+                sendComplete,
                 TABLE_START_CONTENT,  // <-- read only, remains intact
                 false, false, true, true
         );
@@ -77,6 +81,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     @Test
     public void testActivePartitionReadOnlyAndO3OverActivePartition() throws Exception {
         final String tableName = testName.getMethodName();
+        SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineTCP(
                 tableName,
                 () -> {
@@ -92,8 +97,11 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .at(timestampNano[tickerId]);
                         }
                         sender.flush();
+                    } finally {
+                        sendComplete.countDown();
                     }
                 },
+                sendComplete,
                 "min\tmax\tcount\n" +
                         "2022-12-08T00:00:00.001000Z\t2022-12-08T23:56:06.447339Z\t1944\n" + // +1667
                         "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
@@ -107,6 +115,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     @Test
     public void testActivePartitionReadOnlyAndO3UnderActivePartition() throws Exception {
         final String tableName = testName.getMethodName();
+        SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineTCP(
                 tableName,
                 () -> {
@@ -122,8 +131,11 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .at(timestampNano[tickerId]);
                         }
                         sender.flush();
+                    } finally {
+                        sendComplete.countDown();
                     }
                 },
+                sendComplete,
                 "min\tmax\tcount\n" +
                         "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
                         "2022-12-09T00:00:00.001000Z\t2022-12-09T23:57:23.964885Z\t279\n" + // +1
@@ -136,6 +148,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     @Test
     public void testTableIsReadOnly() throws Exception {
         final String tableName = testName.getMethodName();
+        SOCountDownLatch sendComplete = new SOCountDownLatch(1);
         assertServerMainWithLineTCP(
                 tableName,
                 () -> {
@@ -151,8 +164,11 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                                     .at(timestampNano[tickerId]);
                         }
                         sender.flush();
+                    } finally {
+                        sendComplete.countDown();
                     }
                 },
+                sendComplete,
                 TABLE_START_CONTENT,
                 true, true, true, true
         );
@@ -161,15 +177,15 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
     private static void assertServerMainWithLineTCP(
             String tableName,
             Runnable test,
+            SOCountDownLatch sendComplete,
             String finallyExpected,
             boolean... partitionIsReadOnly
     ) throws Exception {
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    CairoEngine engine = qdb.getCairoEngine();
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
                             AllowAllCairoSecurityContext.INSTANCE,
                             null,
                             null,
@@ -177,6 +193,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                             null)
             ) {
                 qdb.start();
+                CairoEngine engine = qdb.getCairoEngine();
 
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
@@ -197,6 +214,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                     engine.unlockTableName(tableToken);
                 }
+                Assert.assertNotNull(tableToken);
 
                 // set partition read-only state
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "read-only-state")) {
@@ -230,6 +248,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
 
                 // run the test
                 test.run();
+                sendComplete.await();
 
                 // wait for the table writer to be returned to the pool
                 tableWriterReturnedToPool.await();
