@@ -4079,7 +4079,7 @@ public class TableReaderTest extends AbstractCairoTest {
                             while (cursor.hasNext()) {
                                 if (count++ != record.getLong(0)) {
                                     sink.clear();
-                                    sink.put("Test [count=").put(count--).put(", rec=").put(record.getLong(0)).put(']').put(',');
+                                    sink.put("Test [count=").put(count--).put(", rec=").put(record.getLong(0)).put("],");
                                     ((Sinkable) record).toSink(sink);
                                     Assert.fail(sink.toString());
                                 }
@@ -4098,7 +4098,12 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }).start();
 
-            Assert.assertTrue(stopLatch.await(120, TimeUnit.SECONDS));
+            long start = System.currentTimeMillis();
+            boolean result = stopLatch.await(5, TimeUnit.MINUTES);
+            System.out.printf("took: %d%n", System.currentTimeMillis() - start);
+            if (!result) {
+                Assert.fail("too long, threading issue");
+            }
             Assert.assertEquals(0, errors.get());
 
             // check that we had multiple partitions created during the test

@@ -115,7 +115,7 @@ public class Bootstrap {
         boolean isOsSupported = true;
         switch (Os.type) {
             case Os.WINDOWS:
-                archName = "OS/Arch windows/amd64";
+                archName = "OS/Arch Windows/amd64";
                 break;
             case Os.LINUX_AMD64:
                 archName = "OS/Arch linux/amd64";
@@ -321,6 +321,7 @@ public class Bootstrap {
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
         log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$(" - attach partition suffix: ").$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();
         log.advisoryW().$(" - open database [id=").$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();
         if (cairoConfig.isReadOnlyInstance()) {
             log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();

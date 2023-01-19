@@ -27,10 +27,11 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.mp.Job;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
     TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
 
