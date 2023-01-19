@@ -26,14 +26,13 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class IntColumn extends IntFunction implements ScalarFunction, Sinkable {
+public class IntColumn extends IntFunction implements ScalarFunction {
     private static final ObjList<IntColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -59,8 +58,8 @@ public class IntColumn extends IntFunction implements ScalarFunction, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("IntColumn(").put(columnIndex).put(')');
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 
     static {

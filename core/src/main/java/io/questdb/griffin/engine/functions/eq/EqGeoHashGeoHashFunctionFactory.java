@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -154,83 +155,103 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstCheckFuncByte extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final byte hash;
+    private static abstract class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
 
-        public ConstCheckFuncByte(Function arg, byte hash) {
+        protected ConstCheckFunc(Function arg) {
             this.arg = arg;
-            this.hash = hash;
         }
 
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=').val(getHash()).val("::geohash");
+        }
+
+        protected abstract long getHash();
+    }
+
+    private static class ConstCheckFuncByte extends ConstCheckFunc {
+        private final byte hash;
+
+        public ConstCheckFuncByte(Function arg, byte hash) {
+            super(arg);
+            this.hash = hash;
         }
 
         @Override
         public boolean getBool(Record rec) {
             return negated != (hash == arg.getGeoByte(rec));
         }
+
+        @Override
+        protected long getHash() {
+            return hash;
+        }
     }
 
-    private static class ConstCheckFuncInt extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
+    private static class ConstCheckFuncInt extends ConstCheckFunc {
         private final int hash;
 
         public ConstCheckFuncInt(Function arg, int hash) {
-            this.arg = arg;
+            super(arg);
             this.hash = hash;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
             return negated != (hash == arg.getGeoInt(rec));
         }
+
+        @Override
+        protected long getHash() {
+            return hash;
+        }
     }
 
-    private static class ConstCheckFuncLong extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
+    private static class ConstCheckFuncLong extends ConstCheckFunc {
         private final long hash;
 
         public ConstCheckFuncLong(Function arg, long hash) {
-            this.arg = arg;
+            super(arg);
             this.hash = hash;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
             return negated != (hash == arg.getGeoLong(rec));
         }
+
+        @Override
+        protected long getHash() {
+            return hash;
+        }
     }
 
-    private static class ConstCheckFuncShort extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
+    private static class ConstCheckFuncShort extends ConstCheckFunc {
         private final short hash;
 
         public ConstCheckFuncShort(Function arg, short hash) {
-            this.arg = arg;
+            super(arg);
             this.hash = hash;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
             return negated != (hash == arg.getGeoShort(rec));
+        }
+
+        @Override
+        protected long getHash() {
+            return hash;
         }
     }
 
@@ -249,8 +270,21 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            if (negated) {
+                return "!=";
+            }
+            return "=";
+        }
+
+        @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
     }
 }

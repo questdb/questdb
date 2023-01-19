@@ -220,7 +220,7 @@ public class JsonLexerTest {
         String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
 
         try (Path p = new Path()) {
-            if (Os.type == Os.WINDOWS && path.startsWith("/")) {
+            if (Os.isWindows() && path.startsWith("/")) {
                 p.of(path.substring(1));
             } else {
                 p.of(path);

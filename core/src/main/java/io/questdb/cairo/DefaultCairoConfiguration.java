@@ -79,7 +79,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public String getAttachPartitionSuffix() {
-        return ".attachable";
+        return TableUtils.ATTACHABLE_DIR_MARKER;
     }
 
     @Override
@@ -235,6 +235,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
+    }
+
+    @Override
+    public int getExplainPoolCapacity() {
+        return 32;
     }
 
     @Override
@@ -567,7 +572,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getSqlFastMapLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -693,6 +698,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
+    }
+
+    @Override
+    public int getSqlSmallMapPageSize() {
+        return 4 * 1024;
     }
 
     @Override

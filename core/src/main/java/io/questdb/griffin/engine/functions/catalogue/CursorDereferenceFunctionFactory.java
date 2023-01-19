@@ -100,8 +100,18 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return ".";
+        }
+
+        @Override
         public Function getRight() {
             return columnNameFunction;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
     }
 }

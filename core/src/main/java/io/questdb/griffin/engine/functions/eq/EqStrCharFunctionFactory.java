@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -100,6 +100,16 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(strFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='");
+            sink.val(chrConst).val("'");
+        }
     }
 
     private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
@@ -112,6 +122,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != equals;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getBool(null));
         }
     }
 
@@ -133,30 +148,26 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (chrFunc.getChar(rec) == chrConst);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(chrFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=');
+            sink.val(chrConst);
+        }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function chrFunc;
-        private final Function strFunc;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function strFunc, Function chrFunc) {
-            this.strFunc = strFunc;
-            this.chrFunc = chrFunc;
+            super(strFunc, chrFunc);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
-        }
-
-        @Override
-        public Function getLeft() {
-            return strFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return chrFunc;
+            return negated != (Chars.equalsNc(left.getStr(rec), right.getChar(rec)));
         }
     }
 
@@ -165,6 +176,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getBool(null));
         }
     }
 }

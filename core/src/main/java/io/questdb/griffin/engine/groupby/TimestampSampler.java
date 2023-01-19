@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.groupby;
 
-public interface TimestampSampler {
+import io.questdb.std.Sinkable;
+
+public interface TimestampSampler extends Sinkable {
 
     default long getBucketSize() {
         throw new UnsupportedOperationException();

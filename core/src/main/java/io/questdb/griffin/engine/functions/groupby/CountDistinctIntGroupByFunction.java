@@ -97,6 +97,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public String getName() {
+        return "count_distinct";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

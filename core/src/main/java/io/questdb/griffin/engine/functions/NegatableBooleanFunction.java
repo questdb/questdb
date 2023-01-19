@@ -27,7 +27,11 @@ package io.questdb.griffin.engine.functions;
 public abstract class NegatableBooleanFunction extends BooleanFunction {
     protected boolean negated = false;
 
-    void setNegated() {
+    public boolean isNegated() {
+        return negated;
+    }
+
+    public void setNegated() {
         this.negated = true;
     }
 }

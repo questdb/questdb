@@ -97,6 +97,11 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public String getName() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

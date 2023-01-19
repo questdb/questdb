@@ -1034,6 +1034,17 @@ public class MemoryCARWImplTest {
         }
     }
 
+    @Test
+    public void testDeadCodeForUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            try {
+                mem.putStrUtf8AsUtf16(null, true);
+                Assert.fail();
+            } catch (UnsupportedOperationException ignored) {
+            }
+        }
+    }
+
     private void testStrRnd(long offset, long pageSize) {
         Rnd rnd = new Rnd();
         int N = 1000;

@@ -64,6 +64,11 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "to_lowercase";
+        }
+
+        @Override
         public CharSequence getStr(final Record rec) {
             CharSequence str = getArg().getStr(rec);
             if (str == null) {

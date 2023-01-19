@@ -29,10 +29,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.DirectByteCharSequenceObjHashMap;
+import io.questdb.std.ByteCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
@@ -44,13 +45,14 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     private final long maintenanceInterval;
     private final MillisecondClock millisecondClock;
     private final LineTcpMeasurementScheduler scheduler;
-    private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new DirectByteCharSequenceObjHashMap<>();
+    private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
     private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
     private final int workerId;
     // Context blocked on LineTcpMeasurementScheduler queue
     private LineTcpConnectionContext busyContext = null;
     private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
     private long maintenanceJobDeadline;
+    private long nextCommitTime;
 
     LineTcpNetworkIOJob(
             LineTcpReceiverConfiguration configuration,
@@ -62,12 +64,13 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         this.maintenanceInterval = configuration.getMaintenanceInterval();
         this.scheduler = scheduler;
         this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
+        this.nextCommitTime = millisecondClock.getTicks();
         this.dispatcher = dispatcher;
         this.workerId = workerId;
     }
 
     @Override
-    public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+    public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
         tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
         tableUpdateDetails.addReference(workerId);
     }
@@ -79,6 +82,15 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busyContext = null;
         }
         Misc.freeObjList(unusedSymbolCaches);
+
+        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (tud.getWriterThreadId() == -1) {
+                tud.releaseWriter(true);
+                tud.close();
+            }
+        }
     }
 
     @Override
@@ -112,6 +124,13 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
         if (dispatcher.processIOQueue(onRequest)) {
             busy = true;
+        }
+
+        if (!busy) {
+            final long wallClockMillis = millisecondClock.getTicks();
+            if (wallClockMillis > nextCommitTime) {
+                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);
+            }
         }
 
         final long millis = millisecondClock.getTicks();

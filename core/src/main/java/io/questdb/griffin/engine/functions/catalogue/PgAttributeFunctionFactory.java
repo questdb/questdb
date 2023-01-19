@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
@@ -42,10 +43,11 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
+    private static final String SIGNATURE = "pg_catalog.pg_attribute()";
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_attribute()";
+        return SIGNATURE;
     }
 
     @Override
@@ -94,6 +96,11 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
         }
 
         @Override
@@ -167,10 +174,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        final long type = ff.findType(findFileStruct);
-                        if (Files.isDir(pUtf8NameZ, type)) {
-                            path.trimTo(plimit);
-                            path.concat(pUtf8NameZ);
+                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
                                 metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);

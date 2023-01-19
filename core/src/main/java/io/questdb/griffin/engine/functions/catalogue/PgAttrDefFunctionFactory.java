@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -39,10 +40,11 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
     static final RecordMetadata METADATA;
     private static final Log LOG = LogFactory.getLog(PgAttrDefFunctionFactory.class);
+    private static final String SIGNATURE = "pg_attrdef()";
 
     @Override
     public String getSignature() {
-        return "pg_attrdef()";
+        return SIGNATURE;
     }
 
     @Override
@@ -125,10 +127,8 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        final long type = ff.findType(findFileStruct);
-                        if (Files.isDir(pUtf8NameZ, type)) {
-                            path.trimTo(plimit);
-                            if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
+                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
+                            if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 int fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
@@ -137,14 +137,14 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
                                             foundMetadataFile = true;
                                             columnCount = Unsafe.getUnsafe().getInt(tempMem);
                                         } else {
-                                            LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                                            LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
                                         }
                                     } else {
-                                        LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                                        LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).I$();
                                     }
                                     ff.close(fd);
                                 } else {
-                                    LOG.error().$("could not read metadata [file=").$(path).$(']').$();
+                                    LOG.error().$("could not read metadata [file=").utf8(path).I$();
                                 }
                             }
                         }
@@ -228,6 +228,11 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
         }
 
         @Override

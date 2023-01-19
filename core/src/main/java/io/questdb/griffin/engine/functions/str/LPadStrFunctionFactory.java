@@ -84,6 +84,11 @@ public class LPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "lpad";
+        }
+
+        @Override
         public Function getRight() {
             return fillTextFunc;
         }

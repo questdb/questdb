@@ -49,11 +49,11 @@ public class TableSequencerImpl implements TableSequencer {
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
     private final MicrosecondClock microClock;
+    private final SequencerMetadataService metadataSvc;
     private final int mkDirMode;
     private final Path path;
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
-    private final SequencerMetadataUpdater sequencerMetadataUpdater;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
@@ -74,7 +74,7 @@ public class TableSequencerImpl implements TableSequencer {
             this.mkDirMode = configuration.getMkDirMode();
 
             metadata = new SequencerMetadata(ff);
-            sequencerMetadataUpdater = new SequencerMetadataUpdater(metadata, tableToken);
+            metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             tableTransactionLog = new TableTransactionLog(ff);
             microClock = engine.getConfiguration().getMicrosecondClock();
@@ -113,7 +113,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo) {
+    public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         checkDropped();
         if (metadata.getStructureVersion() == structureVersionLo) {
             // Nothing to do.
@@ -313,7 +313,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void applyToMetadata(TableMetadataChange change) {
-        change.apply(sequencerMetadataUpdater, true);
+        change.apply(metadataSvc, true);
         metadata.syncToMetaFile();
     }
 

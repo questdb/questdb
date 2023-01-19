@@ -39,4 +39,9 @@ public class LastFloatGroupByFunction extends FirstFloatGroupByFunction {
     public void computeNext(MapValue mapValue, Record record) {
         super.computeFirst(mapValue, record);
     }
+
+    @Override
+    public String getName() {
+        return "last";
+    }
 }

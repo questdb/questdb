@@ -124,6 +124,8 @@ public interface CairoConfiguration {
 
     int getDoubleToStrCastScale();
 
+    int getExplainPoolCapacity();
+
     int getFileOperationRetryCount();
 
     FilesFacade getFilesFacade();
@@ -368,6 +370,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMinRows();
 
     int getSqlSmallMapKeyCapacity();
+
+    int getSqlSmallMapPageSize();
 
     int getSqlSortKeyMaxPages();
 

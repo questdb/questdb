@@ -735,6 +735,8 @@ class ExpressionParser {
                                     if (en.token instanceof GenericLexer.FloatingSequence) {
                                         ((GenericLexer.FloatingSequence) en.token).setHi(lexer.getTokenHi());
                                         break;
+                                    } else {
+                                        assert false;
                                     }
                                 }
                             }

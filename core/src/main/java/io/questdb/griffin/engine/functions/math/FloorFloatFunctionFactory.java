@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -61,6 +62,11 @@ public class FloorFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             float value = function.getFloat(rec);
             return (float) Math.floor(value);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("floor(").val(function).val(')');
         }
     }
 }

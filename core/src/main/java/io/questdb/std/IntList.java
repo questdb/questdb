@@ -28,7 +28,7 @@ import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
-public class IntList implements Mutable {
+public class IntList implements Mutable, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final int NO_ENTRY_VALUE = -1;
     private int[] buffer;
@@ -153,6 +153,13 @@ public class IntList implements Mutable {
         buffer[index] = buffer[index] + 1;
     }
 
+    // increment at index and return previous value
+    public int postIncrement(int index) {
+        final int prev = buffer[index];
+        buffer[index] = prev + 1;
+        return prev;
+    }
+
     public void increment(int index, int delta) {
         assert delta > -1;
         buffer[index] = buffer[index] + delta;
@@ -228,21 +235,42 @@ public class IntList implements Mutable {
         return pos;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(get(i));
+        }
+        sink.put(']');
+    }
+
+    public void toSink(CharSink sink, int exceptValue) {
+        sink.put('[');
+        boolean pastFirst = false;
+        for (int i = 0, k = size(); i < k; i++) {
+            if (pastFirst) {
+                sink.put(',');
+            }
+            int val = get(i);
+            if (val == exceptValue) {
+                continue;
+            }
+            sink.put(val);
+            pastFirst = true;
+        }
+        sink.put(']');
+    }
+
     /**
      * {@inheritDoc}
      */
     @Override
     public String toString() {
         CharSink b = Misc.getThreadLocalBuilder();
-
-        b.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                b.put(',');
-            }
-            b.put(get(i));
-        }
-        b.put(']');
+        toSink(b);
         return b.toString();
     }
 

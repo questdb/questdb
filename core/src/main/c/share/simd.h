@@ -30,16 +30,15 @@
 #ifdef ENABLE_ASMLIB
 #include "asmlib/asmlib.h"
 #define __MEMCPY A_memcpy
+#define __MEMCMP A_memcmp
 #define __MEMSET A_memset
 //TODO: replace with A_memmove (-fPIC asm lib)
 #define __MEMMOVE memmove
 #else
 #define __MEMCPY memcpy
+#define __MEMCMP memcmp
 #define __MEMSET memset
 #define __MEMMOVE memmove
 #endif
-
-
-
 
 #endif //QDB_SIMD_H

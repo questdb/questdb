@@ -31,9 +31,9 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
 public class AlterOperationBuilder {
-    private final LongList longList = new LongList();
-    private final ObjList<CharSequence> objCharList = new ObjList<>();
-    private final AlterOperation resultInstance;
+    private final LongList extraInfo = new LongList();
+    private final ObjList<CharSequence> extraStrInfo = new ObjList<>();
+    private final AlterOperation op;
     private short command;
     private int tableId = -1;
     private int tableNamePosition = -1;
@@ -41,7 +41,7 @@ public class AlterOperationBuilder {
 
     // builder and the operation it is building share two lists.
     public AlterOperationBuilder() {
-        this.resultInstance = new AlterOperation(longList, objCharList);
+        this.op = new AlterOperation(extraInfo, extraStrInfo);
     }
 
     public void addColumnToList(
@@ -54,28 +54,28 @@ public class AlterOperationBuilder {
             int indexValueBlockCapacity
     ) {
         assert columnName != null && columnName.length() > 0;
-        objCharList.add(columnName);
-        longList.add(type);
-        longList.add(symbolCapacity);
-        longList.add(cache ? 1 : -1);
-        longList.add(indexed ? 1 : -1);
-        longList.add(indexValueBlockCapacity);
-        longList.add(columnNamePosition);
+        extraStrInfo.add(columnName);
+        extraInfo.add(type);
+        extraInfo.add(symbolCapacity);
+        extraInfo.add(cache ? 1 : -1);
+        extraInfo.add(indexed ? 1 : -1);
+        extraInfo.add(indexValueBlockCapacity);
+        extraInfo.add(columnNamePosition);
     }
 
     public void addPartitionToList(long timestamp, int timestampPosition) {
-        longList.add(timestamp);
-        longList.add(timestampPosition);
+        extraInfo.add(timestamp);
+        extraInfo.add(timestampPosition);
     }
 
     public AlterOperation build() {
-        return resultInstance.of(command, tableToken, tableId, tableNamePosition);
+        return op.of(command, tableToken, tableId, tableNamePosition);
     }
 
     public void clear() {
-        resultInstance.clear();
-        objCharList.clear();
-        longList.clear();
+        op.clear();
+        extraStrInfo.clear();
+        extraInfo.clear();
         command = DO_NOTHING;
         tableToken = null;
         tableId = -1;
@@ -100,22 +100,28 @@ public class AlterOperationBuilder {
             int indexValueBlockCapacity
     ) {
         assert columnName != null && columnName.length() > 0;
-        objCharList.add(columnName);
-        longList.add(type);
-        longList.add(symbolCapacity);
-        longList.add(cache ? 1 : -1);
-        longList.add(indexed ? 1 : -1);
-        longList.add(indexValueBlockCapacity);
-        longList.add(columnNamePosition);
+        extraStrInfo.add(columnName);
+        extraInfo.add(type);
+        extraInfo.add(symbolCapacity);
+        extraInfo.add(cache ? 1 : -1);
+        extraInfo.add(indexed ? 1 : -1);
+        extraInfo.add(indexValueBlockCapacity);
+        extraInfo.add(columnNamePosition);
     }
 
-    public AlterOperationBuilder ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize) {
+    public AlterOperationBuilder ofAddIndex(
+            int tableNamePosition,
+            TableToken tableToken,
+            int tableId,
+            CharSequence columnName,
+            int indexValueBlockSize
+    ) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.objCharList.add(columnName);
-        this.longList.add(indexValueBlockSize);
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(indexValueBlockSize);
         return this;
     }
 
@@ -132,7 +138,7 @@ public class AlterOperationBuilder {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.objCharList.add(columnName);
+        this.extraStrInfo.add(columnName);
         return this;
     }
 
@@ -146,7 +152,7 @@ public class AlterOperationBuilder {
 
     public AlterOperationBuilder ofDropColumn(CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
-        this.objCharList.add(columnName);
+        this.extraStrInfo.add(columnName);
         return this;
     }
 
@@ -163,8 +169,8 @@ public class AlterOperationBuilder {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.objCharList.add(columnName);
-        this.longList.add(columnNamePosition);
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(columnNamePosition);
         return this;
     }
 
@@ -182,7 +188,7 @@ public class AlterOperationBuilder {
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;
-        this.objCharList.add(columnName);
+        this.extraStrInfo.add(columnName);
         return this;
     }
 
@@ -195,15 +201,15 @@ public class AlterOperationBuilder {
     }
 
     public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
-        objCharList.add(columnName);
-        objCharList.add(newName);
+        extraStrInfo.add(columnName);
+        extraStrInfo.add(newName);
     }
 
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
-        this.longList.add(o3MaxLag);
+        this.extraInfo.add(o3MaxLag);
         this.tableId = tableId;
         return this;
     }
@@ -212,7 +218,7 @@ public class AlterOperationBuilder {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
-        this.longList.add(maxUncommittedRows);
+        this.extraInfo.add(maxUncommittedRows);
         this.tableId = tableId;
         return this;
     }

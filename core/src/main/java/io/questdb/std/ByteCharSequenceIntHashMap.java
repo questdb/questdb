@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.util.Arrays;
@@ -36,48 +37,57 @@ import java.util.Arrays;
  * main victim of itable, suffering from non-deterministic performance loss. With this specific
  * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
  * no longer present in the async profiler.
+ * <p>
+ * This map is optimized for ASCII and UTF8 DirectByteCharSequence lookups.
  */
-public class DirectByteCharSequenceIntHashMap implements Mutable {
+public class ByteCharSequenceIntHashMap implements Mutable {
+
     public static final int NO_ENTRY_VALUE = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final ObjList<String> list;
+    private final int initialCapacity;
     private final double loadFactor;
     private final int noEntryValue;
     private int capacity;
     private int free;
-    private String[] keys;
+    private int[] hashCodes;
+    private ByteCharSequence[] keys;
     private int mask;
     private int[] values;
 
-    public DirectByteCharSequenceIntHashMap() {
+    public ByteCharSequenceIntHashMap() {
         this(8);
     }
 
-    public DirectByteCharSequenceIntHashMap(int initialCapacity) {
+    public ByteCharSequenceIntHashMap(int initialCapacity) {
         this(initialCapacity, 0.5, NO_ENTRY_VALUE);
     }
 
-    public DirectByteCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+    public ByteCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        this.free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        free = capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        this.initialCapacity = capacity;
         this.loadFactor = loadFactor;
-        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
-        this.keys = new String[len];
-        this.mask = len - 1;
+        int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+        keys = new ByteCharSequence[len];
+        hashCodes = new int[len];
+        mask = len - 1;
         this.noEntryValue = noEntryValue;
-        this.list = new ObjList<>(capacity);
         values = new int[keys.length];
         clear();
+    }
+
+    public int capacity() {
+        return capacity;
     }
 
     @Override
     public final void clear() {
         Arrays.fill(keys, null);
-        free = this.capacity;
-        list.clear();
+        Arrays.fill(hashCodes, 0);
+        free = capacity;
         Arrays.fill(values, noEntryValue);
     }
 
@@ -93,54 +103,51 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return valueAt(keyIndex(key));
     }
 
-    public int get(String key) {
+    public int get(ByteCharSequence key) {
         return valueAt(keyIndex(key));
     }
 
     public int keyIndex(DirectByteCharSequence key) {
-        int index = Hash.spread(Chars.hashCode(key)) & mask;
+        int hashCode = Hash.hashMem32(key);
+        int index = hashCode & mask;
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
-        return probe(key, index);
+        return probe(key, hashCode, index);
     }
 
-    public int keyIndex(String key) {
-        int index = Hash.spread(Chars.hashCode(key)) & mask;
+    public int keyIndex(ByteCharSequence key) {
+        int hashCode = Hash.hashMem32(key);
+        int index = hashCode & mask;
 
         if (keys[index] == null) {
             return index;
         }
 
-        if (Chars.equals(key, keys[index])) {
+        if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
             return -index - 1;
         }
 
-        return probe(key, index);
+        return probe(key, hashCode, index);
     }
 
-    public ObjList<String> keys() {
-        return list;
-    }
-
-    public boolean put(String key, int value) {
+    public boolean put(ByteCharSequence key, int value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, String key, int value) {
+    public boolean putAt(int index, ByteCharSequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
         }
 
         putAt0(index, key, value);
-        list.add(key);
         return true;
     }
 
@@ -155,8 +162,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     public void removeAt(int index) {
         if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
             int from = -index - 1;
             erase(from);
             free++;
@@ -170,15 +175,16 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    String k = keys[from];
-                    k != null;
-                    from = (from + 1) & mask, k = keys[from]
+                    ByteCharSequence key = keys[from];
+                    key != null;
+                    from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = Hash.spread(Chars.hashCode(k)) & mask;
+                int hashCode = Hash.hashMem32(key);
+                int idealHit = hashCode & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
-                        to = probe(k, idealHit);
+                        to = probe(key, hashCode, idealHit);
                     } else {
                         to = idealHit;
                     }
@@ -188,7 +194,20 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                     }
                 }
             }
-            list.remove(key);
+        }
+    }
+
+    public void reset() {
+        if (capacity == initialCapacity) {
+            clear();
+        } else {
+            free = capacity = initialCapacity;
+            int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+            keys = new ByteCharSequence[len];
+            hashCodes = new int[len];
+            mask = len - 1;
+            values = new int[keys.length];
+            clear();
         }
     }
 
@@ -201,47 +220,50 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return index < 0 ? values[index1] : noEntryValue;
     }
 
-    public int valueQuick(int index) {
-        return valueAt(keyIndex(list.getQuick(index)));
-    }
-
     private void erase(int index) {
         keys[index] = null;
+        hashCodes[index] = 0;
         values[index] = noEntryValue;
+    }
+
+    private int hash(CharSequence k) {
+        return Chars.hashCode(k) & mask;
     }
 
     private void move(int from, int to) {
         keys[to] = keys[from];
+        hashCodes[to] = hashCodes[from];
         values[to] = values[from];
         erase(from);
     }
 
-    private int probe(DirectByteCharSequence key, int index) {
+    private int probe(DirectByteCharSequence key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            if (Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
     }
 
-    private int probe(String key, int index) {
+    private int probe(ByteCharSequence key, long hashCode, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            if (Chars.equals(key, keys[index])) {
+            if (hashCode == hashCodes[index] && Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);
     }
 
-    private void putAt0(int index, String key, int value) {
+    private void putAt0(int index, ByteCharSequence key, int value) {
         keys[index] = key;
+        hashCodes[index] = Hash.hashMem32(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -250,18 +272,21 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     private void rehash() {
         int[] oldValues = values;
-        String[] oldKeys = keys;
+        ByteCharSequence[] oldKeys = keys;
+        int[] oldHashCodes = hashCodes;
         int size = capacity - free;
         capacity = capacity * 2;
         free = capacity - size;
         mask = Numbers.ceilPow2((int) (capacity / loadFactor)) - 1;
-        this.keys = new String[mask + 1];
-        this.values = new int[mask + 1];
+        keys = new ByteCharSequence[mask + 1];
+        hashCodes = new int[mask + 1];
+        values = new int[mask + 1];
         for (int i = oldKeys.length - 1; i > -1; i--) {
-            String key = oldKeys[i];
+            ByteCharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;
+                hashCodes[index] = oldHashCodes[i];
                 values[index] = oldValues[i];
             }
         }

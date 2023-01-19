@@ -115,9 +115,12 @@ DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int64, index_t *merge_index, int6
 
 DECLARE_DISPATCHER_TYPE(platform_memcpy, void *dst, const void *src, const size_t len);
 
+DECLARE_DISPATCHER_TYPE(platform_memcmp, const void *a, const void *b, const size_t len, int *res);
+
 DECLARE_DISPATCHER_TYPE(platform_memset, void *dst, const int val, const size_t len);
 
 DECLARE_DISPATCHER_TYPE(platform_memmove, void *dst, const void *src, const size_t len);
+
 // 8 - 11
 template<typename T>
 inline void
