@@ -375,18 +375,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public long getLong128Hi(int col, long location) {
-            return mem.getLong(location + Long.BYTES);
+        public long getLong128Hi(int col) {
+            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
         }
 
         @Override
-        public long getLong128Lo(int col, long location) {
-            return mem.getLong(location);
-        }
-
-        @Override
-        public long getLong128Location(int col) {
-            return fixedWithColumnOffset(col);
+        public long getLong128Lo(int col) {
+            return mem.getLong(fixedWithColumnOffset(col));
         }
 
         @Override

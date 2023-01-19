@@ -57,9 +57,8 @@ public class RecordToRowCopierUtils {
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        int rGetLong128Loc = asm.poolInterfaceMethod(Record.class, "getLong128Location", "(I)J");
-        int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(IJ)J");
-        int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(IJ)J");
+        int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
+        int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
 
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
@@ -765,25 +764,13 @@ public class RecordToRowCopierUtils {
                             // fall through
                         case ColumnType.UUID:
                             // Stack: [RowWriter, Record, columnIndex]
-                            asm.invokeInterface(rGetLong128Loc);
-                            // Stack: [RowWriter, location]
-                            asm.lstore(3);
-                            // Stack: [RowWriter]
-                            asm.aload(1);  // Record is at the local variables slot #1. Push it to a stack.
-                            // Stack: [RowWriter, Record]
-                            asm.iconst(i);
-                            // Stack: [RowWriter, Record, columnIndex]
-                            asm.lload(3);
-                            // Stack: [RowWriter, Record, columnIndex, location]
-                            asm.invokeInterface(rGetLong128Lo, 3);
+                            asm.invokeInterface(rGetLong128Lo, 1);
                             // Stack: [RowWriter, lo]
                             asm.aload(1);  // Push record to the stack.
                             // Stack: [RowWriter, lo, Record]
                             asm.iconst(i); // Push column index to a stack
                             // Stack: [RowWriter, lo, Record, columnIndex]
-                            asm.lload(3);
-                            // Stack: [RowWriter, lo, Record, columnIndex, location]
-                            asm.invokeInterface(rGetLong128Hi, 3);
+                            asm.invokeInterface(rGetLong128Hi, 1);
                             // Stack: [RowWriter, lo, hi]
                             asm.invokeInterface(wPutLong128, 5);
                             // invokeInterface consumes the entire stack. Including the RowWriter as invoke interface receives "this" as the first argument
@@ -799,25 +786,13 @@ public class RecordToRowCopierUtils {
                             // so we rely on an auxiliary method `transferUuidToStrCol()` to do branching job and javac generates
                             // the stack maps.
                             // Stack: [RowWriter, Record, columnIndex]
-                            asm.invokeInterface(rGetLong128Loc);
-                            // Stack: [RowWriter, location]
-                            asm.lstore(3);
-                            // Stack: [RowWriter]
-                            asm.aload(1);  // Record is at the local variables slot #1. Push it to a stack.
-                            // Stack: [RowWriter, Record]
-                            asm.iconst(i);
-                            // Stack: [RowWriter, Record, columnIndex]
-                            asm.lload(3);
-                            // Stack: [RowWriter, Record, columnIndex, location]
-                            asm.invokeInterface(rGetLong128Lo, 3);
+                            asm.invokeInterface(rGetLong128Lo, 1);
                             // Stack: [RowWriter, lo]
                             asm.aload(1);  // Push record to the stack.
                             // Stack: [RowWriter, lo, Record]
                             asm.iconst(i); // Push column index to a stack
                             // Stack: [RowWriter, lo, Record, columnIndex]
-                            asm.lload(3);
-                            // Stack: [RowWriter, lo, Record, columnIndex, location]
-                            asm.invokeInterface(rGetLong128Hi, 3);
+                            asm.invokeInterface(rGetLong128Hi, 1);
                             // Stack: [RowWriter, lo, hi]
                             asm.invokeStatic(transferUuidToStrCol);
                             break;

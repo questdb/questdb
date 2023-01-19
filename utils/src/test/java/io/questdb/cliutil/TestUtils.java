@@ -149,10 +149,8 @@ public class TestUtils {
                     case ColumnType.UUID:
                         // fall through
                     case ColumnType.LONG128:
-                        long rrLoc = rr.getLong128Location(i);
-                        long lrLoc = lr.getLong128Location(i);
-                        Assert.assertEquals(rr.getLong128Hi(i, rrLoc), lr.getLong128Hi(i, lrLoc));
-                        Assert.assertEquals(rr.getLong128Lo(i, rrLoc), lr.getLong128Hi(i, lrLoc));
+                        Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
+                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Hi(i));
                         break;
                     default:
                         // Unknown record type.

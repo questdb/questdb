@@ -24,7 +24,8 @@
 
 package io.questdb.std;
 
-public class Long128Util {
+public class Long128 {
+    public static final int BYTES = 16;
 
     // this method is used by byte-code generator
     // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo

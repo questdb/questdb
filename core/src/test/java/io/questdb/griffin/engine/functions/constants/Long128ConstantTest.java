@@ -33,9 +33,8 @@ public class Long128ConstantTest {
     @Test
     public void testReadWrite() {
         try (Long128Constant l = new Long128Constant(1, 2)) {
-            long loc = l.getLong128Location(null);
-            assertEquals(1, l.getLong128Lo(null, loc));
-            assertEquals(2, l.getLong128Hi(null, loc));
+            assertEquals(1, l.getLong128Lo(null));
+            assertEquals(2, l.getLong128Hi(null));
         }
     }
 

@@ -958,9 +958,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void appendUuidColumn(Record record, int columnIndex) {
-        final long loc = record.getLong128Location(columnIndex);
-        final long lo = record.getLong128Lo(columnIndex, loc);
-        final long hi = record.getLong128Hi(columnIndex, loc);
+        final long lo = record.getLong128Lo(columnIndex);
+        final long hi = record.getLong128Hi(columnIndex);
         if (Uuid.isNull(lo, hi)) {
             responseAsciiSink.setNullValue();
         } else {
@@ -971,9 +970,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void appendUuidColumnBin(Record record, int columnIndex) {
-        final long loc = record.getLong128Location(columnIndex);
-        final long lo = record.getLong128Lo(columnIndex, loc);
-        final long hi = record.getLong128Hi(columnIndex, loc);
+        final long lo = record.getLong128Lo(columnIndex);
+        final long hi = record.getLong128Hi(columnIndex);
         if (Uuid.isNull(lo, hi)) {
             responseAsciiSink.setNullValue();
         } else {

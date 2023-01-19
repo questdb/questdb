@@ -126,18 +126,13 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
-        return getFunction(col).getLong128Hi(base, location);
+    public long getLong128Hi(int col) {
+        return getFunction(col).getLong128Hi(base);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
-        return getFunction(col).getLong128Lo(base, location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        return getFunction(col).getLong128Location(base);
+    public long getLong128Lo(int col) {
+        return getFunction(col).getLong128Lo(base);
     }
 
     @Override

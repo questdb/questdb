@@ -121,18 +121,13 @@ public class CompactMapRecord implements MapRecord {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
-        return entries.getLong(location + Long.BYTES);
+    public long getLong128Hi(int col) {
+        return entries.getLong(getColumnOffset(col) + Long.BYTES);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
-        return entries.getLong(location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        return getColumnOffset(col);
+    public long getLong128Lo(int col) {
+        return entries.getLong(getColumnOffset(col));
     }
 
     @Override

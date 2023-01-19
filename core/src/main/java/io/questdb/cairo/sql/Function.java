@@ -95,11 +95,9 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     long getLong(Record rec);
 
-    long getLong128Hi(Record rec, long location);
+    long getLong128Hi(Record rec);
 
-    long getLong128Lo(Record rec, long location);
-
-    long getLong128Location(Record rec);
+    long getLong128Lo(Record rec);
 
     void getLong256(Record rec, CharSink sink);
 

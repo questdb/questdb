@@ -61,11 +61,9 @@ public class EqLong128FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long leftLocation = left.getLong128Location(rec);
-            long rightLocation = right.getLong128Location(rec);
             return negated != (
-                    left.getLong128Lo(rec, leftLocation) == right.getLong128Lo(rec, rightLocation)
-                            && left.getLong128Hi(rec, leftLocation) == right.getLong128Hi(rec, rightLocation)
+                    left.getLong128Lo(rec) == right.getLong128Lo(rec)
+                            && left.getLong128Hi(rec) == right.getLong128Hi(rec)
             );
         }
 

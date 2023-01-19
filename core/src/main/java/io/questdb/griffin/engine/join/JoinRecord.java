@@ -151,27 +151,19 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
+    public long getLong128Hi(int col) {
         if (col < split) {
-            return master.getLong128Hi(col, location);
+            return master.getLong128Hi(col);
         }
-        return slave.getLong128Hi(col - split, location);
+        return slave.getLong128Hi(col - split);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
+    public long getLong128Lo(int col) {
         if (col < split) {
-            return master.getLong128Lo(col, location);
+            return master.getLong128Lo(col);
         }
-        return slave.getLong128Lo(col - split, location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        if (col < split) {
-            return master.getLong128Location(col);
-        }
-        return slave.getLong128Location(col - split);
+        return slave.getLong128Lo(col - split);
     }
 
     @Override

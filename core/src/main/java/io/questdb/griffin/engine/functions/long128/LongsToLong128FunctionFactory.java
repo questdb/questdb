@@ -75,18 +75,13 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
+        public long getLong128Hi(Record rec) {
             return hi.getLong(rec);
         }
 
         @Override
-        public long getLong128Lo(Record rec, long location) {
+        public long getLong128Lo(Record rec) {
             return lo.getLong(rec);
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
-            return 1;
         }
 
         @Override

@@ -71,16 +71,14 @@ final class UuidEqUtils {
                 }
             }
             if (uuidFun.isConstant()) {
-                long loc = uuidFun.getLong128Location(null);
-                return BooleanConstant.of(hi == uuidFun.getLong128Hi(null, loc) && lo == uuidFun.getLong128Hi(null, loc));
+                return BooleanConstant.of(hi == uuidFun.getLong128Hi(null) && lo == uuidFun.getLong128Hi(null));
             } else {
                 return new ConstStrFun(lo, hi, uuidFun);
             }
         } else {
             if (uuidFun.isConstant()) {
-                long loc = uuidFun.getLong128Location(null);
-                long lo = uuidFun.getLong128Lo(null, loc);
-                long hi = uuidFun.getLong128Hi(null, loc);
+                long lo = uuidFun.getLong128Lo(null);
+                long hi = uuidFun.getLong128Hi(null);
                 if (Uuid.isNull(lo, hi)) {
                     return new EqStrFunctionFactory.NullCheckFunc(strFun);
                 } else {
@@ -113,8 +111,7 @@ final class UuidEqUtils {
 
         @Override
         public boolean getBool(Record rec) {
-            long loc = fun.getLong128Location(rec);
-            return negated != (constStrHi == fun.getLong128Hi(rec, loc) && constStrLo == fun.getLong128Lo(rec, loc));
+            return negated != (constStrHi == fun.getLong128Hi(rec) && constStrLo == fun.getLong128Lo(rec));
         }
     }
 
@@ -168,9 +165,8 @@ final class UuidEqUtils {
         @Override
         public boolean getBool(Record rec) {
             CharSequence str = strFunction.getStr(rec);
-            long loc = uuidFunction.getLong128Location(rec);
-            long lo = uuidFunction.getLong128Lo(rec, loc);
-            long hi = uuidFunction.getLong128Hi(rec, loc);
+            long lo = uuidFunction.getLong128Lo(rec);
+            long hi = uuidFunction.getLong128Hi(rec);
             if (str == null) {
                 return negated != Uuid.isNull(lo, hi);
             }

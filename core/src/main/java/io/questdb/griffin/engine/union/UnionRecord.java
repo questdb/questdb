@@ -145,27 +145,19 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
+    public long getLong128Hi(int col) {
         if (useA) {
-            return recordA.getLong128Hi(col, location);
+            return recordA.getLong128Hi(col);
         }
-        return recordB.getLong128Hi(col, location);
+        return recordB.getLong128Hi(col);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
+    public long getLong128Lo(int col) {
         if (useA) {
-            return recordA.getLong128Lo(col, location);
+            return recordA.getLong128Lo(col);
         }
-        return recordB.getLong128Lo(col, location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        if (useA) {
-            return recordA.getLong128Location(col);
-        }
-        return recordB.getLong128Location(col);
+        return recordB.getLong128Lo(col);
     }
 
     @Override

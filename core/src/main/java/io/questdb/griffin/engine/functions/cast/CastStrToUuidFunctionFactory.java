@@ -72,7 +72,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
+        public long getLong128Hi(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
                 return Numbers.LONG_NaN;
@@ -86,7 +86,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong128Lo(Record rec, long location) {
+        public long getLong128Lo(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
                 return Numbers.LONG_NaN;
@@ -97,11 +97,6 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
-            return 1;
         }
     }
 }

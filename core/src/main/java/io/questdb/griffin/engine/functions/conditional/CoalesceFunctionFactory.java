@@ -728,37 +728,31 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
-            if (location == 0) {
-                long loc = args0.getLong128Location(rec);
-                return args0.getLong128Hi(rec, loc);
-            } else if (location == 1) {
-                long loc = args1.getLong128Location(rec);
-                return args1.getLong128Hi(rec, loc);
-            } else {
-                throw new UnsupportedOperationException();
+        public long getLong128Hi(Record rec) {
+            long hi0 = args0.getLong128Hi(rec);
+            if (hi0 != Numbers.LONG_NaN) {
+                return hi0; // if hi is not NaN then we know Long128 is not null
             }
+            long lo0 = args0.getLong128Lo(rec);
+            if (lo0 != Numbers.LONG_NaN) {
+                return hi0; // if lo is not NaN then we know Long128 is not null and we can return hi0 even if it is NaN
+            }
+            // ok, both hi and lo are NaN, we use the value from the second argument
+            return args1.getLong128Hi(rec);
         }
 
         @Override
-        public long getLong128Lo(Record rec, long location) {
-            if (location == 0) {
-                long loc = args0.getLong128Location(rec);
-                return args0.getLong128Lo(rec, loc);
-            } else if (location == 1) {
-                long loc = args1.getLong128Location(rec);
-                return args1.getLong128Lo(rec, loc);
-            } else {
-                throw new UnsupportedOperationException();
+        public long getLong128Lo(Record rec) {
+            long lo0 = args0.getLong128Lo(rec);
+            if (lo0 != Numbers.LONG_NaN) {
+                return lo0; // lo is not NaN -> Long128 is not null, that's easy
             }
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
-            long loc = args0.getLong128Location(rec);
-            long lo = args0.getLong128Lo(rec, loc);
-            long hi = args0.getLong128Hi(rec, loc);
-            return Uuid.isNull(lo, hi) ? 1 : 0;
+            long hi0 = args0.getLong128Hi(rec);
+            if (hi0 != Numbers.LONG_NaN) {
+                return lo0; // hi is not NaN  -> Long128 is not null -> we can return lo even if it is NaN
+            }
+            // ok, both hi and lo are NaN, we use the value from the second argument
+            return args1.getLong128Lo(rec);
         }
 
         @Override
@@ -770,12 +764,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     private static class UuidCoalesceFunction extends UuidFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final int size;
-        private int selectedPos;
 
         public UuidCoalesceFunction(ObjList<Function> args, int argsSize) {
             this.args = args;
             this.size = argsSize;
-            this.selectedPos = -1;
         }
 
         @Override
@@ -784,39 +776,35 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
-            if (selectedPos == -1) {
-                return Numbers.LONG_NaN;
-            }
-            return args.getQuick(selectedPos).getLong128Hi(rec, location);
-        }
-
-        @Override
-        public long getLong128Lo(Record rec, long location) {
-            if (selectedPos == -1) {
-                return Numbers.LONG_NaN;
-            }
-            return args.getQuick(selectedPos).getLong128Lo(rec, location);
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
+        public long getLong128Hi(Record rec) {
+            long value = Numbers.LONG_NaN;
             for (int i = 0; i < size; i++) {
-                long loc = args.getQuick(i).getLong128Location(rec);
-                long lo = args.getQuick(i).getLong128Lo(rec, loc);
-                long hi = args.getQuick(i).getLong128Hi(rec, loc);
-                if (!Uuid.isNull(lo, hi)) {
-                    selectedPos = i;
-                    return loc;
+                value = args.getQuick(i).getLong128Hi(rec);
+                if (value != Numbers.LONG_NaN) {
+                    return value;
+                }
+                long lo = args.getQuick(i).getLong128Lo(rec);
+                if (lo != Numbers.LONG_NaN) {
+                    return value;
                 }
             }
-            selectedPos = -1;
-            return -1;
+            return value;
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public long getLong128Lo(Record rec) {
+            long value = Numbers.LONG_NaN;
+            for (int i = 0; i < size; i++) {
+                value = args.getQuick(i).getLong128Lo(rec);
+                if (value != Numbers.LONG_NaN) {
+                    return value;
+                }
+                long hi = args.getQuick(i).getLong128Hi(rec);
+                if (hi != Numbers.LONG_NaN) {
+                    return value;
+                }
+            }
+            return value;
         }
     }
 }

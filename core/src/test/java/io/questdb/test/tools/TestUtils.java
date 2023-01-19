@@ -1130,9 +1130,8 @@ public final class TestUtils {
             case ColumnType.LONG128:
                 // fall through
             case ColumnType.UUID:
-                long loc = r.getLong128Location(i);
-                long hi = r.getLong128Hi(i, loc);
-                long lo = r.getLong128Lo(i, loc);
+                long hi = r.getLong128Hi(i);
+                long lo = r.getLong128Lo(i);
                 if (!Uuid.isNull(lo, hi)) {
                     Uuid uuid = new Uuid(lo, hi);
                     uuid.toSink(sink);
@@ -1321,10 +1320,8 @@ public final class TestUtils {
                     case ColumnType.LONG128:
                         // fall-through
                     case ColumnType.UUID:
-                        long rrLoc = rr.getLong128Location(i);
-                        long lrLoc = lr.getLong128Location(i);
-                        Assert.assertEquals(rr.getLong128Hi(i, rrLoc), lr.getLong128Hi(i, lrLoc));
-                        Assert.assertEquals(rr.getLong128Lo(i, rrLoc), lr.getLong128Lo(i, lrLoc));
+                        Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
+                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
                     default:
                         // Unknown record type.

@@ -163,27 +163,19 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
+    public long getLong128Hi(int col) {
         if (useA) {
-            return castFunctionsA.getQuick(col).getLong128Hi(recordA, location);
+            return castFunctionsA.getQuick(col).getLong128Hi(recordA);
         }
-        return castFunctionsB.getQuick(col).getLong128Hi(recordB, location);
+        return castFunctionsB.getQuick(col).getLong128Hi(recordB);
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
+    public long getLong128Lo(int col) {
         if (useA) {
-            return castFunctionsA.getQuick(col).getLong128Lo(recordA, location);
+            return castFunctionsA.getQuick(col).getLong128Lo(recordA);
         }
-        return castFunctionsB.getQuick(col).getLong128Lo(recordB, location);
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getLong128Location(recordA);
-        }
-        return castFunctionsB.getQuick(col).getLong128Location(recordB);
+        return castFunctionsB.getQuick(col).getLong128Lo(recordB);
     }
 
     @Override

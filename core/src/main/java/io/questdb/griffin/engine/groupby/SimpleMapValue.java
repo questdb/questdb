@@ -151,21 +151,13 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public long getLong128Hi(int col, long location) {
+    public long getLong128Hi(int col) {
         return values[4 * col + 1];
     }
 
     @Override
-    public long getLong128Lo(int col, long location) {
+    public long getLong128Lo(int col) {
         return values[4 * col];
-    }
-
-    @Override
-    public long getLong128Location(int col) {
-        // we could return the index to the array: 4 * col
-        // but this would only save a single multiplication by constant 4, which is just a bit-shifting
-        // and casting from int to long and back would be probably more work than the multiplication
-        return 1;
     }
 
     @Override

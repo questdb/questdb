@@ -33,17 +33,12 @@ public class UuidTypeConstant extends UuidFunction implements TypeConstant {
     public static final UuidTypeConstant INSTANCE = new UuidTypeConstant();
 
     @Override
-    public long getLong128Hi(Record rec, long location) {
+    public long getLong128Hi(Record rec) {
         return Numbers.LONG_NaN;
     }
 
     @Override
-    public long getLong128Lo(Record rec, long location) {
+    public long getLong128Lo(Record rec) {
         return Numbers.LONG_NaN;
-    }
-
-    @Override
-    public long getLong128Location(Record rec) {
-        return 0;
     }
 }

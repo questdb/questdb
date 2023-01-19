@@ -68,18 +68,15 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     }
 
     private static BooleanConstant createConstant(Function a, Function b) {
-        long aLoc = a.getLong128Location(null);
-        long bLoc = b.getLong128Location(null);
-        long aHi = a.getLong128Hi(null, aLoc);
-        long aLo = a.getLong128Lo(null, aLoc);
-        long bHi = b.getLong128Hi(null, bLoc);
-        long bLo = b.getLong128Lo(null, bLoc);
+        long aHi = a.getLong128Hi(null);
+        long aLo = a.getLong128Lo(null);
+        long bHi = b.getLong128Hi(null);
+        long bLo = b.getLong128Lo(null);
         return BooleanConstant.of(aHi == bHi && aLo == bLo);
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        long loc = constFunc.getLong128Location(null);
-        return new ConstCheckFunc(varFunc, constFunc.getLong128Hi(null, loc), constFunc.getLong128Lo(null, loc));
+        return new ConstCheckFunc(varFunc, constFunc.getLong128Hi(null), constFunc.getLong128Lo(null));
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -100,9 +97,8 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long loc = arg.getLong128Location(rec);
-            long hi = arg.getLong128Hi(rec, loc);
-            long lo = arg.getLong128Lo(rec, loc);
+            long hi = arg.getLong128Hi(rec);
+            long lo = arg.getLong128Lo(rec);
             return negated != (hi == hiConstant && lo == loConstant);
         }
     }
@@ -118,12 +114,10 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long leftLoc = left.getLong128Location(rec);
-            long rightLoc = right.getLong128Location(rec);
-            final long leftHi = left.getLong128Hi(rec, leftLoc);
-            final long leftLo = left.getLong128Lo(rec, leftLoc);
-            final long rightHi = right.getLong128Hi(rec, rightLoc);
-            final long rightLo = right.getLong128Lo(rec, rightLoc);
+            final long leftHi = left.getLong128Hi(rec);
+            final long leftLo = left.getLong128Lo(rec);
+            final long rightHi = right.getLong128Hi(rec);
+            final long rightLo = right.getLong128Lo(rec);
             return negated != (leftHi == rightHi && leftLo == rightLo);
         }
 

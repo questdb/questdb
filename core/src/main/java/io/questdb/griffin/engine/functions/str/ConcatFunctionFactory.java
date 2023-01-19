@@ -116,9 +116,8 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkUuid(CharSink sink, Function function, Record record) {
-        long loc = function.getLong128Location(record);
-        long lo = function.getLong128Lo(record, loc);
-        long hi = function.getLong128Hi(record, loc);
+        long lo = function.getLong128Lo(record);
+        long hi = function.getLong128Hi(record);
         SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
     }
 

@@ -119,18 +119,13 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public long getLong128Hi(Record rec, long location) {
+        public long getLong128Hi(Record rec) {
             return 0;
         }
 
         @Override
-        public long getLong128Lo(Record rec, long location) {
+        public long getLong128Lo(Record rec) {
             return 0;
-        }
-
-        @Override
-        public long getLong128Location(Record rec) {
-            return 1;
         }
 
         @Override
