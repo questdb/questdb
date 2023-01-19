@@ -75,6 +75,7 @@ public class FastMap implements Map, Reopenable {
 
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_INITIAL_CAPACITY = 128;
+    private static final long OFFSET_SLOT_SIZE = 2;
     private final FastMapCursor cursor;
     private final int initialKeyCapacity;
     private final int initialPageSize;

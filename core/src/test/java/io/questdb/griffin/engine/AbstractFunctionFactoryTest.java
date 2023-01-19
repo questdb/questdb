@@ -618,6 +618,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
+        public Long256 getLong256B(int col) {
+            Object o = args[col];
+            if (o == null) {
+                return null;
+            }
+            return (Long256Impl) o;
+        }
+
+        @Override
         public short getShort(int col) {
             return (short) (int) args[col];
         }

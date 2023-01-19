@@ -1487,7 +1487,7 @@ public class SqlCompiler implements Closeable {
                     circuitBreaker
             );
         } catch (CairoException e) {
-            LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
             // Close writer, directory will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
@@ -2876,13 +2876,13 @@ public class SqlCompiler implements Closeable {
                 try {
                     dstPath.trimTo(renameRootLen).concat(tableToken.getDirName()).$();
                     TableUtils.renameOrFail(ff, srcPath, dstPath);
-                    LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(dstPath).$(']').$();
+                    LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
             } catch (CairoException e) {
                 LOG.info()
-                        .$("could not backup [table=").$(tableName)
+                        .$("could not backup [table=").utf8(tableName)
                         .$(", ex=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
@@ -2890,7 +2890,7 @@ public class SqlCompiler implements Closeable {
                 srcPath.of(cachedTmpBackupRoot).concat(tableToken.getDirName()).slash$();
                 int errno;
                 if ((errno = ff.rmdir(srcPath)) != 0) {
-                    LOG.error().$("could not delete directory [path=").$(srcPath).$(", errno=").$(errno).$(']').$();
+                    LOG.error().$("could not delete directory [path=").utf8(srcPath).$(", errno=").$(errno).I$();
                 }
                 throw e;
             }

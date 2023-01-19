@@ -547,7 +547,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
         }
 
-        path.chop$().put(index);
+        path.put(index);
 
         return new IndexOutputFile(ff, path, partitionKey);
     }

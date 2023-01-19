@@ -178,7 +178,7 @@ public class Mig620 {
      */
     private static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen) {
         try {
-            if (ff.exists(topFile(path.chop$(), name))) {
+            if (ff.exists(topFile(path, name))) {
                 final int fd = openRO(ff, path);
                 try {
                     long n;

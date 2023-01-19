@@ -473,7 +473,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
-        this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, ".attachable");
+        this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
@@ -1298,7 +1298,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         String envCandidate = "QDB_" + key.getPropertyPath().replace('.', '_').toUpperCase();
         String envValue = env != null ? env.get(envCandidate) : null;
         if (envValue != null) {
-            log.info().$("env config [key=").$(envCandidate).$(']').$();
+            log.info().$("env config [key=").$(envCandidate).I$();
             return envValue;
         }
         return properties.getProperty(key.getPropertyPath());

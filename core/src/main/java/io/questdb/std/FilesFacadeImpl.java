@@ -25,8 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
 
@@ -181,9 +184,23 @@ public class FilesFacadeImpl implements FilesFacade {
         return Os.isPosix() && errno == 18;
     }
 
+    public boolean isDirOrSoftLinkDir(Path path) {
+        return Files.isDirOrSoftLinkDir(path);
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type);
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
     @Override
     public boolean isRestrictedFileSystem() {
-        return Os.type == Os.WINDOWS;
+        return Os.isWindows();
     }
 
     @Override
@@ -341,8 +358,43 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        return Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
+    @Override
     public int unlink(LPSZ softLink) {
         return Files.unlink(softLink);
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, Log LOG) {
+        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        return unlinkOrRemove(path, checkedType, LOG);
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
+        if (checkedType == Files.DT_LNK) {
+            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (unlink(path) == 0) {
+                LOG.info().$("removed by unlink [path=").utf8(path).I$();
+                return 0;
+            } else {
+                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
+            }
+        }
+
+        int errno;
+        if ((errno = rmdir(path)) == 0) {
+            LOG.info().$("removed [path=").utf8(path).I$();
+        } else {
+            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
+        }
+        return errno;
     }
 
     public void walk(Path path, FindVisitor func) {
@@ -391,12 +443,10 @@ public class FilesFacadeImpl implements FilesFacade {
         int srcLen = src.length();
         int len = src.length();
         long p = findFirst(src.$());
-        src.chop$();
 
         if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
             return -1;
         }
-        dst.chop$();
 
         if (p > 0) {
             try {
@@ -417,7 +467,6 @@ public class FilesFacadeImpl implements FilesFacade {
                             // Ignore if subfolder already exists
                             mkdir(dst.$(), dirMode);
 
-                            dst.chop$();
                             if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
                                 return res;
                             }
