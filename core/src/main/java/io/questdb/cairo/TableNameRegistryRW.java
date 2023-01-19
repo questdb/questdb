@@ -50,11 +50,10 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
                 reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
-                return true;
             } else {
                 reverseTableNameTokenMap.remove(token.getDirName(), reverseMapItem);
-                return true;
             }
+            return true;
         }
         return false;
     }
@@ -112,6 +111,25 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             }
         } else {
             throw CairoException.nonCritical().put("table '").put(newName).put("' already exists");
+        }
+    }
+
+    @Override
+    public TableToken convertToWal(TableToken tableToken) {
+        final String tableName = tableToken.getTableName();
+        if (tableToken.isWal()) {
+            throw CairoException.nonCritical().put("table token is already WAL type [name=").put(tableName).put(']');
+        }
+
+        if (nameTableTokenMap.remove(tableName, tableToken)) {
+            final TableToken newToken = new TableToken(tableName, tableToken.getDirName(), tableToken.getTableId(), true);
+            nameTableTokenMap.put(tableName, newToken);
+            // Persist to file
+            nameStore.logDropTable(tableToken);
+            nameStore.appendEntry(newToken);
+            return newToken;
+        } else {
+            throw CairoException.tableDoesNotExist(tableName);
         }
     }
 

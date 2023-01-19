@@ -79,16 +79,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         Misc.free(roMetaMem);
     }
 
-    public void copyFrom(TableDescriptor model, TableToken tableToken, int tableId, long structureVersion, boolean suspended) {
+    public void copyFrom(TableDescriptor tableDescriptor, TableToken tableToken, int tableId, long structureVersion, boolean suspended) {
         reset();
         this.tableToken = tableToken;
-        this.timestampIndex = model.getTimestampIndex();
+        this.timestampIndex = tableDescriptor.getTimestampIndex();
         this.tableId = tableId;
         this.suspended = suspended;
 
-        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
-            final CharSequence name = model.getColumnName(i);
-            final int type = model.getColumnType(i);
+        for (int i = 0, n = tableDescriptor.getColumnCount(); i < n; i++) {
+            final CharSequence name = tableDescriptor.getColumnName(i);
+            final int type = tableDescriptor.getColumnType(i);
             addColumn0(name, type);
         }
 
@@ -96,8 +96,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
     }
 
-    public void create(TableDescriptor model, TableToken tableToken, Path path, int pathLen, int tableId) {
-        copyFrom(model, tableToken, tableId, 0, false);
+    public void create(TableDescriptor tableDescriptor, TableToken tableToken, Path path, int pathLen, int tableId) {
+        copyFrom(tableDescriptor, tableToken, tableId, 0, false);
         switchTo(path, pathLen);
     }
 

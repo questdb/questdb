@@ -132,6 +132,14 @@ public interface TableNameRegistry extends Closeable {
     TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken);
 
     /**
+     * Converts to WAL table token with in registry.
+     *
+     * @param tableToken table token of the table to be converted to a WAL table
+     * @return updated table token
+     */
+    TableToken convertToWal(TableToken tableToken);
+
+    /**
      * Resets table name storage memory to initial value. Used to not false detect memory leaks in tests.
      */
     @TestOnly

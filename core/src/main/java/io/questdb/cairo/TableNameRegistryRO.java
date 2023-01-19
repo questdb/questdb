@@ -102,6 +102,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
+    public TableToken convertToWal(TableToken tableToken) {
+        throw CairoException.critical(0).put("instance is read only");
+    }
+
+    @Override
     public void unlockTableName(TableToken tableToken) {
         throw CairoException.critical(0).put("instance is read only");
     }

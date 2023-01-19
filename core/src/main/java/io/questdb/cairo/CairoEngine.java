@@ -296,6 +296,35 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public TableToken convertToWal(
+            CairoSecurityContext securityContext,
+            TableToken tableToken
+    ) {
+        securityContext.checkWritePermission();
+        verifyTableToken(tableToken);
+        if (tableToken.isWal()) {
+            throw CairoException.nonCritical().put("table is already WAL type [name=").put(tableToken)
+                    .put(", dirName=").put(tableToken.getDirName()).put(']');
+        }
+
+        final TableDescriptor tableDescriptor;
+        try (TableRecordMetadata metadata = metadataPool.get(tableToken)) {
+            tableDescriptor = new TableDescriptorImpl(metadata);
+        }
+
+        final CharSequence lockedReason = lock(securityContext, tableToken, "convertToWal");
+        if (lockedReason == null) {
+            try {
+                final TableToken newToken = tableNameRegistry.convertToWal(tableToken);
+                tableSequencerAPI.registerTable(newToken.getTableId(), tableDescriptor, newToken);
+                return newToken;
+            } finally {
+                unlockTableUnsafe(tableToken, null, false);
+            }
+        }
+        throw CairoException.nonCritical().put("Could not lock '").put(tableToken).put("' [reason='").put(lockedReason).put("']");
+    }
+
     public TableWriter getBackupWriter(
             CairoSecurityContext securityContext,
             TableToken tableToken,
@@ -860,12 +889,12 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void verifyTableToken(TableToken tableToken) {
-        TableToken newTableToken = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (newTableToken == null) {
+        final TableToken registeredToken = tableNameRegistry.getTableToken(tableToken.getTableName());
+        if (registeredToken == null) {
             throw CairoException.tableDoesNotExist(tableToken.getTableName());
         }
-        if (!newTableToken.equals(tableToken)) {
-            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), newTableToken.getTableId(), newTableToken.getTableId(), -1);
+        if (!registeredToken.equals(tableToken)) {
+            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), registeredToken.getTableId(), -1, -1);
         }
     }
 
@@ -888,6 +917,40 @@ public class CairoEngine implements Closeable, WriterSource {
                 return releaseInactive();
             }
             return false;
+        }
+    }
+
+    private static class TableDescriptorImpl implements TableDescriptor {
+        private final int timestampIndex;
+        private final ObjList<CharSequence> columnNames = new ObjList<>();
+        private final IntList columnTypes = new IntList();
+
+        private TableDescriptorImpl(TableRecordMetadata metadata) {
+            timestampIndex = metadata.getTimestampIndex();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnNames.add(metadata.getColumnName(i));
+                columnTypes.add(metadata.getColumnType(i));
+            }
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnNames.size();
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return columnNames.get(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return columnTypes.get(columnIndex);
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return timestampIndex;
         }
     }
 }
