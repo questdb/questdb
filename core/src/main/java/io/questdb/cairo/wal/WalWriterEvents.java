@@ -246,6 +246,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putByte(WalTxnType.TRUNCATE);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
         return txn++;
     }
 }
