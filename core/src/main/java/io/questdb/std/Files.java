@@ -49,6 +49,9 @@ public final class Files {
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
+    // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
+    // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
+    // wasted disk read ops.
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
@@ -270,7 +273,6 @@ public final class Files {
         for (int i = 0, n = path.length(); i < n; i++) {
             char c = path.charAt(i);
             if (c == Files.SEPARATOR) {
-
                 // do not attempt to create '/' on linux or 'C:\' on Windows
                 if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.charAt(1) == ':')) {
                     continue;

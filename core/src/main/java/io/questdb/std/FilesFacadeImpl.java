@@ -39,7 +39,6 @@ public class FilesFacadeImpl implements FilesFacade {
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
 
-
     @Override
     public boolean allocate(int fd, long size) {
         return Files.allocate(fd, size);
