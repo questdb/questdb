@@ -1537,7 +1537,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    // tests scenario where truncate is not supported (windows) but fails on close
+    // tests scenario where truncate is not supported (Windows) but fails on close
     // truncate on close fails once and then succeeds
     // close is expected not to fail
     public void testCannotTruncateColumnOnCloseAndNotSupported() throws Exception {
@@ -1577,7 +1577,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    // tests scenario where truncate is not supported (windows) but fails on close
+    // tests scenario where truncate is not supported (Windows) but fails on close
     // truncate on close fails all the time
     public void testCannotTruncateColumnOnCloseAndNotSupported2() throws Exception {
         int N = 100000;
@@ -3908,10 +3908,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                        if (Files.isDir(pUtf8NameZ, type)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.top").$()));
+                        if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                            int nlen = path.length();
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.top").$()));
                         }
                     });
                 }
@@ -3998,12 +3999,13 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     path.trimTo(plen);
                     FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                        if (Files.isDir(pUtf8NameZ, type)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
-                            Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.d").$()));
+                        if (FF.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                            int nlen = path.length();
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(nlen).concat("supplier.d").$()));
+                            Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.d").$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
-                                Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.i").$()));
+                                Assert.assertTrue(FF.exists(path.trimTo(nlen).concat("sup.i").$()));
                             }
                         }
                     });

@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
@@ -187,7 +188,6 @@ public class FilesTest {
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
-                src.chop$();
 
                 File f2 = new File(Chars.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
@@ -304,7 +304,6 @@ public class FilesTest {
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
-                src.chop$();
 
                 File f2 = new File(Chars.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
@@ -743,6 +742,29 @@ public class FilesTest {
     }
 
     @Test
+    public void testTypeOfDirAndSoftLinkAreTheSame() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            File folder = temporaryFolder.newFolder("folder");
+            try (
+                    Path path = new Path().of(folder.getAbsolutePath()).$();
+                    Path link = new Path().of(folder.getParentFile().toString()).concat("link").$()
+            ) {
+                Assert.assertTrue(Files.exists(path));
+                int pathType = Files.findType(Files.findFirst(path));
+                Assert.assertEquals(Files.DT_DIR, pathType);
+
+                Assert.assertEquals(0, Files.softLink(path, link));
+                Assert.assertTrue(Files.exists(link));
+                int linkType = Files.findType(Files.findFirst(link));
+                Assert.assertEquals(Files.DT_DIR, linkType);
+
+                Assert.assertEquals(pathType, linkType);
+            }
+        });
+    }
+
+    @Test
     public void testUnlink() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
@@ -760,7 +782,7 @@ public class FilesTest {
             try (
                     Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
-                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$()
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(TableUtils.ATTACHABLE_DIR_MARKER).$()
             ) {
                 createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
 
@@ -824,7 +846,7 @@ public class FilesTest {
 
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
                 int fd1 = Files.openRW(path.$());
-                int fd2 = Files.openRW(path.chop$().put(".2").$());
+                int fd2 = Files.openRW(path.put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;
 
@@ -896,7 +918,7 @@ public class FilesTest {
     private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
         Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
         Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-        Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on windows
+        Assert.assertTrue(Os.isWindows() || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on Windows
     }
 
     private static void createTempFile(Path path, String fileName, String fileContent) {
@@ -1029,7 +1051,7 @@ public class FilesTest {
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
                     Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$()
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(TableUtils.ATTACHABLE_DIR_MARKER).$()
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 

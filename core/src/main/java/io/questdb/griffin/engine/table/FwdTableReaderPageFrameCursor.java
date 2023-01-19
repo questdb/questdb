@@ -91,19 +91,17 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next() {
-        if (this.reenterDataFrame) {
+        if (reenterDataFrame) {
             return computeFrame(reenterPartitionLo, reenterPartitionHi);
         }
         DataFrame dataFrame = dataFrameCursor.next();
         if (dataFrame != null) {
-            this.reenterPartitionIndex = dataFrame.getPartitionIndex();
+            reenterPartitionIndex = dataFrame.getPartitionIndex();
             final long lo = dataFrame.getRowLo();
             final long hi = dataFrame.getRowHi();
-            this.currentPageFrameRowLimit = Math.min(
+            currentPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
-                    Math.max(
-                            pageFrameMinRows, (hi - lo) / workerCount
-                    )
+                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
             );
             return computeFrame(lo, hi);
         }
@@ -124,7 +122,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void toTop() {
-        this.dataFrameCursor.toTop();
+        dataFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
         columnPageAddress.setAll(columnCount * 2, 0);

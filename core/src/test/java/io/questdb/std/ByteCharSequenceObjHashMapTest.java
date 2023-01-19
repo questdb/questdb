@@ -24,14 +24,17 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-public class DirectByteCharSequenceIntHashMapTest {
+public class ByteCharSequenceObjHashMapTest {
+
     @Test
     public void testHashMapCompatibility() {
         final Rnd rnd = new Rnd();
@@ -41,7 +44,7 @@ public class DirectByteCharSequenceIntHashMapTest {
         HashMap<String, Integer> hashMap = new HashMap<>();
         ArrayList<String> list = new ArrayList<>();
         final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-        DirectByteCharSequenceIntHashMap ourMap = new DirectByteCharSequenceIntHashMap();
+        ByteCharSequenceObjHashMap<Integer> ourMap = new ByteCharSequenceObjHashMap<>();
         try {
             // generate random strings and randomly add some of them to the HashMap
             long p = mem;
@@ -50,7 +53,7 @@ public class DirectByteCharSequenceIntHashMapTest {
                 list.add(s);
                 if (rnd.nextBoolean()) {
                     Object v = hashMap.put(s, i);
-                    boolean added = ourMap.put(s, i);
+                    boolean added = ourMap.put(new ByteCharSequence(s.getBytes(StandardCharsets.UTF_8)), i);
 
                     // if we can add string to HashMap, we must be able to add it to our map too.
                     // Opposite is true also. Both maps must behave the same
@@ -81,11 +84,11 @@ public class DirectByteCharSequenceIntHashMapTest {
                 Assert.assertNotEquals(hashMap.containsKey(s), ourMap.excludes(dbcs));
 
                 Object v = hashMap.get(s);
-                int k = ourMap.get(dbcs);
-                Assert.assertEquals(k, ourMap.get(s));
+                Integer k = ourMap.get(dbcs);
+                Assert.assertEquals(k, ourMap.get(new ByteCharSequence(s.getBytes(StandardCharsets.UTF_8))));
 
                 if (v == null) {
-                    Assert.assertEquals(-1, k);
+                    Assert.assertNull(k);
                     Assert.assertTrue(ourMap.keyIndex(dbcs) > -1);
                 } else {
                     Assert.assertEquals(v, k);
@@ -115,10 +118,10 @@ public class DirectByteCharSequenceIntHashMapTest {
                     if (rnd.nextBoolean()) {
                         Object v = hashMap.remove(s);
                         Assert.assertNotNull(v);
-                        ourMap.remove(dbcs);
+                        ourMap.remove(ByteCharSequence.newInstance(dbcs));
                     }
                 } else {
-                    Assert.assertEquals(-1, ourMap.remove(dbcs));
+                    Assert.assertEquals(-1, ourMap.remove(ByteCharSequence.newInstance(dbcs)));
                 }
                 p += len;
             }
@@ -134,11 +137,49 @@ public class DirectByteCharSequenceIntHashMapTest {
                 if (v != null) {
                     Assert.assertEquals(v, ourMap.get(dbcs));
                 } else {
-                    Assert.assertEquals(-1, ourMap.get(dbcs));
+                    Assert.assertNull(ourMap.get(dbcs));
                 }
                 p += len;
             }
+        } finally {
+            Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
 
+    @Test
+    public void testHashMapUtf8() {
+        final int N = 256;
+        final int memSize = 2 * N;
+        long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
+        final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+        ByteCharSequenceObjHashMap<Integer> map = new ByteCharSequenceObjHashMap<>();
+        try {
+            final String utf16Str = "ъ";
+            final byte[] utf8Bytes = utf16Str.getBytes(StandardCharsets.UTF_8);
+            assert utf8Bytes.length == 2;
+            for (int i = 0; i < N; i++) {
+                for (int j = 0; j < 2; j++) {
+                    Unsafe.getUnsafe().putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
+                }
+            }
+
+            for (int i = 0; i < N; i++) {
+                dbcs.of(mem, mem + (long) 2 * i);
+                Assert.assertNull(map.get(dbcs));
+
+                final ByteCharSequence bcs = ByteCharSequence.newInstance(dbcs);
+                map.put(ByteCharSequence.newInstance(dbcs), i);
+                Assert.assertEquals(i, (int) map.get(dbcs));
+                Assert.assertEquals(i, (int) map.get(bcs));
+            }
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertEquals(N - i, map.size());
+
+                dbcs.of(mem, mem + (long) 2 * i);
+                map.remove(ByteCharSequence.newInstance(dbcs));
+                Assert.assertEquals(N - i - 1, map.size());
+            }
         } finally {
             Unsafe.free(mem, memSize, MemoryTag.NATIVE_DEFAULT);
         }

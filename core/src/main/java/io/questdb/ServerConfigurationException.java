@@ -29,10 +29,6 @@ public class ServerConfigurationException extends Exception {
         super(message);
     }
 
-    public static ServerConfigurationException forInvalidKey(String key) {
-        return new ServerConfigurationException("invalid configuration value [key= " + key + "]");
-    }
-
     public static ServerConfigurationException forInvalidKey(String key, String value) {
         return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + "]");
     }
