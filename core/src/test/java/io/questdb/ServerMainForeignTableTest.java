@@ -98,7 +98,25 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateTableInAllowedVolume() throws Exception {
+    public void testServerMainCreateTableIfNotExistsInVolumeTableExists() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                createTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                createTableInVolumeIfNotExists(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                dropTable(compiler, context, tableName, true);
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateTableInVolume() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -122,7 +140,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateTableInAllowedVolumeTableExists0() throws Exception {
+    public void testServerMainCreateTableInVolumeTableExists0() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -145,7 +163,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateTableInAllowedVolumeTableExists1() throws Exception {
+    public void testServerMainCreateTableInVolumeTableExists1() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -168,7 +186,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainCreateTableInAllowedVolumeThenDrop() throws Exception {
+    public void testServerMainCreateTableInVolumeThenDrop() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
@@ -291,6 +309,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             startLatch,
                             haltLatch,
                             tableName,
+                            false,
                             false
                     ).start();
                     concurrentTableCreator(
@@ -301,6 +320,173 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             startLatch,
                             haltLatch,
                             tableName,
+                            false,
+                            true
+                    ).start();
+                    startLatch.countDown();
+                    haltLatch.await();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateWalTableIfNotExistsInVolumeTableExists() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                createWalTableInVolumeIfNotExists(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                dropTable(compiler, context, tableName, true);
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateWalTableInVolume() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT);
+                assertTable(tableName);
+                dropTable(compiler, context, tableName, true);
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateWalTableInVolumeTableExists0() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                createWalTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                try {
+                    createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                }
+                dropTable(compiler, context, tableName, false);
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateWalTableInVolumeTableExists1() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                try {
+                    createWalTable(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                }
+                dropTable(compiler, context, tableName, true);
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateWalTableInVolumeThenDrop() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = executionContext(qdb.getCairoEngine())
+            ) {
+                qdb.start();
+                for (int i = 0; i < 5; i++) {
+                    createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
+                    assertSql(
+                            compiler,
+                            context,
+                            "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                            new StringSink(),
+                            TABLE_START_CONTENT);
+                    assertTable(tableName);
+                    dropTable(compiler, context, tableName, true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainCreateWalTableWhileConcurrentCreateWalTable() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // Windows requires special privileges to create soft links
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            try (
+                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    CairoEngine engine = qdb.getCairoEngine();
+                    SqlCompiler compiler0 = new SqlCompiler(engine);
+                    SqlCompiler compiler1 = new SqlCompiler(engine);
+                    SqlExecutionContext context0 = executionContext(engine);
+                    SqlExecutionContext context1 = executionContext(engine)
+            ) {
+                qdb.start();
+
+                CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
+
+                SOCountDownLatch startLatch = new SOCountDownLatch();
+                SOCountDownLatch haltLatch = new SOCountDownLatch();
+
+                for (int i = 0; i < 10; i++) {
+                    startLatch.setCount(3);
+                    haltLatch.setCount(2);
+                    concurrentTableCreator(
+                            "createWalTable",
+                            cairoConfig,
+                            compiler0,
+                            context0,
+                            startLatch,
+                            haltLatch,
+                            tableName,
+                            true,
+                            false
+                    ).start();
+                    concurrentTableCreator(
+                            "createWalTableInVolume",
+                            cairoConfig,
+                            compiler1,
+                            context1,
+                            startLatch,
+                            haltLatch,
+                            tableName,
+                            true,
                             true
                     ).start();
                     startLatch.countDown();
@@ -350,30 +536,38 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         java.nio.file.Files.createSymbolicLink(Paths.get(tablePath), Paths.get(foreignPath));
     }
 
-    private static String createTableStmt(String tableName) {
-        return "CREATE TABLE " + tableName + '(' +
-                " investmentMill LONG," +
-                " ticketThous INT," +
-                " broker SYMBOL INDEX CAPACITY 32," +
-                " ts TIMESTAMP"
-                + ") TIMESTAMP(ts) PARTITION BY DAY";
+    private static String createTableStmt(String tableName, boolean addIfNotExists) {
+        StringSink sink = new StringSink();
+        sink.put("CREATE TABLE ");
+        if (addIfNotExists) {
+            sink.put("IF NOT EXISTS ");
+        }
+        sink.put(tableName).put('(');
+        sink.put(" investmentMill LONG,");
+        sink.put(" ticketThous INT,");
+        sink.put(" broker SYMBOL INDEX CAPACITY 32,");
+        sink.put(" ts TIMESTAMP");
+        sink.put(") TIMESTAMP(ts) PARTITION BY DAY;");
+        return sink.toString();
     }
 
     private static void deleteFolder(String folderName) throws IOException {
         java.nio.file.Path directory = Paths.get(folderName);
-        java.nio.file.Files.walkFileTree(directory, new SimpleFileVisitor<java.nio.file.Path>() {
-            @Override
-            public FileVisitResult postVisitDirectory(java.nio.file.Path dir, IOException exc) throws IOException {
-                java.nio.file.Files.delete(dir);
-                return FileVisitResult.CONTINUE;
-            }
+        if (directory.toFile().exists()) {
+            java.nio.file.Files.walkFileTree(directory, new SimpleFileVisitor<java.nio.file.Path>() {
+                @Override
+                public FileVisitResult postVisitDirectory(java.nio.file.Path dir, IOException exc) throws IOException {
+                    java.nio.file.Files.delete(dir);
+                    return FileVisitResult.CONTINUE;
+                }
 
-            @Override
-            public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
-                java.nio.file.Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-        });
+                @Override
+                public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
+                    java.nio.file.Files.delete(file);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
     }
 
     private static SqlExecutionContext executionContext(CairoEngine engine) {
@@ -393,6 +587,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             SOCountDownLatch startLatch,
             SOCountDownLatch haltLatch,
             String tableName,
+            boolean isWal,
             boolean isInVolume
     ) {
         return new Thread(() -> {
@@ -401,9 +596,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 startLatch.await();
                 Os.pause();
                 if (isInVolume) {
-                    createTableInVolume(cairoConfig, compiler, context, tableName);
+                    if (isWal) {
+                        createWalTableInVolume(cairoConfig, compiler, context, tableName);
+                    } else {
+                        createTableInVolume(cairoConfig, compiler, context, tableName);
+                    }
                 } else {
-                    createTable(cairoConfig, compiler, context, tableName);
+                    if (isWal) {
+                        createWalTable(cairoConfig, compiler, context, tableName);
+                    } else {
+                        createTable(cairoConfig, compiler, context, tableName);
+                    }
                 }
                 assertTable(tableName);
             } catch (Throwable thr) {
@@ -432,8 +635,19 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         }, threadName);
     }
 
-    private void createPopulateTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName, boolean inVolume) throws Exception {
-        String createStmt = createTableStmt(tableName);
+    private void createPopulateTable(
+            CairoConfiguration cairoConfig,
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            String tableName,
+            boolean isWal,
+            boolean inVolume,
+            boolean addIfNotExists
+    ) throws Exception {
+        String createStmt = createTableStmt(tableName, addIfNotExists);
+        if (isWal) {
+            createStmt += " WAL";
+        }
         if (inVolume) {
             createStmt += " IN VOLUME '" + otherVolumeAlias + '\'';
         }
@@ -453,11 +667,27 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     }
 
     private void createTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
-        createPopulateTable(cairoConfig, compiler, context, tableName, false);
+        createPopulateTable(cairoConfig, compiler, context, tableName, false, false, false);
     }
 
     private void createTableInVolume(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
-        createPopulateTable(cairoConfig, compiler, context, tableName, true);
+        createPopulateTable(cairoConfig, compiler, context, tableName, false, true, false);
+    }
+
+    private void createTableInVolumeIfNotExists(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        createPopulateTable(cairoConfig, compiler, context, tableName, false, true, true);
+    }
+
+    private void createWalTable(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        createPopulateTable(cairoConfig, compiler, context, tableName, true, false, false);
+    }
+
+    private void createWalTableInVolume(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        createPopulateTable(cairoConfig, compiler, context, tableName, true, true, false);
+    }
+
+    private void createWalTableInVolumeIfNotExists(CairoConfiguration cairoConfig, SqlCompiler compiler, SqlExecutionContext context, String tableName) throws Exception {
+        createPopulateTable(cairoConfig, compiler, context, tableName, true, true, true);
     }
 
     private void dropTable(SqlCompiler compiler, SqlExecutionContext context, String tableName, boolean isInVolume) throws Exception {
