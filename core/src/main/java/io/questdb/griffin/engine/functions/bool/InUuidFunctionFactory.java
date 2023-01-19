@@ -66,11 +66,13 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                     }
                     break;
                 case ColumnType.UUID:
-                    Long128 long128 = func.getLong128A(null);
-                    if (Long128.NULL.equals(long128)) {
+                    long loc = func.getLong128Location(null);
+                    long lo = func.getLong128Lo(null, loc);
+                    long hi = func.getLong128Hi(null, loc);
+                    if (hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN) {
                         throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
                     }
-                    set.add(long128.getLo(), long128.getHi());
+                    set.add(lo, hi);
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING or UUID constant expected in IN list");
@@ -78,9 +80,9 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         }
         Function var = args.getQuick(0);
         if (var.isConstant()) {
-            Long128 long128 = var.getLong128A(null);
-            long lo = long128.getLo();
-            long hi = long128.getHi();
+            long loc = var.getLong128Location(null);
+            long lo = var.getLong128Lo(null, loc);
+            long hi = var.getLong128Hi(null, loc);
             if (Uuid.isNull(lo, hi)) {
                 return BooleanConstant.FALSE;
             }
@@ -105,9 +107,9 @@ public final class InUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            Long128 long128 = arg.getLong128A(rec);
-            long lo = long128.getLo();
-            long hi = long128.getHi();
+            long loc = arg.getLong128Location(rec);
+            long lo = arg.getLong128Lo(rec, loc);
+            long hi = arg.getLong128Hi(rec, loc);
             if (Uuid.isNull(lo, hi)) {
                 return false;
             }

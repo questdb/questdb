@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -168,21 +169,29 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public Long128 getLong128A(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong128A(offset);
+    public long getLong128Hi(int columnIndex, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public Long128 getLong128B(int columnIndex) {
+    public long getLong128Lo(int columnIndex, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
+        final long offset = getAdjustedRecordIndex(col) * Uuid.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong128B(offset);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        return column.addressOf(offset);
     }
 
     @Override

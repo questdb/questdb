@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
@@ -121,13 +120,18 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public Long128 getLong128A(Record rec) {
-        return getBase().getLong128A(rec);
+    public long getLong128Hi(Record rec, long location) {
+        return getBase().getLong128Hi(rec, location);
     }
 
     @Override
-    public Long128 getLong128B(Record rec) {
-        return getBase().getLong128B(rec);
+    public long getLong128Lo(Record rec, long location) {
+        return getBase().getLong128Lo(rec, location);
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return getBase().getLong128Location(rec);
     }
 
     @Override

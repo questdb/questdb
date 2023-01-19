@@ -66,7 +66,6 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.UUID);
 
         try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
-            final Long128 long128 = new Long128();
             final int N = 100000;
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
@@ -84,8 +83,7 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
                 key.putShort(rnd.nextShort());
-                long128.setAll(rnd.nextLong(), rnd.nextLong());
-                key.putLong128(long128); // UUID
+                key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -121,8 +119,7 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
                 key.putShort(rnd.nextShort());
-                long128.setAll(rnd.nextLong(), rnd.nextLong());
-                key.putLong128(long128); // UUID
+                key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
@@ -136,9 +133,9 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(8));
-                Long128 l128 = value.getLong128A(9);
-                Assert.assertEquals(rnd.nextLong(), l128.getLo());
-                Assert.assertEquals(rnd.nextLong(), l128.getHi());
+                long loc = value.getLong128Location(9);
+                Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(9, loc));
+                Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(9, loc));
             }
 
             try (RecordCursor cursor = map.getCursor()) {
@@ -360,9 +357,9 @@ public class FastMapTest extends AbstractCairoTest {
                             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
                             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
                             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-                            Long128 long128 = record.getLong128A(9);
-                            Assert.assertEquals(rnd2.nextLong(), long128.getLo());
-                            Assert.assertEquals(rnd2.nextLong(), long128.getHi());
+                            long loc = record.getLong128Location(9);
+                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9, loc));
+                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9, loc));
                         }
                     }
                 }
@@ -820,9 +817,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
-            Long128 long128 = record.getLong128A(col);
-            Assert.assertEquals(rnd.nextLong(), long128.getLo());
-            Assert.assertEquals(rnd.nextLong(), long128.getHi());
+            long loc = record.getLong128Location(col);
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col, loc));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col, loc));
 
             // value part, it comes first in record
             col = 0;
@@ -835,9 +832,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            long128 = record.getLong128A(col);
-            Assert.assertEquals(rnd.nextLong(), long128.getLo());
-            Assert.assertEquals(rnd.nextLong(), long128.getHi());
+            loc = record.getLong128Location(col);
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col, loc));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col, loc));
         }
     }
 
@@ -857,9 +854,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-            Long128 long128 = record.getLong128A(9);
-            Assert.assertEquals(rnd2.nextLong(), long128.getLo());
-            Assert.assertEquals(rnd2.nextLong(), long128.getHi());
+            long loc = record.getLong128Location(9);
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9, loc));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9, loc));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -933,12 +930,13 @@ public class FastMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
-            long128 = record.getLong128A(keyColumnOffset + 12);
+            loc = record.getLong128Location(keyColumnOffset + 12);
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(Long128.NULL, long128);
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12, loc));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12, loc));
             } else {
-                Assert.assertEquals(rnd.nextLong(), long128.getLo());
-                Assert.assertEquals(rnd.nextLong(), long128.getHi());
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12, loc));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12, loc));
             }
         }
         Assert.assertEquals(5000, c);

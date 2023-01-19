@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -110,13 +109,18 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public Long128 getLong128A(int col) {
-        return base.getLong128A(getColumnIndex(col));
+    public long getLong128Hi(int col, long location) {
+        return base.getLong128Hi(getColumnIndex(col), location);
     }
 
     @Override
-    public Long128 getLong128B(int col) {
-        return base.getLong128B(getColumnIndex(col));
+    public long getLong128Lo(int col, long location) {
+        return base.getLong128Lo(getColumnIndex(col), location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        return base.getLong128Location(getColumnIndex(col));
     }
 
     @Override

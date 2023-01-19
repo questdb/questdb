@@ -728,21 +728,37 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Long128 getLong128A(Record rec) {
-            Long128 long128 = args0.getLong128A(rec);
-            if (!Long128.NULL.equals(long128)) {
-                return long128;
+        public long getLong128Hi(Record rec, long location) {
+            if (location == 0) {
+                long loc = args0.getLong128Location(rec);
+                return args0.getLong128Hi(rec, loc);
+            } else if (location == 1) {
+                long loc = args1.getLong128Location(rec);
+                return args1.getLong128Hi(rec, loc);
+            } else {
+                throw new UnsupportedOperationException();
             }
-            return args1.getLong128A(rec);
         }
 
         @Override
-        public Long128 getLong128B(Record rec) {
-            Long128 long128 = args0.getLong128B(rec);
-            if (!Long128.NULL.equals(long128)) {
-                return long128;
+        public long getLong128Lo(Record rec, long location) {
+            if (location == 0) {
+                long loc = args0.getLong128Location(rec);
+                return args0.getLong128Lo(rec, loc);
+            } else if (location == 1) {
+                long loc = args1.getLong128Location(rec);
+                return args1.getLong128Lo(rec, loc);
+            } else {
+                throw new UnsupportedOperationException();
             }
-            return args1.getLong128B(rec);
+        }
+
+        @Override
+        public long getLong128Location(Record rec) {
+            long loc = args0.getLong128Location(rec);
+            long lo = args0.getLong128Lo(rec, loc);
+            long hi = args0.getLong128Hi(rec, loc);
+            return Uuid.isNull(lo, hi) ? 1 : 0;
         }
 
         @Override
@@ -754,10 +770,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     private static class UuidCoalesceFunction extends UuidFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final int size;
+        private int selectedPos;
 
         public UuidCoalesceFunction(ObjList<Function> args, int argsSize) {
             this.args = args;
             this.size = argsSize;
+            this.selectedPos = -1;
         }
 
         @Override
@@ -766,27 +784,34 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Long128 getLong128A(Record rec) {
-            Long128 value = Long128.NULL;
-            for (int i = 0; i < size; i++) {
-                value = args.getQuick(i).getLong128A(rec);
-                if (!Long128.NULL.equals(value)) {
-                    return value;
-                }
+        public long getLong128Hi(Record rec, long location) {
+            if (selectedPos == -1) {
+                return Numbers.LONG_NaN;
             }
-            return value;
+            return args.getQuick(selectedPos).getLong128Hi(rec, location);
         }
 
         @Override
-        public Long128 getLong128B(Record rec) {
-            Long128 value = Long128.NULL;
+        public long getLong128Lo(Record rec, long location) {
+            if (selectedPos == -1) {
+                return Numbers.LONG_NaN;
+            }
+            return args.getQuick(selectedPos).getLong128Lo(rec, location);
+        }
+
+        @Override
+        public long getLong128Location(Record rec) {
             for (int i = 0; i < size; i++) {
-                value = args.getQuick(i).getLong128B(rec);
-                if (!Long128.NULL.equals(value)) {
-                    return value;
+                long loc = args.getQuick(i).getLong128Location(rec);
+                long lo = args.getQuick(i).getLong128Lo(rec, loc);
+                long hi = args.getQuick(i).getLong128Hi(rec, loc);
+                if (!Uuid.isNull(lo, hi)) {
+                    selectedPos = i;
+                    return loc;
                 }
             }
-            return value;
+            selectedPos = -1;
+            return -1;
         }
 
         @Override

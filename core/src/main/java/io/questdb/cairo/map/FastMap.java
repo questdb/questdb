@@ -192,7 +192,7 @@ public class FastMap implements Map, Reopenable {
             this.value3 = new FastMapValue(valueOffsets);
             this.keyBlockOffset = offset;
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
-            this.record = new FastMapRecord(valueOffsets, columnSplit, keyDataOffset, keyBlockOffset, value, keyTypes, valueTypes);
+            this.record = new FastMapRecord(valueOffsets, columnSplit, keyDataOffset, keyBlockOffset, value, keyTypes);
         } else {
             this.valueColumnCount = 0;
             this.value = new FastMapValue(null);
@@ -200,7 +200,7 @@ public class FastMap implements Map, Reopenable {
             this.value3 = new FastMapValue(null);
             this.keyBlockOffset = offset;
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
-            this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes, valueTypes);
+            this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes);
         }
         assert this.keyBlockOffset < kLimit - kStart : "page size is too small for number of columns";
         this.cursor = new FastMapCursor(record, this);
@@ -597,10 +597,10 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128(Long128 value) {
+        public void putLong128(long lo, long hi) {
             checkSize(16);
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLo());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getHi());
+            Unsafe.getUnsafe().putLong(appendAddress, lo);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
             appendAddress += 16;
             writeOffset();
         }
@@ -696,7 +696,7 @@ public class FastMap implements Map, Reopenable {
         public void putTimestamp(long value) {
             putLong(value);
         }
-
+        
         @Override
         public void skip(int bytes) {
             checkSize(bytes);

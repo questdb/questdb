@@ -76,11 +76,6 @@ public final class Uuid implements Sinkable {
         return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
     }
 
-    public static void parse(CharSequence uuid, Long128 to) throws NumericException {
-        checkDashesAndLength(uuid);
-        to.setAll(parseLo(uuid), parseHi(uuid));
-    }
-
     /**
      * Returns highest 64 bits of UUID.
      * <p>

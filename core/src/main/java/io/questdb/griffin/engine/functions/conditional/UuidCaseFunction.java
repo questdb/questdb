@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.Long128;
 import io.questdb.std.ObjList;
 
 public final class UuidCaseFunction extends UuidFunction implements MultiArgFunction {
@@ -46,12 +45,17 @@ public final class UuidCaseFunction extends UuidFunction implements MultiArgFunc
     }
 
     @Override
-    public Long128 getLong128A(Record rec) {
-        return picker.pick(rec).getLong128A(rec);
+    public long getLong128Hi(Record rec, long location) {
+        return picker.pick(rec).getLong128Hi(rec, location);
     }
 
     @Override
-    public Long128 getLong128B(Record rec) {
-        return picker.pick(rec).getLong128B(rec);
+    public long getLong128Lo(Record rec, long location) {
+        return picker.pick(rec).getLong128Lo(rec, location);
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return picker.pick(rec).getLong128Location(rec);
     }
 }

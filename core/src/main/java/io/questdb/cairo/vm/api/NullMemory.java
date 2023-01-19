@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 
@@ -81,16 +84,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public FilesFacade getFilesFacade() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long128 getLong128A(long offset) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long128 getLong128B(long offset) {
         throw new UnsupportedOperationException();
     }
 

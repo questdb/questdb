@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
-import io.questdb.std.Long128;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 
@@ -150,9 +149,10 @@ public class TestUtils {
                     case ColumnType.UUID:
                         // fall through
                     case ColumnType.LONG128:
-                        Long128 rrLong128 = rr.getLong128A(i);
-                        Long128 lrLong128 = lr.getLong128A(i);
-                        Assert.assertEquals(rrLong128, lrLong128);
+                        long rrLoc = rr.getLong128Location(i);
+                        long lrLoc = lr.getLong128Location(i);
+                        Assert.assertEquals(rr.getLong128Hi(i, rrLoc), lr.getLong128Hi(i, lrLoc));
+                        Assert.assertEquals(rr.getLong128Lo(i, rrLoc), lr.getLong128Hi(i, lrLoc));
                         break;
                     default:
                         // Unknown record type.

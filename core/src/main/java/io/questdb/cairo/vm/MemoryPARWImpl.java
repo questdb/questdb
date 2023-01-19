@@ -44,8 +44,6 @@ public class MemoryPARWImpl implements MemoryARW {
     private final CharSequenceView csview = new CharSequenceView();
     private final CharSequenceView csview2 = new CharSequenceView();
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
-    private final Long128 long128 = new Long128();
-    private final Long128 long128B = new Long128();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final int maxPages;
@@ -200,31 +198,6 @@ public class MemoryPARWImpl implements MemoryARW {
             return Unsafe.getUnsafe().getLong(absolutePointer + offset);
         }
         return getLong0(offset);
-    }
-
-    @Override
-    public void getLong128(long offset, Long128 sink) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long128.BYTES) {
-            sink.setAll(
-                    Unsafe.getUnsafe().getLong(absolutePointer + offset),
-                    Unsafe.getUnsafe().getLong(absolutePointer + offset + Long.BYTES)
-            );
-        } else {
-            sink.setAll(
-                    getLong(offset),
-                    getLong(offset + Long.BYTES)
-            );
-        }
-    }
-
-    public Long128 getLong128A(long offset) {
-        getLong128(offset, long128);
-        return long128;
-    }
-
-    public Long128 getLong128B(long offset) {
-        getLong128(offset, long128B);
-        return long128B;
     }
 
     public void getLong256(long offset, CharSink sink) {

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -146,19 +145,27 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public Long128 getLong128A(int col) {
+    public long getLong128Hi(int col, long location) {
         if (useA) {
-            return recordA.getLong128A(col);
+            return recordA.getLong128Hi(col, location);
         }
-        return recordB.getLong128A(col);
+        return recordB.getLong128Hi(col, location);
     }
 
     @Override
-    public Long128 getLong128B(int col) {
+    public long getLong128Lo(int col, long location) {
         if (useA) {
-            return recordA.getLong128B(col);
+            return recordA.getLong128Lo(col, location);
         }
-        return recordB.getLong128B(col);
+        return recordB.getLong128Lo(col, location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        if (useA) {
+            return recordA.getLong128Location(col);
+        }
+        return recordB.getLong128Location(col);
     }
 
     @Override

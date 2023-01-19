@@ -29,13 +29,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
-import io.questdb.std.Long128;
 
 public class CompactMapRecord implements MapRecord {
+
     private final long[] columnOffsets;
     private final MemoryARW entries;
-    private final Long128 long128A = new Long128();
-    private final Long128 long128B = new Long128();
     private final CompactMapValue value;
     private long offset;
     private IntList symbolTableIndex;
@@ -123,17 +121,18 @@ public class CompactMapRecord implements MapRecord {
     }
 
     @Override
-    public Long128 getLong128A(int col) {
-        long columnOffset = getColumnOffset(col);
-        long128A.setAll(entries.getLong(columnOffset), entries.getLong(columnOffset + Long.BYTES));
-        return long128A;
+    public long getLong128Hi(int col, long location) {
+        return entries.getLong(location + Long.BYTES);
     }
 
     @Override
-    public Long128 getLong128B(int col) {
-        long columnOffset = getColumnOffset(col);
-        long128B.setAll(entries.getLong(columnOffset), entries.getLong(columnOffset + Long.BYTES));
-        return long128B;
+    public long getLong128Lo(int col, long location) {
+        return entries.getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        return getColumnOffset(col);
     }
 
     @Override

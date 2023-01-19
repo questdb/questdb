@@ -52,8 +52,9 @@ public class RecordSinkFactory {
         final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
-        final int rGetLong128 = asm.poolInterfaceMethod(Record.class, "getLong128A", "(I)Lio/questdb/std/Long128;");
         final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
+        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(IJ)J");
+        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(IJ)J");
         final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
@@ -68,13 +69,14 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
+        final int rGetLong128Loc = asm.poolInterfaceMethod(Record.class, "getLong128Location", "(I)J");
 
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
-        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(Lio/questdb/std/Long128;)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
+        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
         final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
         final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
         final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
@@ -258,11 +260,24 @@ public class RecordSinkFactory {
                 case ColumnType.LONG128:
                     // fall though
                 case ColumnType.UUID:
+                    int skewedIndex = getSkewedIndex(index, skewIndex);
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.invokeInterface(rGetLong128, 1);
-                    asm.invokeInterface(wPutLong128, 1);
+                    asm.iconst(skewedIndex);
+                    asm.invokeInterface(rGetLong128Loc, 1);
+                    asm.lstore(3);
+
+                    asm.aload(1);
+                    asm.iconst(skewedIndex);
+                    asm.lload(3);
+                    asm.invokeInterface(rGetLong128Lo, 3);
+
+                    asm.aload(1);
+                    asm.iconst(skewedIndex);
+                    asm.lload(3);
+                    asm.invokeInterface(rGetLong128Hi, 3);
+
+                    asm.invokeInterface(wPutLong128, 4);
                     break;
                 default:
                     break;

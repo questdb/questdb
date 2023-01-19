@@ -44,18 +44,6 @@ public class Long128Util {
         return Long.compareUnsigned(aLo, bLo);
     }
 
-    public static int compare(Long128 a, Long128 b) {
-        if (a.getHi() < b.getHi()) {
-            return -1;
-        }
-
-        if (a.getHi() > b.getHi()) {
-            return 1;
-        }
-
-        return Long.compare(a.getLo(), b.getLo());
-    }
-
     public static boolean isNull(long lo, long hi) {
         return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
     }

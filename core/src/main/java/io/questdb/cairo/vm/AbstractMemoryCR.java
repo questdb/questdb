@@ -33,8 +33,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
     private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
     private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
-    private final Long128 long128 = new Long128();
-    private final Long128 long128B = new Long128();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     protected int fd = -1;
@@ -65,16 +63,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public FilesFacade getFilesFacade() {
         return ff;
-    }
-
-    public Long128 getLong128A(long offset) {
-        getLong128(offset, long128);
-        return long128;
-    }
-
-    public Long128 getLong128B(long offset) {
-        getLong128(offset, long128B);
-        return long128B;
     }
 
     public Long256 getLong256A(long offset) {

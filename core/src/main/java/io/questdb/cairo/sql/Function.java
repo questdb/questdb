@@ -27,7 +27,10 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
@@ -92,9 +95,11 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     long getLong(Record rec);
 
-    Long128 getLong128A(Record rec);
+    long getLong128Hi(Record rec, long location);
 
-    Long128 getLong128B(Record rec);
+    long getLong128Lo(Record rec, long location);
+
+    long getLong128Location(Record rec);
 
     void getLong256(Record rec, CharSink sink);
 

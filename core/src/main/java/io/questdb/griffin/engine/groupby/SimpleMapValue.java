@@ -25,13 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 
 public class SimpleMapValue implements MapValue {
-    private final Long128 long128 = new Long128();
     private final Long256Impl long256 = new Long256Impl();
     private final long[] values;
 
@@ -152,10 +150,22 @@ public class SimpleMapValue implements MapValue {
         return values[4 * index];
     }
 
-    public Long128 getLong128A(int index) {
-        final int idx = 4 * index;
-        long128.setAll(values[idx], values[idx + 1]);
-        return long128;
+    @Override
+    public long getLong128Hi(int col, long location) {
+        return values[4 * col + 1];
+    }
+
+    @Override
+    public long getLong128Lo(int col, long location) {
+        return values[4 * col];
+    }
+
+    @Override
+    public long getLong128Location(int col) {
+        // we could return the index to the array: 4 * col
+        // but this would only save a single multiplication by constant 4, which is just a bit-shifting
+        // and casting from int to long and back would be probably more work than the multiplication
+        return 1;
     }
 
     @Override

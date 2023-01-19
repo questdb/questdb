@@ -102,14 +102,12 @@ public class NullMemoryMR implements MemoryMR {
         return Numbers.LONG_NaN;
     }
 
-    @Override
-    public Long128 getLong128A(long offset) {
-        return Long128.NULL;
+    public long getLong128Hi(long offset) {
+        return Numbers.LONG_NaN;
     }
 
-    @Override
-    public Long128 getLong128B(long offset) {
-        return Long128.NULL;
+    public long getLong128Lo(long offset) {
+        return Numbers.LONG_NaN;
     }
 
     @Override

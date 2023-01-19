@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Long128;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -49,39 +48,34 @@ public class RndUuidFunctionFactory implements FunctionFactory {
     }
 
     private static class RndFunction extends UuidFunction implements Function {
-        private final Long128 long128A = new Long128();
-        private final Long128 long128B = new Long128();
         private Rnd rnd;
 
         @Override
-        public Long128 getLong128A(Record rec) {
-            rndLong(long128A);
-            return long128A;
+        public long getLong128Hi(Record rec, long location) {
+            long hi = rnd.nextLong();
+            // set version to 4  
+            hi &= 0xffffffffffff0fffL;
+            hi |= 0x0000000000004000L;
+            return hi;
         }
 
         @Override
-        public Long128 getLong128B(Record rec) {
-            rndLong(long128B);
-            return long128B;
+        public long getLong128Lo(Record rec, long location) {
+            long lo = rnd.nextLong();
+            // set variant to 1
+            lo &= 0x3fffffffffffffffL;
+            lo |= 0x8000000000000000L;
+            return lo;
+        }
+
+        @Override
+        public long getLong128Location(Record rec) {
+            return 1;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
-        }
-
-        private void rndLong(Long128 long128) {
-            long lo = rnd.nextLong();
-            // set variant to 1
-            lo &= 0x3fffffffffffffffL;
-            lo |= 0x8000000000000000L;
-
-            long hi = rnd.nextLong();
-            // set version to 4  
-            hi &= 0xffffffffffff0fffL;
-            hi |= 0x0000000000004000L;
-
-            long128.setAll(lo, hi);
         }
     }
 }

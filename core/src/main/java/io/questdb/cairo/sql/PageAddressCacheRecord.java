@@ -39,8 +39,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
     private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
     private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
-    private final Long128 long128A = new Long128();
-    private final Long128 long128B = new Long128();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
@@ -188,15 +186,28 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public Long128 getLong128A(int columnIndex) {
-        getLong128(columnIndex, long128A);
-        return long128A;
+    public long getLong128Hi(int col, long location) {
+        if (location == 0) {
+            return NullMemoryMR.INSTANCE.getLong128Hi(0);
+        }
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public Long128 getLong128B(int columnIndex) {
-        getLong128(columnIndex, long128B);
-        return long128B;
+    public long getLong128Lo(int rec, long location) {
+        if (location == 0) {
+            return NullMemoryMR.INSTANCE.getLong128Lo(0);
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return 0;
+        }
+        return address + rowIndex * Uuid.BYTES;
     }
 
     @Override
@@ -356,17 +367,14 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return symbolTable;
     }
 
-    void getLong128(int columnIndex, Long128 sink) {
-        final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (columnAddress == 0) {
-            NullMemoryMR.INSTANCE.getLong128(0, sink);
-            return;
-        }
-        final long addr = columnAddress + rowIndex * Long128.BYTES;
-        sink.setAll(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + Long.BYTES)
-        );
+    void getLong256(long offset, CharSink sink) {
+        final long addr = offset + Long.BYTES * 4;
+        final long a, b, c, d;
+        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
+        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
+        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
+        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
+        Numbers.appendLong256(a, b, c, d, sink);
     }
 
     void getLong256(int columnIndex, Long256Acceptor sink) {
@@ -382,15 +390,5 @@ public class PageAddressCacheRecord implements Record, Closeable {
                 Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
                 Unsafe.getUnsafe().getLong(addr - Long.BYTES)
         );
-    }
-
-    void getLong256(long offset, CharSink sink) {
-        final long addr = offset + Long.BYTES * 4;
-        final long a, b, c, d;
-        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
-        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
-        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
-        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-        Numbers.appendLong256(a, b, c, d, sink);
     }
 }

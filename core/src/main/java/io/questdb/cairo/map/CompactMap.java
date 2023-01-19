@@ -483,8 +483,8 @@ public class CompactMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128(Long128 value) {
-            entries.putLong128(value.getLo(), value.getHi());
+        public void putLong128(long lo, long hi) {
+            entries.putLong128(lo, hi);
         }
 
         @Override

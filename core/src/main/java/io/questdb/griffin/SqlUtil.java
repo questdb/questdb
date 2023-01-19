@@ -482,13 +482,13 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
-    public static void implicitCastStrAsUuid(CharSequence str, Long128 uuid) {
+    public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
         if (str == null || str.length() == 0) {
             uuid.ofNull();
             return;
         }
         try {
-            Uuid.parse(str, uuid);
+            uuid.of(str);
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
         }

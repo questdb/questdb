@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Long128;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -117,8 +116,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkUuid(CharSink sink, Function function, Record record) {
-        Long128 long128 = function.getLong128A(record);
-        SqlUtil.implicitCastUuidAsStr(long128.getLo(), long128.getHi(), sink);
+        long loc = function.getLong128Location(record);
+        long lo = function.getLong128Lo(record, loc);
+        long hi = function.getLong128Hi(record, loc);
+        SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
     }
 
     @FunctionalInterface

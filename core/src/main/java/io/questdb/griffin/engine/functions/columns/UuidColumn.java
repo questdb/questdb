@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.Long128;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -48,13 +47,18 @@ public final class UuidColumn extends UuidFunction implements ScalarFunction {
     }
 
     @Override
-    public Long128 getLong128A(Record rec) {
-        return rec.getLong128A(columnIndex);
+    public long getLong128Hi(Record rec, long location) {
+        return rec.getLong128Hi(columnIndex, location);
     }
 
     @Override
-    public Long128 getLong128B(Record rec) {
-        return rec.getLong128B(columnIndex);
+    public long getLong128Lo(Record rec, long location) {
+        return rec.getLong128Lo(columnIndex, location);
+    }
+
+    @Override
+    public long getLong128Location(Record rec) {
+        return rec.getLong128Location(columnIndex);
     }
 
     @Override

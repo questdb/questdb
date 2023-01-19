@@ -27,35 +27,33 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.std.Long128;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
+import io.questdb.std.Uuid;
 
 public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable {
-    final Long128 value;
-
-    public UuidBindVariable() {
-        value = new Long128();
-        clear();
-    }
+    final Uuid value = new Uuid();
 
     @Override
     public void clear() {
-        value.setAll(Numbers.LONG_NaN, Numbers.LONG_NaN);
+        value.ofNull();
     }
 
     @Override
-    public Long128 getLong128A(Record rec) {
-        return value;
+    public long getLong128Hi(Record rec, long location) {
+        return value.getHi();
     }
 
     @Override
-    public Long128 getLong128B(Record rec) {
-        return value;
+    public long getLong128Lo(Record rec, long location) {
+        return value.getLo();
     }
 
+    @Override
+    public long getLong128Location(Record rec) {
+        return 1;
+    }
 
     void set(long lo, long hi) {
-        value.setAll(lo, hi);
+        value.of(lo, hi);
     }
 }

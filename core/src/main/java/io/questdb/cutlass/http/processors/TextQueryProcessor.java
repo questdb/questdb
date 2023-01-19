@@ -561,8 +561,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 putGeoHashStringValue(socket, rec.getGeoLong(col), type);
                 break;
             case ColumnType.UUID:
-                Long128 long128 = rec.getLong128A(col);
-                putUuidOrNull(socket, long128.getLo(), long128.getHi());
+                long loc = rec.getLong128Location(col);
+                putUuidOrNull(socket, rec.getLong128Lo(col, loc), rec.getLong128Hi(col, loc));
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();

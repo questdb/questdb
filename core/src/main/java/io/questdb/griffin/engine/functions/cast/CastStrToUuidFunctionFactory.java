@@ -61,8 +61,6 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
     public static class Func extends UuidFunction implements UnaryFunction {
         private final Function arg;
-        private final Long128 long128A = new Long128();
-        private final Long128 long128B = new Long128();
 
         public Func(Function arg) {
             this.arg = arg;
@@ -74,31 +72,36 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Long128 getLong128A(Record rec) {
+        public long getLong128Hi(Record rec, long location) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return Long128.NULL;
+                return Numbers.LONG_NaN;
             }
             try {
-                Uuid.parse(value, long128A);
-                return long128A;
+                Uuid.checkDashesAndLength(value);
+                return Uuid.parseHi(value);
             } catch (NumericException e) {
-                return Long128.NULL;
+                return Numbers.LONG_NaN;
             }
         }
 
         @Override
-        public Long128 getLong128B(Record rec) {
+        public long getLong128Lo(Record rec, long location) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return Long128.NULL;
+                return Numbers.LONG_NaN;
             }
             try {
-                Uuid.parse(value, long128B);
-                return long128B;
+                Uuid.checkDashesAndLength(value);
+                return Uuid.parseLo(value);
             } catch (NumericException e) {
-                return Long128.NULL;
+                return Numbers.LONG_NaN;
             }
+        }
+
+        @Override
+        public long getLong128Location(Record rec) {
+            return 1;
         }
     }
 }

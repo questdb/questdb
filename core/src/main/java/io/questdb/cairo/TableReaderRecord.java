@@ -161,19 +161,27 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public Long128 getLong128A(int col) {
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong128A(offset);
+    public long getLong128Hi(int col, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location + Long.BYTES);
     }
 
     @Override
-    public Long128 getLong128B(int col) {
+    public long getLong128Lo(int col, long location) {
+        if (location == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int col) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
+        final long offset = getAdjustedRecordIndex(col) * Uuid.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong128B(offset);
+        return reader.getColumn(absoluteColumnIndex).addressOf(offset);
     }
 
     @Override

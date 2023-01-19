@@ -25,15 +25,12 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 
 public class CompactMapValue implements MapValue {
 
     private final long[] columnOffsets;
     private final MemoryARW entries;
-    private final Long128 long128A = new Long128();
-    private final Long128 long128B = new Long128();
     private boolean _new;
     private long currentValueOffset;
     private CompactMapRecord record;
@@ -150,17 +147,18 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public Long128 getLong128A(int col) {
-        long valueColumnOffset = getValueColumnOffset(col);
-        long128A.setAll(entries.getLong(valueColumnOffset), entries.getLong(valueColumnOffset + Long.BYTES));
-        return long128A;
+    public long getLong128Hi(int columnIndex, long location) {
+        return entries.getLong(location + Long.BYTES);
     }
 
     @Override
-    public Long128 getLong128B(int col) {
-        long valueColumnOffset = getValueColumnOffset(col);
-        long128B.setAll(entries.getLong(valueColumnOffset), entries.getLong(valueColumnOffset + Long.BYTES));
-        return long128B;
+    public long getLong128Lo(int columnIndex, long location) {
+        return entries.getLong(location);
+    }
+
+    @Override
+    public long getLong128Location(int columnIndex) {
+        return getValueColumnOffset(columnIndex);
     }
 
     @Override

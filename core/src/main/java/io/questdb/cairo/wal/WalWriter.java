@@ -79,7 +79,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final TableSequencerAPI tableSequencerAPI;
-    private final Long128 uuid = new Long128();
+    private final Uuid uuid = new Uuid();
     private final int walId;
     private final SequencerMetadataChangeSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final String walName;
@@ -1426,14 +1426,8 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong128(lo, hi);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong128(int columnIndex, Long128 value) {
-            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong128(value.getLo(), value.getHi());
+            primaryColumn.putLong(lo);
+            primaryColumn.putLong(hi);
             setRowValueNotNull(columnIndex);
         }
 
