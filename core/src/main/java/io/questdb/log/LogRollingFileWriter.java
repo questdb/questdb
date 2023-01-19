@@ -78,8 +78,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String sizeLimit;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String spinBeforeFlush;
-    private final ObjList<FileTimestamp> sortedFiles = new ObjList<>();
-    private final Comparator<FileTimestamp> fileComparator = new FileOrderComparator();
+    private ObjList<FileTimestamp> sortedFiles = new ObjList<>(); 
+    private Comparator<FileTimestamp> fileComparator = new FileOrderComparator();
     
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
@@ -414,17 +414,17 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    private static class FileOrderComparator implements Comparator<FileTimestamp> {
+    private class FileOrderComparator implements Comparator<FileTimestamp> {
         @Override
         public int compare(FileTimestamp f1, FileTimestamp f2) {
             return (int)(f2.lastModified - f1.lastModified);
         }
     }
     
-    private static class FileTimestamp {
+    private class FileTimestamp {
         
-        private final String filePath;
-        private final long lastModified;
+        private String filePath;
+        private long lastModified;
         
         private FileTimestamp(String filePath, long lastModified) {
             this.filePath = filePath;
