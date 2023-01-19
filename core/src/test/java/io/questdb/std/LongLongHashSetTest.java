@@ -24,11 +24,13 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.Assert.*;
 
@@ -37,7 +39,7 @@ public class LongLongHashSetTest {
 
     @Test
     public void testInsertDupsKeys() {
-        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE);
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
         Set<TwoLongs> jdkSet = new HashSet<>();
         for (int i = 0; i < 10_000; i++) {
             long key1 = rnd.nextLong(50);
@@ -50,7 +52,7 @@ public class LongLongHashSetTest {
 
     @Test
     public void testInsertRandomKeys() {
-        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE);
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
         Set<TwoLongs> jdkSet = new HashSet<>();
         for (int i = 0; i < 10_000; i++) {
             long key1 = rnd.nextLong();
@@ -63,7 +65,7 @@ public class LongLongHashSetTest {
 
     @Test
     public void testInsertingNoEntrySentinel() {
-        LongLongHashSet set = new LongLongHashSet(16, 0.5, 0);
+        LongLongHashSet set = new LongLongHashSet(16, 0.5, 0, LongLongHashSet.LONG_LONG_STRATEGY);
 
         // when both keys are the no_entry_sentinel, we expect add to fail
         try {
@@ -101,14 +103,14 @@ public class LongLongHashSetTest {
     @Test
     public void testInvalidLoadFactor() {
         try {
-            new LongLongHashSet(10, 0.0, Long.MIN_VALUE);
+            new LongLongHashSet(10, 0.0, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
             fail();
         } catch (IllegalArgumentException e) {
             TestUtils.assertContains(e.getMessage(), "load factor");
         }
 
         try {
-            new LongLongHashSet(10, 1.0, Long.MIN_VALUE);
+            new LongLongHashSet(10, 1.0, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
             fail();
         } catch (IllegalArgumentException e) {
             TestUtils.assertContains(e.getMessage(), "load factor");
@@ -117,16 +119,75 @@ public class LongLongHashSetTest {
 
     @Test
     public void testOnlyFirstMatching() {
-        LongLongHashSet set = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE);
+        LongLongHashSet set = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
         set.add(1, 1);
         assertFalse(set.contains(1, 2));
     }
 
     @Test
     public void testOnlySecondMatching() {
-        LongLongHashSet set = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE);
+        LongLongHashSet set = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
         set.add(1, 1);
         assertFalse(set.contains(2, 1));
+    }
+
+    @Test
+    public void testSinkable_EntriesWithMinLong_uuidStrategy() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.UUID_STRATEGY);
+        longSet.add(Long.MIN_VALUE, 1);
+        StringSink sink = new StringSink();
+        longSet.toSink(sink);
+        String expected = "['" + new UUID(1, Long.MIN_VALUE) + "']";
+        assertEquals(expected, sink.toString());
+    }
+
+    @Test
+    public void testSinkable_EntryWithMinLong_longLongStrategy() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
+        longSet.add(Long.MIN_VALUE, 1);
+        StringSink sink = new StringSink();
+        longSet.toSink(sink);
+        assertEquals("[[-9223372036854775808,1]]", sink.toString());
+    }
+
+    @Test
+    public void testSinkable_singleEntry_longLongStrategy() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
+        longSet.add(1, 1);
+        StringSink sink = new StringSink();
+        longSet.toSink(sink);
+        assertEquals("[[1,1]]", sink.toString());
+    }
+
+    @Test
+    public void testSinkable_singleEntry_uuidStrategy() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.UUID_STRATEGY);
+        longSet.add(1, 1);
+        StringSink sink = new StringSink();
+        longSet.toSink(sink);
+        String expected = "['" + new UUID(1, 1) + "']";
+        assertEquals(expected, sink.toString());
+    }
+
+    @Test
+    public void testSinkable_twoEntries_longLongStrategy() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.LONG_LONG_STRATEGY);
+        longSet.add(1, 1);
+        longSet.add(2, 1);
+        StringSink sink = new StringSink();
+        longSet.toSink(sink);
+        assertEquals("[[1,1],[2,1]]", sink.toString());
+    }
+
+    @Test
+    public void testSinkable_twoEntries_uuidStrategy() {
+        LongLongHashSet longSet = new LongLongHashSet(10, 0.5f, Long.MIN_VALUE, LongLongHashSet.UUID_STRATEGY);
+        longSet.add(1, 1);
+        longSet.add(2, 1);
+        StringSink sink = new StringSink();
+        longSet.toSink(sink);
+        String expected = "['" + new UUID(1, 1) + "','" + new UUID(1, 2) + "']";
+        assertEquals(expected, sink.toString());
     }
 
     private static void assertContainsSameKeysAndSize(LongLongHashSet longSet, Set<TwoLongs> jdkSet) {

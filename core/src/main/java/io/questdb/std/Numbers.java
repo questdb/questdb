@@ -153,10 +153,19 @@ public final class Numbers {
     }
 
     public static void append(CharSink sink, final long value) {
+        append(sink, value, true);
+    }
+
+    public static void append(CharSink sink, final long value, final boolean checkNaN) {
         long i = value;
         if (i < 0) {
             if (i == Long.MIN_VALUE) {
-                sink.put("NaN");
+                if (checkNaN) {
+                    sink.put("NaN");
+                } else {
+                    // we cannot negate Long.MIN_VALUE, so we have to special case it
+                    sink.put("-9223372036854775808");
+                }
                 return;
             }
             sink.put('-');

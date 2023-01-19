@@ -47,7 +47,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int n = args.size();
-        LongLongHashSet set = new LongLongHashSet(n - 1, 0.6, Numbers.LONG_NaN);
+        LongLongHashSet set = new LongLongHashSet(n - 1, 0.6, Numbers.LONG_NaN, LongLongHashSet.UUID_STRATEGY);
 
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
@@ -116,8 +116,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            //todo: implement sinking LongLongSet as UUID list
-            sink.val(arg).val(" in uuid_set");
+            sink.val(arg).val(" in ").val(set);
         }
     }
 }

@@ -41,6 +41,7 @@ public class UuidTest {
         assertEqualsString(-1, -1);
         assertEqualsString(Long.MAX_VALUE, Long.MAX_VALUE);
         assertEqualsString(Long.MIN_VALUE, Long.MIN_VALUE);
+        assertEqualsString(Long.MIN_VALUE, 1);
     }
 
     @Test

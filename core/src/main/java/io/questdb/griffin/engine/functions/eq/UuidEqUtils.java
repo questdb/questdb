@@ -114,6 +114,15 @@ final class UuidEqUtils {
         public boolean getBool(Record rec) {
             return negated != (constStrHi == fun.getLong128Hi(rec) && constStrLo == fun.getLong128Lo(rec));
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(fun);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").valUuid(constStrLo, constStrHi).val('\'');
+        }
     }
 
     /**

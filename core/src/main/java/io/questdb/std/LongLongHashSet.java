@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.CharSink;
+
 import java.util.Arrays;
 
 /**
@@ -44,10 +46,23 @@ import java.util.Arrays;
  * <p>
  * This class is not thread safe.
  */
-public final class LongLongHashSet implements Mutable {
+public final class LongLongHashSet implements Mutable, Sinkable {
+    public static final SinkStrategy LONG_LONG_STRATEGY = (key1, key2, sink) -> {
+        sink.put('[');
+        Numbers.append(sink, key1, false);
+        sink.put(',');
+        Numbers.append(sink, key2, false);
+        sink.put(']');
+    };
+    public static final SinkStrategy UUID_STRATEGY = (key1, key2, sink) -> {
+        sink.put('\'');
+        Numbers.appendUuid(key1, key2, sink);
+        sink.put('\'');
+    };
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
     private final long noEntryKeyValue;
+    private final SinkStrategy sinkStrategy;
     private int capacity;
     private int mask;
     private int size;
@@ -62,8 +77,9 @@ public final class LongLongHashSet implements Mutable {
      * @param initialCapacity initial capacity of the set.
      * @param loadFactor      load factor of the set.
      * @param noEntryValue    no entry sentinel value.
+     * @param sinkStrategy    sink strategy
      */
-    public LongLongHashSet(int initialCapacity, double loadFactor, long noEntryValue) {
+    public LongLongHashSet(int initialCapacity, double loadFactor, long noEntryValue, SinkStrategy sinkStrategy) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < load factor < 1");
         }
@@ -73,6 +89,7 @@ public final class LongLongHashSet implements Mutable {
         int slots = Numbers.ceilPow2((int) (this.capacity / loadFactor));
         this.values = new long[2 * slots];
         this.mask = slots - 1;
+        this.sinkStrategy = sinkStrategy;
         Arrays.fill(values, noEntryKeyValue);
     }
 
@@ -154,6 +171,24 @@ public final class LongLongHashSet implements Mutable {
         return size;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        boolean pastFirst = false;
+        for (int i = 0, n = values.length; i < n; i += 2) {
+            long key1 = values[i];
+            long key2 = values[i + 1];
+            if (key1 != noEntryKeyValue || key2 != noEntryKeyValue) {
+                if (pastFirst) {
+                    sink.put(',');
+                }
+                sinkStrategy.put(key1, key2, sink);
+                pastFirst = true;
+            }
+        }
+        sink.put(']');
+    }
+
     private static long firstValue(long[] val, int slot) {
         return val[slot * 2];
     }
@@ -200,5 +235,9 @@ public final class LongLongHashSet implements Mutable {
     private void set(int slot, long key1, long key2) {
         values[slot * 2] = key1;
         values[slot * 2 + 1] = key2;
+    }
+
+    interface SinkStrategy {
+        void put(long key1, long key2, CharSink sink);
     }
 }
