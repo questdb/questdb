@@ -65,7 +65,7 @@ public class WalUtils {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
             final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
-            workerPool.assign(applyWal2TableJob);
+            workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
     }
