@@ -46,16 +46,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.SingleCharCharSequence;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class WalWriter implements TableWriterAPI {
@@ -86,7 +82,7 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final ObjList<DirectByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
+    private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final int walId;
     private final String walName;
     private int columnCount;
@@ -724,7 +720,7 @@ public class WalWriter implements TableWriterAPI {
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
-        utf8SymbolMaps.extendAndSet(columnWriterIndex, new DirectByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
     private void configureSymbolMapWriter(
@@ -813,7 +809,7 @@ public class WalWriter implements TableWriterAPI {
 
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
-        utf8SymbolMaps.extendAndSet(columnWriterIndex, new DirectByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        utf8SymbolMaps.extendAndSet(columnWriterIndex, new ByteCharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
         localSymbolIds.extendAndSet(columnWriterIndex, 0);
         symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
@@ -1130,7 +1126,7 @@ public class WalWriter implements TableWriterAPI {
                 symbolMap.clear();
             }
 
-            final DirectByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
+            final ByteCharSequenceIntHashMap dbcsSymbolMap = utf8SymbolMaps.getQuick(i);
             if (dbcsSymbolMap != null) {
                 dbcsSymbolMap.clear();
             }
@@ -1732,7 +1728,7 @@ public class WalWriter implements TableWriterAPI {
             // otherwise it will write nothing.
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
-                DirectByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
+                ByteCharSequenceIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
                 int index = utf8Map.keyIndex(value);
                 if (index < 0) {
                     getPrimaryColumn(columnIndex).putInt(utf8Map.valueAt(index));
@@ -1741,7 +1737,7 @@ public class WalWriter implements TableWriterAPI {
                     // slow path, symbol is not in utf8 cache
                     utf8Map.putAt(
                             index,
-                            utf8BytesToString(value, tempSink),
+                            ByteCharSequence.newInstance(value),
                             putSymUtf8Slow(columnIndex, value, hasNonAsciiChars, symbolMapReader)
                     );
                 }

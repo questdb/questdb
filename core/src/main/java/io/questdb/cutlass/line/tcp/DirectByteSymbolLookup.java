@@ -22,32 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.map.CompactMap;
-import io.questdb.std.*;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.std.str.DirectByteCharSequence;
 
-public class HashTest {
-
-    @Test
-    public void testStringHash() {
-        CompactMap.HashFunction hashFunction = Hash::hashMem;
-        testHash(hashFunction);
-    }
-
-    private void testHash(CompactMap.HashFunction hashFunction) {
-        Rnd rnd = new Rnd();
-        LongHashSet hashes = new LongHashSet(100000);
-        final int LEN = 64;
-
-        long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
-
-        for (int i = 0; i < 100000; i++) {
-            rnd.nextChars(address, LEN / 2);
-            hashes.add(hashFunction.hash(address, LEN));
-        }
-        Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
-    }
+@FunctionalInterface
+public interface DirectByteSymbolLookup {
+    int keyOf(DirectByteCharSequence value);
 }
