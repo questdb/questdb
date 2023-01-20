@@ -145,6 +145,22 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public long getLong128Hi(int col) {
+        if (useA) {
+            return recordA.getLong128Hi(col);
+        }
+        return recordB.getLong128Hi(col);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        if (useA) {
+            return recordA.getLong128Lo(col);
+        }
+        return recordB.getLong128Lo(col);
+    }
+
+    @Override
     public void getLong256(int col, CharSink sink) {
         if (useA) {
             recordA.getLong256(col, sink);

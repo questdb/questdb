@@ -81,6 +81,7 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         TYPE_NAMES.put(ColumnType.PARAMETER, new StrConstant(ColumnType.nameOf(ColumnType.PARAMETER)));
         TYPE_NAMES.put(ColumnType.CURSOR, new StrConstant(ColumnType.nameOf(ColumnType.CURSOR)));
         TYPE_NAMES.put(ColumnType.VAR_ARG, new StrConstant(ColumnType.nameOf(ColumnType.VAR_ARG)));
+        TYPE_NAMES.put(ColumnType.UUID, new StrConstant(ColumnType.nameOf(ColumnType.UUID)));
 
         TYPE_NAMES.put(ColumnType.GEOBYTE, new StrConstant("null(GEOBYTE)"));
         TYPE_NAMES.put(ColumnType.GEOSHORT, new StrConstant("null(GEOSHORT)"));

@@ -53,6 +53,7 @@ public class FastMapTest extends AbstractCairoTest {
         keyTypes.add(ColumnType.TIMESTAMP);
         keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
         keyTypes.add(ColumnType.LONG256);
+        keyTypes.add(ColumnType.UUID);
 
         ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         valueTypes.add(ColumnType.BYTE);
@@ -67,6 +68,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.TIMESTAMP);
         valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
         valueTypes.add(ColumnType.LONG256);
+        valueTypes.add(ColumnType.UUID);
 
         try (FastMap map = new FastMap(128, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
@@ -96,6 +98,7 @@ public class FastMapTest extends AbstractCairoTest {
                         rnd.nextLong()
                 );
                 key.putLong256(long256);
+                key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -112,6 +115,7 @@ public class FastMapTest extends AbstractCairoTest {
                 value.putTimestamp(9, rnd.nextLong());
                 value.putInt(10, rnd.nextInt());
                 value.putLong256(11, long256);
+                value.putLong128(12, rnd.nextLong(), rnd.nextLong());
             }
 
             rnd.reset();
@@ -143,6 +147,7 @@ public class FastMapTest extends AbstractCairoTest {
                         rnd.nextLong()
                 );
                 key.putLong256(long256);
+                key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
@@ -159,6 +164,8 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(10));
                 Assert.assertEquals(long256, value.getLong256A(11));
+                Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
+                Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
             }
 
             try (RecordCursor cursor = map.getCursor()) {
@@ -601,7 +608,8 @@ public class FastMapTest extends AbstractCairoTest {
                                         .add(ColumnType.DOUBLE)
                                         .add(ColumnType.DATE)
                                         .add(ColumnType.TIMESTAMP)
-                                        .add(ColumnType.BOOLEAN),
+                                        .add(ColumnType.BOOLEAN)
+                                        .add(ColumnType.UUID),
                                 N, 0.9f, 1
                         )
                 ) {
@@ -629,6 +637,8 @@ public class FastMapTest extends AbstractCairoTest {
                             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
                             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
                             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9));
+                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9));
                         }
                     }
                 }
@@ -830,7 +840,8 @@ public class FastMapTest extends AbstractCairoTest {
                                         .add(ColumnType.DOUBLE)
                                         .add(ColumnType.DATE)
                                         .add(ColumnType.TIMESTAMP)
-                                        .add(ColumnType.BOOLEAN),
+                                        .add(ColumnType.BOOLEAN)
+                                        .add(ColumnType.UUID),
                                 N, 0.9f, 1
                         )
                 ) {
@@ -1078,6 +1089,8 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -1150,6 +1163,14 @@ public class FastMapTest extends AbstractCairoTest {
                 binarySequence.of(rnd.nextBytes(25));
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12));
+            }
         }
         Assert.assertEquals(5000, c);
     }
@@ -1157,7 +1178,8 @@ public class FastMapTest extends AbstractCairoTest {
     private void assertCursorAllTypes(Rnd rnd, RecordCursor cursor) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            int col = 12;
+            // key part, comes after value part in records
+            int col = 13;
             Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
             Assert.assertEquals(rnd.nextChar(), record.getChar(col++));
@@ -1185,7 +1207,9 @@ public class FastMapTest extends AbstractCairoTest {
                     rnd.nextLong(),
                     rnd.nextLong()
             );
-            Assert.assertEquals(long256, record.getLong256A(col));
+            Assert.assertEquals(long256, record.getLong256A(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
 
             // value part, it comes first in record
             col = 0;
@@ -1200,7 +1224,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
             Assert.assertEquals(rnd.nextLong(), record.getTimestamp(col++));
             Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
-            Assert.assertEquals(long256, record.getLong256A(col));
+            Assert.assertEquals(long256, record.getLong256A(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
         }
     }
 
@@ -1291,7 +1317,8 @@ public class FastMapTest extends AbstractCairoTest {
                     .col("i", ColumnType.STRING)
                     .col("j", ColumnType.SYMBOL)
                     .col("k", ColumnType.BOOLEAN)
-                    .col("l", ColumnType.BINARY);
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID);
             CairoTestUtils.create(model);
         }
 
@@ -1357,6 +1384,13 @@ public class FastMapTest extends AbstractCairoTest {
                     binarySequence.of(rnd.nextBytes(25));
                     row.putBin(11, binarySequence);
                 }
+
+                // UUID
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong128(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                } else {
+                    row.putLong128(12, rnd.nextLong(), rnd.nextLong());
+                }
                 row.append();
             }
             writer.commit();
@@ -1380,6 +1414,7 @@ public class FastMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
+            value.putLong128(9, rnd2.nextLong(), rnd2.nextLong());
         }
     }
 

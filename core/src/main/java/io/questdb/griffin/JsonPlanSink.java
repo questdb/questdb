@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Sinkable;
+import io.questdb.std.Uuid;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -239,6 +240,18 @@ public class JsonPlanSink extends BasePlanSink {
         quoteValue = true;
         checkType(NODE_VALUE);
         GeoHashes.append(hash, geoHashBits, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valUuid(long lo, long hi) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        if (Uuid.isNull(lo, hi)) {
+            sink.put("null");
+        } else {
+            Numbers.appendUuid(lo, hi, sink);
+        }
         return this;
     }
 

@@ -37,7 +37,7 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.griffin.engine.functions.constants.Long128Constant;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -83,6 +83,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final ObjList<ByteCharSequenceIntHashMap> utf8SymbolMaps = new ObjList<>();
+    private final Uuid uuid = new Uuid();
     private final int walId;
     private final String walName;
     private int columnCount;
@@ -382,7 +383,7 @@ public class WalWriter implements TableWriterAPI {
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLongLong(timestamp, segmentRowCount);
+                primaryColumn.putLong128(timestamp, segmentRowCount);
                 setRowValueNotNull(timestampIndex);
                 row.timestamp = timestamp;
             }
@@ -547,7 +548,9 @@ public class WalWriter implements TableWriterAPI {
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128LittleEndian(Long128Constant.NULL_HI, Long128Constant.NULL_LO));
+                // fall through
+            case ColumnType.UUID:
+                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -1646,7 +1649,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+        public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
@@ -1721,6 +1724,12 @@ public class WalWriter implements TableWriterAPI {
         public void putSym(int columnIndex, char value) {
             CharSequence str = SingleCharCharSequence.get(value);
             putSym(columnIndex, str);
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuidStr) {
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {

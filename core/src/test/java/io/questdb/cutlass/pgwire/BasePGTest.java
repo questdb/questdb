@@ -231,6 +231,14 @@ public abstract class BasePGTest extends AbstractGriffinTest {
                             toSink(stream, sink);
                         }
                         break;
+                    case OTHER:
+                        Object object = rs.getObject(i);
+                        if (rs.wasNull()) {
+                            sink.put("null");
+                        } else {
+                            sink.put(object.toString());
+                        }
+                        break;
                     default:
                         assert false;
                 }

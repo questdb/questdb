@@ -449,6 +449,9 @@ public class WalEventCursor {
                     case ColumnType.GEOLONG:
                         bindVariableService.setGeoHash(name, readLong(), type);
                         break;
+                    case ColumnType.UUID:
+                        bindVariableService.setUuid(name, readLong(), readLong());
+                        break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
                 }

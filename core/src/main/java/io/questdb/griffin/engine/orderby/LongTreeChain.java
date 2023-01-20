@@ -112,7 +112,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
     private long appendValue(long value, long prevValueOffset) {
         final long offset = valueChain.getAppendOffset();
-        valueChain.putLongLong(value, prevValueOffset);
+        valueChain.putLong128(value, prevValueOffset);
         return offset;
     }
 

@@ -979,6 +979,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         break;
+                    case ColumnType.UUID:
+                        assert fromTag == ColumnType.UUID;
+                        castFunctions.add(new UuidColumn(i));
+                        break;
                     case ColumnType.TIMESTAMP:
                         switch (fromTag) {
                             case ColumnType.DATE:
@@ -1092,6 +1096,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.STRING:
                                 castFunctions.add(new StrColumn(i));
+                                break;
+                            case ColumnType.UUID:
+                                castFunctions.add(new CastUuidToStrFunctionFactory.Func(new UuidColumn(i)));
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
@@ -4324,6 +4331,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.LONG256:
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
+                    case ColumnType.UUID:
+                    case ColumnType.LONG128:
                         // we are reusing collections which leads to confusing naming for this method
                         // keyTypes are types of columns we collect 'latest by' for
                         keyTypes.add(columnType);
@@ -4337,7 +4346,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
+                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY");
                 }
             }
         }
