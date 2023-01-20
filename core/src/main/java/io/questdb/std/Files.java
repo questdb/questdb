@@ -103,7 +103,8 @@ public final class Files {
     }
 
     public static int close(int fd) {
-        if (fd > 0) {
+        // do not close `stdin` and `stdout`
+        if (fd > 1) {
             assert auditClose(fd);
             int res = close0(fd);
             if (res == 0) {
