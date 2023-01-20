@@ -389,7 +389,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             path.trimTo(logDir.length()).concat(fileName).$();
             if ((totalSize += Files.length(path)) > nSizeLimit) {
                 if (!ff.remove(path)) {
-                    throw new LogError("cannot remove: " + path.$());
+                    throw new LogError("cannot remove: " + path);
                 }
             }
         }
@@ -416,7 +416,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             if (Chars.contains(logFileName, logFileTemplate)
                     && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
                 if (!ff.remove(path)) {
-                    throw new LogError("cannot remove: " + path.$());
+                    throw new LogError("cannot remove: " + path);
                 }
             }
         }
