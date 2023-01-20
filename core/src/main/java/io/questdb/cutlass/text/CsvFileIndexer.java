@@ -169,7 +169,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         closeOutputFiles();
         closeSortBuffer();
 
-        if (ff.closeChecked(fd)) {
+        if (ff.close(fd)) {
             fd = -1;
         }
 
@@ -694,7 +694,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         void putEntry(long timestamp, long offset, long length) {
-            memory.putLongLong(timestamp, offset);
+            memory.putLong128(timestamp, offset);
             indexChunkSize += INDEX_ENTRY_SIZE;
             dataSize += length;
         }

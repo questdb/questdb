@@ -70,8 +70,8 @@ public class TemplateParserTest {
         parser.parse("${date:yyyy}{${tarzan}^$jane}", 0, props);
         TestUtils.assertEquals("1970{T^J}", parser);
         Assert.assertTrue(parser.getKeyOffset("date:") < 0);
-        Assert.assertEquals(parser.getKeyOffset("tarzan"), 13);
-        Assert.assertEquals(parser.getKeyOffset("jane"), 23);
+        Assert.assertEquals(13, parser.getKeyOffset("tarzan"));
+        Assert.assertEquals(23, parser.getKeyOffset("jane"));
     }
 
     @Test

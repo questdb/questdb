@@ -129,6 +129,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 return GeoIntConstant.NULL;
             case ColumnType.GEOLONG:
                 return GeoLongConstant.NULL;
+            case ColumnType.UUID:
+                return UuidConstant.NULL;
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }

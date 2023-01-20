@@ -5010,7 +5010,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "        timestamp_sequence(0, 1000000000) ts" +
                 "    from long_sequence(10)" +
                 ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG128, LONG256, CHAR, STRING, SYMBOL, UUID] are supported in LATEST BY";
         assertFailure(
                 "comprehensive latest on ts partition by byte",
                 createTableDDL,

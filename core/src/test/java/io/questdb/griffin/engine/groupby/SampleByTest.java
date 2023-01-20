@@ -9485,6 +9485,76 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampIsNotRequiredInFilterSubQuery() throws Exception {
+        // (x union x) is used in sub-query to make sure that the base doesn't have designated timestamp
+        assertQuery(
+                "sym\tv\n" +
+                        "baz\t7\n",
+                "select sym, last(value) v\n" +
+                        "from x\n" +
+                        "where sym in (select sym from (x union x) where sym in ('baz'))\n" +
+                        "sample by 1d",
+                "create table x as (\n" +
+                        "  select x as value,\n" +
+                        "         rnd_symbol('foo','bar','baz') sym,\n" +
+                        "         cast(x as timestamp) ts\n" +
+                        "  from long_sequence(10)\n" +
+                        ") timestamp(ts) partition by day",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampSpecifiedForTableWithNoDesignatedTimestamp() throws Exception {
+        assertQuery(
+                "ts\tv\n" +
+                        "1970-01-01T00:00:00.000001Z\t10\n",
+                "select ts, last(value) v\n" +
+                        "from (\n" +
+                        "    select ts, value\n" +
+                        "    from x\n" +
+                        "    where sym is not null\n" +
+                        "    order by ts\n" +
+                        ") timestamp(ts)\n" +
+                        "sample by 1d",
+                "create table x as (\n" +
+                        "  select x as value,\n" +
+                        "         rnd_symbol(100, 10, 10, 0) sym,\n" +
+                        "         cast(x as timestamp) ts\n" +
+                        "  from long_sequence(10)\n" +
+                        ")",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testUuidFillNull() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tlast\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\t797fa69e-b8fe-46cc-a8be-ef38cd7bb3d8\t797fa69e-b8fe-46cc-a8be-ef38cd7bb3d8\n" +
+                        "TJW\t1970-01-03T00:30:00.000000Z\t\t\n" +
+                        "TJW\t1970-01-03T01:00:00.000000Z\tc72bfc52-3015-4059-980e-ca62a219a0f1\tc72bfc52-3015-4059-980e-ca62a219a0f1\n",
+                "select s, k, " +
+                        "first(u), " +
+                        "last(u) " +
+                        "from x sample by 30m fill(NULL)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_uuid4() u," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
     public void testWrongTypeInPeriodSyntax() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*3 T",

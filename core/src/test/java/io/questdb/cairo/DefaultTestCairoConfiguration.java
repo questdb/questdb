@@ -33,6 +33,11 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean disableColumnPurgeJob() {
+        return true;
+    }
+
+    @Override
     public boolean getAllowTableRegistrySharedWrite() {
         return true;
     }
@@ -40,6 +45,12 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     @Override
     public FilesFacade getFilesFacade() {
         return TestFilesFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getO3ColumnMemorySize() {
+        // Reduce test memory consumption, set o3 column memory to 1MB
+        return 1 << 20;
     }
 
     @Override

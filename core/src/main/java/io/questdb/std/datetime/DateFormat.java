@@ -29,7 +29,7 @@ import io.questdb.std.str.CharSink;
 
 /**
  * Instances of DateFormat do not have state. They are thread-safe. In that multiple threads can use
- * same DateFormat instance without disk of data corruption.
+ * same DateFormat instance without risk of data corruption.
  */
 public interface DateFormat {
 

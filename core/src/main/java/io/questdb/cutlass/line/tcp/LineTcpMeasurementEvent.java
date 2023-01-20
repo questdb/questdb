@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -262,6 +263,10 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.putTimestamp(colIndex, buffer.readLong(offset));
                         offset += Long.BYTES;
                         break;
+                    case LineTcpParser.ENTITY_TYPE_UUID:
+                        row.putLong128(colIndex, buffer.readLong(offset), buffer.readLong(offset + Long.BYTES));
+                        offset += Long.BYTES * 2;
+                        break;
                     case ENTITY_TYPE_NULL:
                         // ignored, default nulls is used
                         break;
@@ -453,6 +458,14 @@ class LineTcpMeasurementEvent implements Closeable {
 
                             case ColumnType.SYMBOL:
                                 offset = buffer.addSymbol(offset, entityValue, parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                                break;
+
+                            case ColumnType.UUID:
+                                try {
+                                    offset = buffer.addUuid(offset, entityValue);
+                                } catch (NumericException e) {
+                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                }
                                 break;
 
                             default:

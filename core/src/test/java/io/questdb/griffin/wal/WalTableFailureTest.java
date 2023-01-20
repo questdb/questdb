@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -202,8 +202,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             int badWriterId;
             try (
-                TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
+                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
             ) {
 
                 badWalIds.add(badWriterId = ((WalWriter) alterWriter).getWalId());

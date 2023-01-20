@@ -102,6 +102,14 @@ public class NullMemoryMR implements MemoryMR {
         return Numbers.LONG_NaN;
     }
 
+    public long getLong128Hi(long offset) {
+        return Numbers.LONG_NaN;
+    }
+
+    public long getLong128Lo(long offset) {
+        return Numbers.LONG_NaN;
+    }
+
     @Override
     public void getLong256(long offset, CharSink sink) {
     }

@@ -146,9 +146,11 @@ public class TestUtils {
                     case ColumnType.LONG256:
                     case ColumnType.BINARY:
                         throw new UnsupportedOperationException();
+                    case ColumnType.UUID:
+                        // fall through
                     case ColumnType.LONG128:
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
-                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
+                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Hi(i));
                         break;
                     default:
                         // Unknown record type.

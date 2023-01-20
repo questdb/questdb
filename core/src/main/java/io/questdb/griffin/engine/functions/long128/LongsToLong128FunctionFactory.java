@@ -49,30 +49,29 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function hiLong = args.getQuick(0);
-        final Function loLong = args.getQuick(1);
-        return new LongsToLong128Function(hiLong, loLong);
+        final Function loLong = args.getQuick(0);
+        final Function hiLong = args.getQuick(1);
+        return new LongsToLong128Function(loLong, hiLong);
     }
 
     private static class LongsToLong128Function extends Long128Function implements BinaryFunction {
         private final Function hi;
         private final Function lo;
 
-        public LongsToLong128Function(Function hi, Function lo) {
-
-            this.hi = hi;
+        public LongsToLong128Function(Function lo, Function hi) {
             this.lo = lo;
+            this.hi = hi;
         }
 
         @Override
         public void close() {
-            Misc.free(hi);
             Misc.free(lo);
+            Misc.free(hi);
         }
 
         @Override
         public Function getLeft() {
-            return hi;
+            return lo;
         }
 
         @Override
@@ -92,7 +91,7 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
 
         @Override
         public Function getRight() {
-            return lo;
+            return hi;
         }
 
         @Override

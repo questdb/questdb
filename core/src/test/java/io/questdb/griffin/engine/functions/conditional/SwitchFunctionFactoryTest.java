@@ -442,6 +442,58 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastValueToUuid() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\td\tk\n" +
+                        "-920\t315515118\t7746536061816329025\t0x965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad159f9b2131d49fcd1d\tdb2d3458-6f62-45fa-b5b2-159a23565217\t315515118\n" +
+                        "-48\t-1191262516\t3614738589890112276\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
+                        "-405\t339631474\t7953532976996720859\t0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\t7e828f56-aaa1-4bde-8d07-6bf991c0ee88\t350\n" +
+                        "968\t-85170055\t5539350449504785212\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\t523eb59d-99c6-47af-9840-ad8800156d26\t523eb59d-99c6-47af-9840-ad8800156d26\n" +
+                        "-127\t1631244228\t8416773233910814357\t0x6f06560981acb5496adc00ebd29fdd5373dee145497c54365b9832d4b5522a94\t36ee542d-654d-4259-8a53-8661f350d0b4\t\n" +
+                        "454\t1253890363\t8942747579519338504\t0xc2593f82b430328d84a09f29df637e3863eb3740c80f661e9c8afa23e6ca6ca1\t58dfd08e-eb9c-439e-8ec8-2869edec121b\t\n" +
+                        "-300\t2006313928\t-5986859522579472839\t0x5705e75fe328fa9d6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09\t83b91ec9-70b0-4e78-8a50-f7ff7f6ed330\t\n" +
+                        "-194\t68265578\t8325936937764905778\t0x9290f9bc187b0cd2bacd57f41b59057caa237cfb02a208e494cfe42988a633de\ta937c9ce-75e8-4607-a1b5-6c3d802c4735\t\n" +
+                        "-54\t-1162267908\t3705833798044144433\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\t98c2d832-d83d-4993-8a07-05e1136e872b\t\n" +
+                        "-467\t-2034804966\t5536695302686527374\t0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\t9ff97d73-fc0c-42d0-a944-0048957ae053\t\n" +
+                        "-781\t1627393380\t9036423629723776443\t0x954a62eca44acb2d71660a9b0890a2f06a0accd425e948d49a77e857727e751a\t9b27eba5-e9cf-41e2-9660-300cea7db540\t\n" +
+                        "-133\t-1299391311\t7528475600160271422\t0x68653a6cd896f81ed4e0ddcd6eb2cff1c736a8b67656c4f159d574d2ff5fb1e3\t7a902c77-fa1a-489c-9168-6790e59377ca\t\n" +
+                        "669\t-307026682\t5271904137583983788\t0xc009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8a5f80be4b45bf437\t6cecb916-a1ad-492b-9979-18f622d62989\t\n" +
+                        "-819\t532665695\t5867661438830308598\t0x3c5d8a6969daa0b37d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46\t87c4f865-faa4-418e-8fd9-93f0e9bcda59\t\n" +
+                        "-123\t-998315423\t8155981915549526575\t0x84646fead466b67f39d5534da00d272c772c8b7f9505620ebbdfe8ff0cd60c64\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7\t\n" +
+                        "272\t-1723887671\t-6626590012581323602\t0x7c97a2cb4ac4b04722556b928447b58414e2b6a0cb7dddc7781a7e89ba21f328\taa1896d0-ad34-49d2-910a-a7b6d58506dc\t\n" +
+                        "-227\t817130367\t-8408704077728333147\t0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\t4b0a72b3-339b-4c7c-9872-e79ea1032246\t\n" +
+                        "37\t-1966408995\t9063592617902736531\t0x8fd449ba32592a2b5beb329042090bb3acb025f759cffbd0de9be4e331fe36e6\tb482cff5-7e9c-4398-ac09-f1b4db297f07\t\n" +
+                        "-188\t544695670\t-7103100524321179064\t0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3\t5b3ef212-23ee-4849-a500-9e89eacf0aad\t\n" +
+                        "444\t-2111250190\t7035958104135945276\t0x7b9d06dec7caf8a87ee54df55f49e9ac6ea837f54a4154397f3f9fef24a116ed\t5bee3da4-8400-45a6-a827-63e262d6903b\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    d,\n" +
+                        "    case x\n" +
+                        "        when -920 then a\n" +
+                        "        when -48 then c\n" +
+                        "        when -405 then 350\n" +
+                        "        when 968 then d\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_long() b," +
+                        " rnd_long256() c, " +
+                        " rnd_uuid4() d" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testCharOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
