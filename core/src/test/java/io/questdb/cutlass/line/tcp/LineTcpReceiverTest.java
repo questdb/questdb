@@ -1267,12 +1267,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
         String weather = "weather";
-        int tableId = 2;
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int count = 1;
             @Override
             public int openRW(LPSZ name, long opts) {
-                final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), weather, tableId, true);
-                if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                if (
+                    Chars.endsWith(name,Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
+                    Chars.contains(name,weather) &&
+                    --count == 0
+                ) {
                     mayDrainWalQueue();
                     dropWeatherTable();
                 }
@@ -1305,13 +1308,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
         String weather = "weather";
-        int tableId = 2;
         String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int count = 1;
             @Override
             public int openRW(LPSZ name, long opts) {
-                final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), weather, tableId, true);
-                if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                if (
+                    Chars.endsWith(name,Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
+                    Chars.contains(name,weather) &&
+                    --count == 0
+                ) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
@@ -1357,13 +1363,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
         String weather = "weather";
-        int tableId = 2;
         String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int count = 1;
             @Override
             public int openRW(LPSZ name, long opts) {
-                final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), weather, tableId, true);
-                if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                if (
+                    Chars.endsWith(name,Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
+                    Chars.contains(name,weather) &&
+                    --count == 0
+                ) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
                 }
