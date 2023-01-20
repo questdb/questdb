@@ -276,9 +276,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         addedTables.remove(tableId);
 
                         // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
-                        for (int i = 0;
-                             i < 1000 && ff.rmdir(rmPath.trimTo(rootLen).concat(tableName).$()) != 0; i++) {
-                            Os.pause();
+                        rmPath.trimTo(rootLen).concat(tableName).$();
+                        for (int i = 0; i < 100 && ff.rmdir(rmPath) != 0; i++) {
+                            Os.sleep(1L);
                         }
                     }
 
