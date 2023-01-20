@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -42,6 +43,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -215,6 +217,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(threadCount + 1);
             ObjList<Thread> threads = new ObjList<>(threadCount);
+            SOCountDownLatch halted = new SOCountDownLatch(threadCount);
             AtomicBoolean done = new AtomicBoolean(false);
 
             for (int i = 0; i < threadCount; i++) {
@@ -235,6 +238,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         ref.set(e);
                     } finally {
                         Path.clearThreadLocals();
+                        halted.countDown();
                     }
                 }));
                 threads.getLast().start();
@@ -252,6 +256,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 barrier.await();
                 int iteration = 0;
                 IntHashSet addedTables = new IntHashSet();
+                FilesFacade ff = configuration.getFilesFacade();
+                int rootLen = configuration.getRoot().length();
                 while (addedTables.size() < tableCount) {
                     iteration++;
                     if (rnd.nextDouble() > 0.2) {
@@ -271,7 +277,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                         // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                         for (int i = 0;
-                             i < 1000 && configuration.getFilesFacade().rmdir(rmPath.trimTo(configuration.getRoot().length()).concat(tableName).$()) != 0; i++) {
+                             i < 1000 && ff.rmdir(rmPath.trimTo(rootLen).concat(tableName).$()) != 0; i++) {
                             Os.pause();
                         }
                     }
@@ -284,17 +290,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         }
                     }
                 }
-                Path.clearThreadLocals();
             } finally {
                 done.set(true);
                 tm.close();
                 rmPath.close();
+                Path.clearThreadLocals();
             }
 
-            for (int i = 0; i < threads.size(); i++) {
-                threads.getQuick(i).join();
-            }
-
+            halted.await(TimeUnit.MILLISECONDS.toNanos(500L));
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }
