@@ -239,18 +239,6 @@ final class FastFloatByteArray {
             } else if (hexValue == FastDoubleUtils.DECIMAL_POINT_CLASS) {
                 illegal |= virtualIndexOfPoint >= 0;
                 virtualIndexOfPoint = index;
-                /*
-                for (;index < endIndex - 8;index += 8) {
-                    long parsed = tryToParseEightHexDigits(str, index + 1)
-                    if (parsed >= 0) {
-                        // This might overflow, we deal with it later.
-                        significand = (significand << 32) + parsed;
-
-                    } else {
-                        break;
-                    }
-                }
-                */
             } else {
                 break;
             }
@@ -276,10 +264,7 @@ final class FastFloatByteArray {
             }
             illegal |= !isDigit(ch);
             do {
-                // Guard against overflow
-                if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
-                    expNumber = 10 * expNumber + ch - '0';
-                }
+                expNumber = 10 * expNumber + ch - '0';
                 ch = ++index < endIndex ? str[index] : 0;
             } while (isDigit(ch));
             if (neg_exp) {
