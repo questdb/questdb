@@ -70,7 +70,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
     private static final int partitionCount = 11;
     private static final int pgPort = PG_PORT + 10;
     private static String otherVolume;
-    private static String otherVolumeAlias = "SECONDARY_VOLUME";
+    private static String otherVolumeAlias = "SECONDARY VOLUME";
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
