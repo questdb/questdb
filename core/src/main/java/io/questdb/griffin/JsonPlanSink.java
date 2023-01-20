@@ -245,11 +245,11 @@ public class JsonPlanSink extends BasePlanSink {
 
     @Override
     public PlanSink valUuid(long lo, long hi) {
+        quoteValue = true;
         checkType(NODE_VALUE);
         if (Uuid.isNull(lo, hi)) {
             sink.put("null");
         } else {
-            quoteValue = true;
             Numbers.appendUuid(lo, hi, sink);
         }
         return this;
