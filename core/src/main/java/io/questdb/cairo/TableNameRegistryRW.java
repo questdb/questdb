@@ -30,8 +30,8 @@ import io.questdb.std.ConcurrentHashMap;
 import java.util.Map;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
-    private final Map<CharSequence, TableToken> nameTableTokenMap = new ConcurrentHashMap<>();
-    private final Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
+    private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
     public TableNameRegistryRW(CairoConfiguration configuration) {
         super(configuration);
@@ -50,11 +50,10 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
                 reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
-                return true;
             } else {
                 reverseTableNameTokenMap.remove(token.getDirName(), reverseMapItem);
-                return true;
             }
+            return true;
         }
         return false;
     }

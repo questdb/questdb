@@ -231,8 +231,8 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     private void reloadFromRootDirectory(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         Path path = Path.getThreadLocal(configuration.getRoot());
         int plimit = path.length();
@@ -298,8 +298,8 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     private void reloadFromTablesFile(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
@@ -422,8 +422,8 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     void reload(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         tableIds.clear();
         reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap);
