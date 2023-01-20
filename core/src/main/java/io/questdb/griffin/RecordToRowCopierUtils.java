@@ -802,8 +802,9 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 default:
-                    // todo: shouldn't we also assert false here?
-                    break;
+                    // we don't need to do anything for null as null is already written by TableWriter/WalWriter NullSetters
+                    // every non-null-type is an error
+                    assert fromColumnType == ColumnType.NULL;
             }
         }
 
