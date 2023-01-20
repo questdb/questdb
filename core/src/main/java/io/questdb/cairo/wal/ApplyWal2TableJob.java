@@ -378,8 +378,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     telemetryFacade.store(APPLIED_TXN, writer.getTableToken(), walId, seqTxn, -1L, referenceTimestamp);
                     break;
                 case TRUNCATE:
+                    long txn = writer.getTxn();
                     writer.setSeqTxn(seqTxn);
                     writer.removeAllPartitions();
+                    if (writer.getTxn() == txn) {
+                        // force mark the transaction as applied
+                        writer.markSeqTxnCommitted(seqTxn);
+                    }
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);

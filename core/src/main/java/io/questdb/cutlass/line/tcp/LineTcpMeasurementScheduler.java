@@ -76,7 +76,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
     private final CairoSecurityContext securityContext;
     private final StringSink[] tableNameSinks;
-    private final LowerCaseCharSequenceObjHashMap<TableToken> tableNamesUtf16;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
@@ -113,7 +112,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         // in worker threads.
         tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-        tableNamesUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
         autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
@@ -175,7 +173,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         try {
             closeLocals(tableUpdateDetailsUtf16);
             closeLocals(idleTableUpdateDetailsUtf16);
-            tableNamesUtf16.clear();
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
@@ -696,9 +693,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
-                    final int keyIndex = tableNamesUtf16.keyIndex(tableNameUtf16);
-                    tableToken = keyIndex < 0 ? tableNamesUtf16.valueAt(keyIndex) : tableToken;
-                    final CharSequence tableName = keyIndex < 0 ? tableToken.getTableName() : tableNameUtf16;
                     if (engine.isWalTable(tableToken)) {
                         // create WAL-oriented TUD and NOT add it to the global cache
                         tud = new TableUpdateDetails(
@@ -712,9 +706,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 netIoJobs,
                                 defaultColumnTypes
                         );
-                        if (keyIndex > -1) {
-                            tableNamesUtf16.putAt(keyIndex, tableName.toString(), tableToken);
-                        }
                     } else {
                         tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
                     }

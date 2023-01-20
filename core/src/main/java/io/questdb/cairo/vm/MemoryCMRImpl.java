@@ -61,7 +61,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             size = 0;
             pageAddress = 0;
         }
-        if (ff != null && ff.closeChecked(fd)) {
+        if (ff != null && ff.close(fd)) {
             LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }

@@ -27,14 +27,15 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 public class CountLong256GroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "count_distinct(H)";
+        return "count(H)";
     }
 
     @Override
@@ -43,7 +44,23 @@ public class CountLong256GroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountLong256GroupByFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            Long256 val = arg.getLong256A(null);
+            if (val.equals(Long256Impl.NULL_LONG256)) {
+                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
+            }
+            return new CountLongConstGroupByFunction();
+        } else {
+            return new CountLong256GroupByFunction(arg);
+        }
+
     }
 }
