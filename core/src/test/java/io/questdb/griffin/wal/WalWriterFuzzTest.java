@@ -42,6 +42,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -90,6 +91,12 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         walTxnNotificationQueueCapacity = 16;
         AbstractGriffinTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        configOverrideO3ColumnMemorySize(512 * 1024);
+        super.setUp();
     }
 
     @Test
@@ -645,6 +652,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 ObjList<FuzzTransaction> transactions = createTransactions(rnd, tableNameWal);
                 fuzzTransactions.add(transactions);
             }
+            // Can help to reduce memory consumption.
+            engine.releaseInactive();
 
             applyManyWalParallel(fuzzTransactions, rnd, tableNameBase);
 

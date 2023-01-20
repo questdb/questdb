@@ -962,13 +962,13 @@ public final class Numbers {
     }
 
     public static long parseLongDuration(CharSequence sequence) throws NumericException {
-        int lim = sequence.length();
+        final int lim = sequence.length();
         if (lim == 0) {
             throw NumericException.INSTANCE;
         }
 
-        boolean negative = sequence.charAt(0) == '-';
-        if (negative){
+        final boolean negative = sequence.charAt(0) == '-';
+        if (negative) {
             throw NumericException.INSTANCE;
         }
 
@@ -1043,7 +1043,7 @@ public final class Numbers {
             val = r;
         }
 
-        if (val == Long.MIN_VALUE && !negative) {
+        if (val == Long.MIN_VALUE) {
             throw NumericException.INSTANCE;
         }
         return -val;
