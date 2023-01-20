@@ -315,6 +315,11 @@ public class AbstractO3Test {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
+                    public boolean disableColumnPurgeJob() {
+                        return false;
+                    }
+
+                    @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
                     }
@@ -334,6 +339,11 @@ public class AbstractO3Test {
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public boolean disableColumnPurgeJob() {
+                        return false;
+                    }
+
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();

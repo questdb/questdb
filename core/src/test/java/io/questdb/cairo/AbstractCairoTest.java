@@ -87,7 +87,7 @@ public abstract class AbstractCairoTest {
     protected static CairoConfiguration configuration;
     protected static long currentMicros = -1;
     protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    protected static QuestDBNode node1;
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
     protected static FilesFacade ff;
     protected static String inputRoot = null;
@@ -95,8 +95,8 @@ public abstract class AbstractCairoTest {
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
+    protected static QuestDBNode node1;
     protected static ObjList<QuestDBNode> nodes = new ObjList<>();
-    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
@@ -320,6 +320,10 @@ public abstract class AbstractCairoTest {
 
     protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
         node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    protected static void configOverrideO3ColumnMemorySize(int size) {
+        node1.getConfigurationOverrides().setO3ColumnMemorySize(size);
     }
 
     protected static void configOverrideO3MaxLag(int o3MaxLag) {
