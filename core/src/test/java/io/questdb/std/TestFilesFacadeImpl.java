@@ -50,14 +50,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public boolean closeChecked(int fd) {
-        if (fd > -1) {
-            untrack(fd);
-        }
-        return super.closeChecked(fd);
-    }
-
-    @Override
     public boolean closeRemove(int fd, LPSZ path) {
         if (fd > -1) {
             if (untrack(fd) != 0) {
