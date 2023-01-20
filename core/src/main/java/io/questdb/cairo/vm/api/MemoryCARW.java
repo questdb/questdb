@@ -121,9 +121,9 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putLong128(long lo, long hi) {
-        long addr = appendAddressFor(16);
+        long addr = appendAddressFor(2 * Long.BYTES);
         Unsafe.getUnsafe().putLong(addr, lo);
-        Unsafe.getUnsafe().putLong(addr + 8, hi);
+        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hi);
     }
 
     default void putLong256(long l0, long l1, long l2, long l3) {
