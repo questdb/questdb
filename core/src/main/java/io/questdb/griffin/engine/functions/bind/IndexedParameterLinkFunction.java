@@ -129,6 +129,16 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public long getLong128Hi(Record rec) {
+        return getBase().getLong128Hi(rec);
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        return getBase().getLong128Lo(rec);
+    }
+
+    @Override
     public void getLong256(Record rec, CharSink sink) {
         getBase().getLong256(rec, sink);
     }

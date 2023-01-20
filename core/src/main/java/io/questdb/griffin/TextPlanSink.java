@@ -26,7 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Sinkable;
 
 /**
  * Gathers important query execution plan details and prints them in a readable format.
@@ -187,6 +189,11 @@ public class TextPlanSink extends BasePlanSink {
 
     public PlanSink val(long hash, int geoHashBits) {
         GeoHashes.append(hash, geoHashBits, sink);
+        return this;
+    }
+
+    public PlanSink valUuid(long lo, long hi) {
+        Numbers.appendUuid(lo, hi, sink);
         return this;
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,6 +43,8 @@ public class JsonPlanSinkTest {
                 "        \"plan\": \"null\",\n" +
                 "        \"double\": \"0.0\",\n" +
                 "        \"float\": \"1.0\",\n" +
+                "        \"uuid\": \"00000000-0000-0002-0000-000000000001\",\n" +
+                "        \"uuid_null\": \"null\",\n" +
                 "    }\n" +
                 "  }\n" +
                 "]";
@@ -76,6 +79,10 @@ public class JsonPlanSinkTest {
             sink.val(0.0f);
             sink.attr("float");
             sink.val(1.0d);
+            sink.attr("uuid");
+            sink.valUuid(1L, 2L);
+            sink.attr("uuid_null");
+            sink.valUuid(Numbers.LONG_NaN, Numbers.LONG_NaN);
         }
     }
 }

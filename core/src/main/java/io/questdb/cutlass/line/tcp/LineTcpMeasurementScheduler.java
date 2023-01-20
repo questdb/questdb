@@ -482,7 +482,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 case ColumnType.SYMBOL:
                                     r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());
                                     break;
-
+                                case ColumnType.UUID:
+                                    r.putUuid(columnIndex, entityValue);
+                                    break;
                                 default:
                                     throw castError("string", i, colType, ent.getName());
                             }

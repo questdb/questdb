@@ -62,7 +62,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         if (parentOffset != -1) {
             valueChain.putLong(parentOffset, appendOffset);
         }
-        valueChain.putLongLong(-1, value);
+        valueChain.putLong128(-1, value);
         return appendOffset;
     }
 

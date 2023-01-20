@@ -278,7 +278,8 @@ public class CompactMap implements Map, Reopenable {
                     sz = Long256.BYTES;
                     break;
                 case ColumnType.LONG128:
-                    sz = 2 * Long.BYTES;
+                case ColumnType.UUID:
+                    sz = Long128.BYTES;
                     break;
                 default:
                     throw CairoException.critical(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
@@ -466,8 +467,8 @@ public class CompactMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128LittleEndian(long hi, long lo) {
-            entries.putLong128LittleEndian(hi, lo);
+        public void putLong128(long lo, long hi) {
+            entries.putLong128(lo, hi);
         }
 
         @Override

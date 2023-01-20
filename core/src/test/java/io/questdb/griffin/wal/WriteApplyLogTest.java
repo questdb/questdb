@@ -66,7 +66,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                         ")",
                 sqlExecutionContext
         );
-        return "select to_long128(rn - 1 + " + tsStartSequence + "L, ts1) ts," +
+        return "select to_long128(ts1, rn - 1 + " + tsStartSequence + "L) ts," +
                 "ts1," +
                 "i," +
                 "timestamp," +
@@ -84,7 +84,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     @NotNull
     private String generateTableSelect(long tsIncrement, int count1, String startTime, long tsStartSequence) {
         return "select" +
-                " to_long128(x - 1 +  " + tsStartSequence + "L, timestamp_sequence('" + startTime + "', " + tsIncrement + "L) ) ts," +
+                " to_long128(timestamp_sequence('" + startTime + "', " + tsIncrement + "L), x - 1 +  " + tsStartSequence + "L) ts," +
                 " timestamp_sequence('" + startTime + "', " + tsIncrement + "L) ts1," +
                 " cast(x as int) i," +
                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +

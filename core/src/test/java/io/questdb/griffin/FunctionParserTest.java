@@ -1223,7 +1223,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testSignatureIllegalArgumentType() throws SqlException {
-        assertSignatureFailure("x(Bz)");
+        assertSignatureFailure("x(By)");
     }
 
     @Test

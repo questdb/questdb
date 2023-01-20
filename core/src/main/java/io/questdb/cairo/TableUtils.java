@@ -34,7 +34,6 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -200,8 +199,8 @@ public final class TableUtils {
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         final Function function = functionParser.parseFunction(
-                tableNameExpr, 
-                AnyRecordMetadata.INSTANCE, 
+                tableNameExpr,
+                AnyRecordMetadata.INSTANCE,
                 executionContext
         );
         if (!ColumnType.isCursor(function.getType())) {
@@ -1065,10 +1064,11 @@ public final class TableUtils {
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
                 break;
             case ColumnType.LONG128:
-                // Long128 is null when all 2 longs are NaNs
+                // fall through
+            case ColumnType.UUID:
+                // Long128 and UUID are null when all 2 longs are NaNs
                 //noinspection ConstantConditions
-                assert Long128Constant.NULL_HI == Long128Constant.NULL_LO;
-                Vect.setMemoryLong(addr, Long128Constant.NULL_HI, count * 2);
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
                 break;
             default:
                 break;

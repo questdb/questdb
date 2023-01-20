@@ -594,7 +594,7 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128LittleEndian(long hi, long lo) {
+        public void putLong128(long lo, long hi) {
             assert appendAddress + 16 <= kLimit;
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
@@ -735,7 +735,7 @@ public class FastMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong128LittleEndian(long hi, long lo) {
+        public void putLong128(long lo, long hi) {
             checkSize(16);
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);

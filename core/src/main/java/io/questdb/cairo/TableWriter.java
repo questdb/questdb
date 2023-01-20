@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -153,6 +154,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxWriter txWriter;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
+    private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
@@ -1979,7 +1981,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128LittleEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                // fall through
+            case ColumnType.UUID:
+                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -2453,11 +2457,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         case ColumnType.CHAR:
                         case ColumnType.SHORT:
                         case ColumnType.FLOAT:
+                        case ColumnType.LONG128:
                         case ColumnType.LONG256:
                         case ColumnType.GEOBYTE:
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
+                        case ColumnType.UUID:
                             attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                         case ColumnType.STRING:
@@ -3832,9 +3838,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             for (long n = 0; n < transientRowsAdded; n++) {
                 long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
-                // putLong128(hi, lo)
-                // written in memory as lo then hi
-                o3TimestampMem.putLongLong(ts, o3RowCount + n);
+                o3TimestampMem.putLong128(ts, o3RowCount + n);
             }
 
             if (locallyMapped) {
@@ -4206,9 +4210,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void o3TimestampSetter(long timestamp) {
-        // putLong128(hi, lo)
-        // written in memory as lo then hi
-        o3TimestampMem.putLongLong(timestamp, getO3RowCount0());
+        o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
     }
 
@@ -6363,7 +6365,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putLong(int columnIndex, long value);
 
-        void putLong128LittleEndian(int columnIndex, long first, long second);
+        void putLong128(int columnIndex, long lo, long hi);
 
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
@@ -6408,6 +6410,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         default void putTimestamp(int columnIndex, long value) {
             putLong(columnIndex, value);
         }
+
+        void putUuid(int columnIndex, CharSequence uuid);
     }
 
     private static class NoOpRow implements Row {
@@ -6487,7 +6491,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putLong128LittleEndian(int columnIndex, long first, long second) {
+        public void putLong128(int columnIndex, long lo, long hi) {
             // no-op
         }
 
@@ -6559,6 +6563,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putTimestamp(int columnIndex, long value) {
             // no-op
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuid) {
+
         }
     }
 
@@ -6646,7 +6655,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+        public void putLong128(int columnIndex, long lo, long hi) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
@@ -6717,6 +6726,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         public void putSym(int columnIndex, char value) {
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuidStr) {
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
