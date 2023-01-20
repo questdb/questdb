@@ -285,10 +285,7 @@ final class FastFloat {
             }
             illegal |= !isDigit(ch);
             do {
-                // Guard against overflow
-                if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
-                    expNumber = 10 * expNumber + ch - '0';
-                }
+                expNumber = 10 * expNumber + ch - '0';
                 ch = ++index < endIndex ? str.charAt(index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {

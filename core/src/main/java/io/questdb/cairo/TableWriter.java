@@ -511,8 +511,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // remove _todo
             clearTodoLog();
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
 
         bumpStructureVersion();
@@ -1016,7 +1016,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void dropIndex(CharSequence columnName) {
-
         checkDistressed();
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
@@ -1571,8 +1570,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // remove column files has to be done after _todo is removed
             removeColumnFiles(name, index, type);
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
 
         bumpStructureVersion();
@@ -1685,7 +1684,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void renameColumn(CharSequence currentName, CharSequence newName) {
-
         checkDistressed();
         checkColumnName(newName);
 
@@ -1720,8 +1718,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // rename column files has to be done after _todo is removed
             renameColumnFiles(currentName, index, newName, type);
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
 
         bumpStructureVersion();
@@ -1921,8 +1919,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.truncate(columnVersionWriter.getVersion());
         try {
             clearTodoLog();
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
@@ -2975,20 +2973,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             // rename _meta.swp to -_meta
             restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-        } catch (CairoException ex) {
+        } catch (CairoException e) {
             try {
                 recoverFromTodoWriteFailure(null);
-            } catch (CairoException ex2) {
-                throwDistressException(ex2);
+            } catch (CairoException e2) {
+                throwDistressException(e2);
             }
-            throw ex;
+            throw e;
         }
 
         try {
             // open _meta file
             openMetaFile(ff, path, rootLen, metaMem);
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
 
         bumpStructureVersion();
@@ -5704,9 +5702,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
         try {
             fragile.run(columnName);
-        } catch (CairoException err) {
+        } catch (CairoException e2) {
             LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
-            throwDistressException(err);
+            throwDistressException(e2);
         }
         throw e;
     }
@@ -5726,42 +5724,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
-        MemoryMA mem1 = getPrimaryColumn(columnIndex);
-        MemoryMA mem2 = getSecondaryColumn(columnIndex);
-        int type = metadata.getColumnType(columnIndex);
-        if (type > 0) { // Not deleted
-            final long pos = size - columnTops.getQuick(columnIndex);
-            if (pos > 0) {
-                // subtract column top
-                final long m1pos;
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.BINARY:
-                    case ColumnType.STRING:
-                        assert mem2 != null;
-                        if (doubleAllocate) {
-                            mem2.allocate(pos * Long.BYTES + Long.BYTES);
-                        }
-                        // Jump to the number of records written to read length of var column correctly
-                        mem2.jumpTo(pos * Long.BYTES);
-                        m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
-                        // Jump to the end of file to correctly trim the file
-                        mem2.jumpTo((pos + 1) * Long.BYTES);
-                        break;
-                    default:
-                        m1pos = pos << ColumnType.pow2SizeOf(type);
-                        break;
-                }
-                if (doubleAllocate) {
-                    mem1.allocate(m1pos);
-                }
-                mem1.jumpTo(m1pos);
-            } else {
-                mem1.jumpTo(0);
-                if (mem2 != null) {
-                    mem2.jumpTo(0);
-                    mem2.putLong(0);
+        try {
+            MemoryMA mem1 = getPrimaryColumn(columnIndex);
+            MemoryMA mem2 = getSecondaryColumn(columnIndex);
+            int type = metadata.getColumnType(columnIndex);
+            if (type > 0) { // Not deleted
+                final long pos = size - columnTops.getQuick(columnIndex);
+                if (pos > 0) {
+                    // subtract column top
+                    final long m1pos;
+                    switch (ColumnType.tagOf(type)) {
+                        case ColumnType.BINARY:
+                        case ColumnType.STRING:
+                            assert mem2 != null;
+                            if (doubleAllocate) {
+                                mem2.allocate(pos * Long.BYTES + Long.BYTES);
+                            }
+                            // Jump to the number of records written to read length of var column correctly
+                            mem2.jumpTo(pos * Long.BYTES);
+                            m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
+                            // Jump to the end of file to correctly trim the file
+                            mem2.jumpTo((pos + 1) * Long.BYTES);
+                            break;
+                        default:
+                            m1pos = pos << ColumnType.pow2SizeOf(type);
+                            break;
+                    }
+                    if (doubleAllocate) {
+                        mem1.allocate(m1pos);
+                    }
+                    mem1.jumpTo(m1pos);
+                } else {
+                    mem1.jumpTo(0);
+                    if (mem2 != null) {
+                        mem2.jumpTo(0);
+                        mem2.putLong(0);
+                    }
                 }
             }
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
     }
 
@@ -5824,9 +5826,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             // remove _todo
             clearTodoLog();
-
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            throwDistressException(e);
         }
         bumpStructureVersion();
     }
@@ -5874,7 +5875,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void throwDistressException(CairoException cause) {
         LOG.critical().$("writer error [table=").utf8(tableToken.getTableName()).$(", e=").$((Sinkable) cause).I$();
-        this.distressed = true;
+        distressed = true;
         throw new CairoError(cause);
     }
 

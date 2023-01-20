@@ -78,7 +78,7 @@ public class TxnScoreboard implements Closeable, Mutable {
             mem = 0;
         }
 
-        if (ff.closeChecked(fd)) {
+        if (ff.close(fd)) {
             LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }

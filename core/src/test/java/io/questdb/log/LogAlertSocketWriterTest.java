@@ -534,7 +534,7 @@ public class LogAlertSocketWriterTest {
                     );
                 }
             } finally {
-                ff.closeChecked(fd);
+                ff.close(fd);
                 ff.remove(path);
                 path.close();
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
