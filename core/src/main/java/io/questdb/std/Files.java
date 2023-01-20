@@ -106,19 +106,16 @@ public final class Files {
     }
 
     public static int close(int fd) {
-        assert auditClose(fd);
-        int res = close0(fd);
-        if (res == 0) {
-            OPEN_FILE_COUNT.decrementAndGet();
+        // do not close `stdin` and `stdout`
+        if (fd > 1) {
+            assert auditClose(fd);
+            int res = close0(fd);
+            if (res == 0) {
+                OPEN_FILE_COUNT.decrementAndGet();
+            }
+            return res;
         }
-        return res;
-    }
-
-    // If fd is negative, no action occurs.
-    public static int closeChecked(int fd) {
-        if (fd >= 0) {
-            return close(fd);
-        }
+        // failed to close
         return -1;
     }
 
@@ -216,19 +213,6 @@ public final class Files {
 
     public static int hardLink(LPSZ src, LPSZ hardLink) {
         return hardLink(src.address(), hardLink.address());
-    }
-
-    public static boolean isDirOrSoftLinkDir(Path path) {
-        long ptr = findFirst(path);
-        if (ptr < 1L) {
-            return false;
-        }
-        try {
-            int type = findType(ptr);
-            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
-        } finally {
-            findClose(ptr);
-        }
     }
 
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {

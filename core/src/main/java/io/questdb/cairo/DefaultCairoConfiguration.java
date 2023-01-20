@@ -184,7 +184,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getDataAppendPageSize() {
-        return getFilesFacade().getMapPageSize();
+        return 2 * 1024 * 1024;
     }
 
     @Override

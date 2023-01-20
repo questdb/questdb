@@ -183,10 +183,6 @@ public class FilesFacadeImpl implements FilesFacade {
         return Os.isPosix() && errno == 18;
     }
 
-    public boolean isDirOrSoftLinkDir(Path path) {
-        return Files.isDirOrSoftLinkDir(path);
-    }
-
     @Override
     public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
         return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type);

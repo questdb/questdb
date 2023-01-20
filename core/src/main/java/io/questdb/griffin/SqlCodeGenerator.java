@@ -2293,148 +2293,102 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode sampleByNode,
             ExpressionNode sampleByUnits
     ) throws SqlException {
-        executionContext.pushTimestampRequiredFlag(true);
+        final ExpressionNode timezoneName = model.getSampleByTimezoneName();
+        final Function timezoneNameFunc;
+        final int timezoneNameFuncPos;
+        final ExpressionNode offset = model.getSampleByOffset();
+        final Function offsetFunc;
+        final int offsetFuncPos;
+
+        if (timezoneName != null) {
+            timezoneNameFunc = functionParser.parseFunction(
+                    timezoneName,
+                    EmptyRecordMetadata.INSTANCE,
+                    executionContext
+            );
+            timezoneNameFuncPos = timezoneName.position;
+        } else {
+            timezoneNameFunc = StrConstant.NULL;
+            timezoneNameFuncPos = 0;
+        }
+
+        if (ColumnType.isUndefined(timezoneNameFunc.getType())) {
+            timezoneNameFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+        } else if ((!timezoneNameFunc.isConstant() && !timezoneNameFunc.isRuntimeConstant())
+                || !ColumnType.isAssignableFrom(timezoneNameFunc.getType(), ColumnType.STRING)) {
+            throw SqlException.$(timezoneNameFuncPos, "timezone must be a constant expression of STRING or CHAR type");
+        }
+
+        if (offset != null) {
+            offsetFunc = functionParser.parseFunction(
+                    offset,
+                    EmptyRecordMetadata.INSTANCE,
+                    executionContext
+            );
+            offsetFuncPos = offset.position;
+        } else {
+            offsetFunc = StrConstant.NULL;
+            offsetFuncPos = 0;
+        }
+
+        if (ColumnType.isUndefined(offsetFunc.getType())) {
+            offsetFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+        } else if ((!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant())
+                || !ColumnType.isAssignableFrom(offsetFunc.getType(), ColumnType.STRING)) {
+            throw SqlException.$(offsetFuncPos, "offset must be a constant expression of STRING or CHAR type");
+        }
+
+        RecordCursorFactory factory = null;
+        // We require timestamp with asc order.
+        final int timestampIndex;
+        // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
+        executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
         try {
-            final ExpressionNode timezoneName = model.getSampleByTimezoneName();
-            final Function timezoneNameFunc;
-            final int timezoneNameFuncPos;
-            final ExpressionNode offset = model.getSampleByOffset();
-            final Function offsetFunc;
-            final int offsetFuncPos;
+            factory = generateSubQuery(model, executionContext);
+            timestampIndex = getTimestampIndex(model, factory);
+            if (timestampIndex == -1 || factory.hasDescendingOrder()) {
+                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
+            }
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        } finally {
+            executionContext.popTimestampRequiredFlag();
+        }
 
-            if (timezoneName != null) {
-                timezoneNameFunc = functionParser.parseFunction(
-                        timezoneName,
+        final RecordMetadata metadata = factory.getMetadata();
+        final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+        final TimestampSampler timestampSampler;
+        final int fillCount = sampleByFill.size();
+        try {
+            if (sampleByUnits == null) {
+                timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+            } else {
+                Function sampleByPeriod = functionParser.parseFunction(
+                        sampleByNode,
                         EmptyRecordMetadata.INSTANCE,
                         executionContext
                 );
-                timezoneNameFuncPos = timezoneName.position;
-            } else {
-                timezoneNameFunc = StrConstant.NULL;
-                timezoneNameFuncPos = 0;
-            }
-
-            if (ColumnType.isUndefined(timezoneNameFunc.getType())) {
-                timezoneNameFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
-            } else if ((!timezoneNameFunc.isConstant() && !timezoneNameFunc.isRuntimeConstant())
-                    || !ColumnType.isAssignableFrom(timezoneNameFunc.getType(), ColumnType.STRING)) {
-                throw SqlException.$(timezoneNameFuncPos, "timezone must be a constant expression of STRING or CHAR type");
-            }
-
-            if (offset != null) {
-                offsetFunc = functionParser.parseFunction(
-                        offset,
-                        EmptyRecordMetadata.INSTANCE,
-                        executionContext
-                );
-                offsetFuncPos = offset.position;
-            } else {
-                offsetFunc = StrConstant.NULL;
-                offsetFuncPos = 0;
-            }
-
-            if (ColumnType.isUndefined(offsetFunc.getType())) {
-                offsetFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
-            } else if ((!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant())
-                    || !ColumnType.isAssignableFrom(offsetFunc.getType(), ColumnType.STRING)) {
-                throw SqlException.$(offsetFuncPos, "offset must be a constant expression of STRING or CHAR type");
-            }
-
-            final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-
-            // We require timestamp with asc order.
-            final int timestampIndex;
-            try {
-                timestampIndex = getTimestampIndex(model, factory);
-                if (timestampIndex == -1 || factory.hasDescendingOrder()) {
-                    throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
+                if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
+                    Misc.free(sampleByPeriod);
+                    throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
                 }
-            } catch (Throwable e) {
-                Misc.free(factory);
-                throw e;
+                long period = sampleByPeriod.getLong(null);
+                sampleByPeriod.close();
+                timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
             }
 
-            final RecordMetadata metadata = factory.getMetadata();
-            final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
-            final TimestampSampler timestampSampler;
-            final int fillCount = sampleByFill.size();
-            try {
-                if (sampleByUnits == null) {
-                    timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
-                } else {
-                    Function sampleByPeriod = functionParser.parseFunction(
-                            sampleByNode,
-                            EmptyRecordMetadata.INSTANCE,
-                            executionContext
-                    );
-                    if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
-                        Misc.free(sampleByPeriod);
-                        throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
-                    }
-                    long period = sampleByPeriod.getLong(null);
-                    sampleByPeriod.close();
-                    timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
-                }
+            keyTypes.clear();
+            valueTypes.clear();
+            listColumnFilterA.clear();
 
-                keyTypes.clear();
-                valueTypes.clear();
-                listColumnFilterA.clear();
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "linear")) {
 
-                if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "linear")) {
-
-                    final int columnCount = metadata.getColumnCount();
-                    final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-                    final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
-
-                    valueTypes.add(ColumnType.BYTE); // gap flag
-
-                    GroupByUtils.prepareGroupByFunctions(
-                            model,
-                            metadata,
-                            functionParser,
-                            executionContext,
-                            groupByFunctions,
-                            groupByFunctionPositions,
-                            valueTypes
-                    );
-
-                    final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-                    GroupByUtils.prepareGroupByRecordFunctions(
-                            model,
-                            metadata,
-                            listColumnFilterA,
-                            groupByFunctions,
-                            groupByFunctionPositions,
-                            recordFunctions,
-                            recordFunctionPositions,
-                            groupByMetadata,
-                            keyTypes,
-                            valueTypes.getColumnCount(),
-                            false,
-                            timestampIndex
-                    );
-
-                    return new SampleByInterpolateRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            timestampSampler,
-                            model,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            entityColumnFilter,
-                            groupByFunctionPositions,
-                            timestampIndex
-                    );
-                }
-
-                final int columnCount = model.getColumns().size();
+                final int columnCount = metadata.getColumnCount();
                 final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-                valueTypes.add(ColumnType.TIMESTAMP); // first value is always timestamp
+                final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+
+                valueTypes.add(ColumnType.BYTE); // gap flag
 
                 GroupByUtils.prepareGroupByFunctions(
                         model,
@@ -2446,9 +2400,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes
                 );
 
-                final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
                 final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-
                 GroupByUtils.prepareGroupByRecordFunctions(
                         model,
                         metadata,
@@ -2464,59 +2416,90 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timestampIndex
                 );
 
+                return new SampleByInterpolateRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        timestampSampler,
+                        model,
+                        listColumnFilterA,
+                        keyTypes,
+                        valueTypes,
+                        entityColumnFilter,
+                        groupByFunctionPositions,
+                        timestampIndex
+                );
+            }
 
-                boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
-                boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
-                if (allGroupsFirstLast) {
-                    SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
-                    if (symbolFilter != null) {
-                        return new SampleByFirstLastRecordCursorFactory(
-                                factory,
-                                timestampSampler,
-                                groupByMetadata,
-                                model.getColumns(),
-                                metadata,
-                                timezoneNameFunc,
-                                timezoneNameFuncPos,
-                                offsetFunc,
-                                offsetFuncPos,
-                                timestampIndex,
-                                symbolFilter,
-                                configuration.getSampleByIndexSearchPageSize()
-                        );
-                    }
-                }
+            final int columnCount = model.getColumns().size();
+            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+            valueTypes.add(ColumnType.TIMESTAMP); // first value is always timestamp
 
-                if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
-                    if (keyTypes.getColumnCount() == 0) {
-                        return new SampleByFillPrevNotKeyedRecordCursorFactory(
-                                asm,
-                                factory,
-                                timestampSampler,
-                                groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
-                                timestampIndex,
-                                valueTypes.getColumnCount(),
-                                timezoneNameFunc,
-                                timezoneNameFuncPos,
-                                offsetFunc,
-                                offsetFuncPos
-                        );
-                    }
+            GroupByUtils.prepareGroupByFunctions(
+                    model,
+                    metadata,
+                    functionParser,
+                    executionContext,
+                    groupByFunctions,
+                    groupByFunctionPositions,
+                    valueTypes
+            );
 
-                    return new SampleByFillPrevRecordCursorFactory(
-                            asm,
-                            configuration,
+            final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+
+            GroupByUtils.prepareGroupByRecordFunctions(
+                    model,
+                    metadata,
+                    listColumnFilterA,
+                    groupByFunctions,
+                    groupByFunctionPositions,
+                    recordFunctions,
+                    recordFunctionPositions,
+                    groupByMetadata,
+                    keyTypes,
+                    valueTypes.getColumnCount(),
+                    false,
+                    timestampIndex
+            );
+
+
+            boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
+            boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
+            if (allGroupsFirstLast) {
+                SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
+                if (symbolFilter != null) {
+                    return new SampleByFirstLastRecordCursorFactory(
                             factory,
                             timestampSampler,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
+                            groupByMetadata,
+                            model.getColumns(),
+                            metadata,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos,
+                            timestampIndex,
+                            symbolFilter,
+                            configuration.getSampleByIndexSearchPageSize()
+                    );
+                }
+            }
+
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
+                if (keyTypes.getColumnCount() == 0) {
+                    return new SampleByFillPrevNotKeyedRecordCursorFactory(
+                            asm,
+                            factory,
+                            timestampSampler,
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
                             timestampIndex,
+                            valueTypes.getColumnCount(),
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
@@ -2524,92 +2507,70 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                if (isFillNone) {
+                return new SampleByFillPrevRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        listColumnFilterA,
+                        keyTypes,
+                        valueTypes,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
+                );
+            }
 
-                    if (keyTypes.getColumnCount() == 0) {
-                        // this sample by is not keyed
-                        return new SampleByFillNoneNotKeyedRecordCursorFactory(
-                                asm,
-                                factory,
-                                timestampSampler,
-                                groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
-                                valueTypes.getColumnCount(),
-                                timestampIndex,
-                                timezoneNameFunc,
-                                timezoneNameFuncPos,
-                                offsetFunc,
-                                offsetFuncPos
-                        );
-                    }
-
-                    return new SampleByFillNoneRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            timestampSampler,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            timestampIndex,
-                            timezoneNameFunc,
-                            timezoneNameFuncPos,
-                            offsetFunc,
-                            offsetFuncPos
-                    );
-                }
-
-                if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
-                    if (keyTypes.getColumnCount() == 0) {
-                        return new SampleByFillNullNotKeyedRecordCursorFactory(
-                                asm,
-                                factory,
-                                timestampSampler,
-                                groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
-                                recordFunctionPositions,
-                                valueTypes.getColumnCount(),
-                                timestampIndex,
-                                timezoneNameFunc,
-                                timezoneNameFuncPos,
-                                offsetFunc,
-                                offsetFuncPos
-                        );
-                    }
-
-                    return new SampleByFillNullRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            timestampSampler,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            recordFunctionPositions,
-                            timestampIndex,
-                            timezoneNameFunc,
-                            timezoneNameFuncPos,
-                            offsetFunc,
-                            offsetFuncPos
-                    );
-                }
-
-                assert fillCount > 0;
+            if (isFillNone) {
 
                 if (keyTypes.getColumnCount() == 0) {
-                    return new SampleByFillValueNotKeyedRecordCursorFactory(
+                    // this sample by is not keyed
+                    return new SampleByFillNoneNotKeyedRecordCursorFactory(
                             asm,
                             factory,
                             timestampSampler,
-                            sampleByFill,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            valueTypes.getColumnCount(),
+                            timestampIndex,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
+                    );
+                }
+
+                return new SampleByFillNoneRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        timestampSampler,
+                        listColumnFilterA,
+                        keyTypes,
+                        valueTypes,
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
+                );
+            }
+
+            if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
+                if (keyTypes.getColumnCount() == 0) {
+                    return new SampleByFillNullNotKeyedRecordCursorFactory(
+                            asm,
+                            factory,
+                            timestampSampler,
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
@@ -2623,13 +2584,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                return new SampleByFillValueRecordCursorFactory(
+                return new SampleByFillNullRecordCursorFactory(
                         asm,
                         configuration,
                         factory,
                         timestampSampler,
                         listColumnFilterA,
-                        sampleByFill,
                         keyTypes,
                         valueTypes,
                         groupByMetadata,
@@ -2642,12 +2602,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFunc,
                         offsetFuncPos
                 );
-            } catch (Throwable e) {
-                Misc.free(factory);
-                throw e;
             }
-        } finally {
-            executionContext.popTimestampRequiredFlag();
+
+            assert fillCount > 0;
+
+            if (keyTypes.getColumnCount() == 0) {
+                return new SampleByFillValueNotKeyedRecordCursorFactory(
+                        asm,
+                        factory,
+                        timestampSampler,
+                        sampleByFill,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        recordFunctionPositions,
+                        valueTypes.getColumnCount(),
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
+                );
+            }
+
+            return new SampleByFillValueRecordCursorFactory(
+                    asm,
+                    configuration,
+                    factory,
+                    timestampSampler,
+                    listColumnFilterA,
+                    sampleByFill,
+                    keyTypes,
+                    valueTypes,
+                    groupByMetadata,
+                    groupByFunctions,
+                    recordFunctions,
+                    recordFunctionPositions,
+                    timestampIndex,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
+            );
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
         }
     }
 
@@ -2927,7 +2926,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (columnTypeMismatch) {
-                return generateSelectVirtualWithSubquery(model, executionContext, factory);
+                return generateSelectVirtualWithSubQuery(model, executionContext, factory);
             }
         }
 
@@ -3350,11 +3349,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
-        return generateSelectVirtualWithSubquery(model, executionContext, factory);
+        return generateSelectVirtualWithSubQuery(model, executionContext, factory);
     }
 
     @NotNull
-    private VirtualRecordCursorFactory generateSelectVirtualWithSubquery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
+    private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
         try {
             final ObjList<QueryColumn> columns = model.getColumns();
             final int columnCount = columns.size();

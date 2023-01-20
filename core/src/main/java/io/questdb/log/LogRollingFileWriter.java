@@ -199,7 +199,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
             buf = 0;
         }
-        if (ff.closeChecked(fd)) {
+        if (ff.close(fd)) {
             fd = -1;
         }
         Misc.free(path);
