@@ -145,7 +145,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalWriteWithQuickSort() throws Exception {
+    public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = new Rnd();
         int tableCount = Math.max(2, rnd.nextInt(10));

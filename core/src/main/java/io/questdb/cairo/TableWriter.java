@@ -3763,7 +3763,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ColumnType.isSymbol(columnType)) {
                 mappedRowLo = lagRows;
             } else {
-                throw CairoException.critical(0).put("not implemented");
+                throw CairoException.critical(0)
+                        .put("same source and destination to copy data from for non-symbol column [")
+                        .put(ColumnType.nameOf(columnType)).put("] in o3MergeFixColumnLag routine is not supported ");
             }
         }
         final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
