@@ -2301,16 +2301,17 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateAsSelectInVolumeNotAllowed() throws Exception {
+    public void testCreateAsSelectInVolumeNotAllowedAsItNoLongerExists0() throws Exception {
         File volume = temp.newFolder("other_folder");
+        String volumeAlias = "manzana";
+        String volumePath = volume.getAbsolutePath();
         try {
-            String volumeAlias = "manzana";
-            String volumePath = volume.getAbsolutePath();
             configuration.getAllowedVolumePaths().of(volumeAlias + "->" + volumePath, path);
+            Assert.assertTrue(volume.delete());
             assertQuery(
                     "geohash\n",
                     "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c)) in volume '" + volume + "'",
+                    "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'",
                     null,
                     "insert into geohash " +
                             "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
@@ -2333,10 +2334,65 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             if (Os.isWindows()) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
             } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=" + volume + ']');
+                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [alias=" + volumeAlias + ", path=" + volumePath + ']');
             }
         } finally {
-            Assert.assertTrue(volume.delete());
+            Assert.assertFalse(volume.delete());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectInVolumeNotAllowedAsItNoLongerExists1() throws Exception {
+        File volume = temp.newFolder("other_path");
+        String volumeAlias = "pera";
+        String volumePath = volume.getAbsolutePath();
+        String tableName = "geohash";
+        String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 1, false);
+        String target = volumePath + Files.SEPARATOR + dirName;
+        FilesFacade originalFf = AbstractCairoTest.ff;
+        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (target.equals(path.toString())) {
+                    Assert.assertTrue(volume.delete());
+                    return true;
+                }
+                return super.exists(path);
+            }
+        };
+        try {
+            configuration.getAllowedVolumePaths().of(volumeAlias + "->" + volumePath, path);
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from " + tableName,
+                    "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'",
+                    null,
+                    "insert into " + tableName +
+                            " select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                    "geohash\n" +
+                            "q\n" +
+                            "q\n" +
+                            "u\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "u\n" +
+                            "q\n" +
+                            "u\n",
+                    true,
+                    true,
+                    true);
+            Assert.fail();
+        } catch (SqlException e) {
+            if (Os.isWindows()) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+            } else {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table, name is reserved [table=" + tableName + ']');
+            }
+        } finally {
+            AbstractCairoTest.ff = originalFf;
+            Assert.assertFalse(volume.delete());
         }
     }
 
