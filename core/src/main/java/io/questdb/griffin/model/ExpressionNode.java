@@ -68,7 +68,8 @@ public class ExpressionNode implements Mutable, Sinkable {
         if (a == null || b == null || a.type != b.type) {
             return false;
         }
-        return Chars.equals(a.token, b.token) && compareArgsExact(a, b);
+        return (a.type == FUNCTION || a.type == LITERAL ? Chars.equalsIgnoreCase(a.token, b.token) : Chars.equals(a.token, b.token)) &&
+                compareArgsExact(a, b);
     }
 
     public static boolean compareNodesGroupBy(
