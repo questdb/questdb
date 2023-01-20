@@ -281,7 +281,7 @@ public class LineTcpEventBuffer {
             case LineTcpParser.ENTITY_TYPE_DOUBLE:
                 return Double.BYTES;
             case LineTcpParser.ENTITY_TYPE_UUID:
-                return Uuid.BYTES;
+                return Long128.BYTES;
             case ENTITY_TYPE_NULL:
                 return 0;
             default:

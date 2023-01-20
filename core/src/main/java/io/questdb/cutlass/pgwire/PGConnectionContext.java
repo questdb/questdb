@@ -2631,7 +2631,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void setUuidBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(index, Uuid.BYTES, valueLen);
+        ensureValueLength(index, Long128.BYTES, valueLen);
         long hi = getLongUnsafe(address);
         long lo = getLongUnsafe(address + Long.BYTES);
         bindVariableService.setUuid(index, lo, hi);

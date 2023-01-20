@@ -27,7 +27,6 @@ package io.questdb.std;
 import io.questdb.std.str.CharSink;
 
 public final class Uuid implements Sinkable {
-    public static final int BYTES = Long.BYTES * 2;
     public static final int FIRST_DASH_POS = 8;
     public static final int FOURTH_DASH_POS = 23;
     public static final int SECOND_DASH_POS = 13;
