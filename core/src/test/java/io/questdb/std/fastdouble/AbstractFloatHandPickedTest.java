@@ -166,6 +166,7 @@ abstract class AbstractFloatHandPickedTest {
         testLegalHexInput(Math.nextDown(0.0f));
         testLegalInput("Just above MAX_VALUE: 0x1.fffffffffffff8p1023", "0x1.fffffffffffff8p1023", Float.POSITIVE_INFINITY);
         testLegalInput("Just below MIN_VALUE: 0x0.00000000000008p-1022", "0x0.00000000000008p-1022", 0.0f);
+        testLegalInput("0X.2P102481", Float.POSITIVE_INFINITY);
     }
 
     @Test

@@ -910,7 +910,7 @@ public class FilesTest {
             Chars.utf8Decode(buffPtr, buffPtr + size, sink);
             TestUtils.assertEquals(fileContent, sink.toString());
         } finally {
-            Files.closeChecked(fd);
+            Files.close(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
@@ -940,7 +940,7 @@ public class FilesTest {
             }
             Assert.assertTrue(Files.exists(fd));
         } finally {
-            Files.closeChecked(fd);
+            Files.close(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }

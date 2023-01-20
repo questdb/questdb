@@ -483,7 +483,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    long_sequence count: 1\n");
     }
 
-    @Ignore
     @Test
     public void testCountOfColumnsVectorized() throws Exception {
         assertPlan("create table x " +
@@ -506,7 +505,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "from x",
                 "GroupBy vectorized: true\n" +
                         "  keys: [k]\n" +
-                        "  values: [count(),count(),count(i),count(l),count(d),count(dat),count(ts)]\n" +
+                        "  values: [count(*),count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
                         "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -1462,7 +1461,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select count(*), max(i), min(d) from a",
                 "GroupBy vectorized: true\n" +
-                        "  values: [count(0),max(i),min(d)]\n" +
+                        "  values: [count(*),max(i),min(d)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1786,7 +1785,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DistinctKey\n" +
                         "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
-                        "              values: [count(1)]\n" +
+                        "              values: [count(*)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1806,7 +1805,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DistinctKey\n" +
                         "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
-                        "              values: [count(1)]\n" +
+                        "              values: [count(*)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1825,7 +1824,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DistinctKey\n" +
                         "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
-                        "              values: [count(1)]\n" +
+                        "              values: [count(*)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -1844,7 +1843,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DistinctKey\n" +
                         "            GroupBy vectorized: true\n" +
                         "              keys: [s]\n" +
-                        "              values: [count(1)]\n" +
+                        "              values: [count(*)]\n" +
                         "              workers: 1\n" +
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
@@ -2698,7 +2697,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Ignore
     @Test
     public void testRewriteAggregateWithAddition() throws Exception {
         assertMemoryLeak(() -> {
@@ -2745,7 +2743,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
     public void testRewriteAggregateWithMultiplication() throws Exception {
         assertMemoryLeak(() -> {
@@ -2813,7 +2810,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
     public void testRewriteAggregateWithSubtraction() throws Exception {
         assertMemoryLeak(() -> {
@@ -2860,7 +2856,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
     public void testRewriteAggregates() throws Exception {
         assertMemoryLeak(() -> {
@@ -2876,7 +2871,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                     "VirtualRecord\n" +
                             "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
                             "    GroupBy vectorized: true\n" +
-                            "      values: [sum(resolutIONWidth),count(resolutIONWidth),count()]\n" +
+                            "      values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n");
@@ -3173,7 +3168,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table a ( i int, d double)",
                 "select count(2) from a",
                 "GroupBy vectorized: false\n" +
-                        "  values: [count(0)]\n" +
+                        "  values: [count(*)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -3256,7 +3251,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select count_distinct(s)  from tab",
                 "GroupBy vectorized: false\n" +
-                        "  values: [count(s)]\n" +
+                        "  values: [count_distinct(s)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
@@ -3267,7 +3262,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s symbol index, ts timestamp);",
                 "select count_distinct(s)  from tab",
                 "GroupBy vectorized: false\n" +
-                        "  values: [count(s)]\n" +
+                        "  values: [count_distinct(s)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
@@ -3278,7 +3273,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         assertPlan("create table tab ( s string, l long );",
                 "select count_distinct(l)  from tab",
                 "GroupBy vectorized: false\n" +
-                        "  values: [count(l)]\n" +
+                        "  values: [count_distinct(l)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n");
@@ -3360,7 +3355,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DistinctKey\n" +
                         "    GroupBy vectorized: true\n" +
                         "      keys: [s]\n" +
-                        "      values: [count(1)]\n" +
+                        "      values: [count(*)]\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
@@ -3374,7 +3369,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "DistinctKey\n" +
                         "    GroupBy vectorized: true\n" +
                         "      keys: [s]\n" +
-                        "      values: [count(1)]\n" +
+                        "      values: [count(*)]\n" +
                         "      workers: 1\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +

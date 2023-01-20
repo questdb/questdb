@@ -422,7 +422,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             } catch (TextException e) {
                 throw TextImportException.instance(TextImportTask.PHASE_CLEANUP, e.getFlyweightMessage());
             } finally {
-                ff.closeChecked(fd);
+                ff.close(fd);
             }
         } catch (TextImportException e) {
             LOG.error()
