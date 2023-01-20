@@ -1346,7 +1346,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-
             // open another writer that would fail recovery
             // ft table is empty constructor should only attempt to recover non-partitioned ones
             if (empty && partitionBy == PartitionBy.NONE) {
@@ -1357,7 +1356,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            // lets see what we can read after this catastrophe
+            // let's see what we can read after this catastrophe
             try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();

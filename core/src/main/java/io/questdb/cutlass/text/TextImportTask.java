@@ -651,8 +651,8 @@ public class TextImportTask {
                     ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
                 }
             } finally {
-                ff.closeChecked(columnFd);
-                ff.closeChecked(remapFd);
+                ff.close(columnFd);
+                ff.close(remapFd);
                 if (columnMemory > 0) {
                     ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_IMPORT);
                 }
@@ -1119,7 +1119,7 @@ public class TextImportTask {
                 }
 
             } finally {
-                ff.closeChecked(fd);
+                ff.close(fd);
             }
         }
 
@@ -1205,7 +1205,7 @@ public class TextImportTask {
                     }
                 }
             } finally {
-                ff.closeChecked(fd);
+                ff.close(fd);
             }
         }
 
@@ -1276,7 +1276,7 @@ public class TextImportTask {
                     );
                 }
             } finally {
-                ff.closeChecked(fd);
+                ff.close(fd);
                 ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_IMPORT);
                 unmap(ff, unmergedIndexes);
             }

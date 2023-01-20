@@ -244,7 +244,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             }
             Chars.utf8Decode(address, address + size, sink);
         } finally {
-            ff.closeChecked(templateFd);
+            ff.close(templateFd);
         }
     }
 
