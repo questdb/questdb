@@ -1283,10 +1283,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(filesFacade, (receiver) -> {
             String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
                     weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
-                    weather + ",location=us-eastcoast temperature=81 1465839830101400200\n";
-            sendNoWait(receiver, lineData, weather);
-
-            lineData = weather + ",location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    weather + ",location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
                     weather + ",location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
                     weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
             send(receiver, lineData, weather, WAIT_ILP_TABLE_RELEASE);
