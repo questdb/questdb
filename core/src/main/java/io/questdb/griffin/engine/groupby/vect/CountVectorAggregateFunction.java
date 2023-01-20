@@ -97,12 +97,12 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("count(").val(valueOffset).val(')');
+        sink.val("count(*)");
     }
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return true;
+        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum() > 0 ? count.sum() : -1);
     }
 
     @FunctionalInterface
