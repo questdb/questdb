@@ -973,21 +973,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case ColumnType.UUID:
-                        switch (fromTag) {
-                            case ColumnType.UUID:
-                                castFunctions.add(new UuidColumn(i));
-                                break;
-                            case ColumnType.STRING:
-                                castFunctions.add(new CastStrToUuidFunctionFactory.Func(new StrColumn(i)));
-                                break;
-                            default:
-                                throw SqlException.unsupportedCast(
-                                        modelPosition,
-                                        castFromMetadata.getColumnName(i),
-                                        fromType,
-                                        toType
-                                );
-                        }
+                        assert fromTag == ColumnType.UUID;
+                        castFunctions.add(new UuidColumn(i));
                         break;
                     case ColumnType.TIMESTAMP:
                         switch (fromTag) {
