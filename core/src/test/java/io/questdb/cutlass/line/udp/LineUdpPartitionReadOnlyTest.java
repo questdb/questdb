@@ -31,7 +31,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLinePartitionReadOnlyTest;
-import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -152,7 +151,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 tableName,
                 () -> {
                     long[] timestampNano = {firstPartitionTs, secondPartitionTs, thirdPartitionTs, lastPartitionTs};
-                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
+                    try (LineUdpSender sender = new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), ILP_PORT, 200, 1)) {
                         for (int tick = 0; tick < numEvents; tick++) {
                             int tickerId = tick % timestampNano.length;
                             timestampNano[tickerId] += lineTsStep;
@@ -185,9 +184,8 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
         assertMemoryLeak(() -> {
             try (
                     ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-                    CairoEngine engine = qdb.getCairoEngine();
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
+                    SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
+                    SqlExecutionContext context = new SqlExecutionContextImpl(qdb.getCairoEngine(), 1).with(
                             AllowAllCairoSecurityContext.INSTANCE,
                             null,
                             null,
@@ -195,6 +193,7 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                             null)
             ) {
                 qdb.start();
+                CairoEngine engine = qdb.getCairoEngine();
 
                 // create a table with 4 partitions and 1111 rows
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
@@ -209,11 +208,13 @@ public class LineUdpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         Path path = new Path().of(cairoConfig.getRoot())
                 ) {
                     tableToken = engine.lockTableName(tableName, 1, false);
+                    Assert.assertNotNull(tableToken);
                     engine.registerTableToken(tableToken);
                     createTable(cairoConfig, mem, path.concat(tableToken), tableModel, 1, tableToken.getDirName());
                     compiler.compile(insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4), context);
                     engine.unlockTableName(tableToken);
                 }
+                Assert.assertNotNull(tableToken);
 
                 // set partition read-only state
                 final long[] partitionSizes = new long[partitionIsReadOnly.length];
