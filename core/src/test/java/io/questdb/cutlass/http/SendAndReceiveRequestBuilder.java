@@ -59,7 +59,7 @@ public class SendAndReceiveRequestBuilder {
                     "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
-    private final int maxWaitTimeoutMs = 2000;
+    private final int maxWaitTimeoutMs = 30_000;
     private int clientLingerSeconds = -1;
     private int compareLength = -1;
     private boolean expectDisconnect;
