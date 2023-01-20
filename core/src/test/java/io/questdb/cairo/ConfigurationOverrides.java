@@ -72,6 +72,8 @@ public interface ConfigurationOverrides {
 
     int getMaxUncommittedRows();
 
+    int getO3ColumnMemorySize();
+
     long getO3MaxLag();
 
     int getPageFrameMaxRows();
@@ -183,6 +185,8 @@ public interface ConfigurationOverrides {
     void setMaxFileNameLength(int maxFileNameLength);
 
     void setMaxUncommittedRows(int configOverrideMaxUncommittedRows);
+
+    void setO3ColumnMemorySize(int size);
 
     void setO3MaxLag(long configOverrideO3MaxLag);
 

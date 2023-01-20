@@ -22,28 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.std;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+public class Long128 {
+    public static final int BYTES = 16;
 
-public class CountStringGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "count_distinct(S)";
+    // this method is used by byte-code generator
+    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
+    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
+    // instead as A, B records.
+    // See special cases for Long128 in RecordComparatorCompiler
+    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+
+        if (aHi < bHi) {
+            return -1;
+        }
+
+        if (aHi > bHi) {
+            return 1;
+        }
+
+        return Long.compareUnsigned(aLo, bLo);
     }
 
-    @Override
-    public boolean isGroupBy() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountStringGroupByFunction(args.getQuick(0));
+    public static boolean isNull(long lo, long hi) {
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
     }
 }

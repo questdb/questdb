@@ -652,6 +652,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 }
                 break;
+            case ColumnType.UUID:
             case ColumnType.LONG128:
                 Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
@@ -1052,6 +1053,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     );
                 }
                 break;
+            case ColumnType.UUID:
             case ColumnType.LONG128:
                 copyFixedSizeCol(
                         ff,

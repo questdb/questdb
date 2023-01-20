@@ -58,6 +58,12 @@ public final class Vect {
 
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
+    public static native long countDouble(long pDouble, long count);
+
+    public static native long countInt(long pLong, long count);
+
+    public static native long countLong(long pLong, long count);
+
     public static native void flattenIndex(long pIndex, long count);
 
     public static void freeMergedIndex(long pIndex, long indexSize) {

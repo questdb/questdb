@@ -105,12 +105,6 @@ public abstract class Long128Function implements ScalarFunction {
     }
 
     @Override
-    public abstract long getLong128Hi(Record rec);
-
-    @Override
-    public abstract long getLong128Lo(Record rec);
-
-    @Override
     public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }

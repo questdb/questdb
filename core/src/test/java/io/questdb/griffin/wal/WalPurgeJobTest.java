@@ -487,7 +487,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             int txnFd = -1;
 
             @Override
-            public boolean closeChecked(int fd) {
+            public boolean close(int fd) {
                 if (fd == txnFd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
@@ -496,7 +496,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     }
                     txnFd = -1;
                 }
-                return super.closeChecked(fd);
+                return super.close(fd);
             }
 
             @Override
@@ -562,7 +562,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             int txnFd = -1;
 
             @Override
-            public boolean closeChecked(int fd) {
+            public boolean close(int fd) {
                 if (fd == txnFd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
@@ -571,7 +571,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     }
                     txnFd = -1;
                 }
-                return super.closeChecked(fd);
+                return super.close(fd);
             }
 
             @Override

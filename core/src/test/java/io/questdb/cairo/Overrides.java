@@ -58,6 +58,7 @@ public class Overrides implements ConfigurationOverrides {
     private boolean mangleTableDirNames = true;
     private int maxFileNameLength = -1;
     private int maxUncommittedRows = -1;
+    private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
@@ -183,6 +184,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
+    }
+
+    @Override
+    public int getO3ColumnMemorySize() {
+        return o3ColumnMemorySize;
     }
 
     @Override
@@ -501,6 +507,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    @Override
+    public void setO3ColumnMemorySize(int size) {
+        o3ColumnMemorySize = size;
     }
 
     @Override

@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
@@ -263,6 +263,84 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testInsertBadStringIntoUuidColumn() throws Exception {
+        testValueCannotBeInsertedToUuidColumn("totally not a uuid");
+    }
+
+    @Test
+    public void testInsertNonAsciiStringAndUuid() throws Exception {
+        // this is to check that a non-ASCII string will not prevent 
+        // parsing a subsequent UUID
+        runInContext(r -> {
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+                    .col("s", ColumnType.STRING)
+                    .col("u", ColumnType.UUID)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("s", "non-ascii äöü")
+                        .stringColumn("u", "11111111-2222-3333-4444-555555555555")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), engine.getTableToken("mytable"))) {
+                TestUtils.assertReader("s\tu\ttimestamp\n" +
+                        "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNonAsciiStringIntoUuidColumn() throws Exception {
+        // carefully crafted value so when encoded as UTF-8 it has the same byte length as a proper UUID
+        testValueCannotBeInsertedToUuidColumn("11111111-1111-1111-1111-1111111111ü");
+    }
+
+    @Test
+    public void testInsertStringIntoUuidColumn() throws Exception {
+        runInContext(r -> {
+            // create table with UUID column
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+                    .col("u1", ColumnType.UUID)
+                    .col("u2", ColumnType.UUID)
+                    .col("u3", ColumnType.UUID)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
+                        // u2 empty -> insert as null
+                        .stringColumn("u3", "33333333-3333-3333-3333-333333333333")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), engine.getTableToken("mytable"))) {
+                TestUtils.assertReader("u1\tu2\tu3\ttimestamp\n" +
+                        "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
     public void testMinBufferSizeWhenAuth() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         int tinyCapacity = 42;
@@ -473,6 +551,50 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     TestUtils.assertContains(e.getMessage(), "before any other column types");
                     sender.atNow();
                 }
+            }
+        });
+    }
+
+    private void testValueCannotBeInsertedToUuidColumn(String value) throws Exception {
+        runInContext(r -> {
+            // create table with UUID column
+            try (TableModel model = new TableModel(configuration, "mytable", PartitionBy.NONE)
+                    .col("u1", ColumnType.UUID)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            // this sender fails as the string is not UUID
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", value)
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            // this sender succeeds as the string is in the UUID format
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .stringColumn("u1", "11111111-1111-1111-1111-111111111111")
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), engine.getTableToken("mytable"))) {
+                TestUtils.assertReader("u1\ttimestamp\n" +
+                        "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
     }

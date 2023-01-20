@@ -22,29 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.groupby;
 
-public class Long128Util {
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
 
-    // this method is used by byte-code generator
-    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
-    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
-    // instead as A, B records.
-    // See special cases for Long128 in RecordComparatorCompiler
-    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
 
-        if (aHi < bHi) {
-            return -1;
-        }
-
-        if (aHi > bHi) {
-            return 1;
-        }
-
-        return Long.compareUnsigned(aLo, bLo);
+    public CountIntGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
-    public static boolean isNull(long hi, long lo) {
-        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NaN) {
+            mapValue.putLong(valueIndex, 1);
+        } else {
+            mapValue.putLong(valueIndex, 0);
+        }
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NaN) {
+            mapValue.addLong(valueIndex, 1);
+        }
     }
 }

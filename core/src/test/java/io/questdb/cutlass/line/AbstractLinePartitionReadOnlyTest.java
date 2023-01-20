@@ -25,7 +25,10 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.AbstractBootstrapTest;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;

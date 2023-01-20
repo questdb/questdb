@@ -52,7 +52,7 @@ public class EqLong256FunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Long256 lv = left.getLong256A(rec);
-            final Long256 rv = right.getLong256A(rec);
+            final Long256 rv = right.getLong256B(rec);
             return negated != lv.equals(rv);
         }
     }

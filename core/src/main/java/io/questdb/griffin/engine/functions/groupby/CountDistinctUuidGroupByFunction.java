@@ -32,18 +32,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
-import io.questdb.std.CompactCharSequenceHashSet;
+import io.questdb.std.LongLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 
-public class CountStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
-    private int setIndex = 0;
+    private final ObjList<LongLongHashSet> sets = new ObjList<>();
+    private int setIndex;
     private int valueIndex;
 
-    public CountStringGroupByFunction(Function arg) {
+    public CountDistinctUuidGroupByFunction(Function arg) {
         this.arg = arg;
     }
 
@@ -55,17 +55,18 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final CompactCharSequenceHashSet set;
+        LongLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
+            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, Numbers.LONG_NaN, LongLongHashSet.UUID_STRATEGY));
         } else {
             set = sets.getQuick(setIndex);
         }
-        set.clear();
 
-        final CharSequence val = arg.getStr(record);
-        if (val != null) {
-            set.add(Chars.toString(val));
+        set.clear();
+        long lo = arg.getLong128Lo(record);
+        long hi = arg.getLong128Hi(record);
+        if (!Uuid.isNull(lo, hi)) {
+            set.add(lo, hi);
             mapValue.putLong(valueIndex, 1L);
         } else {
             mapValue.putLong(valueIndex, 0L);
@@ -75,14 +76,15 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final CharSequence val = arg.getStr(record);
-        if (val != null) {
-            final int index = set.keyIndex(val);
+        LongLongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        long lo = arg.getLong128Lo(record);
+        long hi = arg.getLong128Hi(record);
+        if (!Uuid.isNull(lo, hi)) {
+            final int index = set.keySlot(lo, hi);
             if (index < 0) {
                 return;
             }
-            set.addAt(index, Chars.toString(val));
+            set.addAt(index, lo, hi);
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -99,7 +101,7 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
 
     @Override
     public String getName() {
-        return "count";
+        return "count_distinct";
     }
 
     @Override
@@ -117,16 +119,6 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
         columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
     }
 
     @Override

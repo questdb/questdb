@@ -39,7 +39,6 @@ public class FilesFacadeImpl implements FilesFacade {
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
 
-
     @Override
     public boolean allocate(int fd, long size) {
         return Files.allocate(fd, size);
@@ -182,10 +181,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return Os.isPosix() && errno == 18;
-    }
-
-    public boolean isDirOrSoftLinkDir(Path path) {
-        return Files.isDirOrSoftLinkDir(path);
     }
 
     @Override

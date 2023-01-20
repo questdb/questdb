@@ -319,18 +319,14 @@ public class TableTransactionLog implements Closeable {
 
                 throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
-                ff.closeChecked(txnFd);
-                ff.closeChecked(txnMetaFd);
-                ff.closeChecked(txnMetaIndexFd);
+                ff.close(txnFd);
+                ff.close(txnMetaFd);
+                ff.close(txnMetaIndexFd);
             }
         }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
-        private static final long WAL_ID_OFFSET = 0;
-        // @formatter:off
-        private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
-        // @formatter:on
         private long address;
         private int fd;
         private FilesFacade ff;
@@ -345,7 +341,7 @@ public class TableTransactionLog implements Closeable {
 
         @Override
         public void close() {
-            ff.closeChecked(fd);
+            ff.close(fd);
             ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
         }
 

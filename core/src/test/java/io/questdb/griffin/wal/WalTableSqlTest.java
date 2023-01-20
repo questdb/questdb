@@ -762,6 +762,24 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testEmptyTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " (" +
+                    "A INT," +
+                    "ts TIMESTAMP)" +
+                    " timestamp(ts) partition by DAY WAL");
+
+            compile("truncate table " + tableName);
+
+            drainWalQueue();
+
+            assertSql("wal_tables()", "name\tsuspended\twriterTxn\tsequencerTxn\n" +
+                    "testEmptyTruncate\tfalse\t1\t1\n");
+        });
+    }
+
+    @Test
     public void testInsertManyThenDrop() throws Exception {
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();

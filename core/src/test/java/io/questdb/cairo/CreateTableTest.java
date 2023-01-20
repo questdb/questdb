@@ -378,6 +378,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 {"z", "STRING"},
                 {"y", "BOOLEAN"},
                 {"l", "LONG256"},
+                {"u", "UUID"},
                 {"gh1", "GEOHASH(7c)"},
                 {"gh2", "GEOHASH(4b)"}
         };
@@ -385,8 +386,9 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertCompile("create table x (" +
                 getColumnDefinitions(columnTypes) + ")"
         );
-        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
+        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
         assertColumnTypes(columnTypes);
+
     }
 
     @Test

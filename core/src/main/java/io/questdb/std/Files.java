@@ -49,6 +49,9 @@ public final class Files {
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
+    // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
+    // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
+    // wasted disk read ops.
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
@@ -103,19 +106,16 @@ public final class Files {
     }
 
     public static int close(int fd) {
-        assert auditClose(fd);
-        int res = close0(fd);
-        if (res == 0) {
-            OPEN_FILE_COUNT.decrementAndGet();
+        // do not close `stdin` and `stdout`
+        if (fd > 1) {
+            assert auditClose(fd);
+            int res = close0(fd);
+            if (res == 0) {
+                OPEN_FILE_COUNT.decrementAndGet();
+            }
+            return res;
         }
-        return res;
-    }
-
-    // If fd is negative, no action occurs.
-    public static int closeChecked(int fd) {
-        if (fd >= 0) {
-            return close(fd);
-        }
+        // failed to close
         return -1;
     }
 
@@ -215,19 +215,6 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
-    public static boolean isDirOrSoftLinkDir(Path path) {
-        long ptr = findFirst(path);
-        if (ptr < 1L) {
-            return false;
-        }
-        try {
-            int type = findType(ptr);
-            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
-        } finally {
-            findClose(ptr);
-        }
-    }
-
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
         return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
     }
@@ -270,7 +257,6 @@ public final class Files {
         for (int i = 0, n = path.length(); i < n; i++) {
             char c = path.charAt(i);
             if (c == Files.SEPARATOR) {
-
                 // do not attempt to create '/' on linux or 'C:\' on Windows
                 if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.charAt(1) == ':')) {
                     continue;

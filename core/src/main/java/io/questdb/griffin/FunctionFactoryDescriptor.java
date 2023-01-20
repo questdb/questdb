@@ -161,6 +161,9 @@ public class FunctionFactoryDescriptor {
             case 'j':
                 sigArgType = ColumnType.LONG128;
                 break;
+            case 'z':
+                sigArgType = ColumnType.UUID;
+                break;
             default:
                 sigArgType = -1;
                 break;

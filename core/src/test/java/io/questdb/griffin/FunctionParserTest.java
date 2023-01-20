@@ -349,7 +349,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("COUNT()", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
-        Assert.assertEquals(CountLongGroupByFunction.class, function.getClass());
+        Assert.assertEquals(CountLongConstGroupByFunction.class, function.getClass());
     }
 
     @Test
@@ -1223,7 +1223,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testSignatureIllegalArgumentType() throws SqlException {
-        assertSignatureFailure("x(Bz)");
+        assertSignatureFailure("x(By)");
     }
 
     @Test
@@ -1422,8 +1422,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testUndefinedBindVariableDefineLong256() throws SqlException {
         assertBindVariableTypes(
                 "count_distinct($1)",
-                new CountLong256GroupByFunctionFactory(),
-                "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
+                new CountDistinctLong256GroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunction",
                 ColumnType.LONG256
         );
     }

@@ -55,9 +55,10 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_SYMBOL = 5;
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
+    public static final byte ENTITY_TYPE_UUID = 20;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_CHAR + 1;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_UUID + 1;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;

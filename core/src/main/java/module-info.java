@@ -138,6 +138,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqStrGeoHashFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqStrUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqUuidStrFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,
@@ -240,6 +243,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
@@ -439,6 +443,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastCharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory,
 //                  cast str to ...,
             io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory,
@@ -460,6 +465,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory,
 //                  cast symbol to ...
             io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToDoubleFunctionFactory,
@@ -483,6 +490,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
 //                  'agg' group by function
@@ -507,6 +515,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastUuidGroupByFunctionFactory,
 
 //                  'first' group by function
             io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
@@ -519,6 +528,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.FirstGeoHashGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstUuidGroupByFunctionFactory,
 //                  'max' group
             io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxBooleanGroupByFunctionFactory,
@@ -541,12 +551,20 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunctionFactory,
 //                  'count' group by function
             io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.CountStringGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountStrGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctStringGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
 //                  'isOrdered'
