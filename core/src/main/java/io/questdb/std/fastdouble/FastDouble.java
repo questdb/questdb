@@ -290,10 +290,8 @@ class FastDouble {
             }
             illegal |= !isDigit(ch);
             do {
-                // Guard against overflow
-                if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
-                    expNumber = 10 * expNumber + ch - '0';
-                }
+                // exponent boundaries will be validated later
+                expNumber = 10 * expNumber + ch - '0';
                 ch = ++index < endIndex ? str.charAt(index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {

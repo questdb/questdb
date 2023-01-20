@@ -228,6 +228,7 @@ abstract class AbstractDoubleHandPickedTest {
         testLegalHexInput(Math.nextDown(0.0));
         testLegalInput("Just above MAX_VALUE: 0x1.fffffffffffff8p1023", "0x1.fffffffffffff8p1023", Double.POSITIVE_INFINITY);
         testLegalInput("Just below MIN_VALUE: 0x0.00000000000008p-1022", "0x0.00000000000008p-1022", 0.0);
+        testLegalInput("0X.2P102481", Double.POSITIVE_INFINITY);
     }
 
     @Test
