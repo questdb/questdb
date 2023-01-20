@@ -1454,13 +1454,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (commitToTimestamp < o3TimestampMin) {
-                    // Don't commit anything, move everything to memory instead.
-                    LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
-                    if (!copiedToMemory) {
-                        // This will copy data from mmap files to memory.
-                        o3ShiftLagRowsUp(timestampIndex, o3Hi - o3Lo, o3Lo, lagRowCount, false);
-                    }
-                    // otherwise the rows are already copied to LAG memory during sorting.
+                    // Don't commit anything, it is enough to move everything to memory instead.
+                    // Copying is already done while sorting at the point so we can finish here.
                     return false;
                 } else {
                     if (commitToTimestamp < o3TimestampMax) {
