@@ -859,7 +859,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void verifyTableToken(TableToken tableToken) {
+    private void verifyTableToken(TableToken tableToken) {
         TableToken newTableToken = tableNameRegistry.getTableToken(tableToken.getTableName());
         if (newTableToken == null) {
             throw CairoException.tableDoesNotExist(tableToken.getTableName());

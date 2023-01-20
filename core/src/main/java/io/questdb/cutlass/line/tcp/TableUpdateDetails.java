@@ -246,12 +246,8 @@ public class TableUpdateDetails implements Closeable {
                 throw CommitFailedException.instance(ex);
             }
         }
-        if (isWal()) {
-            try {
-                engine.verifyTableToken(tableToken);
-            } catch (CairoException | TableReferenceOutOfDateException ignore) {
-                setWriterInError();
-            }
+        if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
+            setWriterInError();
         }
     }
 

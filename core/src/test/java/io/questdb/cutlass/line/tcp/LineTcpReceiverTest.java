@@ -1266,10 +1266,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
+        String weather = "weather";
+        int tableId = 2;
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "weather~2" + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), weather, tableId, true);
+                if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
                     mayDrainWalQueue();
                     dropWeatherTable();
                 }
@@ -1278,15 +1281,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         };
 
         runInContext(filesFacade, (receiver) -> {
-            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            sendNoWait(receiver, lineData, "weather");
+            String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                    weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                    weather + ",location=us-eastcoast temperature=81 1465839830101400200\n";
+            sendNoWait(receiver, lineData, weather);
 
-            lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
-                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
-            send(receiver, lineData, "weather", WAIT_ILP_TABLE_RELEASE);
+            lineData = weather + ",location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    weather + ",location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
+                    weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
+            send(receiver, lineData, weather, WAIT_ILP_TABLE_RELEASE);
 
             mayDrainWalQueue();
 
@@ -1294,7 +1297,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String expected = "location\tsource\ttemp\ttimestamp\n" +
                     "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected, weather);
         }, false, 250);
     }
 
@@ -1303,30 +1306,35 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
+        String weather = "weather";
+        int tableId = 2;
+        String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "weather~2" + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), weather, tableId, true);
+                if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
                     mayDrainWalQueue();
-                    renameTable("weather", "meteorology");
+                    renameTable(weather, meteorology);
+                    Os.sleep(1000); //todo: remove after test
                 }
                 return super.openRW(name, opts);
             }
         };
 
         runInContext(filesFacade, (receiver) -> {
-            String lineData = "weather,location=west1 temperature=10 1465839830100400200\n" +
-                    "weather,location=west2 temperature=20 1465839830100500200\n" +
-                    "weather,location=east3 temperature=30 1465839830100600200\n" +
-                    "weather,location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
-                    "weather,location=east5,source=sensor2 temp=50 1465839830100800200\n" +
-                    "weather,location=west6,source=sensor3 temp=60 1465839830100900200\n";
-            send(receiver, lineData, "weather");
+            String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
+                    weather + ",location=west2 temperature=20 1465839830100500200\n" +
+                    weather + ",location=east3 temperature=30 1465839830100600200\n" +
+                    weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
+                    weather + ",location=east5,source=sensor2 temp=50 1465839830100800200\n" +
+                    weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n";
+            send(receiver, lineData, weather);
 
-            lineData = "weather,location=north,source=sensor4 temp=70 1465839830101000200\n";
-            send(receiver, lineData, "weather");
-            lineData = "meteorology,location=south temperature=80 1465839830101000200\n";
-            send(receiver, lineData, "meteorology");
+            lineData = weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n";
+            send(receiver, lineData, weather);
+            lineData = meteorology + ",location=south temperature=80 1465839830101000200\n";
+            send(receiver, lineData, meteorology);
 
             mayDrainWalQueue();
             String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
@@ -1335,13 +1343,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
                     "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
                     "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
-            assertTable(expected, "meteorology");
+            assertTable(expected, meteorology);
 
             expected = "location\tsource\ttemp\ttimestamp\n" +
                     "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
                     "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
                     "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected, weather);
 
         }, false, 250);
     }
@@ -1351,33 +1359,37 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
         configOverrideWalSegmentRolloverRowCount(2);
+        String weather = "weather";
+        int tableId = 2;
+        String meteorology = "meteorology";
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "weather~2" + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
+                final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), weather, tableId, true);
+                if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
                     mayDrainWalQueue();
-                    renameTable("weather", "meteorology");
+                    renameTable(weather, meteorology);
                 }
                 return super.openRW(name, opts);
             }
         };
 
         runInContext(filesFacade, (receiver) -> {
-            String lineData = "weather,location=west1 temperature=10 1465839830100400200\n" +
-                    "weather,location=west2 temperature=20 1465839830100500200\n" +
-                    "weather,location=east3 temperature=30 1465839830100600200\n";
-            sendNoWait(receiver, lineData, "weather");
+            String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
+                    weather + ",location=west2 temperature=20 1465839830100500200\n" +
+                    weather + ",location=east3 temperature=30 1465839830100600200\n";
+            sendNoWait(receiver, lineData, weather);
 
-            lineData = "weather,location=west4 temperature=40 1465839830100700200\n" +
-                    "weather,location=west5 temperature=50 1465839830100800200\n" +
-                    "weather,location=east6 temperature=60 1465839830100900200\n";
+            lineData = weather + ",location=west4 temperature=40 1465839830100700200\n" +
+                    weather + ",location=west5 temperature=50 1465839830100800200\n" +
+                    weather + ",location=east6 temperature=60 1465839830100900200\n";
 
-            send(receiver, lineData, "weather");
+            send(receiver, lineData, weather);
 
-            lineData = "weather,location=south7 temperature=70 1465839830101000200\n";
-            send(receiver, lineData, "weather");
-            lineData = "meteorology,location=south8 temperature=80 1465839830101000200\n";
-            send(receiver, lineData, "meteorology");
+            lineData = weather + ",location=south7 temperature=70 1465839830101000200\n";
+            send(receiver, lineData, weather);
+            lineData = meteorology + ",location=south8 temperature=80 1465839830101000200\n";
+            send(receiver, lineData, meteorology);
 
             mayDrainWalQueue();
             // two of the three commits go to the renamed table
@@ -1387,14 +1399,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
                     "west4\t40.0\t2016-06-13T17:43:50.100700Z\n" +
                     "south8\t80.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, "meteorology");
+            assertTable(expected, meteorology);
 
             // last commit goes to the recreated table
             expected = "location\ttemperature\ttimestamp\n" +
                     "west5\t50.0\t2016-06-13T17:43:50.100800Z\n" +
                     "east6\t60.0\t2016-06-13T17:43:50.100900Z\n" +
                     "south7\t70.0\t2016-06-13T17:43:50.101000Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected, weather);
 
         }, false, 250);
     }
