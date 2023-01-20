@@ -1095,38 +1095,98 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     @Test
     public void testConvertToWal() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY"
-            );
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                String tableName = testName.getMethodName();
+                compile("create table " + tableName + " as (" +
+                        "select x, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                        " from long_sequence(1)" +
+                        ") timestamp(ts) partition by DAY"
+                );
 
-            TableToken tableToken = engine.convertToWal(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName));
+                try (TableWriterAPI writer = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName), "test")) {
+                    Assert.assertTrue(writer instanceof TableWriter);
+                    TableWriter.Row row = writer.newRow(4000L);
+                    row.putLong(0, 123L);
+                    row.append();
+                    writer.commit();
+                }
 
-            Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME);
-            MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+                TableToken tableToken = engine.convertToWal(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName));
 
-            sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
-            MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+                Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+                MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
 
-            sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat("2022-02-24").concat("x.d");
-            MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+                sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+                MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
 
-            try (TableWriterAPI writer = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "test")) {
-                Assert.assertTrue(writer instanceof WalWriter);
-                TableWriter.Row row = writer.newRow(1000L);
-                row.putLong(0, 3456L);
-                row.append();
-                writer.commit();
+                sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat("2022-02-24").concat("x.d");
+                MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+
+                try (TableWriterAPI writer = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "test")) {
+                    Assert.assertTrue(writer instanceof WalWriter);
+                    TableWriter.Row row = writer.newRow(1000L);
+                    row.putLong(0, 3456L);
+                    row.append();
+                    writer.commit();
+                }
+                drainWalQueue(walApplyJob);
+
+                Assert.assertTrue(engine.isWalTable(tableToken));
+                assertSql(tableName, "x\tts\n" +
+                        "3456\t1970-01-01T00:00:00.001000Z\n" +
+                        "123\t1970-01-01T00:00:00.004000Z\n" +
+                        "1\t2022-02-24T00:00:00.000000Z\n");
             }
-            drainWalQueue();
+        });
+    }
 
-            Assert.assertTrue(engine.isWalTable(tableToken));
-            assertSql(tableName, "x\tts\n" +
-                    "3456\t1970-01-01T00:00:00.001000Z\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n");
+    @Test
+    public void testConvertToNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                String tableName = testName.getMethodName();
+                compile("create table " + tableName + " as (" +
+                        "select x, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                        " from long_sequence(1)" +
+                        ") timestamp(ts) partition by DAY WAL"
+                );
+
+                try (TableWriterAPI writer = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName), "test")) {
+                    Assert.assertTrue(writer instanceof WalWriter);
+                    TableWriter.Row row = writer.newRow(4000L);
+                    row.putLong(0, 123L);
+                    row.append();
+                    writer.commit();
+                }
+                drainWalQueue(walApplyJob);
+
+                TableToken tableToken = engine.convertToNonWal(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken(tableName));
+
+                Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+                MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+
+                sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+                MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+
+                sysPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat("2022-02-24").concat("x.d");
+                MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+
+                try (TableWriterAPI writer = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableToken, "test")) {
+                    Assert.assertTrue(writer instanceof TableWriter);
+                    TableWriter.Row row = writer.newRow(1000L);
+                    row.putLong(0, 3456L);
+                    row.append();
+                    writer.commit();
+                }
+
+                Assert.assertFalse(engine.isWalTable(tableToken));
+                assertSql(tableName, "x\tts\n" +
+                        "3456\t1970-01-01T00:00:00.001000Z\n" +
+                        "123\t1970-01-01T00:00:00.004000Z\n" +
+                        "1\t2022-02-24T00:00:00.000000Z\n");
+            }
         });
     }
 

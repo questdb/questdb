@@ -115,14 +115,15 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken convertToWal(TableToken tableToken) {
-        final String tableName = tableToken.getTableName();
-        if (tableToken.isWal()) {
-            throw CairoException.nonCritical().put("table token is already WAL type [name=").put(tableName).put(']');
+    public TableToken setWalType(TableToken tableToken, boolean walTable) {
+        if (tableToken.isWal() == walTable) {
+            // nothing to do
+            return tableToken;
         }
 
+        final String tableName = tableToken.getTableName();
         if (nameTableTokenMap.remove(tableName, tableToken)) {
-            final TableToken newToken = new TableToken(tableName, tableToken.getDirName(), tableToken.getTableId(), true);
+            final TableToken newToken = new TableToken(tableName, tableToken.getDirName(), tableToken.getTableId(), walTable);
             nameTableTokenMap.put(tableName, newToken);
             // Persist to file
             nameStore.logDropTable(tableToken);

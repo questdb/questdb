@@ -315,8 +315,32 @@ public class CairoEngine implements Closeable, WriterSource {
         final CharSequence lockedReason = lock(securityContext, tableToken, "convertToWal");
         if (lockedReason == null) {
             try {
-                final TableToken newToken = tableNameRegistry.convertToWal(tableToken);
+                final TableToken newToken = tableNameRegistry.setWalType(tableToken, true);
                 tableSequencerAPI.registerTable(newToken.getTableId(), tableDescriptor, newToken);
+                return newToken;
+            } finally {
+                unlockTableUnsafe(tableToken, null, false);
+            }
+        }
+        throw CairoException.nonCritical().put("Could not lock '").put(tableToken).put("' [reason='").put(lockedReason).put("']");
+    }
+
+    public TableToken convertToNonWal(
+            CairoSecurityContext securityContext,
+            TableToken tableToken
+    ) {
+        securityContext.checkWritePermission();
+        verifyTableToken(tableToken);
+        if (!tableToken.isWal()) {
+            throw CairoException.nonCritical().put("table is already non-WAL type [name=").put(tableToken)
+                    .put(", dirName=").put(tableToken.getDirName()).put(']');
+        }
+
+        final CharSequence lockedReason = lock(securityContext, tableToken, "convertToNonWal");
+        if (lockedReason == null) {
+            try {
+                final TableToken newToken = tableNameRegistry.setWalType(tableToken, false);
+                tableSequencerAPI.deregisterTable(tableToken);
                 return newToken;
             } finally {
                 unlockTableUnsafe(tableToken, null, false);
@@ -532,7 +556,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
-
         }
         return walWriterPool.get(tableToken);
     }

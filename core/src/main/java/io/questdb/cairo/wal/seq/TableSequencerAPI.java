@@ -276,6 +276,19 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void deregisterTable(final TableToken tableToken) {
+        try (TableSequencerEntry tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
+            try {
+                if (tableSequencer.checkClose()) {
+                    LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
+                    seqRegistry.remove(tableToken.getDirName(), tableSequencer);
+                }
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+        }
+    }
+
     public boolean releaseAll() {
         return releaseAll(Long.MAX_VALUE);
     }
