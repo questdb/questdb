@@ -34,16 +34,14 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
+import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
