@@ -2343,6 +2343,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectInVolumeNotAllowedAsItNoLongerExists1() throws Exception {
+        Assert.assertFalse(Os.isWindows()); // soft links not supported in windows
         File volume = temp.newFolder("other_path");
         String volumeAlias = "pera";
         String volumePath = volume.getAbsolutePath();
