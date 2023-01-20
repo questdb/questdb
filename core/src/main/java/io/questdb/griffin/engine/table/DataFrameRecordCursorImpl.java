@@ -32,17 +32,12 @@ import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.BooleanSupplier;
-
 class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
 
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
-    private final BooleanSupplier nextFrame = this::nextFrame;
-    private final BooleanSupplier nextRow = this::nextRow;
     private boolean areCursorsPrepared;
-    private BooleanSupplier next;
     private RowCursor rowCursor;
 
     public DataFrameRecordCursorImpl(
@@ -68,11 +63,26 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
             areCursorsPrepared = true;
         }
+
         try {
-            return next.getAsBoolean();
+            if (rowCursor != null && rowCursor.hasNext()) {
+                recordA.setRecordIndex(rowCursor.next());
+                return true;
+            }
+
+            DataFrame dataFrame;
+            while ((dataFrame = dataFrameCursor.next()) != null) {
+                rowCursor = rowCursorFactory.getCursor(dataFrame);
+                if (rowCursor.hasNext()) {
+                    recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                    return true;
+                }
+            }
         } catch (NoMoreFramesException ignore) {
             return false;
         }
+
+        return false;
     }
 
     @Override
@@ -89,7 +99,7 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         recordA.of(dataFrameCursor.getTableReader());
         recordB.of(dataFrameCursor.getTableReader());
         rowCursorFactory.init(dataFrameCursor.getTableReader(), sqlExecutionContext);
-        next = nextFrame;
+        rowCursor = null;
         areCursorsPrepared = false;
     }
 
@@ -108,7 +118,6 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         if (dataFrame != null) {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); // move to partition, rowlo doesn't matter
-            next = nextRow;
             return true;
         }
         return false;
@@ -125,27 +134,6 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             filter.toTop();
         }
         dataFrameCursor.toTop();
-        next = nextFrame;
-    }
-
-    private boolean nextFrame() {
-        DataFrame dataFrame;
-        while ((dataFrame = dataFrameCursor.next()) != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            if (rowCursor.hasNext()) {
-                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
-                next = nextRow;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean nextRow() {
-        if (rowCursor.hasNext()) {
-            recordA.setRecordIndex(rowCursor.next());
-            return true;
-        }
-        return nextFrame();
+        rowCursor = null;
     }
 }
