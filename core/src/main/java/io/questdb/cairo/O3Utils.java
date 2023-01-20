@@ -49,11 +49,11 @@ public class O3Utils {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
+        workerPool.assign(purgeDiscoveryJob);
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-            workerPool.assign(purgeDiscoveryJob);
             workerPool.freeOnExit(columnPurgeJob);
             workerPool.assign(columnPurgeJob);
         }
