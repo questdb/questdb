@@ -37,6 +37,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     private long hi;
     private long lo;
     private long ptr;
+    private FloatingCharSequence subSequence;
 
     public DirectCharSink(long capacity) {
         ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
@@ -117,7 +118,10 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
 
     @Override
     public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
+        if (subSequence == null) {
+            subSequence = new FloatingCharSequence();
+        }
+        return subSequence.of(start, end - start);
     }
 
     @NotNull
@@ -138,5 +142,27 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     @TestOnly
     long getCapacity() {
         return capacity;
+    }
+
+    private class FloatingCharSequence extends AbstractCharSequence {
+
+        private int len;
+        private int startIndex;
+
+        @Override
+        public char charAt(int index) {
+            return Unsafe.getUnsafe().getChar(ptr + (startIndex + index) * 2L);
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        CharSequence of(int startIndex, int len) {
+            this.startIndex = startIndex;
+            this.len = len;
+            return this;
+        }
     }
 }
