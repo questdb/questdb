@@ -25,6 +25,8 @@
 #ifndef VECT_VANILLA_H
 #define VECT_VANILLA_H
 
+int64_t countDouble_Vanilla(double *d, int64_t count);
+
 double sumDouble_Vanilla(double *d, int64_t count);
 
 double sumDoubleKahan_Vanilla(double *d, int64_t count);
@@ -35,11 +37,15 @@ double minDouble_Vanilla(double *d, int64_t count);
 
 double maxDouble_Vanilla(double *d, int64_t count);
 
+int64_t countInt_Vanilla(int32_t *pi, int64_t count);
+
 int64_t sumInt_Vanilla(int32_t *pi, int64_t count);
 
 int32_t minInt_Vanilla(int32_t *pi, int64_t count);
 
 int32_t maxInt_Vanilla(int32_t *pi, int64_t count);
+
+int64_t countLong_Vanilla(int64_t *pl, int64_t count);
 
 int64_t sumLong_Vanilla(int64_t *pl, int64_t count);
 

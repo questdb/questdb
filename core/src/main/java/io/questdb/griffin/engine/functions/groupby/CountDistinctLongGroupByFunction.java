@@ -98,7 +98,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public String getName() {
-        return "count";
+        return "count_distinct";
     }
 
     @Override
