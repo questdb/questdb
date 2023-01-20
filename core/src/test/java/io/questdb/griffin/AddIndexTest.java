@@ -79,8 +79,10 @@ public class AddIndexTest extends AbstractGriffinTest {
             );
 
             compile("alter table trades alter column sym2 add index", sqlExecutionContext);
+            // While row count is derived from append page size, the expected row count value is hardcoded
+            // as a string. Test will fail should append page size change.
             assertSql("select count(*) from trades where sym2 = 'ABB'", "count\n" +
-                    "1398605\n");
+                    "175654\n");
         });
     }
 

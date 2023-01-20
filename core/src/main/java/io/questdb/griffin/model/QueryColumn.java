@@ -33,6 +33,7 @@ public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
     private ExpressionNode ast;
+    private int columnType;
     private boolean includeIntoWildcard = true;
 
     protected QueryColumn() {
@@ -43,6 +44,7 @@ public class QueryColumn implements Mutable {
         alias = null;
         ast = null;
         includeIntoWildcard = true;
+        columnType = -1;
     }
 
     @Override
@@ -59,6 +61,10 @@ public class QueryColumn implements Mutable {
 
     public ExpressionNode getAst() {
         return ast;
+    }
+
+    public int getColumnType() {
+        return columnType;
     }
 
     public CharSequence getName() {
@@ -79,9 +85,14 @@ public class QueryColumn implements Mutable {
     }
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
+        return of(alias, ast, includeIntoWildcard, -1);
+    }
+
+    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard, int type) {
         this.alias = alias;
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
+        this.columnType = type;
         return this;
     }
 

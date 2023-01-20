@@ -38,10 +38,6 @@ public interface FilesFacade {
 
     boolean close(int fd);
 
-    default boolean closeChecked(int fd) {
-        return Files.closeChecked(fd) == 0;
-    }
-
     boolean closeRemove(int fd, LPSZ path);
 
     int copy(LPSZ from, LPSZ to);
@@ -85,8 +81,6 @@ public interface FilesFacade {
     int hardLinkDirRecursive(Path src, Path dst, int dirMode);
 
     boolean isCrossDeviceCopyError(int errno);
-
-    boolean isDirOrSoftLinkDir(Path path);
 
     boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
 

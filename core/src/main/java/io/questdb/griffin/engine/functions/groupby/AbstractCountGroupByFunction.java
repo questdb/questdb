@@ -29,62 +29,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
-import io.questdb.std.CompactCharSequenceHashSet;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 
-public class CountStringGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
-    private int setIndex = 0;
-    private int valueIndex;
+public abstract class AbstractCountGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
 
-    public CountStringGroupByFunction(Function arg) {
+    protected final Function arg;
+    protected int valueIndex;
+
+    protected AbstractCountGroupByFunction(Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public void clear() {
-        sets.clear();
-        setIndex = 0;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        final CompactCharSequenceHashSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new CompactCharSequenceHashSet());
-        } else {
-            set = sets.getQuick(setIndex);
-        }
-        set.clear();
-
-        final CharSequence val = arg.getStr(record);
-        if (val != null) {
-            set.add(Chars.toString(val));
-            mapValue.putLong(valueIndex, 1L);
-        } else {
-            mapValue.putLong(valueIndex, 0L);
-        }
-        mapValue.putInt(valueIndex + 1, setIndex++);
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final CharSequence val = arg.getStr(record);
-        if (val != null) {
-            final int index = set.keyIndex(val);
-            if (index < 0) {
-                return;
-            }
-            set.addAt(index, Chars.toString(val));
-            mapValue.addLong(valueIndex, 1);
-        }
     }
 
     @Override
@@ -98,17 +55,7 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
-    public String getName() {
-        return "count";
-    }
-
-    @Override
     public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
         return false;
     }
 
@@ -116,7 +63,6 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -135,8 +81,7 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-        setIndex = 0;
+    public void toPlan(PlanSink sink) {
+        sink.val("count(").val(arg).val(')');
     }
 }
