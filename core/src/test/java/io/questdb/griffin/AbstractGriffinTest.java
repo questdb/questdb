@@ -1519,17 +1519,17 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
     }
 
-    protected void createPopulateTable(
+    protected TableToken createPopulateTable(
             int tableId,
             TableModel tableModel,
             int totalRows,
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        createPopulateTable(tableId, tableModel, 1, totalRows, startDate, partitionCount);
+        return createPopulateTable(tableId, tableModel, 1, totalRows, startDate, partitionCount);
     }
 
-    protected void createPopulateTable(
+    protected TableToken createPopulateTable(
             int tableId,
             TableModel tableModel,
             int insertIterations,
@@ -1550,6 +1550,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 );
             }
         }
+        return tableToken;
     }
 
     protected void executeOperation(

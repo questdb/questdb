@@ -22,17 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.MutableCharSink;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import org.jetbrains.annotations.NotNull;
 
-public final class LineTcpUtils {
-    public static String utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
-        tempSink.clear();
-        for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
-            tempSink.put(utf8CharSeq.charAt(i));
+public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunction {
+
+    public CountGeoHashGroupByFunctionLong(@NotNull Function arg) {
+        super(arg);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final long value = arg.getGeoLong(record);
+        if (value != GeoHashes.NULL) {
+            mapValue.putLong(valueIndex, 1);
+        } else {
+            mapValue.putLong(valueIndex, 0);
         }
-        return tempSink.toString();
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final long value = arg.getGeoLong(record);
+        if (value != GeoHashes.NULL) {
+            mapValue.addLong(valueIndex, 1);
+        }
     }
 }
+

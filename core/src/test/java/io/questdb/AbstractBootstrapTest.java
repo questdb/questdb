@@ -27,17 +27,16 @@ package io.questdb;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URL;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -48,13 +47,19 @@ public abstract class AbstractBootstrapTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
+    protected static final int HTTP_MIN_PORT = 9011;
+    protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
     protected static final int ILP_PORT = 9009;
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
-    protected static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
-    private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
+    protected static final int PG_PORT = 8822;
+    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
+    private static final File siteDir = new File(Objects.requireNonNull(ServerMain.class.getResource("/io/questdb/site/")).getFile());
     protected static CharSequence root;
     private static boolean publicZipStubCreated = false;
+
+    @Rule
+    public TestName testName = new TestName();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -78,7 +83,7 @@ public abstract class AbstractBootstrapTest {
     }
 
     @AfterClass
-    public static void tearDownStatic() {
+    public static void tearDownStatic() throws Exception {
         if (publicZipStubCreated) {
             File publicZip = new File(siteDir, "public.zip");
             if (publicZip.exists()) {
@@ -90,11 +95,16 @@ public abstract class AbstractBootstrapTest {
         temp.delete();
     }
 
-    protected static void createDummyConfiguration() throws Exception {
+    protected static void createDummyConfiguration(
+            int httpPort,
+            int httpMinPort,
+            int pgPort,
+            int ilpPort,
+            String... extra) throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, "UTF8")) {
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
 
             // enable services
             writer.println("http.enabled=true");
@@ -113,11 +123,11 @@ public abstract class AbstractBootstrapTest {
             writer.println("telemetry.enabled=false");
 
             // configure end points
-            writer.println("http.bind.to=0.0.0.0:9010");
-            writer.println("http.min.net.bind.to=0.0.0.0:9011");
-            writer.println("pg.net.bind.to=0.0.0.0:8822");
-            writer.println("line.tcp.net.bind.to=0.0.0.0:" + ILP_PORT);
-            writer.println("line.udp.bind.to=0.0.0.0:" + ILP_PORT);
+            writer.println("http.bind.to=0.0.0.0:" + httpPort);
+            writer.println("http.min.net.bind.to=0.0.0.0:" + httpMinPort);
+            writer.println("pg.net.bind.to=0.0.0.0:" + pgPort);
+            writer.println("line.tcp.net.bind.to=0.0.0.0:" + ilpPort);
+            writer.println("line.udp.bind.to=0.0.0.0:" + ilpPort);
             writer.println("line.udp.receive.buffer.size=" + ILP_BUFFER_SIZE);
 
             // configure worker pools
@@ -127,22 +137,33 @@ public abstract class AbstractBootstrapTest {
             writer.println("pg.worker.count=1");
             writer.println("line.tcp.writer.worker.count=1");
             writer.println("line.tcp.io.worker.count=1");
+
+            // extra
+            if (extra != null) {
+                for (String s : extra) {
+                    writer.println(s);
+                }
+            }
         }
 
         // mime types
         file = confPath + Files.SEPARATOR + "mime.types";
-        try (PrintWriter writer = new PrintWriter(file, "UTF8")) {
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("");
         }
 
         // logs
         file = confPath + Files.SEPARATOR + "log.conf";
         System.setProperty("out", file);
-        try (PrintWriter writer = new PrintWriter(file, "UTF8")) {
+        try (PrintWriter writer = new PrintWriter(file, "UTF-8")) {
             writer.println("writers=stdout");
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
         }
+    }
+
+    protected static void createDummyConfiguration(String... extra) throws Exception {
+        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {
@@ -156,6 +177,10 @@ public abstract class AbstractBootstrapTest {
         System.arraycopy(args, 0, extendedArgs, 0, argsLen);
         System.arraycopy(moreArgs, 0, extendedArgs, argsLen, extLen);
         return extendedArgs;
+    }
+
+    protected static String getPgConnectionUri(int pgPort) {
+        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
     }
 
     void assertFail(String message, String... args) {

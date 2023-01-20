@@ -22,32 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.CompactMap;
-import io.questdb.std.*;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
+import org.jetbrains.annotations.NotNull;
 
-public class HashTest {
+public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
 
-    @Test
-    public void testStringHash() {
-        CompactMap.HashFunction hashFunction = Hash::hashMem;
-        testHash(hashFunction);
+    public CountIntGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
-    private void testHash(CompactMap.HashFunction hashFunction) {
-        Rnd rnd = new Rnd();
-        LongHashSet hashes = new LongHashSet(100000);
-        final int LEN = 64;
-
-        long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
-
-        for (int i = 0; i < 100000; i++) {
-            rnd.nextChars(address, LEN / 2);
-            hashes.add(hashFunction.hash(address, LEN));
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NaN) {
+            mapValue.putLong(valueIndex, 1);
+        } else {
+            mapValue.putLong(valueIndex, 0);
         }
-        Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NaN) {
+            mapValue.addLong(valueIndex, 1);
+        }
     }
 }

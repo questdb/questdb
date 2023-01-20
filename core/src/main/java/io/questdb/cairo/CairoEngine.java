@@ -105,9 +105,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetryPubSeq = null;
             this.telemetrySubSeq = null;
         }
-        tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
-            tableIdGenerator.open();
+            this.tableIdGenerator.open();
         } catch (Throwable e) {
             close();
             throw e;
@@ -281,7 +281,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     path.of(configuration.getRoot()).concat(tableToken).$();
                     int errno;
                     if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                        LOG.error().$("drop failed [tableName='").$(tableToken).$("', error=").$(errno).$(']').$();
+                        LOG.error().$("drop failed [tableName='").$(tableToken).$("', error=").$(errno).I$();
                         throw CairoException.critical(errno).put("could not remove table [name=").put(tableToken)
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
@@ -811,14 +811,14 @@ public class CairoEngine implements Closeable, WriterSource {
             if (dstTableToken != null) {
                 tableNameRegistry.unlockTableName(dstTableToken);
             }
-            LOG.error().$("rename target exists [from='").utf8(tableName).$("', to='").utf8(otherPath.chop$()).I$();
+            LOG.error().$("rename target exists [from='").utf8(tableName).$("', to='").utf8(otherPath.$()).I$();
             throw CairoException.nonCritical().put("Rename target exists");
         }
 
         try {
             if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
                 int error = ff.errno();
-                LOG.error().$("could not rename [from='").$(path).$("', to='").utf8(otherPath).$("', error=").$(error).I$();
+                LOG.error().$("could not rename [from='").utf8(path).$("', to='").utf8(otherPath).$("', error=").$(error).I$();
                 throw CairoException.critical(error)
                         .put("could not rename [from='").put(path)
                         .put("', to='").put(otherPath)

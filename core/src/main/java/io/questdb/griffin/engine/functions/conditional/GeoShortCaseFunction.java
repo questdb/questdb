@@ -22,28 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
-public class CountStringGroupByFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "count_distinct(S)";
+public class GeoShortCaseFunction extends GeoShortFunction implements MultiArgFunction {
+    private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
+
+    public GeoShortCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args) {
+        super(type);
+        this.picker = picker;
+        this.args = args;
     }
 
     @Override
-    public boolean isGroupBy() {
-        return true;
+    public ObjList<Function> getArgs() {
+        return args;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CountStringGroupByFunction(args.getQuick(0));
+    public short getGeoShort(Record rec) {
+        return picker.pick(rec).getGeoShort(rec);
     }
 }

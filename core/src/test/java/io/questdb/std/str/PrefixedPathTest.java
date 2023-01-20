@@ -74,7 +74,7 @@ public class PrefixedPathTest {
     }
 
     private static String transform(final String s) {
-        return Os.type == Os.WINDOWS ? s.replaceAll("/", "\\\\") : s;
+        return Os.isWindows() ? s.replaceAll("/", "\\\\") : s;
     }
 
     private void assertThat(PrefixedPath path, String expected, CharSequence concat) {

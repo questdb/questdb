@@ -805,11 +805,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
            com_questdb_std_Files_DT_DIR : com_questdb_std_Files_DT_REG;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
-        (JNIEnv *e, jclass cl, jlong findPtr) {
-    return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jint fd) {
     if (LockFile(FD_TO_HANDLE(fd), 0, 0, 1, 0)) {

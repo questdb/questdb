@@ -31,8 +31,31 @@ import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
 
+    /**
+     * Not-keyed aggregation that doesn't use rosti.
+     * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
+     *
+     * @param address        address
+     * @param addressSize    address size
+     * @param columnSizeHint column size hint
+     * @param workerId       worker id
+     */
     void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
 
+
+    /**
+     * Keyed aggregation that uses rosti.
+     * If valueAddress == 0 it means that value page frame is 'empty' (due to column tops) and contains null values
+     * so only keys should be processed.
+     *
+     * @param pRosti           pointer to rosti
+     * @param keyAddress       key address
+     * @param valueAddress     value address
+     * @param valueAddressSize value address size
+     * @param columnSizeShr    column size
+     * @param workerId         worker id
+     * @return true if processing went fine and false if it failed on memory allocation
+     */
     boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
 
     int getColumnIndex();
@@ -40,9 +63,20 @@ public interface VectorAggregateFunction extends Function, Mutable {
     // value offset in map
     int getValueOffset();
 
+    /**
+     * Set initial/default slot values (e.g. 0 for count())
+     *
+     * @param pRosti pointer to rosti
+     */
     void initRosti(long pRosti);
 
-    //returns true if merge was fine and false if it failed on memory allocation 
+    /**
+     * Merge rosti instance pointed to by pRostiB into rosti instance pointed to by pRostiA.
+     *
+     * @param pRostiA pointer to rosti that will hold result
+     * @param pRostiB pointer to other rosti to merge
+     * @return true if merge was fine and false if it failed on memory allocation
+     */
     boolean merge(long pRostiA, long pRostiB);
 
     void pushValueTypes(ArrayColumnTypes types);
@@ -51,9 +85,13 @@ public interface VectorAggregateFunction extends Function, Mutable {
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');
     }
-
-    // sets null as result of aggregation of all nulls
-    // this typically checks non-null count and replaces 0 with null if all values were null
-    //returns true if wrapUp was fine and false if it failed on memory allocation
+    
+    /**
+     * Used for keyed aggregates only.
+     * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.
+     *
+     * @param pRosti pointer to rosti
+     * @return true if wrapUp was fine and false if it failed on memory allocation
+     */
     boolean wrapUp(long pRosti);
 }
