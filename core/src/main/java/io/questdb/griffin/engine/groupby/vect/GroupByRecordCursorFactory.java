@@ -240,17 +240,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
                         ownCount++;
                     } else {
-                        if (keyAddress != 0 || valueAddress != 0) {
-                            final VectorAggregateEntry entry = entryPool.next();
-                            if (keyAddress == 0) {
-                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null, sharedCircuitBreaker);
-                            } else {
-                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf, sharedCircuitBreaker);
-                            }
-                            activeEntries.add(entry);
-                            queue.get(seq).entry = entry;
-                            pubSeq.done(seq);
+                        final VectorAggregateEntry entry = entryPool.next();
+                        if (keyAddress == 0) {
+                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, null, sharedCircuitBreaker);
+                        } else {
+                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter, raf, sharedCircuitBreaker);
                         }
+                        activeEntries.add(entry);
+                        queue.get(seq).entry = entry;
+                        pubSeq.done(seq);
                     }
                     total++;
                 }

@@ -24,124 +24,34 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.*;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import org.jetbrains.annotations.NotNull;
 
-public class CountLong256GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final ObjList<Long256HashSet> sets = new ObjList<>();
-    private int setIndex;
-    private int valueIndex;
+public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
 
-    public CountLong256GroupByFunction(Function arg) {
-        this.arg = arg;
-    }
-
-    @Override
-    public void clear() {
-        sets.clear();
-        setIndex = 0;
+    public CountLong256GroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final Long256HashSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new Long256HashSet());
+        final Long256 value = arg.getLong256A(record);
+        if (!Long256Impl.isNull(value)) {
+            mapValue.putLong(valueIndex, 1);
         } else {
-            set = sets.getQuick(setIndex);
+            mapValue.putLong(valueIndex, 0);
         }
-
-        set.clear();
-        Long256 val = arg.getLong256A(record);
-        if (isNotNull(val)) {
-            set.add(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-            mapValue.putLong(valueIndex, 1L);
-        } else {
-            mapValue.putLong(valueIndex, 0L);
-        }
-        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final Long256HashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final Long256 val = arg.getLong256A(record);
-        if (isNotNull(val)) {
-            final int index = set.keyIndex(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-            if (index < 0) {
-                return;
-            }
-            set.addAt(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+        final Long256 value = arg.getLong256A(record);
+        if (!Long256Impl.isNull(value)) {
             mapValue.addLong(valueIndex, 1);
         }
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
-    }
-
-    @Override
-    public String getName() {
-        return "count";
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-        setIndex = 0;
-    }
-
-    private static boolean isNotNull(Long256 value) {
-        return value != null &&
-                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
-                value.getLong1() != Numbers.LONG_NaN ||
-                value.getLong2() != Numbers.LONG_NaN ||
-                value.getLong3() != Numbers.LONG_NaN);
     }
 }

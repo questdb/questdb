@@ -68,6 +68,7 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import static io.questdb.griffin.model.ExpressionNode.CONSTANT;
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
@@ -81,6 +82,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
     private static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
     private static final IntHashSet limitTypes = new IntHashSet();
@@ -269,10 +271,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
-        } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
-            // count() is a no-arg function
+        } else if (ast.type == FUNCTION && SqlKeywords.isCountKeyword(ast.token) &&
+                (ast.paramCount == 0 || (ast.paramCount == 1 && ast.rhs.type == CONSTANT && !isNullKeyword(ast.rhs.token)))) {
+            // count() is a no-arg function, count(1) is the same as count(*)
             tempVecConstructorArgIndexes.add(-1);
             return COUNT_CONSTRUCTOR;
+        } else if (isSingleColumnFunction(ast, "count")) {
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            tempVecConstructorArgIndexes.add(columnIndex);
+            return countConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -4593,6 +4600,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     static {
+        countConstructors.put(ColumnType.DOUBLE, CountDoubleVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.INT, CountIntVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.LONG, CountLongVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.DATE, CountLongVectorAggregateFunction::new);
+        countConstructors.put(ColumnType.TIMESTAMP, CountLongVectorAggregateFunction::new);
+
         sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
