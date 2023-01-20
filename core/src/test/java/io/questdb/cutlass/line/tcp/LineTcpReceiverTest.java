@@ -1316,7 +1316,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (Chars.endsWith(name, dirName + Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
-                    Os.sleep(1000); //todo: remove after test
                 }
                 return super.openRW(name, opts);
             }
