@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -33,8 +34,8 @@ import java.util.Map;
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryFileStore nameStore;
-    private Map<CharSequence, TableToken> nameTokenMap;
-    private Map<CharSequence, ReverseTableMapItem> reverseNameTokenMap;
+    private ConcurrentHashMap<TableToken> nameTokenMap;
+    private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
 
     public AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.nameStore = new TableNameRegistryFileStore(configuration);
@@ -91,8 +92,8 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     void setNameMaps(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap) {
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap) {
         this.nameTokenMap = nameTableTokenMap;
         this.reverseNameTokenMap = reverseTableNameTokenMap;
     }

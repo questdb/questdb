@@ -51,7 +51,7 @@ public class TableSequencerAPI implements QuietCloseable {
     private final long inactiveTtlUs;
     private final BiFunction<CharSequence, Object, TableSequencerEntry> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
-    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>(false);
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
