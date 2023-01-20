@@ -52,7 +52,7 @@ import static org.hamcrest.Matchers.containsString;
 public class TextLoaderTest extends AbstractGriffinTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
-    private static final String PATH_SEP_REGEX = Os.type == Os.WINDOWS ?
+    private static final String PATH_SEP_REGEX = Os.isWindows() ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 

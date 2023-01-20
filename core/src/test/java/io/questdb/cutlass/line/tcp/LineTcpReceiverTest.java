@@ -260,7 +260,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testDateColumnAcceptsTimestamp() throws Exception {
-        Assume.assumeFalse(walEnabled);
         partitionByDefault = PartitionBy.NONE;
         String tableName = "date_column_accepts_timestamp";
 

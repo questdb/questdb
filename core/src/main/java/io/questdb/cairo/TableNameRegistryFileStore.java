@@ -72,6 +72,10 @@ public class TableNameRegistryFileStore implements Closeable {
         tableNameMemory.close(false);
     }
 
+    public boolean isLocked() {
+        return lockFd != -1;
+    }
+
     public boolean lock() {
         if (lockFd != -1) {
             throw CairoException.critical(0).put("table registry already locked");
@@ -177,10 +181,6 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
-    public boolean isLocked() {
-        return lockFd != -1;
-    }
-
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.META_FILE_NAME).$();
         int fd = ff.openRO(path);
@@ -231,17 +231,16 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     private void reloadFromRootDirectory(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         Path path = Path.getThreadLocal(configuration.getRoot());
+        int plimit = path.length();
         FilesFacade ff = configuration.getFilesFacade();
         long findPtr = ff.findFirst(path.$());
         StringSink sink = Misc.getThreadLocalBuilder();
-
         do {
-            long fileName = ff.findName(findPtr);
-            if (Files.isDir(fileName, ff.findType(findPtr), sink)) {
+            if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
                 if (!reverseTableNameTokenMap.containsKey(sink)
                         && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
@@ -299,8 +298,8 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     private void reloadFromTablesFile(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
@@ -423,8 +422,8 @@ public class TableNameRegistryFileStore implements Closeable {
     }
 
     void reload(
-            Map<CharSequence, TableToken> nameTableTokenMap,
-            Map<CharSequence, ReverseTableMapItem> reverseTableNameTokenMap
+            ConcurrentHashMap<TableToken> nameTableTokenMap,
+            ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
         tableIds.clear();
         reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap);

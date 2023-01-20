@@ -4514,7 +4514,9 @@ public class IODispatcherTest {
                                             "00\r\n" +
                                             "\r\n"
                             );
-                            Os.sleep(timeout);
+                            if (i != iterations - 1) {
+                                Os.sleep(timeout);
+                            }
                         }
                     }
                 });
@@ -7239,7 +7241,9 @@ public class IODispatcherTest {
                                             "00\r\n" +
                                             "\r\n"
                             );
-                            Os.sleep(timeout);
+                            if (i != iterations - 1) {
+                                Os.sleep(timeout);
+                            }
                         }
                     }
                 });

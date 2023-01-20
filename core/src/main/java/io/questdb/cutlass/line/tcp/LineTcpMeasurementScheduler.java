@@ -40,6 +40,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -73,7 +74,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
     private final CairoSecurityContext securityContext;
     private final StringSink[] tableNameSinks;
-    private final LowerCaseCharSequenceObjHashMap<TableToken> tableNamesUtf16;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
@@ -108,7 +108,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         // in worker threads.
         tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-        tableNamesUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
         autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
@@ -170,7 +169,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         try {
             closeLocals(tableUpdateDetailsUtf16);
             closeLocals(idleTableUpdateDetailsUtf16);
-            tableNamesUtf16.clear();
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
@@ -189,10 +187,10 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    public long commitWalTables(DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
+    public long commitWalTables(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
         long minTableNextCommitTime = Long.MAX_VALUE;
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             // WAL writer
             if (tud.getWriterThreadId() == -1) {
@@ -217,12 +215,12 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     public boolean doMaintenance(
-            DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (millis - tud.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
@@ -324,12 +322,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             int columnIndex = ld.getColumnIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
             int columnType = ColumnType.UNDEFINED;
             if (columnIndex == COLUMN_NOT_FOUND) {
-                final String columnNameUtf16 = ld.getColName();
+                final String columnNameUtf16 = ld.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                     if (metadata.getColumnIndexQuiet(columnNameUtf16) < 0) {
                         ww.commit();
                         try {
-                            ww.addColumn(columnNameUtf16, ld.getColumnType(columnNameUtf16, ent.getType()));
+                            ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
                         } catch (CairoException e) {
                             columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                             if (columnIndex < 0) {
@@ -691,9 +689,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
-                    final int keyIndex = tableNamesUtf16.keyIndex(tableNameUtf16);
-                    tableToken = keyIndex < 0 ? tableNamesUtf16.valueAt(keyIndex) : tableToken;
-                    final CharSequence tableName = keyIndex < 0 ? tableToken.getTableName() : tableNameUtf16;
                     if (engine.isWalTable(tableToken)) {
                         // create WAL-oriented TUD and NOT add it to the global cache
                         tud = new TableUpdateDetails(
@@ -707,22 +702,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 netIoJobs,
                                 defaultColumnTypes
                         );
-                        if (keyIndex > -1) {
-                            tableNamesUtf16.putAt(keyIndex, tableName.toString(), tableToken);
-                        }
                     } else {
                         tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
                     }
                 }
             }
 
-            // here we need to create a string image (mangled) of utf8 char sequence
-            // deliberately not decoding UTF8, store bytes as chars each
-            tableNameUtf16.clear();
-            tableNameUtf16.put(tableNameUtf8);
-
-            // at this point this is not UTF16 string
-            netIoJob.addTableUpdateDetails(tableNameUtf16.toString(), tud);
+            netIoJob.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
             return tud;
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();

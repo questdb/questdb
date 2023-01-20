@@ -35,6 +35,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Before;
@@ -49,6 +50,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+    protected NoNetworkIOJob NO_NETWORK_IO_JOB = new NoNetworkIOJob();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -65,7 +67,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
     protected WorkerPool workerPool;
-    protected NoNetworkIOJob NO_NETWORK_IO_JOB = new NoNetworkIOJob();
+
     @Before
     @Override
     public void setUp() {
@@ -357,34 +359,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         Os.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
     }
 
-    class LineTcpNetworkFacade extends NetworkFacadeImpl {
-        @Override
-        public int recv(int fd, long buffer, int bufferLen) {
-            Assert.assertEquals(FD, fd);
-            if (null == recvBuffer) {
-                return -1;
-            }
-
-            byte[] bytes = getBytes(recvBuffer);
-            int n = 0;
-            while (n < bufferLen && n < bytes.length) {
-                Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);
-            }
-            recvBuffer = new String(bytes, n, bytes.length - n);
-            return n;
-        }
-
-        byte[] getBytes(String recvBuffer) {
-            return recvBuffer.getBytes(StandardCharsets.UTF_8);
-        }
-    }
-
     static class NoNetworkIOJob implements NetworkIOJob {
-        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
+        private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
-        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 
@@ -414,4 +394,25 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
     }
 
+    class LineTcpNetworkFacade extends NetworkFacadeImpl {
+        @Override
+        public int recv(int fd, long buffer, int bufferLen) {
+            Assert.assertEquals(FD, fd);
+            if (recvBuffer == null) {
+                return -1;
+            }
+
+            byte[] bytes = getBytes(recvBuffer);
+            int n = 0;
+            while (n < bufferLen && n < bytes.length) {
+                Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);
+            }
+            recvBuffer = new String(bytes, n, bytes.length - n);
+            return n;
+        }
+
+        byte[] getBytes(String recvBuffer) {
+            return recvBuffer.getBytes(StandardCharsets.UTF_8);
+        }
+    }
 }

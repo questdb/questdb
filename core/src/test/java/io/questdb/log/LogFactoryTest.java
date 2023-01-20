@@ -169,6 +169,36 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testLogAutoDeleteByDirectorySize40k() throws Exception {
+        testAutoDelete("40k", null);
+    }
+
+    @Test
+    public void testLogAutoDeleteByDirectorySize500k() throws Exception {
+        testAutoDelete("500k", null);
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge1Year() throws Exception {
+        testAutoDelete(null, "1y");
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge25days() throws Exception {
+        testAutoDelete(null, "25d");
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge3weeks() throws Exception {
+        testAutoDelete(null, "3w");
+    }
+
+    @Test
+    public void testLogAutoDeleteByFileAge6months() throws Exception {
+        testAutoDelete(null, "6m");
+    }
+
+    @Test
     public void testMultiplexing() throws Exception {
         final File x = temp.newFile();
         final File y = temp.newFile();
@@ -720,6 +750,74 @@ public class LogFactoryTest {
     private void assertFileLength(String file) {
         long len = new File(file).length();
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
+    }
+
+    private void testAutoDelete(String sizeLimit, String lifeDuration) throws NumericException {
+        String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
+        long speed = 24 * 60000L;
+
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialTimestamp("2019-12-31"));
+
+        String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        String logFile = base + fileTemplate;
+        final LogRollingFileWriter[] writer = new LogRollingFileWriter[1];
+        try (LogFactory factory = new LogFactory()) {
+            LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                w.setLocation(logFile);
+                if (sizeLimit != null) w.setRollSize(sizeLimit);
+                else w.setRollSize("600k");
+                w.setRollEvery("day");
+                if (sizeLimit != null) w.setSizeLimit(sizeLimit);
+                if (lifeDuration != null) w.setLifeDuration(lifeDuration);
+                return w;
+            });
+
+            factory.add(config);
+            factory.bind();
+            factory.startThread();
+
+            if (lifeDuration != null) {
+                Path testPath = new Path();
+                testPath.of(base + "mylog-test.txt").$();
+                Files.touch(testPath);
+                Files.setLastModified(testPath, clock.getTicks() / 1000 - Numbers.parseLongDuration(lifeDuration) / 1000);
+                System.out.println();
+            }
+
+            Log logger = factory.create("x");
+            for (int i = 0; i < 100000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
+            }
+        }
+
+        int fileCount = 0;
+        try (Path path = new Path()) {
+            StringSink fileNameSink = new StringSink();
+            path.of(base).$();
+            long pFind = Files.findFirst(path);
+            try {
+                Assert.assertTrue(pFind != 0);
+                do {
+                    fileNameSink.clear();
+                    Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
+                    if (Files.isDots(fileNameSink)) {
+                        continue;
+                    }
+                    fileCount++;
+                } while (Files.findNext(pFind) > 0);
+
+            } finally {
+                Files.findClose(pFind);
+            }
+        }
+        //It usually ends up with 4 files without auto log removal
+        if (sizeLimit != null) {
+            Assert.assertEquals(1, fileCount);
+        }
+        if (lifeDuration != null) {
+            Assert.assertEquals(2, fileCount);
+        }
     }
 
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
