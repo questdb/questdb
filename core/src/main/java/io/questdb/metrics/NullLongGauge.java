@@ -22,26 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.metrics;
 
-import io.questdb.metrics.LongGauge;
-import io.questdb.metrics.MetricsRegistry;
+import io.questdb.std.str.CharSink;
 
-public class PGWireMetrics {
+public class NullLongGauge implements LongGauge {
+    public static final NullLongGauge INSTANCE = new NullLongGauge();
 
-    private final LongGauge cachedSelectsGauge;
-    private final LongGauge cachedUpdatesGauge;
-
-    public PGWireMetrics(MetricsRegistry metricsRegistry) {
-        this.cachedSelectsGauge = metricsRegistry.newLongGauge("pg_wire_select_queries_cached");
-        this.cachedUpdatesGauge = metricsRegistry.newLongGauge("pg_wire_update_queries_cached");
+    private NullLongGauge() {
     }
 
-    public LongGauge cachedSelectsGauge() {
-        return cachedSelectsGauge;
+    @Override
+    public void add(long value) {
     }
 
-    public LongGauge cachedUpdatesGauge() {
-        return cachedUpdatesGauge;
+    @Override
+    public void dec() {
+    }
+
+    @Override
+    public long getValue() {
+        return 0;
+    }
+
+    @Override
+    public void inc() {
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+    }
+
+    @Override
+    public void setValue(long value) {
     }
 }

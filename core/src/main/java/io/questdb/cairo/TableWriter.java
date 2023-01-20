@@ -218,6 +218,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryARW o3TimestampMemCpy;
     private long partitionTimestampHi;
     private boolean performRecovery;
+    private long physicallyWrittenRowsSinceLastCommit;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
@@ -605,6 +606,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void addPhysicallyWrittenRows(long rows) {
+        // maybe not thread safe but hey it's just a metric
+        physicallyWrittenRowsSinceLastCommit += rows;
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
@@ -1157,6 +1160,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPartitionTimestamp(int partitionIndex) {
         return txWriter.getPartitionTimestamp(partitionIndex);
+    }
+
+    public long getPhysicallyWrittenRowsSinceLastCommit() {
+        return physicallyWrittenRowsSinceLastCommit;
     }
 
     public long getRowCount() {
@@ -2665,6 +2672,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private long commit(int commitMode, long o3MaxLag) {
         checkDistressed();
+        physicallyWrittenRowsSinceLastCommit = 0;
 
         if (o3InError) {
             rollback();

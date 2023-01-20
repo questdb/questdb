@@ -60,6 +60,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final long commitSquashRowLimit;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
+    private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
     private final LongList transactionMeta = new LongList();
@@ -73,6 +74,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         this.microClock = engine.getConfiguration().getMicrosecondClock();
         walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
         commitSquashRowLimit = engine.getConfiguration().getWalCommitSquashRowLimit();
+        metrics = engine.getMetrics().getWalMetrics();
     }
 
     public long applyWAL(
@@ -276,6 +278,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 int iTransaction = 0;
                 int totalTransactionCount = 0;
                 long rowsAdded = 0;
+                long physicalRowsAdded = 0;
                 long insertTimespan = 0;
 
                 tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();
@@ -375,9 +378,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             );
 
                             if (added > -1L) {
-                                insertTimespan += microClock.getTicks() - start;
+                                long timeDelta = microClock.getTicks() - start;
+                                insertTimespan += timeDelta;
                                 rowsAdded += added;
                                 iTransaction++;
+                                long physicallyWrittenRowsSinceLastCommit = writer.getPhysicallyWrittenRowsSinceLastCommit();
+                                physicalRowsAdded += physicallyWrittenRowsSinceLastCommit;
+                                metrics.addRowsWritten(added, physicallyWrittenRowsSinceLastCommit, timeDelta);
                             }
                             if (added == -2L || isTerminating) {
                                 // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
@@ -392,7 +399,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", rows=").$(rowsAdded)
                             .$(", time=").$(insertTimespan / 1000)
                             .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
-                            .$("rows/s]").$();
+                            .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
+                            .I$();
                 }
             } finally {
                 Misc.free(structuralChangeCursor);

@@ -24,32 +24,15 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.CharSink;
+public interface LongGauge extends Scrapable {
 
-public class NullGauge implements Gauge {
-    public static final NullGauge INSTANCE = new NullGauge();
+    void add(long value);
 
-    private NullGauge() {
-    }
+    void dec();
 
-    @Override
-    public void add(long value) {
-    }
+    long getValue();
 
-    @Override
-    public void dec() {
-    }
+    void inc();
 
-    @Override
-    public long getValue() {
-        return 0;
-    }
-
-    @Override
-    public void inc() {
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
-    }
+    void setValue(long value);
 }

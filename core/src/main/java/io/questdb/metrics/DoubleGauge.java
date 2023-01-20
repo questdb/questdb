@@ -22,26 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.metrics;
 
-import io.questdb.metrics.LongGauge;
-import io.questdb.metrics.MetricsRegistry;
+public interface DoubleGauge {
+    DoubleGauge INSTANCE = value -> {
+    };
 
-public class PGWireMetrics {
-
-    private final LongGauge cachedSelectsGauge;
-    private final LongGauge cachedUpdatesGauge;
-
-    public PGWireMetrics(MetricsRegistry metricsRegistry) {
-        this.cachedSelectsGauge = metricsRegistry.newLongGauge("pg_wire_select_queries_cached");
-        this.cachedUpdatesGauge = metricsRegistry.newLongGauge("pg_wire_update_queries_cached");
-    }
-
-    public LongGauge cachedSelectsGauge() {
-        return cachedSelectsGauge;
-    }
-
-    public LongGauge cachedUpdatesGauge() {
-        return cachedUpdatesGauge;
-    }
+    void setValue(double value);
 }

@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Gauge;
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.AssociativeCache;
 import org.jetbrains.annotations.NotNull;
 
@@ -43,7 +43,7 @@ public final class QueryCache implements Closeable {
     private static Metrics metrics;
     private final AssociativeCache<RecordCursorFactory> cache;
 
-    public QueryCache(int blocks, int rows, Gauge cachedQueriesGauge) {
+    public QueryCache(int blocks, int rows, LongGauge cachedQueriesGauge) {
         this.cache = new AssociativeCache<>(blocks, rows, cachedQueriesGauge);
     }
 

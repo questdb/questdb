@@ -435,7 +435,7 @@ public class WriterPool extends AbstractPool {
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
 
                 if (logBusy) {
-                    LOG.debug().$("busy [table=`").utf8(tableToken.getDirName())
+                    LOG.info().$("busy [table=`").utf8(tableToken.getDirName())
                             .$("`, owner=").$(owner)
                             .$(", thread=").$(thread)
                             .$(", reason=").$(reason)
