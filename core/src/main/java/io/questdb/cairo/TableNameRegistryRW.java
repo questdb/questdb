@@ -27,8 +27,6 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 
-import java.util.Map;
-
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
@@ -56,11 +54,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             return true;
         }
         return false;
-    }
-
-    @Override
-    public boolean isTableNameLocked(String tableName) {
-        return nameTableTokenMap.containsKey(tableName);
     }
 
     @Override
