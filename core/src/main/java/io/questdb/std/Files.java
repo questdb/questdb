@@ -215,6 +215,19 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
+    public static boolean isDirOrSoftLinkDir(Path path) {
+        long ptr = findFirst(path);
+        if (ptr < 1L) {
+            return false;
+        }
+        try {
+            int type = findType(ptr);
+            return type == DT_DIR || (type == DT_LNK && isDir(path.address()));
+        } finally {
+            findClose(ptr);
+        }
+    }
+
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
         return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);
     }
