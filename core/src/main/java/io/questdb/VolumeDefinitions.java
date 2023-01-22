@@ -30,18 +30,20 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class FolderMapping {
+public class VolumeDefinitions {
 
     private static final char SEPARATOR = ',';
 
     private final LowerCaseCharSequenceObjHashMap<CharSequence> map = new LowerCaseCharSequenceObjHashMap<>(4);
-    private int lo, hi, limit;
+    private int hi;
+    private int limit;
+    private int lo;
 
     public void forEach(LowerCaseCharSequenceObjHashMap.CharSequenceObjConsumer<CharSequence> action) {
         map.forEach(action);
     }
 
-    public FolderMapping of(@Nullable CharSequence text, @NotNull Path path) throws ServerConfigurationException {
+    public VolumeDefinitions of(@Nullable CharSequence text, @NotNull Path path) throws ServerConfigurationException {
         if (text != null) {
             // 'any-case-alias' -> 'absolute path to volume' (quotes are optional)
             map.clear();

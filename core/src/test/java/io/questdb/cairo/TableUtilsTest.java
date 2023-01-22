@@ -79,7 +79,7 @@ public class TableUtilsTest {
             Assert.fail();
         } catch (CairoException e) {
             path.of(dbRoot.getAbsolutePath()).concat(tableName).$();
-            TestUtils.assertContains(e.getFlyweightMessage(), "table folder already exists in volume [path=" + path.toString() + ']');
+            TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists in volume [path=" + path.toString() + ']');
         } finally {
             dbRoot.delete();
             volumeRoot.delete();
@@ -108,7 +108,7 @@ public class TableUtilsTest {
                     0);
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "table folder already exists in volume [path=" + path.toString() + ']');
+            TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists in volume [path=" + path.toString() + ']');
         } finally {
             dbRoot.delete();
             volumeRoot.delete();

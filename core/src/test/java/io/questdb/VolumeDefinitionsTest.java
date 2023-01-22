@@ -36,20 +36,20 @@ import java.io.File;
 import java.io.IOException;
 import java.util.function.Consumer;
 
-public class FolderMappingTests {
+public class VolumeDefinitionsTest {
 
     private final static Rnd rnd = new Rnd();
     private final static StringSink sink = new StringSink();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    private FolderMapping allowedVolumePaths;
+    private VolumeDefinitions allowedVolumePaths;
     private Path path;
 
 
     @Before
     public void setUp() {
         path = new Path();
-        allowedVolumePaths = new FolderMapping();
+        allowedVolumePaths = new VolumeDefinitions();
     }
 
     @After

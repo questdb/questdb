@@ -70,7 +70,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
-    private final FolderMapping allowedVolumePaths = new FolderMapping();
+    private final VolumeDefinitions allowedVolumePaths = new VolumeDefinitions();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -1501,7 +1501,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public FolderMapping getAllowedVolumePaths() {
+        public VolumeDefinitions getAllowedVolumePaths() {
             return allowedVolumePaths;
         }
 

@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.FolderMapping;
+import io.questdb.VolumeDefinitions;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
@@ -59,7 +59,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public FolderMapping getAllowedVolumePaths() {
+    public VolumeDefinitions getAllowedVolumePaths() {
         return null;
     }
 

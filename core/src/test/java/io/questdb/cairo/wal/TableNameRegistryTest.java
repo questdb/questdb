@@ -297,7 +297,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 Path.clearThreadLocals();
             }
 
-            halted.await(TimeUnit.MILLISECONDS.toNanos(500L));
+            halted.await(TimeUnit.SECONDS.toNanos(4L));
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }

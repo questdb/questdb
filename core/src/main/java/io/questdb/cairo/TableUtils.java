@@ -281,24 +281,24 @@ public final class TableUtils {
             LOG.info().$("create table [name=").utf8(tableDir).I$();
         } else {
             // path has been set by CREATE TABLE ... [IN VOLUME 'path'].
-            // it is a valid folder, or link to a folder, checked at bootstrap
+            // it is a valid directory, or link to a directory, checked at bootstrap
             normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
             LOG.info().$("create table in volume [path=").utf8(normalPath).I$();
             if (ff.isDirOrSoftLinkDir(normalPath)) {
-                throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(normalPath).put(']');
+                throw CairoException.critical(ff.errno()).put("table directory already exists in volume [path=").put(normalPath).put(']');
             }
         }
 
         final int rootLen = path.length();
         if (ff.isDirOrSoftLinkDir(path)) {
-            throw CairoException.critical(ff.errno()).put("table folder already exists in volume [path=").put(path).put(']');
+            throw CairoException.critical(ff.errno()).put("table directory already exists in volume [path=").put(path).put(']');
         }
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
         if (pathIsLoadedWithVolume && ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
             if (ff.rmdir(path.slash$()) != 0) {
-                LOG.error().$("cannot remove table folder in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
+                LOG.error().$("cannot remove table directory in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
             }
             throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path).put(", tableName=").put(tableDir).put(']');
         }

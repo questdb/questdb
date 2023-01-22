@@ -252,7 +252,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     public void setVolumeAlias(CharSequence volumeAlias) {
         // set if the create table statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
-        this.volumeAlias = volumeAlias;
+        this.volumeAlias = Chars.toString(volumeAlias);
     }
 
     public void setWalEnabled(boolean walEnabled) {
