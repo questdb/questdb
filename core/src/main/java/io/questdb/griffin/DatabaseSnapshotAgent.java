@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;

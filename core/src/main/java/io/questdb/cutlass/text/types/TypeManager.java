@@ -134,6 +134,8 @@ public class TypeManager implements Mutable {
                 if (adapter != null) {
                     return adapter;
                 }
+            case ColumnType.UUID:
+                return UuidAdapter.INSTANCE;
             default:
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
@@ -166,6 +168,7 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.DOUBLE));
         probes.add(getTypeAdapter(ColumnType.BOOLEAN));
         probes.add(getTypeAdapter(ColumnType.LONG256));
+        probes.add(getTypeAdapter(ColumnType.UUID));
     }
 
     ObjList<TypeAdapter> getAllAdapters() {

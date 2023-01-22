@@ -3308,7 +3308,7 @@ public class O3FailureTest extends AbstractO3Test {
             try {
                 compiler.compile("insert into x select * from append", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException | CairoError ignored) {
+            } catch (CairoException | CairoError ignore) {
             }
         }
 

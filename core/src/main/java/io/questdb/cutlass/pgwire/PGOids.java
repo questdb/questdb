@@ -44,6 +44,7 @@ public class PGOids {
     public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
+    public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
@@ -59,8 +60,9 @@ public class PGOids {
     public static final int PG_PUBLIC_OID = 2200;
     public static final int PG_TIMESTAMP = 1114;
     public static final IntList PG_TYPE_OIDS = new IntList();
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
+    public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
@@ -86,6 +88,9 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_UUID = ((PG_UUID >> 24) & 0xff) | ((PG_UUID << 8) & 0xff0000) | ((PG_UUID >> 8) & 0xff00) | ((PG_UUID << 24) & 0xff000000);
+    public static final int X_B_PG_UUID = 1 | X_PG_UUID;
     private static final IntList TYPE_OIDS = new IntList();
 
     public static int getTypeOid(int type) {
@@ -133,6 +138,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // VARCHAR
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
@@ -145,6 +151,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_BOOL);
         PG_TYPE_OIDS.add(PG_BYTEA);
         PG_TYPE_OIDS.add(PG_DATE);
+        PG_TYPE_OIDS.add(PG_UUID);
 
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);
@@ -153,6 +160,7 @@ public class PGOids {
         PG_TYPE_TO_SIZE_MAP.put(PG_CHAR, Character.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Long.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_UUID, Long.BYTES * 2);
 
         PG_TYPE_TO_NAME[0] = "varchar";
         PG_TYPE_TO_NAME[1] = "timestamp";
@@ -165,5 +173,6 @@ public class PGOids {
         PG_TYPE_TO_NAME[8] = "bool";
         PG_TYPE_TO_NAME[9] = "binary";
         PG_TYPE_TO_NAME[10] = "date";
+        PG_TYPE_TO_NAME[11] = "uuid";
     }
 }

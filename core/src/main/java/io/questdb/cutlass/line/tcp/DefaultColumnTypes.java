@@ -65,5 +65,6 @@ class DefaultColumnTypes {
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
         MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = ColumnType.TIMESTAMP;
+        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_UUID] = ColumnType.UUID;
     }
 }

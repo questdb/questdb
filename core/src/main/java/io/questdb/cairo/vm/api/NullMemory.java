@@ -230,6 +230,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void putLong128(long lo, long hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putLong256(long l0, long l1, long l2, long l3) {
         throw new UnsupportedOperationException();
     }
@@ -263,11 +268,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void putLong256Null() {
-    }
-
-    @Override
-    public void putLongLong(long l0, long l1) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

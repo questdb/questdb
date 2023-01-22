@@ -53,7 +53,6 @@ import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.sql.Timestamp;
-import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1038,6 +1037,12 @@ public final class TestUtils {
                 case ColumnType.SHORT:
                     insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
                     break;
+                case ColumnType.UUID:
+                    insertFromSelect.append("rnd_uuid4() ").append(colName);
+                    break;
+                case ColumnType.LONG128:
+                    insertFromSelect.append("to_long128(x, 0) ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }
@@ -1118,11 +1123,13 @@ public final class TestUtils {
                 r.getLong256(i, sink);
                 break;
             case ColumnType.LONG128:
-                long long128Hi = r.getLong128Hi(i);
-                long long128Lo = r.getLong128Lo(i);
-                if (!Long128Util.isNull(long128Hi, long128Lo)) {
-                    UUID guid = new UUID(long128Hi, long128Lo);
-                    sink.put(guid.toString());
+                // fall through
+            case ColumnType.UUID:
+                long hi = r.getLong128Hi(i);
+                long lo = r.getLong128Lo(i);
+                if (!Uuid.isNull(lo, hi)) {
+                    Uuid uuid = new Uuid(lo, hi);
+                    uuid.toSink(sink);
                 }
                 break;
             default:
@@ -1326,6 +1333,8 @@ public final class TestUtils {
                         assertEquals(rr.getLong256A(i), lr.getLong256A(i));
                         break;
                     case ColumnType.LONG128:
+                        // fall-through
+                    case ColumnType.UUID:
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;

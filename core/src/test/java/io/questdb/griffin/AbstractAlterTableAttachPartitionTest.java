@@ -24,12 +24,17 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
-import io.questdb.std.*;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.rules.TestName;
 
 

@@ -1479,6 +1479,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                     .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
                     .col("symbol8", ColumnType.SYMBOL) // putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
                     .col("string8", ColumnType.STRING) // putStrUtf8AsUtf16(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars)
+                    .col("uuida", ColumnType.UUID) // putUUID(int columnIndex, long lo, long hi)
+                    .col("uuidb", ColumnType.UUID) // putUUID(int columnIndex, CharSequence value)
                     .timestamp("ts")
                     .wal()
             ) {
@@ -1544,6 +1546,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                         TestUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 26, true);
                         TestUtils.putUtf8(row, (i % 2) == 0 ? "Щось" : "Таке-Сяке", 27, false);
 
+                        row.putLong128(28, i, i + 1); // UUID
+                        stringSink.clear();
+                        Numbers.appendUuid(i, i + 1, stringSink);
+                        row.putUuid(29, stringSink);
+
                         row.append();
                     }
 
@@ -1557,7 +1564,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(29, reader.getColumnCount());
+                    assertEquals(31, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -1617,7 +1624,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                         assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSym(26).toString());
                         assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStr(27).toString());
 
-                        assertEquals(ts, record.getTimestamp(28));
+                        assertEquals(i, record.getLong128Lo(28));
+                        assertEquals(i + 1, record.getLong128Hi(28));
+
+                        assertEquals(i, record.getLong128Lo(29));
+                        assertEquals(i + 1, record.getLong128Hi(29));
+
+                        assertEquals(ts, record.getTimestamp(30));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);

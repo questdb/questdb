@@ -113,7 +113,8 @@ public class CairoTestUtils {
                         .col("i", ColumnType.STRING)
                         .col("j", ColumnType.SYMBOL)
                         .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY);
+                        .col("l", ColumnType.BINARY)
+                        .col("m", ColumnType.UUID);
                 create(model, engine);
             }
         } catch (RuntimeException e) {
@@ -187,6 +188,13 @@ public class CairoTestUtils {
                 } else {
                     binarySequence.of(rnd.nextBytes(25));
                     row.putBin(11, binarySequence);
+                }
+
+                // UUID
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong128(12, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                } else {
+                    row.putLong128(12, rnd.nextLong(), rnd.nextLong());
                 }
                 row.append();
             }

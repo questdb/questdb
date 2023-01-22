@@ -120,12 +120,12 @@ public class GroupByFunctionTest {
 
         @Override
         public long getLong128Hi(Record rec) {
-            throw new UnsupportedOperationException();
+            return 0;
         }
 
         @Override
         public long getLong128Lo(Record rec) {
-            throw new UnsupportedOperationException();
+            return 0;
         }
 
         @Override

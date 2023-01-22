@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
@@ -229,6 +226,30 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
+    /**
+     * Add UUID encoded as a string to the buffer.
+     * <p>
+     * Technically, DirectByteCharSequence is UTF-8 encoded, but any non-ASCII character will cause the UUID
+     * to be rejected by the parser. Hence, we do not have to bother with UTF-8 decoding.
+     *
+     * @param offset offset in the buffer to write to
+     * @param value  value to write
+     * @return new offset
+     * @throws NumericException if the value is not a valid UUID string
+     */
+    public long addUuid(long offset, DirectByteCharSequence value) throws NumericException {
+        checkCapacity(offset, Byte.BYTES + 2 * Long.BYTES);
+        Uuid.checkDashesAndLength(value);
+        long hi = Uuid.parseHi(value);
+        long lo = Uuid.parseLo(value);
+        Unsafe.getUnsafe().putByte(offset, LineTcpParser.ENTITY_TYPE_UUID);
+        offset += Byte.BYTES;
+        Unsafe.getUnsafe().putLong(offset, lo);
+        offset += Long.BYTES;
+        Unsafe.getUnsafe().putLong(offset, hi);
+        return offset + Long.BYTES;
+    }
+
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
         switch (entityType) {
@@ -259,6 +280,8 @@ public class LineTcpEventBuffer {
                 return Float.BYTES;
             case LineTcpParser.ENTITY_TYPE_DOUBLE:
                 return Double.BYTES;
+            case LineTcpParser.ENTITY_TYPE_UUID:
+                return Long128.BYTES;
             case ENTITY_TYPE_NULL:
                 return 0;
             default:

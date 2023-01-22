@@ -181,22 +181,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * Gets the high int64 value of a Long128 column by index
-     *
-     * @param col numeric index of the column
-     * @return high long64 of 128-bit integer
-     */
     default long getLong128Hi(int col) {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * Gets the low int64 value of a Long128 column by index
-     *
-     * @param col numeric index of the column
-     * @return low long64 of 128-bit integer
-     */
     default long getLong128Lo(int col) {
         throw new UnsupportedOperationException();
     }

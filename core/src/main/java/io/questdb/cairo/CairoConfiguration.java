@@ -49,6 +49,10 @@ public interface CairoConfiguration {
 
     boolean attachPartitionCopy();
 
+    default boolean disableColumnPurgeJob() {
+        return false;
+    }
+
     boolean enableTestFactories();
 
     boolean getAllowTableRegistrySharedWrite();

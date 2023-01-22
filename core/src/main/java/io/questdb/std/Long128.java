@@ -24,7 +24,8 @@
 
 package io.questdb.std;
 
-public class Long128Util {
+public class Long128 {
+    public static final int BYTES = 16;
 
     // this method is used by byte-code generator
     // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
@@ -44,7 +45,7 @@ public class Long128Util {
         return Long.compareUnsigned(aLo, bLo);
     }
 
-    public static boolean isNull(long hi, long lo) {
+    public static boolean isNull(long lo, long hi) {
         return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
     }
 }
