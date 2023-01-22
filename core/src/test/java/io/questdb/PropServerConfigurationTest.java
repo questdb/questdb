@@ -756,7 +756,7 @@ public class PropServerConfigurationTest {
             loadVolumePath(aliasA, volumeAPath);
             sink.put(',');
             loadVolumePath(aliasB, volumeBPath);
-            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
+            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath(), sink.toString());
             try {
                 new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
             } catch (ServerConfigurationException e) {
@@ -780,7 +780,7 @@ public class PropServerConfigurationTest {
             loadVolumePath(aliasA, volumeAPath);
             sink.put(',');
             loadVolumePath(aliasB, volumeBPath);
-            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
+            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath(), sink.toString());
             try {
                 new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
             } catch (ServerConfigurationException e) {
@@ -795,7 +795,7 @@ public class PropServerConfigurationTest {
     public void testNotValidAllowedVolumePaths2() throws Exception {
         String p = ",";
         Properties properties = new Properties();
-        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), p);
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath(), p);
         try {
             new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         } catch (ServerConfigurationException e) {
@@ -1246,7 +1246,7 @@ public class PropServerConfigurationTest {
             String volumeBPath = volumeB.getAbsolutePath();
             String volumeCPath = volumeC.getAbsolutePath();
             Properties properties = new Properties();
-            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), "");
+            properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath(), "");
             Assert.assertNull(PropServerConfiguration.validate(properties));
             for (int i = 0; i < 20; i++) {
                 sink.clear();
@@ -1255,13 +1255,13 @@ public class PropServerConfigurationTest {
                 loadVolumePath(aliasB, volumeBPath);
                 sink.put(',');
                 loadVolumePath(aliasC, volumeCPath);
-                properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), sink.toString());
+                properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath(), sink.toString());
                 CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
 
-                Assert.assertNotNull(cairoConfig.getAllowedVolumePaths().resolveAlias(aliasA));
-                Assert.assertNotNull(cairoConfig.getAllowedVolumePaths().resolveAlias(aliasB));
-                Assert.assertNotNull(cairoConfig.getAllowedVolumePaths().resolveAlias(aliasC));
-                Assert.assertNull(cairoConfig.getAllowedVolumePaths().resolveAlias("banana"));
+                Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasA));
+                Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasB));
+                Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasC));
+                Assert.assertNull(cairoConfig.getVolumeDefinitions().resolveAlias("banana"));
             }
         } finally {
             Assert.assertTrue(volumeA.delete());
@@ -1274,9 +1274,9 @@ public class PropServerConfigurationTest {
     public void testValidAllowedVolumePaths1() throws Exception {
         String p = "   ";
         Properties properties = new Properties();
-        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath(), p);
+        properties.setProperty(PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath(), p);
         CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
-        Assert.assertNull(cairoConfig.getAllowedVolumePaths().resolveAlias("banana"));
+        Assert.assertNull(cairoConfig.getVolumeDefinitions().resolveAlias("banana"));
     }
 
     @Test

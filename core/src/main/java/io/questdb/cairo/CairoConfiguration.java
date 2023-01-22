@@ -57,8 +57,6 @@ public interface CairoConfiguration {
 
     boolean getAllowTableRegistrySharedWrite();
 
-    VolumeDefinitions getAllowedVolumePaths();
-
     int getAnalyticColumnPoolCapacity();
 
     // the '+' is used to prevent overlap with table names
@@ -405,6 +403,8 @@ public interface CairoConfiguration {
     int getTxnScoreboardEntryCount();
 
     int getVectorAggregateQueueCapacity();
+
+    VolumeDefinitions getVolumeDefinitions();
 
     boolean getWalEnabledDefault();
 

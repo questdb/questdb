@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -42,14 +43,13 @@ public class VolumeDefinitionsTest {
     private final static StringSink sink = new StringSink();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    private VolumeDefinitions allowedVolumePaths;
     private Path path;
-
+    private VolumeDefinitions volumeDefinitions;
 
     @Before
     public void setUp() {
         path = new Path();
-        allowedVolumePaths = new VolumeDefinitions();
+        volumeDefinitions = new VolumeDefinitions();
     }
 
     @After
@@ -89,10 +89,10 @@ public class VolumeDefinitionsTest {
 
     @Test
     public void testValidEmptyDefinition() throws Exception {
-        allowedVolumePaths.of("       ", path);
-        Assert.assertNull(allowedVolumePaths.resolveAlias(""));
-        Assert.assertNull(allowedVolumePaths.resolveAlias("       "));
-        allowedVolumePaths.forEach((alias, volumePath) -> Assert.fail());
+        volumeDefinitions.of("       ", path);
+        Assert.assertNull(volumeDefinitions.resolveAlias(""));
+        Assert.assertNull(volumeDefinitions.resolveAlias("       "));
+        volumeDefinitions.forEach((alias, volumePath) -> Assert.fail());
     }
 
     @Test
@@ -103,10 +103,10 @@ public class VolumeDefinitionsTest {
             sink.clear();
             appendVolumeDefinition(alias0, volumePath0);
             parseVolumeDefinitions();
-            Assert.assertNotNull(allowedVolumePaths.resolveAlias("volumeA"));
-            Assert.assertNotNull(allowedVolumePaths.resolveAlias("VOLUMEA"));
-            Assert.assertNotNull(allowedVolumePaths.resolveAlias("volumea"));
-            Assert.assertEquals(volumePath0, allowedVolumePaths.resolveAlias(alias0));
+            Assert.assertNotNull(volumeDefinitions.resolveAlias("volumeA"));
+            Assert.assertNotNull(volumeDefinitions.resolveAlias("VOLUMEA"));
+            Assert.assertNotNull(volumeDefinitions.resolveAlias("volumea"));
+            Assert.assertEquals(volumePath0, volumeDefinitions.resolveAlias(alias0));
         });
     }
 
@@ -123,8 +123,8 @@ public class VolumeDefinitionsTest {
                 sink.put(',');
                 appendVolumeDefinition(alias1, volumePath1);
                 parseVolumeDefinitions();
-                Assert.assertEquals(volumePath0, allowedVolumePaths.resolveAlias(alias0));
-                Assert.assertEquals(volumePath1, allowedVolumePaths.resolveAlias(alias1));
+                Assert.assertEquals(volumePath0, volumeDefinitions.resolveAlias(alias0));
+                Assert.assertEquals(volumePath1, volumeDefinitions.resolveAlias(alias1));
             });
         });
     }
@@ -136,12 +136,13 @@ public class VolumeDefinitionsTest {
         sink.put("->");
         randWhiteSpace();
         sink.put(volumePath);
+        randSlash();
         randWhiteSpace();
     }
 
     private void assertFail(String text, String expectedErrorMsg) {
         try {
-            allowedVolumePaths.of(text, path);
+            volumeDefinitions.of(text, path);
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), expectedErrorMsg);
@@ -150,9 +151,15 @@ public class VolumeDefinitionsTest {
 
     private void parseVolumeDefinitions() {
         try {
-            allowedVolumePaths.of(sink.toString(), path);
+            volumeDefinitions.of(sink.toString(), path);
         } catch (ServerConfigurationException unexpected) {
             Assert.fail(unexpected.getMessage());
+        }
+    }
+
+    private void randSlash() {
+        if (rnd.nextDouble() < 0.33) {
+            sink.put(Files.SEPARATOR);
         }
     }
 

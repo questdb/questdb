@@ -70,7 +70,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
-    private final VolumeDefinitions allowedVolumePaths = new VolumeDefinitions();
     private final DateFormat backupDirTimestampFormat;
     private final int backupMkdirMode;
     private final String backupRoot;
@@ -271,6 +270,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int telemetryQueueCapacity;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int vectorAggregateQueueCapacity;
+    private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final int[] walApplyWorkerAffinity;
@@ -491,7 +491,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            allowedVolumePaths.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS), path);
+            volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS), path);
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
@@ -1501,11 +1501,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public VolumeDefinitions getAllowedVolumePaths() {
-            return allowedVolumePaths;
-        }
-
-        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }
@@ -2197,6 +2192,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
+        }
+
+        @Override
+        public VolumeDefinitions getVolumeDefinitions() {
+            return volumeDefinitions;
         }
 
         @Override

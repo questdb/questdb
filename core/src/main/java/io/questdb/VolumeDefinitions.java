@@ -43,33 +43,33 @@ public class VolumeDefinitions {
         map.forEach(action);
     }
 
-    public VolumeDefinitions of(@Nullable CharSequence text, @NotNull Path path) throws ServerConfigurationException {
-        if (text != null) {
+    public VolumeDefinitions of(@Nullable CharSequence definitions, @NotNull Path path) throws ServerConfigurationException {
+        if (definitions != null) {
             // 'any-case-alias' -> 'absolute path to volume' (quotes are optional)
             map.clear();
-            limit = text.length();
+            limit = definitions.length();
             lo = 0;
             int separatorCount = 0;
             CharSequence alias = null;
             for (int i = 0; i < limit; i++) {
-                char c = text.charAt(i);
-                if (c == '-' && i + 1 < limit && text.charAt(i + 1) == '>') { // found arrow
+                char c = definitions.charAt(i);
+                if (c == '-' && i + 1 < limit && definitions.charAt(i + 1) == '>') { // found arrow
                     if (alias != null) {
                         throw new ServerConfigurationException("invalid syntax, missing volume path at offset " + lo);
                     }
-                    alias = popToken(text, i);
+                    alias = popToken(definitions, i, false);
                     lo = ++i + 1; // move over '>'
                 } else if (SEPARATOR == c) {
                     if (alias == null) {
                         throw new ServerConfigurationException("invalid syntax, missing alias at offset " + lo);
                     }
-                    addVolumeDefinition(alias, popToken(text, i), path);
+                    addVolumeDefinition(alias, popToken(definitions, i, false), path);
                     alias = null;
                     lo = i + 1;
                     separatorCount++;
                 }
             }
-            finishVolumeDefinitions(alias, popLastToken(text), path, separatorCount);
+            finishVolumeDefinitions(alias, popToken(definitions, limit, true), path, separatorCount);
         }
         return this;
     }
@@ -79,10 +79,14 @@ public class VolumeDefinitions {
     }
 
     private void addVolumeDefinition(CharSequence alias, CharSequence volumePath, Path path) throws ServerConfigurationException {
-        if (!Files.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-            throw new ServerConfigurationException("inaccessible volume [path=" + path + ']');
+        int len = volumePath.length();
+        if (len > 0 && volumePath.charAt(len - 1) == Files.SEPARATOR) {
+            len--;
         }
-        if (!map.put(alias, volumePath)) {
+        if (!Files.isDirOrSoftLinkDir(path.of(volumePath, 0, len).$())) {
+            throw new ServerConfigurationException("inaccessible volume [path=" + volumePath + ']');
+        }
+        if (!map.put(alias, volumePath.subSequence(0, len))) {
             throw new ServerConfigurationException("duplicate alias [alias=" + alias + ']');
         }
     }
@@ -100,16 +104,12 @@ public class VolumeDefinitions {
         }
     }
 
-    private CharSequence popLastToken(CharSequence paths) throws ServerConfigurationException {
-        return popToken(paths, limit, true);
-    }
-
-    private CharSequence popToken(CharSequence paths, int i, boolean isOptional) throws ServerConfigurationException {
-        while (lo < limit && paths.charAt(lo) == ' ') { // left trim
+    private CharSequence popToken(CharSequence definitions, int i, boolean isOptional) throws ServerConfigurationException {
+        while (lo < limit && definitions.charAt(lo) == ' ') { // left trim
             lo++;
         }
         hi = i;
-        while (hi > lo && paths.charAt(hi - 1) == ' ') { // right trim
+        while (hi > lo && definitions.charAt(hi - 1) == ' ') { // right trim
             hi--;
         }
         if (hi < lo + 1) {
@@ -118,8 +118,8 @@ public class VolumeDefinitions {
             }
             throw new ServerConfigurationException("empty value at offset " + hi);
         }
-        if (paths.charAt(hi - 1) == '\'') {
-            if (paths.charAt(lo) != '\'') {
+        if (definitions.charAt(hi - 1) == '\'') {
+            if (definitions.charAt(lo) != '\'') {
                 throw new ServerConfigurationException("missing opening quote at offset " + lo);
             }
             if (--hi < ++lo + 1) {
@@ -128,13 +128,9 @@ public class VolumeDefinitions {
                 }
                 throw new ServerConfigurationException("empty value at offset " + hi);
             }
-        } else if (paths.charAt(lo) == '\'') {
+        } else if (definitions.charAt(lo) == '\'') {
             throw new ServerConfigurationException("missing closing quote at offset " + (hi - 1));
         }
-        return paths.subSequence(lo, hi);
-    }
-
-    private CharSequence popToken(CharSequence paths, int i) throws ServerConfigurationException {
-        return popToken(paths, i, false);
+        return definitions.subSequence(lo, hi);
     }
 }

@@ -59,11 +59,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public VolumeDefinitions getAllowedVolumePaths() {
-        return null;
-    }
-
-    @Override
     public int getAnalyticColumnPoolCapacity() {
         return conf.getAnalyticColumnPoolCapacity();
     }
@@ -766,6 +761,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return conf.getVectorAggregateQueueCapacity();
+    }
+
+    @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return null;
     }
 
     @Override

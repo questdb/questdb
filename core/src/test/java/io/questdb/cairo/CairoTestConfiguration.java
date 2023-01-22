@@ -35,9 +35,9 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
-    private final VolumeDefinitions allowedVolumePaths = new VolumeDefinitions();
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
+    private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, ConfigurationOverrides overrides) {
         super(root);
@@ -48,11 +48,6 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean attachPartitionCopy() {
         return overrides.getCopyPartitionOnAttach() == null ? super.attachPartitionCopy() : overrides.getCopyPartitionOnAttach();
-    }
-
-    @Override
-    public VolumeDefinitions getAllowedVolumePaths() {
-        return allowedVolumePaths;
     }
 
     @Override
@@ -254,6 +249,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
+    }
+
+    @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
     }
 
     @Override

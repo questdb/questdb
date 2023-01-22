@@ -85,7 +85,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     HTTP_MIN_PORT + 10,
                     pgPort,
                     ILP_PORT + 10,
-                    PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_PATHS.getPropertyPath() + "=" + otherVolumeAlias + "->" + otherVolume);
+                    PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath() + "=" + otherVolumeAlias + "->" + otherVolume);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

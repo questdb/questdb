@@ -74,11 +74,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public VolumeDefinitions getAllowedVolumePaths() {
-        return volumeDefinitions;
-    }
-
-    @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
     }
@@ -774,6 +769,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
     }
 
     @Override
