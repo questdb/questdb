@@ -26,9 +26,9 @@ package io.questdb;
 
 public final class TelemetrySystemEvent {
     public static final short APPLIED_TXN = 103;
-    public static final short APPLY_STRUCTURE_CHANGE = 104;
-    public static final short APPLY_TXN_DATA = 105;
-    public static final short APPLY_TXN_SQL = 106;
+    public static final short WAL_APPLY_STRUCTURE_CHANGE = 104;
+    public static final short WAL_APPLY_TXN_DATA = 105;
+    public static final short WAL_APPLY_TXN_SQL = 106;
     public static final short ILP_RESERVE_WRITER = 102;
     public static final short SYSTEM_DOWN = 101;
     public static final short SYSTEM_UP = 100;

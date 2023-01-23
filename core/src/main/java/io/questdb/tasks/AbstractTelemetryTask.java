@@ -34,5 +34,5 @@ public abstract class AbstractTelemetryTask {
         this.created = created;
     }
 
-    public abstract void writeTo(TableWriter writer);
+    public abstract void writeTo(TableWriter writer, long timestamp);
 }

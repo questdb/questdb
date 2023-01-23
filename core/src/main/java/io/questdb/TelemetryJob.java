@@ -30,6 +30,8 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
@@ -38,6 +40,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class TelemetryJob extends SynchronizedJob implements Closeable {
+    private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TelemetryConfigLogger telemetryConfigLogger;
@@ -70,8 +73,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     @Override
     public boolean runSerially() {
-        telemetry.consumeAll();
-        telemetryWal.consumeAll();
+        try {
+            telemetry.consumeAll();
+            telemetryWal.consumeAll();
+        } catch (Throwable th) {
+            LOG.error().$("failed to process telemetry event").$(th).$();
+        }
         return false;
     }
 }

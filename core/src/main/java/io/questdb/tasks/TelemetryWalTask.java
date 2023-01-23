@@ -42,21 +42,20 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
     private int walId;
     private long seqTxn;
     private long rowCount;
-    private long latency; //micros
+    private float latency; // millis
 
     private TelemetryWalTask() {
     }
 
-    public static long store(@NotNull Telemetry<TelemetryWalTask> telemetry, short origin, short event, int tableId, int walId, long seqTxn, long rowCount, long start) {
+    public static long store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long start) {
         final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
-            task.origin = origin;
             task.event = event;
             task.tableId = tableId;
             task.walId = walId;
             task.seqTxn = seqTxn;
             task.rowCount = rowCount;
-            task.latency = task.created - start;
+            task.latency = (task.created - start) / 1000.0f;
             telemetry.store();
             return task.created;
         }
@@ -64,16 +63,15 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
     }
 
     @Override
-    public void writeTo(TableWriter writer) {
+    public void writeTo(TableWriter writer, long timestamp) {
         try {
-            final TableWriter.Row row = writer.newRow(created);
+            final TableWriter.Row row = writer.newRow(timestamp);
             row.putShort(1, event);
-            row.putShort(2, origin);
-            row.putInt(3, tableId);
-            row.putInt(4, walId);
-            row.putLong(5, seqTxn);
-            row.putLong(6, rowCount);
-            row.putLong(7, latency);
+            row.putInt(2, tableId);
+            row.putInt(3, walId);
+            row.putLong(4, seqTxn);
+            row.putLong(5, rowCount);
+            row.putFloat(6, latency);
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
@@ -93,13 +91,12 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
             return "CREATE TABLE IF NOT EXISTS " + TABLE_NAME + " (" +
                     "created timestamp, " +
                     "event short, " +
-                    "origin short, " +
                     "tableId int, " +
                     "walId int, " +
                     "seqTxn long, " +
                     "rowCount long," +
-                    "latency long" +
-                    ") timestamp(created)";
+                    "latency float" +
+                    ") timestamp(created) partition by MONTH BYPASS WAL";
         }
 
         @Override

@@ -37,7 +37,6 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.AbstractTelemetryTask;
 import org.jetbrains.annotations.NotNull;
@@ -84,7 +83,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public void consume(T task) {
-        task.writeTo(writer);
+        task.writeTo(writer, clock.getTicks());
     }
 
     public void consumeAll() {
@@ -124,17 +123,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
 
         long cursor = telemetryPubSeq.next();
-        while (cursor == -2) {
-            Os.pause();
-            cursor = telemetryPubSeq.next();
+        if (cursor < 0) {
+            return null;
         }
 
-        if (cursor > -1) {
-            final T task = telemetryQueue.get(cursor);
-            task.setCreated(clock.getTicks());
-            return task;
-        }
-        return null;
+        final T task = telemetryQueue.get(cursor);
+        task.setCreated(clock.getTicks());
+        return task;
     }
 
     public void store() {

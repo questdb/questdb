@@ -44,7 +44,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.TelemetryOrigin.WAL_APPLY;
 import static io.questdb.TelemetrySystemEvent.*;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.wal.WalTxnType.*;
@@ -308,7 +307,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             }
 
                             if (hasNext) {
-                                final long referenceTimestamp = telemetryFacade.store(APPLY_STRUCTURE_CHANGE, tableToken, walId, seqTxn, -1L, commitTimestamp);
+                                final long referenceTimestamp = telemetryFacade.store(WAL_APPLY_STRUCTURE_CHANGE, tableToken, walId, seqTxn, -1L, commitTimestamp);
                                 structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
                                 telemetryFacade.store(APPLIED_TXN, tableToken, walId, seqTxn, -1L, referenceTimestamp);
@@ -347,7 +346,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private long doStoreTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
-        return TelemetryWalTask.store(telemetryWal, WAL_APPLY, event, tableToken.getTableId(), walId, seqTxn, rowCount, referenceTimestamp);
+        return TelemetryWalTask.store(telemetryWal, event, tableToken.getTableId(), walId, seqTxn, rowCount, referenceTimestamp);
     }
 
     private void processWalCommit(TableWriter writer, int walId, @Transient Path walPath, long segmentTxn, OperationCompiler operationCompiler, long seqTxn, long commitTimestamp) {
@@ -358,7 +357,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             switch (walTxnType) {
                 case DATA:
                     final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
-                    referenceTimestamp = telemetryFacade.store(APPLY_TXN_DATA, writer.getTableToken(), walId, seqTxn, -1L, commitTimestamp);
+                    referenceTimestamp = telemetryFacade.store(WAL_APPLY_TXN_DATA, writer.getTableToken(), walId, seqTxn, -1L, commitTimestamp);
                     final long rowsAdded = writer.processWalData(
                             walPath,
                             !dataInfo.isOutOfOrder(),
@@ -373,7 +372,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     break;
                 case SQL:
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    referenceTimestamp = telemetryFacade.store(APPLY_TXN_SQL, writer.getTableToken(), walId, seqTxn, -1L, commitTimestamp);
+                    referenceTimestamp = telemetryFacade.store(WAL_APPLY_TXN_SQL, writer.getTableToken(), walId, seqTxn, -1L, commitTimestamp);
                     processWalSql(writer, sqlInfo, operationCompiler, seqTxn);
                     telemetryFacade.store(APPLIED_TXN, writer.getTableToken(), walId, seqTxn, -1L, referenceTimestamp);
                     break;

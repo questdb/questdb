@@ -37,6 +37,7 @@ public class TelemetryTask extends AbstractTelemetryTask {
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
 
+    private short origin;
     private short event;
 
     private TelemetryTask() {
@@ -52,9 +53,9 @@ public class TelemetryTask extends AbstractTelemetryTask {
     }
 
     @Override
-    public void writeTo(TableWriter writer) {
+    public void writeTo(TableWriter writer, long timestamp) {
         try {
-            final TableWriter.Row row = writer.newRow(created);
+            final TableWriter.Row row = writer.newRow(timestamp);
             row.putShort(1, event);
             row.putShort(2, origin);
             row.append();
@@ -92,7 +93,7 @@ public class TelemetryTask extends AbstractTelemetryTask {
             systemStatusTask.created = micros;
             systemStatusTask.origin = TelemetryOrigin.INTERNAL;
             systemStatusTask.event = systemStatus;
-            systemStatusTask.writeTo(writer);
+            systemStatusTask.writeTo(writer, micros);
             writer.commit();
         }
     };
