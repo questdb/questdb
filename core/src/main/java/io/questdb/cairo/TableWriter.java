@@ -144,6 +144,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
+    private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
     private final int rootLen;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
@@ -203,7 +204,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final O3ColumnUpdateMethod o3MergeLagVarColumnRef = this::o3MergeVarColumnLag;
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
-    // o3PartitionUpdateSink (offset, description): 
+    // o3PartitionUpdateSink (offset, description):
     // 0, partitionTimestamp
     // 1, timestampMin
     // 2, timestampMax
@@ -220,7 +221,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryARW o3TimestampMemCpy;
     private long partitionTimestampHi;
     private boolean performRecovery;
-    private long physicallyWrittenRowsSinceLastCommit;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private TableToken tableToken;
@@ -609,7 +609,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void addPhysicallyWrittenRows(long rows) {
         // maybe not thread safe but hey it's just a metric
-        physicallyWrittenRowsSinceLastCommit += rows;
+        physicallyWrittenRowsSinceLastCommit.addAndGet(rows);
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
@@ -1164,7 +1164,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPhysicallyWrittenRowsSinceLastCommit() {
-        return physicallyWrittenRowsSinceLastCommit;
+        return physicallyWrittenRowsSinceLastCommit.get();
     }
 
     public long getRowCount() {
@@ -2671,7 +2671,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private long commit(int commitMode, long o3MaxLag) {
         checkDistressed();
-        physicallyWrittenRowsSinceLastCommit = 0;
+        physicallyWrittenRowsSinceLastCommit.set(0);
 
         if (o3InError) {
             rollback();
