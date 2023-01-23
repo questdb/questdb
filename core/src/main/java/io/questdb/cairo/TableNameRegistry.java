@@ -89,6 +89,14 @@ public interface TableNameRegistry extends Closeable {
     boolean isTableDropped(TableToken tableToken);
 
     /**
+     * Returns whether the table name is locked.
+     *
+     * @param tableName table name
+     * @return true if table is locked at the time of calling this method
+     */
+    boolean isTableNameAvailable(String tableName);
+
+    /**
      * Locks table name for creation and returns table token.
      * {@link #registerName(TableToken)} must be called to complete table creation and release the lock.
      * or {@link #unlockTableName(TableToken)} must be called to release lock without completing table creation.

@@ -57,6 +57,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public boolean isTableNameAvailable(String tableName) {
+        return !nameTableTokenMap.containsKey(tableName);
+    }
+
+    @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         TableToken newNameRecord = new TableToken(tableName, dirName, tableId, isWal);
         TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
