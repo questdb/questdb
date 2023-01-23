@@ -49,10 +49,10 @@ public class MetricsBenchmark {
             "label0", new CharSequence[]{"A", "B", "C"},
             "label1", new CharSequence[]{"X", "Y", "Z"}
     );
-    private static final Gauge gauge = metricsRegistry.newGauge("gauge");
+    private static final LongGauge gauge = metricsRegistry.newLongGauge("gauge");
     private static final MetricsRegistry nullMetricsRegistry = new NullMetricsRegistry();
     private static final Counter nullCounter = nullMetricsRegistry.newCounter("null_counter");
-    private static final Gauge nullGauge = nullMetricsRegistry.newGauge("null_gauge");
+    private static final LongGauge nullGauge = nullMetricsRegistry.newLongGauge("null_gauge");
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

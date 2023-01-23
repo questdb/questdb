@@ -163,19 +163,25 @@ public class MetricsTest {
         }
 
         @Override
-        public Gauge newGauge(CharSequence name) {
+        public DoubleGauge newDoubleGauge(CharSequence name) {
             addMetricName(name);
-            return delegate.newGauge(name);
+            return delegate.newDoubleGauge(name);
         }
 
         @Override
-        public Gauge newGauge(int memoryTag) {
+        public LongGauge newLongGauge(CharSequence name) {
+            addMetricName(name);
+            return delegate.newLongGauge(name);
+        }
+
+        @Override
+        public LongGauge newLongGauge(int memoryTag) {
             addMetricName("memory_tag_" + MemoryTag.nameOf(memoryTag));
-            return delegate.newGauge(memoryTag);
+            return delegate.newLongGauge(memoryTag);
         }
 
         @Override
-        public Gauge newVirtualGauge(CharSequence name, VirtualGauge.StatProvider provider) {
+        public LongGauge newVirtualGauge(CharSequence name, VirtualLongGauge.StatProvider provider) {
             addMetricName(name);
             return delegate.newVirtualGauge(name, provider);
         }

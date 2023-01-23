@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -77,7 +78,7 @@ class LineTcpWriterJob implements Job, Closeable {
         LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
-            if (!run(workerId)) {
+            if (!run(workerId, Job.TERMINATING_STATUS)) {
                 break;
             }
         }
@@ -86,7 +87,7 @@ class LineTcpWriterJob implements Job, Closeable {
     }
 
     @Override
-    public boolean run(int workerId) {
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer

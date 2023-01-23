@@ -189,6 +189,7 @@ public final class TestUtils {
                             try {
                                 assertColumnValues(symAsStrTypes, symAsStrTypes, chainLR, chainRR, 0, false);
                                 recordsMatched++;
+                                break;
                             } catch (AssertionError ignore) {
                                 // ignore
                             }
@@ -919,7 +920,9 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log, long s0, long s1) {
-        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        if (log != null) {
+            log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        }
         System.out.printf("random seeds: %dL, %dL%n", s0, s1);
         return new Rnd(s0, s1);
     }

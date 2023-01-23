@@ -65,7 +65,7 @@ public class HttpHealthCheckTestBuilder {
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                workerPool.assign(workerId -> {
+                workerPool.assign((workerId, runStatus) -> {
                     if (!alreadyErrored.getAndSet(true)) {
                         throw new NullPointerException("you'd better not handle me");
                     }

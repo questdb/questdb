@@ -196,7 +196,10 @@ public class LogFactory implements Closeable {
                 try {
                     if (job != null && flush) {
                         try {
-                            job.drain(0);
+                            // noinspection StatementWithEmptyBody
+                            while (job.run(0, Job.TERMINATING_STATUS)) {
+                                // Keep running the job until it returns false to log all the buffered messages
+                            }
                         } catch (Exception th) {
                             // Exception means we cannot log anymore. Perhaps network is down or disk is full.
                             // Switch to the next job.

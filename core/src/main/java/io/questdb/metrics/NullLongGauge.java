@@ -22,42 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.metrics;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.CharSink;
 
-public interface Job {
-    RunStatus RUNNING_STATUS = () -> false;
-    RunStatus TERMINATING_STATUS = () -> true;
+public class NullLongGauge implements LongGauge {
+    public static final NullLongGauge INSTANCE = new NullLongGauge();
 
-    default void drain(int workerId) {
-        while (true) {
-            if (!run(workerId)) {
-                return;
-            }
-        }
+    private NullLongGauge() {
     }
 
-    /**
-     * Runs and returns true if it should be rescheduled ASAP.
-     *
-     * @param workerId  worker id
-     * @param runStatus set to 1 when job is running, 2 when it is halting
-     * @return true if job should be rescheduled ASAP
-     */
-    boolean run(int workerId, @NotNull RunStatus runStatus);
-
-    /**
-     * Runs and returns true if it should be rescheduled ASAP.
-     *
-     * @param workerId worker id
-     * @return true if job should be rescheduled ASAP
-     */
-    default boolean run(int workerId) {
-        return run(workerId, RUNNING_STATUS);
+    @Override
+    public void add(long value) {
     }
 
-    interface RunStatus {
-        boolean isTerminating();
+    @Override
+    public void dec() {
+    }
+
+    @Override
+    public long getValue() {
+        return 0;
+    }
+
+    @Override
+    public void inc() {
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+    }
+
+    @Override
+    public void setValue(long value) {
     }
 }

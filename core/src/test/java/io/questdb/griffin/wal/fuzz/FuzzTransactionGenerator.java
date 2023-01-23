@@ -156,7 +156,19 @@ public class FuzzTransactionGenerator {
     }
 
     private static int generateNewColumnType(Rnd rnd) {
-        return FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
+        int columnType = FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
+        switch (columnType) {
+            default:
+                return columnType;
+            case ColumnType.GEOBYTE:
+                return ColumnType.getGeoHashTypeWithBits(5);
+            case ColumnType.GEOSHORT:
+                return ColumnType.getGeoHashTypeWithBits(10);
+            case ColumnType.GEOINT:
+                return ColumnType.getGeoHashTypeWithBits(25);
+            case ColumnType.GEOLONG:
+                return ColumnType.getGeoHashTypeWithBits(35);
+        }
     }
 
     private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {

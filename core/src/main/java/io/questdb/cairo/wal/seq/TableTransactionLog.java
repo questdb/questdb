@@ -332,6 +332,7 @@ public class TableTransactionLog implements Closeable {
         private FilesFacade ff;
         private long txn;
         private long txnCount;
+        private long txnLo;
         private long txnOffset;
 
         public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
@@ -355,7 +356,7 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
-        public long getSegmentTxn() {
+        public int getSegmentTxn() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 
@@ -392,6 +393,30 @@ public class TableTransactionLog implements Closeable {
             return false;
         }
 
+        @Override
+        public boolean reset() {
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
+            if (newTxnCount > txnCount) {
+                final long oldSize = getMappedLen();
+                txnCount = newTxnCount;
+                final long newSize = getMappedLen();
+                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
+
+                this.txnLo = txn - 1;
+                this.txnOffset -= RECORD_SIZE;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void toTop() {
+            if (txnCount > -1L) {
+                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
+                this.txn = txnLo;
+            }
+        }
+
         private long getMappedLen() {
             return txnCount * RECORD_SIZE + HEADER_SIZE;
         }
@@ -414,6 +439,7 @@ public class TableTransactionLog implements Closeable {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             }
+            this.txnLo = txnLo;
             txn = txnLo;
             return this;
         }

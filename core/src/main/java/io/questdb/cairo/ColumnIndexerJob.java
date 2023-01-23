@@ -35,7 +35,7 @@ public class ColumnIndexerJob extends AbstractQueueConsumerJob<ColumnIndexerTask
         super(messageBus.getIndexerQueue(), messageBus.getIndexerSubSequence());
     }
 
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final ColumnIndexerTask queueItem = queue.get(cursor);
         // copy values and release queue item
         final ColumnIndexer indexer = queueItem.indexer;

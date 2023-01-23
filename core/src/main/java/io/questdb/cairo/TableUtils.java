@@ -688,24 +688,26 @@ public final class TableUtils {
         return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
-    public static int lock(FilesFacade ff, Path path, boolean logOnError) {
+    public static int lock(FilesFacade ff, Path path, boolean verbose) {
         final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            if (logOnError) {
+            if (verbose) {
                 LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             }
             return -1;
         }
 
         if (ff.lock(fd) != 0) {
-            if (logOnError) {
+            if (verbose) {
                 LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             }
             ff.close(fd);
             return -1;
         }
 
-        LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+        if (verbose) {
+            LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+        }
         return fd;
     }
 
