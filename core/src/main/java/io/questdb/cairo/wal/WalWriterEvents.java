@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -43,7 +44,9 @@ class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
+    private int indexFd;
     private AtomicIntList initialSymbolCounts;
+    private long longBuffer;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
@@ -56,12 +59,23 @@ class WalWriterEvents implements Closeable {
     @Override
     public void close() {
         eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        Unsafe.free(longBuffer, Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        longBuffer = 0L;
+        ff.close(indexFd);
+        indexFd = -1;
+    }
+
+    private void appendIndex(long value) {
+        Unsafe.getUnsafe().putLong(longBuffer, value);
+        ff.append(indexFd, longBuffer, Long.BYTES);
     }
 
     private void init() {
-        eventMem.putLong(WALE_HEADER_SIZE + Integer.BYTES);
+        eventMem.putInt(0);
         eventMem.putInt(WAL_FORMAT_VERSION);
         eventMem.putInt(-1);
+
+        appendIndex(WALE_HEADER_SIZE);
         txn = 0;
     }
 
@@ -117,6 +131,9 @@ class WalWriterEvents implements Closeable {
                 break;
             case ColumnType.BINARY:
                 eventMem.putBin(function.getBin(null));
+                break;
+            case ColumnType.UUID:
+                eventMem.putLong128(function.getLong128Lo(null), function.getLong128Hi(null));
                 break;
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
@@ -198,7 +215,9 @@ class WalWriterEvents implements Closeable {
         writeSymbolMapDiffs();
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
-        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
     }
 
@@ -216,7 +235,9 @@ class WalWriterEvents implements Closeable {
         writeNamedVariables(bindVariableService);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
-        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
     }
 
@@ -231,13 +252,16 @@ class WalWriterEvents implements Closeable {
             close();
         }
         openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        indexFd = ff.openRW(path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), CairoConfiguration.O_NONE);
+        longBuffer = Unsafe.malloc(Long.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
         init();
     }
 
     void rollback() {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
-        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn - 1);
+        ff.truncate(indexFd, (txn + 1L) << 3);
     }
 
     int truncate() {
@@ -246,7 +270,9 @@ class WalWriterEvents implements Closeable {
         eventMem.putByte(WalTxnType.TRUNCATE);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
-        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
         return txn++;
     }
 }

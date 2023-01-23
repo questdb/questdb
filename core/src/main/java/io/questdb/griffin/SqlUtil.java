@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -479,6 +480,26 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NaN;
+    }
+
+    public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
+        if (str == null || str.length() == 0) {
+            uuid.ofNull();
+            return;
+        }
+        try {
+            uuid.of(str);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
+        }
+    }
+
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
+        if (Uuid.isNull(lo, hi)) {
+            return false;
+        }
+        Numbers.appendUuid(lo, hi, sink);
+        return true;
     }
 
     /**

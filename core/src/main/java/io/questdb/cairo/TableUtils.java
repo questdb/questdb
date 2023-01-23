@@ -34,7 +34,6 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -200,8 +199,8 @@ public final class TableUtils {
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
         final Function function = functionParser.parseFunction(
-                tableNameExpr, 
-                AnyRecordMetadata.INSTANCE, 
+                tableNameExpr,
+                AnyRecordMetadata.INSTANCE,
                 executionContext
         );
         if (!ColumnType.isCursor(function.getType())) {
@@ -689,24 +688,26 @@ public final class TableUtils {
         return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
-    public static int lock(FilesFacade ff, Path path, boolean logOnError) {
+    public static int lock(FilesFacade ff, Path path, boolean verbose) {
         final int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
-            if (logOnError) {
+            if (verbose) {
                 LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             }
             return -1;
         }
 
         if (ff.lock(fd) != 0) {
-            if (logOnError) {
+            if (verbose) {
                 LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             }
             ff.close(fd);
             return -1;
         }
 
-        LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+        if (verbose) {
+            LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
+        }
         return fd;
     }
 
@@ -1065,10 +1066,11 @@ public final class TableUtils {
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
                 break;
             case ColumnType.LONG128:
-                // Long128 is null when all 2 longs are NaNs
+                // fall through
+            case ColumnType.UUID:
+                // Long128 and UUID are null when all 2 longs are NaNs
                 //noinspection ConstantConditions
-                assert Long128Constant.NULL_HI == Long128Constant.NULL_LO;
-                Vect.setMemoryLong(addr, Long128Constant.NULL_HI, count * 2);
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
                 break;
             default:
                 break;

@@ -26,7 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.std.*;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjStack;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;

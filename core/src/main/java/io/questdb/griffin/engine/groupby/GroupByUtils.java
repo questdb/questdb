@@ -189,6 +189,9 @@ public class GroupByUtils {
                         case ColumnType.LONG128:
                             fun = Long128Column.newInstance(keyColumnIndex - 1);
                             break;
+                        case ColumnType.UUID:
+                            fun = UuidColumn.newInstance(keyColumnIndex - 1);
+                            break;
                         default:
                             fun = BinColumn.newInstance(keyColumnIndex - 1);
                             break;

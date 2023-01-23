@@ -763,6 +763,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalCommitSquashRowLimit() {
+        return conf.getWalCommitSquashRowLimit();
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return conf.getWalEnabledDefault();
     }

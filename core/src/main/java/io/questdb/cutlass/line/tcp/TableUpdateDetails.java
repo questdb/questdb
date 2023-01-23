@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -110,7 +111,7 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public void addReference(int workerId) {
-        if (writerThreadId != -1) {
+        if (!isWal()) {
             networkIOOwnerCount++;
         }
         LOG.info()
@@ -195,8 +196,12 @@ public class TableUpdateDetails implements Closeable {
         return writerInError;
     }
 
+    public boolean isWal() {
+        return writerThreadId == -1;
+    }
+
     public void removeReference(int workerId) {
-        if (writerThreadId != -1) {
+        if (!isWal()) {
             networkIOOwnerCount--;
         }
         localDetailsArray[workerId].clear();
@@ -221,7 +226,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private void commit(boolean withLag) throws CommitFailedException {
+    public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
                 LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
@@ -240,6 +245,9 @@ public class TableUpdateDetails implements Closeable {
                 }
                 throw CommitFailedException.instance(ex);
             }
+        }
+        if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
+            setWriterInError();
         }
     }
 
@@ -285,7 +293,7 @@ public class TableUpdateDetails implements Closeable {
         nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
 
         try {
-            writerAPI.ic();
+            commit(true);
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())
@@ -632,10 +640,14 @@ public class TableUpdateDetails implements Closeable {
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetStateIfNecessary() {
-            // First, reset processed column tracking.
+        void clearProcessedColumns() {
             processedCols.setAll(columnCount, false);
             addedColsUtf16.clear();
+        }
+
+        void resetStateIfNecessary() {
+            // First, reset processed column tracking.
+            clearProcessedColumns();
             // Second, check if writer's structure version has changed
             // compared with the known metadata.
             if (latestKnownMetadata != null) {
@@ -647,7 +659,15 @@ public class TableUpdateDetails implements Closeable {
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
-                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+                try {
+                    latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableToken);
+                } catch (CairoException | TableReferenceOutOfDateException ex) {
+                    if (isWal()) {
+                        setWriterInError();
+                    } else {
+                        throw ex;
+                    }
+                }
             }
         }
     }

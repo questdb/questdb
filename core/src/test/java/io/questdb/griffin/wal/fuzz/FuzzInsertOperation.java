@@ -29,7 +29,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 
@@ -52,7 +51,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOSHORT,
             ColumnType.GEOINT,
             ColumnType.GEOLONG,
-            ColumnType.BOOLEAN
+            ColumnType.BOOLEAN,
+            ColumnType.UUID
     };
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
@@ -124,7 +124,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                     if (rnd.nextDouble() > notSet) {
                         boolean isNull = rnd.nextDouble() < nullSet;
 
-                        switch (type) {
+                        switch (ColumnType.tagOf(type)) {
                             case ColumnType.CHAR:
                                 row.putChar(index, rnd.nextChar());
                                 break;
@@ -167,9 +167,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
                             case ColumnType.LONG128:
                                 if (!isNull) {
-                                    row.putLong128LittleEndian(index, rnd.nextLong(), rnd.nextLong());
+                                    row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 } else {
-                                    row.putLong128LittleEndian(index, Long128Constant.NULL_HI, Long128Constant.NULL_LO);
+                                    row.putLong128(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
                                 }
                                 break;
 
@@ -200,7 +200,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                             case ColumnType.GEOLONG:
                                 row.putGeoHash(index, rnd.nextLong());
                                 break;
-
+                            case ColumnType.UUID:
+                                row.putLong128(index, rnd.nextLong(), rnd.nextLong());
+                                break;
                             default:
                                 throw new UnsupportedOperationException();
                         }

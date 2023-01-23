@@ -33,6 +33,8 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
+import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
@@ -224,6 +226,12 @@ public class SendAndReceiveRequestBuilder {
                     // expectSendDisconnect means that test expect disconnect during send or straight after
                     TestUtils.assertContains(disconnected ? "Server disconnected" : null, actual, expectedFragment);
                 }
+            }
+        } else {
+            try {
+                java.nio.file.Files.write(Paths.get("actual.txt"), actual.getBytes(Files.UTF_8));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
             }
         }
 

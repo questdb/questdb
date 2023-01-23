@@ -405,6 +405,8 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
                     break;
                 case ColumnType.LONG128:
+                    // fall-through
+                case ColumnType.UUID:
                     dstFixMem.putLong(masterRecord.getLong128Lo(i));
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;

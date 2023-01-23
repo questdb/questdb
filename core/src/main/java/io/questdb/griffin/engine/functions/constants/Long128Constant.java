@@ -27,19 +27,18 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long128Function;
+import io.questdb.std.Numbers;
 
 public class Long128Constant extends Long128Function implements ConstantFunction {
 
-    public static final long NULL_HI = Long.MIN_VALUE;
-    public static final long NULL_LO = Long.MIN_VALUE;
-    public static final Long128Constant NULL = new Long128Constant(NULL_HI, NULL_LO);
+    public static final Long128Constant NULL = new Long128Constant(Numbers.LONG_NaN, Numbers.LONG_NaN);
 
     private final long hi;
     private final long lo;
 
-    public Long128Constant(long hi, long lo) {
-        this.hi = hi;
+    public Long128Constant(long lo, long hi) {
         this.lo = lo;
+        this.hi = hi;
     }
 
     @Override
