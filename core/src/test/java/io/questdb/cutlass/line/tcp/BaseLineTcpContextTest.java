@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -334,7 +335,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean run(int workerId) {
+            public boolean run(int workerId, @NotNull RunStatus runStatus) {
                 return false;
             }
         });
@@ -399,7 +400,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean run(int workerId) {
+        public boolean run(int workerId, @NotNull RunStatus runStatus) {
             Assert.fail("This is a mock job, not designed to run in a worker pool");
             return false;
         }

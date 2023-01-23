@@ -245,37 +245,36 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
 
             try (
-                    TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
-                            .timestamp()
-                            .col("c", ColumnType.TIMESTAMP);
-                    Path rmPath = new Path().of(configuration.getRoot())
+                TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
+                        .timestamp().col("c", ColumnType.TIMESTAMP);
+                Path rmPath = new Path().of(configuration.getRoot())
             ) {
-                // Add / remove tables
-                engine.closeNameRegistry();
-                Rnd rnd = new Rnd(940303792693L, 1673348707058L);
-                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
-                    rw.reloadTableNameCache();
-                    barrier.await();
-                    int iteration = 0;
-                    IntHashSet addedTables = new IntHashSet();
-                    FilesFacade ff = configuration.getFilesFacade();
-                    int rootLen = configuration.getRoot().length();
-                    while (addedTables.size() < tableCount) {
-                        iteration++;
-                        if (rnd.nextDouble() > 0.2) {
-                            // Add table
-                            String tableName = "tab" + iteration;
-                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
-                            rw.registerName(tableToken);
-                            addedTables.add(iteration);
-                            TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
-                        } else if (addedTables.size() > 0) {
-                            // Remove table
-                            int tableId = addedTables.getLast();
-                            String tableName = "tab" + tableId;
-                            TableToken tableToken = rw.getTableToken(tableName);
-                            rw.dropTable(tableToken);
-                            addedTables.remove(tableId);
+            // Add / remove tables
+            engine.closeNameRegistry();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
+                rw.reloadTableNameCache();
+                barrier.await();
+                int iteration = 0;
+                IntHashSet addedTables = new IntHashSet();
+                FilesFacade ff = configuration.getFilesFacade();
+                int rootLen = configuration.getRoot().length();
+                while (addedTables.size() < tableCount) {
+                    iteration++;
+                    if (rnd.nextDouble() > 0.2) {
+                        // Add table
+                        String tableName = "tab" + iteration;
+                        TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
+                        rw.registerName(tableToken);
+                        addedTables.add(iteration);
+                        TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
+                    } else if (addedTables.size() > 0) {
+                        // Remove table
+                        int tableId = addedTables.getLast();
+                        String tableName = "tab" + tableId;
+                        TableToken tableToken = rw.getTableToken(tableName);
+                        rw.dropTable(tableToken);
+                        addedTables.remove(tableId);
 
                             // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                             rmPath.trimTo(rootLen).concat(tableName).$();

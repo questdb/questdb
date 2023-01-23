@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
@@ -120,7 +121,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public boolean run(int workerId) {
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
         assert this.workerId == workerId;
         boolean busy = false;
         if (busyContext != null) {

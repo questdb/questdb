@@ -50,7 +50,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     private void applyWalData(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
-        writer.processWalData(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null, 1);
+        writer.processWalData(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null, 1, timestampHi);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -124,7 +124,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
             compile("create table wal_clean as (select * from wal_all)");
             compile("alter table wal_clean drop column ts");
             compile("alter table wal_clean rename column ts1 to ts");
-            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
+            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY WAL");
 
             try (
                     TableWriter writer = getWriter("x");
@@ -176,7 +176,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
             compile("create table wal_clean as (select * from wal_all)");
             compile("alter table wal_clean drop column ts");
             compile("alter table wal_clean rename column ts1 to ts");
-            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
+            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY WAL");
 
             try (
                     TableWriter writer = getWriter("x");

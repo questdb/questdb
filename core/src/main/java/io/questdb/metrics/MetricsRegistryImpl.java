@@ -59,22 +59,29 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     }
 
     @Override
-    public Gauge newGauge(CharSequence name) {
-        Gauge gauge = new GaugeImpl(name);
+    public DoubleGauge newDoubleGauge(CharSequence name) {
+        DoubleGaugeImpl gauge = new DoubleGaugeImpl(name);
         metrics.add(gauge);
         return gauge;
     }
 
     @Override
-    public Gauge newGauge(int memoryTag) {
-        Gauge gauge = new MemoryTagGauge(memoryTag);
+    public LongGauge newLongGauge(CharSequence name) {
+        LongGauge gauge = new LongGaugeImpl(name);
         metrics.add(gauge);
         return gauge;
     }
 
     @Override
-    public Gauge newVirtualGauge(CharSequence _name, VirtualGauge.StatProvider provider) {
-        VirtualGauge gauge = new VirtualGauge(_name, provider);
+    public LongGauge newLongGauge(int memoryTag) {
+        LongGauge gauge = new MemoryTagLongGauge(memoryTag);
+        metrics.add(gauge);
+        return gauge;
+    }
+
+    @Override
+    public LongGauge newVirtualGauge(CharSequence _name, VirtualLongGauge.StatProvider provider) {
+        VirtualLongGauge gauge = new VirtualLongGauge(_name, provider);
         metrics.add(gauge);
         return gauge;
     }
