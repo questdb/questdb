@@ -2353,8 +2353,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         FilesFacade originalFf = AbstractCairoTest.ff;
         AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
-                if (target.equals(path.toString())) {
+            public boolean isDirOrSoftLinkDir(Path path) {
+                if (Chars.equals(path, target)) {
                     Assert.assertTrue(volume.delete());
                     return true;
                 }

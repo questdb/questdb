@@ -303,7 +303,7 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path).put(", tableName=").put(tableDir).put(']');
         }
 
-        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
+        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
@@ -1305,6 +1305,9 @@ public final class TableUtils {
             } else {
                 return TABLE_RESERVED;
             }
+        } else if (ff.exists(path)) {
+            // it will be a file
+            return TABLE_RESERVED;
         } else {
             return TABLE_DOES_NOT_EXIST;
         }
