@@ -25,33 +25,25 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.metrics.Counter;
-import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 public class WalMetrics {
-    private final Counter physicallyWrittenRowsCounter;
-    private final LongGauge rowsWriteRateGauge;
+    private final Counter applyPhysicallyWrittenRowsCounter;
+    private final Counter applyRowsWrittenCounter;
     private final Counter rowsWrittenCounter;
-    private final AtomicLong totalRowsWritten;
-    private final AtomicLong totalRowsWrittenTotalTime;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
-        this.physicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
-        this.rowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
-        this.rowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
-
-        this.totalRowsWrittenTotalTime = new AtomicLong();
-        this.totalRowsWritten = new AtomicLong();
+        this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
+        this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
+        this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
     }
 
-    public void addRowsWritten(long rows, long physicallyWrittenRows, long timeMicros) {
-        rowsWrittenCounter.add(rows);
-        physicallyWrittenRowsCounter.add(physicallyWrittenRows);
+    public void addApplyRowsWritten(long rows, long physicallyWrittenRows) {
+        applyRowsWrittenCounter.add(rows);
+        applyPhysicallyWrittenRowsCounter.add(physicallyWrittenRows);
+    }
 
-        long totalRows = totalRowsWritten.addAndGet(rows);
-        long rowsAppendRate = totalRows * 1000_000L / Math.max(1, totalRowsWrittenTotalTime.addAndGet(timeMicros));
-        rowsWriteRateGauge.setValue(rowsAppendRate);
+    public void addRowsWritten(long rows) {
+        rowsWrittenCounter.add(rows);
     }
 }
