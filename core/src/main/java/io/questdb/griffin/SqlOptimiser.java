@@ -2002,12 +2002,12 @@ class SqlOptimiser {
                     }
 
                     final QueryModel nested = parent.getNestedModel();
-                    if (
-                            nested == null
-                                    || nested.getLatestBy().size() > 0
-                                    || nested.getLimitLo() != null
-                                    || nested.getLimitHi() != null
-                                    || nested.getUnionModel() != null
+                    if (nested == null
+                            || nested.getLatestBy().size() > 0
+                            || nested.getLimitLo() != null
+                            || nested.getLimitHi() != null
+                            || nested.getUnionModel() != null
+                            || nested.getSampleBy() != null
                     ) {
                         // there is no nested model for this table, keep where clause element with this model
                         addWhereNode(parent, node);
