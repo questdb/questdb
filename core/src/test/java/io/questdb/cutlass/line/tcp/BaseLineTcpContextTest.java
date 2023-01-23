@@ -370,6 +370,17 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
+        public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
+            if (keyIndex < 0) {
+                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
+                localTableUpdateDetailsByTableName.removeAt(keyIndex);
+                return tud;
+            }
+            return null;
+        }
+
+        @Override
         public void close() {
         }
 

@@ -87,11 +87,22 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            if (tud.getWriterThreadId() == -1) {
+            if (tud.isWal()) {
                 tud.releaseWriter(true);
                 tud.close();
             }
         }
+    }
+
+    @Override
+    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
+        if (keyIndex < 0) {
+            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
+            tableUpdateDetailsUtf8.removeAt(keyIndex);
+            return tud;
+        }
+        return null;
     }
 
     @Override
