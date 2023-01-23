@@ -89,10 +89,10 @@ public interface TableNameRegistry extends Closeable {
     boolean isTableDropped(TableToken tableToken);
 
     /**
-     * Returns whether the table name is locked.
+     * Returns whether the table name is available.
      *
      * @param tableName table name
-     * @return true if table is locked at the time of calling this method
+     * @return true if table is available at the time of calling this method
      */
     boolean isTableNameAvailable(String tableName);
 
