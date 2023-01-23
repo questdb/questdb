@@ -90,7 +90,7 @@ public class MetricsRegistryTest {
     @Test
     public void testGauge() {
         MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
-        Gauge gauge = metricsRegistry.newGauge("gauge");
+        LongGauge gauge = metricsRegistry.newLongGauge("gauge");
 
         gauge.inc();
         gauge.inc();
@@ -120,7 +120,7 @@ public class MetricsRegistryTest {
     @Test
     public void testNullGauge() {
         MetricsRegistry metricsRegistry = new NullMetricsRegistry();
-        Gauge gauge = metricsRegistry.newGauge("gauge");
+        LongGauge gauge = metricsRegistry.newLongGauge("gauge");
 
         gauge.inc();
         gauge.inc();

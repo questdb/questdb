@@ -24,8 +24,8 @@
 
 package io.questdb;
 
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;

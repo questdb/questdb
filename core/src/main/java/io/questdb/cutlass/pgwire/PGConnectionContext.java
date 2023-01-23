@@ -830,6 +830,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 case BINARY_TYPE_BYTE:
                     appendByteColumnBin(record, i);
                     break;
+                case BINARY_TYPE_UUID:
+                    appendUuidColumnBin(record, i);
+                    break;
                 case ColumnType.FLOAT:
                     appendFloatColumn(record, i);
                     break;
@@ -874,6 +877,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     break;
                 case ColumnType.NULL:
                     responseAsciiSink.setNullValue();
+                    break;
+                case ColumnType.UUID:
+                    appendUuidColumn(record, i);
                     break;
                 default:
                     assert false;
@@ -949,6 +955,30 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             responseAsciiSink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
             responseAsciiSink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        }
+    }
+
+    private void appendUuidColumn(Record record, int columnIndex) {
+        final long lo = record.getLong128Lo(columnIndex);
+        final long hi = record.getLong128Hi(columnIndex);
+        if (Uuid.isNull(lo, hi)) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.appendUuid(lo, hi, responseAsciiSink);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
+    private void appendUuidColumnBin(Record record, int columnIndex) {
+        final long lo = record.getLong128Lo(columnIndex);
+        final long hi = record.getLong128Hi(columnIndex);
+        if (Uuid.isNull(lo, hi)) {
+            responseAsciiSink.setNullValue();
+        } else {
+            responseAsciiSink.putNetworkInt(Long.BYTES * 2);
+            responseAsciiSink.putNetworkLong(hi);
+            responseAsciiSink.putNetworkLong(lo);
         }
     }
 
@@ -1034,6 +1064,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         break;
                     case X_B_PG_BYTEA:
                         setBinBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_UUID:
+                        setUuidBindVariable(j, lo, valueLen);
                         break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
@@ -2595,6 +2628,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareReadyForQuery();
         sendAndReset();
+    }
+
+    private void setUuidBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(index, Long128.BYTES, valueLen);
+        long hi = getLongUnsafe(address);
+        long lo = getLongUnsafe(address + Long.BYTES);
+        bindVariableService.setUuid(index, lo, hi);
     }
 
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {

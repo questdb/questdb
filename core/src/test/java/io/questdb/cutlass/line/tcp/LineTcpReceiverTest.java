@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
@@ -48,6 +50,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -1259,6 +1262,162 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDropTable() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        configOverrideMaxUncommittedRows(2);
+        configOverrideWalSegmentRolloverRowCount(2);
+        String weather = "weather";
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int count = 1;
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (
+                    Chars.endsWith(name,Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
+                    Chars.contains(name,weather) &&
+                    --count == 0
+                ) {
+                    mayDrainWalQueue();
+                    dropWeatherTable();
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        runInContext(filesFacade, (receiver) -> {
+            String lineData = weather + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                    weather + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                    weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
+                    weather + ",location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    weather + ",location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
+                    weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
+            send(receiver, lineData, weather, WAIT_ILP_TABLE_RELEASE);
+
+            mayDrainWalQueue();
+
+            // two of the three commits are lost
+            String expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, weather);
+        }, false, 250);
+    }
+
+    @Test
+    public void testRenameTable() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        configOverrideMaxUncommittedRows(2);
+        configOverrideWalSegmentRolloverRowCount(2);
+        String weather = "weather";
+        String meteorology = "meteorology";
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int count = 1;
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (
+                    Chars.endsWith(name,Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
+                    Chars.contains(name,weather) &&
+                    --count == 0
+                ) {
+                    mayDrainWalQueue();
+                    renameTable(weather, meteorology);
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        runInContext(filesFacade, (receiver) -> {
+            String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
+                    weather + ",location=west2 temperature=20 1465839830100500200\n" +
+                    weather + ",location=east3 temperature=30 1465839830100600200\n" +
+                    weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
+                    weather + ",location=east5,source=sensor2 temp=50 1465839830100800200\n" +
+                    weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n";
+            send(receiver, lineData, weather);
+
+            lineData = weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n";
+            send(receiver, lineData, weather);
+            lineData = meteorology + ",location=south temperature=80 1465839830101000200\n";
+            send(receiver, lineData, meteorology);
+
+            mayDrainWalQueue();
+            String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
+                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
+                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\t\tNaN\n" +
+                    "west4\tNaN\t2016-06-13T17:43:50.100700Z\tsensor1\t40.0\n" +
+                    "south\t80.0\t2016-06-13T17:43:50.101000Z\t\tNaN\n";
+            assertTable(expected, meteorology);
+
+            expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "east5\tsensor2\t50.0\t2016-06-13T17:43:50.100800Z\n" +
+                    "west6\tsensor3\t60.0\t2016-06-13T17:43:50.100900Z\n" +
+                    "north\tsensor4\t70.0\t2016-06-13T17:43:50.101000Z\n";
+            assertTable(expected, weather);
+
+        }, false, 250);
+    }
+
+    @Test
+    public void testRenameTableSameMeta() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        configOverrideMaxUncommittedRows(2);
+        configOverrideWalSegmentRolloverRowCount(2);
+        String weather = "weather";
+        String meteorology = "meteorology";
+        FilesFacade filesFacade = new TestFilesFacadeImpl() {
+            private int count = 1;
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (
+                    Chars.endsWith(name,Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
+                    Chars.contains(name,weather) &&
+                    --count == 0
+                ) {
+                    mayDrainWalQueue();
+                    renameTable(weather, meteorology);
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        runInContext(filesFacade, (receiver) -> {
+            String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
+                    weather + ",location=west2 temperature=20 1465839830100500200\n" +
+                    weather + ",location=east3 temperature=30 1465839830100600200\n";
+            sendNoWait(receiver, lineData, weather);
+
+            lineData = weather + ",location=west4 temperature=40 1465839830100700200\n" +
+                    weather + ",location=west5 temperature=50 1465839830100800200\n" +
+                    weather + ",location=east6 temperature=60 1465839830100900200\n";
+
+            send(receiver, lineData, weather);
+
+            lineData = weather + ",location=south7 temperature=70 1465839830101000200\n";
+            send(receiver, lineData, weather);
+            lineData = meteorology + ",location=south8 temperature=80 1465839830101000200\n";
+            send(receiver, lineData, meteorology);
+
+            mayDrainWalQueue();
+            // two of the three commits go to the renamed table
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "west1\t10.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "west2\t20.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "east3\t30.0\t2016-06-13T17:43:50.100600Z\n" +
+                    "west4\t40.0\t2016-06-13T17:43:50.100700Z\n" +
+                    "south8\t80.0\t2016-06-13T17:43:50.101000Z\n";
+            assertTable(expected, meteorology);
+
+            // last commit goes to the recreated table
+            expected = "location\ttemperature\ttimestamp\n" +
+                    "west5\t50.0\t2016-06-13T17:43:50.100800Z\n" +
+                    "east6\t60.0\t2016-06-13T17:43:50.100900Z\n" +
+                    "south7\t70.0\t2016-06-13T17:43:50.101000Z\n";
+            assertTable(expected, weather);
+
+        }, false, 250);
+    }
+
+    @Test
     public void testWriterRelease1() throws Exception {
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -1318,8 +1477,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease3() throws Exception {
-        Assume.assumeFalse(walEnabled);
-
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1348,7 +1505,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease4() throws Exception {
-        Assume.assumeFalse(walEnabled);
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1377,7 +1533,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease5() throws Exception {
-        Assume.assumeFalse(walEnabled);
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1423,6 +1578,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private void dropWeatherTable() {
         TableToken tt = engine.getTableToken("weather");
         engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, tt);
+    }
+
+    private void renameTable(CharSequence from, CharSequence to) {
+        try (MemoryMARW mem = Vm.getMARWInstance(); Path otherPath = new Path()) {
+            engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, mem, from, otherPath, to);
+        }
     }
 
     private void mayDrainWalQueue() {

@@ -104,6 +104,10 @@ public class WalEventCursor {
         }
         nextOffset = length + nextOffset;
 
+        if (memSize < nextOffset + Integer.BYTES) {
+            eventMem.extend(nextOffset + Integer.BYTES);
+            memSize = eventMem.size();
+        }
         txn = readLong();
         if (txn == END_OF_EVENTS) {
             return false;
@@ -219,6 +223,20 @@ public class WalEventCursor {
         return value;
     }
 
+    void openOffset(long offset) {
+        reset();
+        if (offset > 0) {
+            this.offset = offset;
+            int size = readInt();
+            this.nextOffset = offset + size;
+            this.txn = readLong();
+            this.memSize = eventMem.size();
+            this.readRecord();
+        } else {
+            reset();
+        }
+    }
+
     SymbolMapDiff readNextSymbolMapDiff(SymbolMapDiffImpl symbolMapDiff) {
         final int columnIndex = readInt();
         if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
@@ -241,33 +259,6 @@ public class WalEventCursor {
         final CharSequence symbol = readStr();
         entry.of(key, symbol);
         return entry;
-    }
-
-    boolean setPosition(long segmentTxn) {
-        reset();
-
-        if (segmentTxn > -1) {
-            while (true) {
-                offset = nextOffset;
-                int length = readInt();
-                if (length < 1) {
-                    // EOF
-                    return false;
-                }
-                nextOffset = length + nextOffset;
-
-                txn = readLong();
-                if (txn == segmentTxn) {
-                    readRecord();
-                    return true;
-                } else if (txn == END_OF_EVENTS) {
-                    return false;
-                }
-            }
-        }
-
-        // Read all from beginning
-        return true;
     }
 
     public class DataInfo implements SymbolMapDiffCursor {
@@ -448,6 +439,9 @@ public class WalEventCursor {
                         break;
                     case ColumnType.GEOLONG:
                         bindVariableService.setGeoHash(name, readLong(), type);
+                        break;
+                    case ColumnType.UUID:
+                        bindVariableService.setUuid(name, readLong(), readLong());
                         break;
                     default:
                         throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));

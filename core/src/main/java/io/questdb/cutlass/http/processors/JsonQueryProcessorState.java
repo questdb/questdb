@@ -399,6 +399,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODate(t).put('"');
     }
 
+    private static void putUuidValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        long lo = rec.getLong128Lo(col);
+        long hi = rec.getLong128Hi(col);
+        if (Uuid.isNull(lo, hi)) {
+            socket.put("null");
+            return;
+        }
+        socket.put('"');
+        Numbers.appendUuid(lo, hi, socket);
+        socket.put('"');
+    }
+
     private boolean addColumnToOutput(
             RecordMetadata metadata,
             CharSequence columnNames,
@@ -584,6 +596,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.LONG128:
                     throw new UnsupportedOperationException();
+                case ColumnType.UUID:
+                    putUuidValue(socket, record, columnIdx);
+                    break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
                     socket.put("null"); // To make JSON valid

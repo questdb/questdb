@@ -246,7 +246,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             // Add / remove tables
             engine.closeNameRegistry();
-            Rnd rnd = new Rnd(940303792693L, 1673348707058L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
             try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
                 rw.reloadTableNameCache();
                 barrier.await();

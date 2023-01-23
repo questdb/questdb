@@ -108,5 +108,6 @@ public interface PlanSink {
 
     PlanSink val(long hash, int geoHashBits);
 
+    PlanSink valUuid(long lo, long hi);
 
 }

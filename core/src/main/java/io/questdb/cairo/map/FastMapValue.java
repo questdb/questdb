@@ -166,6 +166,16 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public long getLong128Hi(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col) + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col));
+    }
+
+    @Override
     public short getShort(int index) {
         return Unsafe.getUnsafe().getShort(address0(index));
     }
@@ -230,6 +240,13 @@ final class FastMapValue implements MapValue {
         final long p = address0(index);
         assert p + Long.BYTES < limit;
         Unsafe.getUnsafe().putLong(p, value);
+    }
+
+    @Override
+    public void putLong128(int index, long lo, long hi) {
+        long address = address0(index);
+        Unsafe.getUnsafe().putLong(address, lo);
+        Unsafe.getUnsafe().putLong(address + Long.BYTES, hi);
     }
 
     @Override

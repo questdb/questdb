@@ -526,7 +526,7 @@ class ExpressionParser {
                                     if (prevBranch != BRANCH_GEOHASH) {
                                         // validate type
                                         final short columnTypeTag = ColumnType.tagOf(node.token);
-                                        if (((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) ||
+                                        if (((columnTypeTag < ColumnType.BOOLEAN || (columnTypeTag > ColumnType.LONG256 && columnTypeTag != ColumnType.UUID)) && !asPoppedNull) ||
                                                 (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
                                             throw SqlException.$(node.position, "unsupported cast");
                                         }
@@ -806,7 +806,7 @@ class ExpressionParser {
 
                                     // validate type
                                     final short columnType = ColumnType.tagOf(prevNode.token);
-                                    if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
+                                    if (columnType < ColumnType.BOOLEAN || (columnType > ColumnType.LONG256 && columnType != ColumnType.UUID)) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
                                         ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lastPos);

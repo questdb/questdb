@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
 import io.questdb.metrics.*;
@@ -41,10 +42,11 @@ public class Metrics implements Scrapable {
     private final MetricsRegistry metricsRegistry;
     private final PGWireMetrics pgWire;
     private final Runtime runtime = Runtime.getRuntime();
-    private final VirtualGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
-    private final VirtualGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
-    private final VirtualGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
+    private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
+    private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
+    private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
     private final TableWriterMetrics tableWriter;
+    private final WalMetrics walMetrics;
 
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
@@ -53,6 +55,7 @@ public class Metrics implements Scrapable {
         this.pgWire = new PGWireMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
         this.tableWriter = new TableWriterMetrics(metricsRegistry);
+        this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
     }
@@ -63,6 +66,10 @@ public class Metrics implements Scrapable {
 
     public static Metrics enabled() {
         return new Metrics(true, new MetricsRegistryImpl());
+    }
+
+    public WalMetrics getWalMetrics() {
+        return walMetrics;
     }
 
     public HealthMetricsImpl health() {
@@ -95,7 +102,7 @@ public class Metrics implements Scrapable {
 
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            metricsRegistry.newGauge(i);
+            metricsRegistry.newLongGauge(i);
         }
 
         metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);

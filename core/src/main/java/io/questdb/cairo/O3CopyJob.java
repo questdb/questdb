@@ -652,6 +652,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 }
                 break;
+            case ColumnType.UUID:
             case ColumnType.LONG128:
                 Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
@@ -1052,6 +1053,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     );
                 }
                 break;
+            case ColumnType.UUID:
             case ColumnType.LONG128:
                 copyFixedSizeCol(
                         ff,
@@ -1085,7 +1087,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         copy(queue.get(cursor), cursor, subSeq);
         return true;
     }

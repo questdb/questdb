@@ -7991,6 +7991,50 @@ create table tab as (
         );
     }
 
+    @Test
+    public void testUuidType_insertIntoUUIDColumn() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid, u2 uuid, s1 string)")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?)")) {
+                    insert.setObject(1, UUID.fromString("12345678-1234-5678-9012-345678901234"));
+                    insert.setString(2, "12345678-1234-5678-9012-345678901234");
+                    insert.setObject(3, UUID.fromString("12345678-1234-5678-9012-345678901234"));
+                    insert.executeUpdate();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select *  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "u1[OTHER],u2[OTHER],s1[VARCHAR]\n" +
+                            "12345678-1234-5678-9012-345678901234,12345678-1234-5678-9012-345678901234,12345678-1234-5678-9012-345678901234\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUuidType_update() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (u1 uuid)")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                    insert.setObject(1, UUID.fromString("11111111-1111-1111-1111-111111111111"));
+                    insert.executeUpdate();
+                }
+                try (PreparedStatement update = connection.prepareStatement("update x set u1 = ?")) {
+                    update.setObject(1, UUID.fromString("22222222-2222-2222-2222-222222222222"));
+                    update.executeUpdate();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select *  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "u1[OTHER]\n" +
+                            "22222222-2222-2222-2222-222222222222\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
     private void assertHexScript(String script) throws Exception {
         skipOnWalRun();
         final Rnd rnd = new Rnd();

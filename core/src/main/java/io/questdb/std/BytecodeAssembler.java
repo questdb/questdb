@@ -512,6 +512,10 @@ public class BytecodeAssembler {
         return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));
     }
 
+    public int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
+        return poolRef(0x0B, classIndex, nameAndTypeIndex);
+    }
+
     public int poolLongConst(long value) {
         putByte(0x05);
         putLong(value);
@@ -766,10 +770,6 @@ public class BytecodeAssembler {
                 putByte(value);
                 break;
         }
-    }
-
-    private int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
-        return poolRef(0x0B, classIndex, nameAndTypeIndex);
     }
 
     private int poolRef(int op, int name, int type) {

@@ -25,23 +25,23 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.metrics.Counter;
-import io.questdb.metrics.Gauge;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import org.jetbrains.annotations.TestOnly;
 
 public class JsonQueryMetrics {
 
-    private final Gauge cachedQueriesGauge;
+    private final LongGauge cachedQueriesGauge;
     private final Counter completedQueriesCounter;
     private final Counter startedQueriesCounter;
 
     public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
         this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
         this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
-        this.cachedQueriesGauge = metricsRegistry.newGauge("json_queries_cached");
+        this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
     }
 
-    public Gauge cachedQueriesGauge() {
+    public LongGauge cachedQueriesGauge() {
         return cachedQueriesGauge;
     }
 

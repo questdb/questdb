@@ -39,6 +39,7 @@ import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -109,7 +110,7 @@ public class PGWireServer implements Closeable {
                 };
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     long seq = queryCacheEventSubSeq.next();
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.

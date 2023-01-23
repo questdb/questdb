@@ -46,7 +46,7 @@ import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
-import io.questdb.griffin.engine.functions.rnd.*;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -1020,6 +1020,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         constFuncs.put(ColumnType.GEOHASH, new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
         constFuncs.put(ColumnType.BINARY, new NullBinConstant());
         constFuncs.put(ColumnType.LONG128, new Long128Constant(0, 1));
+        constFuncs.put(ColumnType.UUID, new UuidConstant(0, 1));
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
@@ -1054,6 +1055,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         colFuncs.put(ColumnType.GEOHASH, new GeoShortColumn((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
         colFuncs.put(ColumnType.BINARY, new BinColumn(1));
         colFuncs.put(ColumnType.LONG128, new Long128Column(1));
+        colFuncs.put(ColumnType.UUID, new UuidColumn(1));
 
         PlanSink planSink = new TextPlanSink() {
             @Override
@@ -1196,7 +1198,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         function.toPlan(planSink);
                         goodArgsFound = true;
 
-                        Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly", Chars.contains(planSink.getSink(), "io.questdb"));
+                        Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
                         LOG.info().$(sink).$(planSink.getSink()).$();
 
                         if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
@@ -1619,6 +1621,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInUuid() throws Exception {
+        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);",
+                "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
+                "Async Filter\n" +
+                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test
     public void testIntersect1() throws Exception {
         assertPlan("create table a ( i int, s string);",
                 "select * from a intersect select * from a",
@@ -1762,7 +1776,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: subquery should just read symbols from map  
+    @Test//TODO: subquery should just read symbols from map
     public void testLatestOn12() throws Exception {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
@@ -1782,7 +1796,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     }
 
-    @Test//TODO: subquery should just read symbols from map  
+    @Test//TODO: subquery should just read symbols from map
     public void testLatestOn12a() throws Exception {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
@@ -1801,7 +1815,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     }
 
-    @Test//TODO: subquery should just read symbols from map  
+    @Test//TODO: subquery should just read symbols from map
     public void testLatestOn13() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
@@ -1820,7 +1834,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: subquery should just read symbols from map  
+    @Test//TODO: subquery should just read symbols from map
     public void testLatestOn13a() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
@@ -1838,7 +1852,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: should use one or two indexes   
+    @Test//TODO: should use one or two indexes
     public void testLatestOn14() throws Exception {
         assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2",
@@ -1849,7 +1863,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: should use one or two indexes   
+    @Test//TODO: should use one or two indexes
     public void testLatestOn15() throws Exception {
         assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2",
@@ -2004,7 +2018,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//key outside list of symbols 
+    @Test//key outside list of symbols
     public void testLatestOn8a() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
@@ -2018,7 +2032,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//columns in order different to table's 
+    @Test//columns in order different to table's
     public void testLatestOn9() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
@@ -2028,7 +2042,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//columns in table's order 
+    @Test//columns in table's order
     public void testLatestOn9a() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
@@ -2092,7 +2106,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME: there should be no separate filter 
+    @Test //FIXME: there should be no separate filter
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2111,7 +2125,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME: join and where clause filters should be separated 
+    @Test //FIXME: join and where clause filters should be separated
     public void testLeftJoinWithEquality4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2131,7 +2145,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME: ORed predicates should be applied as filter in hash join   
+    @Test //FIXME: ORed predicates should be applied as filter in hash join
     public void testLeftJoinWithEquality5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2268,7 +2282,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//FIXME: a2=a2 run as past of left join or be optimized away ! 
+    @Test//FIXME: a2=a2 run as past of left join or be optimized away !
     public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2289,7 +2303,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//left join filter must remain intact !  
+    @Test//left join filter must remain intact !
     public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 string)");
@@ -2311,7 +2325,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  ! 
+    @Test //FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2379,7 +2393,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//FIXME: this should work as hash outer join of function results   
+    @Test//FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2398,7 +2412,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//FIXME: this should work as hash outer join of function results   
+    @Test//FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -3082,7 +3096,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should return count on first table instead 
+    @Test//TODO: should return count on first table instead
     public void testSelectCount11() throws Exception {
         assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)",
                 "select count(*) from (select * from a lt join a b) ",
@@ -3097,7 +3111,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should return count on first table instead 
+    @Test//TODO: should return count on first table instead
     public void testSelectCount12() throws Exception {
         assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)",
                 "select count(*) from (select * from a asof join a b) ",
@@ -3112,7 +3126,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should return count(first table)*count(second_table) instead 
+    @Test//TODO: should return count(first table)*count(second_table) instead
     public void testSelectCount13() throws Exception {
         assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)",
                 "select count(*) from (select * from a cross join a b) ",
@@ -3149,7 +3163,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: this should use Count factory same as queries above 
+    @Test//TODO: this should use Count factory same as queries above
     public void testSelectCount3() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select count(2) from a",
@@ -3312,7 +3326,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Ignore
-    @Test//FIXME: somehow only ts gets included, pg returns record type   
+    @Test//FIXME: somehow only ts gets included, pg returns record type
     public void testSelectDistinct0a() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select distinct (l, ts) from tab",
@@ -3334,7 +3348,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should scan symbols table 
+    @Test//TODO: should scan symbols table
     public void testSelectDistinct2() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
@@ -3497,7 +3511,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: having multiple cursors on the same level isn't very clear 
+    @Test//TODO: having multiple cursors on the same level isn't very clear
     public void testSelectIndexedSymbols10() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in ('S1', 'S2') limit 1",
@@ -3511,7 +3525,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: having multiple cursors on the same level isn't very clear 
+    @Test//TODO: having multiple cursors on the same level isn't very clear
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s symbol index, ts timestamp) timestamp(ts)");
@@ -3573,7 +3587,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//backward index scan is triggered only if query uses a single partition and orders by key column and ts desc  
+    @Test//backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
@@ -3610,7 +3624,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//TODO: should use the same plan as above 
+    @Test//TODO: should use the same plan as above
     public void testSelectIndexedSymbols17() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
@@ -3648,7 +3662,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test //TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !  
+    @Test //TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols2() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
@@ -3661,7 +3675,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame backward scan on: a\n");
     }
 
-    @Test //TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !  
+    @Test //TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols3() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
@@ -3674,7 +3688,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame backward scan on: a\n");
     }
 
-    @Test//TODO: it would be better to get rid of unnecessary sort and limit factories 
+    @Test//TODO: it would be better to get rid of unnecessary sort and limit factories
     public void testSelectIndexedSymbols4() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
@@ -3719,7 +3733,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: this one should scan index/data file backward and skip sorting  
+    @Test//TODO: this one should scan index/data file backward and skip sorting
     public void testSelectIndexedSymbols6() throws Exception {
         assertPlan("create table a ( s symbol index) ;",
                 "select * from a where s = 'S1' order by s asc limit 10",
@@ -3880,7 +3894,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                 "Empty table\n");
     }
 
-    @Test//only 2020-03-10->2020-03-31 needs to be scanned 
+    @Test//only 2020-03-10->2020-03-31 needs to be scanned
     public void testSelectStaticTsInterval5() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03' and ts > '2020-03-10'",
@@ -3984,7 +3998,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should interval scan with jit filter 
+    @Test//TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter12() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
@@ -4153,7 +4167,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should scan from the end like in testSelectWithJittedFilter24c()  
+    @Test//TODO: this one should scan from the end like in testSelectWithJittedFilter24c()
     public void testSelectWithJittedFilter24b() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit -1 ",
@@ -4282,7 +4296,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should use jit  
+    @Test//TODO: this one should use jit
     public void testSelectWithJittedFilter7() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
@@ -4349,7 +4363,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: query should scan from end of table with limit = 10 
+    @Test//TODO: query should scan from end of table with limit = 10
     public void testSelectWithLimitLoNegative() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10",
@@ -4371,7 +4385,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work with type casts 
+    @Test//jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter10() throws Exception {
         assertPlan("create table tab ( s short, ts timestamp);",
                 "select * from tab where s = 1::short ",
@@ -4383,7 +4397,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like b = true 
+    @Test//TODO: should run with jitted filter just like b = true
     public void testSelectWithNonJittedFilter11() throws Exception {
         assertPlan("create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = true::boolean ",
@@ -4395,7 +4409,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like l = 1024 
+    @Test//TODO: should run with jitted filter just like l = 1024
     public void testSelectWithNonJittedFilter12() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 1024::long ",
@@ -4407,7 +4421,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like d = 1024.1 
+    @Test//TODO: should run with jitted filter just like d = 1024.1
     public void testSelectWithNonJittedFilter13() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1::double ",
@@ -4419,7 +4433,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like d = null 
+    @Test//TODO: should run with jitted filter just like d = null
     public void testSelectWithNonJittedFilter14() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null::double ",
@@ -4431,7 +4445,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit doesn't work for bitwise operators  
+    @Test//jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter15() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where (l | l) > 0  ",
@@ -4443,7 +4457,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit doesn't work for bitwise operators  
+    @Test//jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter16() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where (l & l) > 0  ",
@@ -4455,7 +4469,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit doesn't work for bitwise operators  
+    @Test//jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter17() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0  ",
@@ -4495,7 +4509,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n");
     }
-
 
     @Test//jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {
@@ -4557,7 +4570,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work for string type 
+    @Test//jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter7() throws Exception {
         assertPlan("create table tab ( s string, ts timestamp);",
                 "select * from tab where s = 'test' ",
@@ -4569,7 +4582,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work for string type 
+    @Test//jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter8() throws Exception {
         assertPlan("create table tab ( s string, ts timestamp);",
                 "select * from tab where s = null ",
@@ -4581,7 +4594,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work with type casts 
+    @Test//jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan("create table tab ( b byte, ts timestamp);",
                 "select * from tab where b = 1::byte ",
@@ -4625,7 +4638,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame backward scan on: a\n");
     }
 
-    @Test//TODO: query should scan from end of table with limit = 10 
+    @Test//TODO: query should scan from end of table with limit = 10
     public void testSelectWithOrderByTsLimitLoNegative() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts limit -10",
@@ -4878,6 +4891,18 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testWhereUuid() throws Exception {
+        assertPlan("create table a (u uuid, ts timestamp) timestamp(ts);",
+                "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
+                "Async Filter\n" +
+                        "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
+                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");

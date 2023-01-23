@@ -25,7 +25,10 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -315,6 +318,11 @@ public class AbstractO3Test {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
+                    public boolean disableColumnPurgeJob() {
+                        return false;
+                    }
+
+                    @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
                     }
@@ -334,6 +342,11 @@ public class AbstractO3Test {
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public boolean disableColumnPurgeJob() {
+                        return false;
+                    }
+
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();

@@ -28,21 +28,24 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Misc;
-import org.jetbrains.annotations.Nullable;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class OperationCompiler implements Closeable {
     private final BindVariableService bindVariableService;
+    private final Rnd rnd;
     private final SqlCompiler sqlCompiler;
     private final WalSqlExecutionContextImpl sqlExecutionContext;
-    private final Rnd rnd;
 
     public OperationCompiler(
             CairoEngine engine,
@@ -73,14 +76,6 @@ public class OperationCompiler implements Closeable {
         Misc.free(sqlExecutionContext);
     }
 
-    public void resetRnd(long seed0, long seed1) {
-        rnd.reset(seed0, seed1);
-    }
-
-    public void setNowAndFixClock(long now) {
-        sqlExecutionContext.setNowAndFixClock(now);
-    }
-
     public AlterOperation compileAlterSql(CharSequence alterSql, TableToken tableToken) throws SqlException {
         sqlExecutionContext.remapTableNameResolutionTo(tableToken);
         final CompiledQuery compiledQuery = sqlCompiler.compile(alterSql, sqlExecutionContext);
@@ -99,5 +94,13 @@ public class OperationCompiler implements Closeable {
 
     public BindVariableService getBindVariableService() {
         return bindVariableService;
+    }
+
+    public void resetRnd(long seed0, long seed1) {
+        rnd.reset(seed0, seed1);
+    }
+
+    public void setNowAndFixClock(long now) {
+        sqlExecutionContext.setNowAndFixClock(now);
     }
 }

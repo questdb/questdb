@@ -144,6 +144,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public int getO3ColumnMemorySize() {
+        return overrides.getO3ColumnMemorySize() < 0 ? super.getO3ColumnMemorySize() : overrides.getO3ColumnMemorySize();
+    }
+
+    @Override
     public long getO3MaxLag() {
         return overrides.getO3MaxLag() >= 0 ? overrides.getO3MaxLag() : super.getO3MaxLag();
     }
@@ -247,6 +252,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public boolean getWalEnabledDefault() {
         return overrides.getDefaultTableWriteMode() < 0 ? super.getWalEnabledDefault() : overrides.getDefaultTableWriteMode() == 1;
+    }
+
+    @Override
+    public long getWalPurgeInterval() {
+        return overrides.getWalPurgeInterval() < 0 ? super.getWalPurgeInterval() : overrides.getWalPurgeInterval();
     }
 
     @Override

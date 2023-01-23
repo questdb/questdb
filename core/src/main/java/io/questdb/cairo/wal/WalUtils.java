@@ -33,6 +33,7 @@ public class WalUtils {
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WALID = -2;
     public static final String EVENT_FILE_NAME = "_event";
+    public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final int METADATA_WALID = -1;
     public static final String SEQ_DIR = "txn_seq";
     public static final String SEQ_DIR_DEPRECATED = "seq";
@@ -44,16 +45,16 @@ public class WalUtils {
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_SUSPENDED = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
+    public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
-    public static final int WALE_HEADER_SIZE = Long.BYTES + Integer.BYTES;
-    public static final long WALE_SIZE_OFFSET = 0L;
-    public static final int WAL_FORMAT_OFFSET = Long.BYTES;
+    public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
+    public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
+    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
-    public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
 
     public static void setupWorkerPool(
             WorkerPool workerPool,
@@ -64,7 +65,7 @@ public class WalUtils {
         for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
             final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
-            workerPool.assign(applyWal2TableJob);
+            workerPool.assign(i, applyWal2TableJob);
             workerPool.freeOnExit(applyWal2TableJob);
         }
     }

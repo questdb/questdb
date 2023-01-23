@@ -83,6 +83,8 @@ public interface MapValue extends Record {
 
     void putLong(int index, long value);
 
+    void putLong128(int index, long lo, long hi);
+
     void putLong256(int index, Long256 value);
 
     void putShort(int index, short value);

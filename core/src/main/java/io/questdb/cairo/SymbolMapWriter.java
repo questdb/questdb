@@ -128,7 +128,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
 
             if (useCache) {
-                this.cache = new CharSequenceIntHashMap(symbolCapacity);
+                this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);
             } else {
                 this.cache = null;
             }

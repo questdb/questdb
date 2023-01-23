@@ -92,6 +92,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                     }
                 }
                 return new SymStrCoalesceFunction(args, argsSize);
+            case ColumnType.UUID:
+                return argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
@@ -721,6 +723,102 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getTimestamp(rec);
+        }
+    }
+
+    private static class TwoUuidCoalesceFunction extends UuidFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoUuidCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            long hi0 = args0.getLong128Hi(rec);
+            if (hi0 != Numbers.LONG_NaN) {
+                return hi0; // if hi is not NaN then we know Long128 is not null
+            }
+            long lo0 = args0.getLong128Lo(rec);
+            if (lo0 != Numbers.LONG_NaN) {
+                return hi0; // if lo is not NaN then we know Long128 is not null and we can return hi0 even if it is NaN
+            }
+            // ok, both hi and lo are NaN, we use the value from the second argument
+            return args1.getLong128Hi(rec);
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            long lo0 = args0.getLong128Lo(rec);
+            if (lo0 != Numbers.LONG_NaN) {
+                return lo0; // lo is not NaN -> Long128 is not null, that's easy
+            }
+            long hi0 = args0.getLong128Hi(rec);
+            if (hi0 != Numbers.LONG_NaN) {
+                return lo0; // hi is not NaN  -> Long128 is not null -> we can return lo even if it is NaN
+            }
+            // ok, both hi and lo are NaN, we use the value from the second argument
+            return args1.getLong128Lo(rec);
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class UuidCoalesceFunction extends UuidFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public UuidCoalesceFunction(ObjList<Function> args, int argsSize) {
+            this.args = args;
+            this.size = argsSize;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            long value = Numbers.LONG_NaN;
+            for (int i = 0; i < size; i++) {
+                value = args.getQuick(i).getLong128Hi(rec);
+                if (value != Numbers.LONG_NaN) {
+                    return value;
+                }
+                long lo = args.getQuick(i).getLong128Lo(rec);
+                if (lo != Numbers.LONG_NaN) {
+                    return value;
+                }
+            }
+            return value;
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            long value = Numbers.LONG_NaN;
+            for (int i = 0; i < size; i++) {
+                value = args.getQuick(i).getLong128Lo(rec);
+                if (value != Numbers.LONG_NaN) {
+                    return value;
+                }
+                long hi = args.getQuick(i).getLong128Hi(rec);
+                if (hi != Numbers.LONG_NaN) {
+                    return value;
+                }
+            }
+            return value;
         }
     }
 }
