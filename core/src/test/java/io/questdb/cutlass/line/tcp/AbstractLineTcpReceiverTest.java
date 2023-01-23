@@ -34,16 +34,14 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
+import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -261,9 +259,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         runInContext(r, false, 250);
     }
 
-    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+    protected void runInContext(FilesFacade ff, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
                 if (needMaintenanceJob) {
@@ -284,6 +282,10 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 throw err;
             }
         });
+    }
+
+    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+        runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
     }
 
     protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
