@@ -304,7 +304,6 @@ public class TableNameRegistryFileStore implements Closeable {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot());
-        path.of(configuration.getRoot());
         int pathRootLen = path.length();
 
         MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;

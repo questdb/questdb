@@ -1299,7 +1299,7 @@ public final class TableUtils {
     }
 
     private static int tableExists(FilesFacade ff, Path path) {
-        if (ff.exists(path)) {
+        if (ff.isDirOrSoftLinkDir(path)) {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
