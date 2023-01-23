@@ -49,16 +49,20 @@ public class O3Utils {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
-        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-
         workerPool.assign(purgeDiscoveryJob);
-        workerPool.assign(columnPurgeJob);
+
+        // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
+        if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
+            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
+            workerPool.freeOnExit(columnPurgeJob);
+            workerPool.assign(columnPurgeJob);
+        }
+
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnExit(purgeDiscoveryJob);
-        workerPool.freeOnExit(columnPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

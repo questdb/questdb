@@ -72,6 +72,8 @@ public interface ConfigurationOverrides {
 
     int getMaxUncommittedRows();
 
+    int getO3ColumnMemorySize();
+
     long getO3MaxLag();
 
     int getPageFrameMaxRows();
@@ -107,6 +109,8 @@ public interface ConfigurationOverrides {
     int getSqlJoinMetadataPageSize();
 
     MicrosecondClock getTestMicrosClock();
+
+    long getWalPurgeInterval();
 
     long getWalSegmentRolloverRowCount();
 
@@ -182,6 +186,8 @@ public interface ConfigurationOverrides {
 
     void setMaxUncommittedRows(int configOverrideMaxUncommittedRows);
 
+    void setO3ColumnMemorySize(int size);
+
     void setO3MaxLag(long configOverrideO3MaxLag);
 
     void setO3QuickSortEnabled(boolean o3QuickSortEnabled);
@@ -221,6 +227,8 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
 

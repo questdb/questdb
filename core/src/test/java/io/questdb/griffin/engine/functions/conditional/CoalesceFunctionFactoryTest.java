@@ -63,6 +63,30 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCoalesceUUID() throws Exception {
+        assertQuery(
+                "c1\tc2\ta\tb\tx\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t\t\t\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "\t\t\t\t\n" +
+                        "b5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\t\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "e8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t\n",
+                "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE CAST(NULL as UUID) END as x," +
+                        " CASE WHEN x % 4 = 0 THEN rnd_uuid4() ELSE CAST(NULL as UUID) END as a," +
+                        " CASE WHEN x % 4 = 1 THEN rnd_uuid4() ELSE CAST(NULL as UUID) END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDateCoalesce() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tx\n" +

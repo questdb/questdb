@@ -212,8 +212,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void putLong128LittleEndian(long hi, long lo) {
-        mem.putLong128LittleEndian(hi, lo);
+    public void putLong128(long lo, long hi) {
+        mem.putLong128(lo, hi);
     }
 
     @Override
@@ -376,7 +376,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public long getLong128Hi(int col) {
-            return mem.getLong(fixedWithColumnOffset(col) + 8);
+            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
         }
 
         @Override

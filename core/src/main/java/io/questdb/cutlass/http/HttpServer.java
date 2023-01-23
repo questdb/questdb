@@ -43,6 +43,7 @@ import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -85,7 +86,7 @@ public class HttpServer implements Closeable {
                         (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     long seq = queryCacheEventSubSeq.next();
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.

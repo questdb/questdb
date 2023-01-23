@@ -25,8 +25,8 @@
 package io.questdb.std;
 
 // @formatter:off
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
@@ -153,10 +153,19 @@ public final class Numbers {
     }
 
     public static void append(CharSink sink, final long value) {
+        append(sink, value, true);
+    }
+
+    public static void append(CharSink sink, final long value, final boolean checkNaN) {
         long i = value;
         if (i < 0) {
             if (i == Long.MIN_VALUE) {
-                sink.put("NaN");
+                if (checkNaN) {
+                    sink.put("NaN");
+                } else {
+                    // we cannot negate Long.MIN_VALUE, so we have to special case it
+                    sink.put("-9223372036854775808");
+                }
                 return;
             }
             sink.put('-');
@@ -325,6 +334,43 @@ public final class Numbers {
         array[bit].append(sink, value);
     }
 
+    /**
+     * Append a long value to a CharSink in hex format.
+     * 
+     * @param sink the CharSink to append to
+     * @param value the value to append
+     * @param padToBytes if non-zero, pad the output to the specified number of bytes
+     */
+    public static void appendHexPadded(CharSink sink, long value, int padToBytes) {
+        assert padToBytes >= 0 && padToBytes <= 8;
+        // This code might be unclear, so here are some hints: 
+        // This method uses longHexAppender() and longHexAppender() is always padding to a whole byte. It never prints
+        // just a nibble. It means the longHexAppender() will print value 0xf as "0f". Value 0xff will be printed as "ff".
+        // Value 0xfff will be printed as "0fff". Value 0xffff will be printed as "ffff" and so on. 
+        // So this method needs to pad only from the next whole byte up.
+        // In other words: This method always pads with full bytes (=even number of zeros), never with just a nibble.
+
+        // Example 1: Value is 0xF and padToBytes is 2. This means the desired output is 000f. 
+        // longHexAppender() pads to a full byte. This means it will output is 0f. So this method needs to pad with 2 zeros.
+
+        // Example 2: The value is 0xFF and padToBytes is 2. This means the desired output is 00ff.
+        // longHexAppender() will output "ff". This is a full byte so longHexAppender() will not do any padding on its own. 
+        // So this method needs to pad with 2 zeros.
+        int leadingZeroBits = Long.numberOfLeadingZeros(value);
+        int padToBits = padToBytes << 3;
+        int bitsToPad = padToBits - (Long.SIZE - leadingZeroBits);
+        int bytesToPad = (bitsToPad >> 3);
+        for (int i = 0; i < bytesToPad; i++) {
+            sink.put('0');
+            sink.put('0');
+        }
+        if (value == 0) {
+            return;
+        }
+        int bit = 64 - leadingZeroBits;
+        longHexAppender[bit].append(sink, value);
+    }
+
     public static void appendHexPadded(CharSink sink, final int value) {
         int i = value;
         if (i < 0) {
@@ -432,6 +478,18 @@ public final class Numbers {
         }
 
         appendHex(sink, a, false);
+    }
+
+    public static void appendUuid(long lo, long hi, CharSink sink) {
+        appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 4);
+        sink.put('-');
+        appendHexPadded(sink, (hi >> 16) & 0xFFFF, 2);
+        sink.put('-');
+        appendHexPadded(sink, hi & 0xFFFF, 2);
+        sink.put('-');
+        appendHexPadded(sink, lo >> 48 & 0xFFFF, 2);
+        sink.put('-');
+        appendHexPadded(sink, lo & 0xFFFFFFFFFFFFL, 6);
     }
 
     public static int bswap(int value) {
@@ -556,6 +614,9 @@ public final class Numbers {
     }
 
     public static int hexToDecimal(int c) throws NumericException {
+        if (c > 127) {
+            throw NumericException.INSTANCE;
+        }
         int r = hexNumbers[c];
         if (r == -1) {
             throw NumericException.INSTANCE;
@@ -901,13 +962,13 @@ public final class Numbers {
     }
 
     public static long parseLongDuration(CharSequence sequence) throws NumericException {
-        int lim = sequence.length();
+        final int lim = sequence.length();
         if (lim == 0) {
             throw NumericException.INSTANCE;
         }
 
-        boolean negative = sequence.charAt(0) == '-';
-        if (negative){
+        final boolean negative = sequence.charAt(0) == '-';
+        if (negative) {
             throw NumericException.INSTANCE;
         }
 
@@ -982,7 +1043,7 @@ public final class Numbers {
             val = r;
         }
 
-        if (val == Long.MIN_VALUE && !negative) {
+        if (val == Long.MIN_VALUE) {
             throw NumericException.INSTANCE;
         }
         return -val;

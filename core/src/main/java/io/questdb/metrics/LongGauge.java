@@ -22,29 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.metrics;
 
-public class Long128Util {
+public interface LongGauge extends Scrapable {
 
-    // this method is used by byte-code generator
-    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
-    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
-    // instead as A, B records.
-    // See special cases for Long128 in RecordComparatorCompiler
-    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+    void add(long value);
 
-        if (aHi < bHi) {
-            return -1;
-        }
+    void dec();
 
-        if (aHi > bHi) {
-            return 1;
-        }
+    long getValue();
 
-        return Long.compareUnsigned(aLo, bLo);
-    }
+    void inc();
 
-    public static boolean isNull(long hi, long lo) {
-        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
-    }
+    void setValue(long value);
 }

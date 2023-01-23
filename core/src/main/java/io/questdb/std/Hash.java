@@ -48,6 +48,25 @@ public final class Hash {
     }
 
     /**
+     * Hash function based on Knuth's multiplicative method.
+     * It provides good distribution even for a sequence of keys.
+     *
+     * @param k the long for which the hash will be calculated
+     * @return the hash
+     */
+    public static long fastLongMix(long k) {
+        // phi = 2^64 / goldenRatio
+        final long phi = 0x9E3779B97F4A7C15L;
+        long h = k * phi;
+        h ^= h >>> 32;
+        return h ^ (h >>> 16);
+    }
+
+    public static int hash(long key1, long key2) {
+        return (int) fastLongMix(fastLongMix(key1) + key2);
+    }
+
+    /**
      * Same as {@link #hashMem32(long, long)}, but with direct UTF8 char sequence
      * instead of direct unsafe access.
      */

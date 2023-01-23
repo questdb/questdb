@@ -116,6 +116,16 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
+    public long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }

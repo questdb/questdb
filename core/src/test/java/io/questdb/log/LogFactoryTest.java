@@ -29,10 +29,12 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -45,6 +47,7 @@ import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.hamcrest.CoreMatchers.is;
 
@@ -96,7 +99,7 @@ public class LogFactoryTest {
                 }
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     long cursor = seq.next();
                     if (cursor > -1) {
                         counter.incrementAndGet();
@@ -116,7 +119,7 @@ public class LogFactoryTest {
                 }
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     throw new UnsupportedOperationException();
                 }
             }));
@@ -445,7 +448,6 @@ public class LogFactoryTest {
                 halted.countDown();
             }).start();
 
-
             // now publish
             int published = 0;
             int toPublish = 100_000;
@@ -555,6 +557,52 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testSetIncorrectBufferSizeProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "w.file.class=io.questdb.log.LogRollingFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "questdb-rolling.log.${date:yyyyMMdd}\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.rollEvery=hour\n" +
+                "w.file.bufferSize=avocado\n" +
+                "w.file.rollSize=10m\n" +
+                "w.file.lifeDuration=1d\n" +
+                "w.file.sizeLimit=1g"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            factory.init(null);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Invalid value for bufferSize", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetIncorrectLifeDurationProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "w.file.class=io.questdb.log.LogRollingFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "questdb-rolling.log.${date:yyyyMMdd}\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.rollEvery=hour\n" +
+                "w.file.bufferSize=100m\n" +
+                "w.file.rollSize=10m\n" +
+                "w.file.lifeDuration=avocado\n" +
+                "w.file.sizeLimit=1g"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            factory.init(null);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Invalid value for lifeDuration", e.getMessage());
+        }
+    }
+
+    @Test
     public void testSetIncorrectQueueDepthProperty() throws Exception {
         File conf = temp.newFile();
         File out = new File(temp.newFolder(), "testSetProperties.log");
@@ -597,6 +645,51 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testSetIncorrectRollSizeProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "w.file.class=io.questdb.log.LogRollingFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "questdb-rolling.log.${date:yyyyMMdd}\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.rollEvery=hour\n" +
+                "w.file.rollSize=avocado\n" +
+                "w.file.lifeDuration=1d\n" +
+                "w.file.sizeLimit=1g"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            factory.init(null);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Invalid value for rollSize", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetIncorrectSizeLimitProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "w.file.class=io.questdb.log.LogRollingFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "questdb-rolling.log.${date:yyyyMMdd}\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.rollEvery=hour\n" +
+                "w.file.bufferSize=100m\n" +
+                "w.file.rollSize=10m\n" +
+                "w.file.lifeDuration=24h\n" +
+                "w.file.sizeLimit=avocado"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            factory.init(null);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Invalid value for sizeLimit", e.getMessage());
+        }
+    }
+
+    @Test
     public void testSetProperties() throws Exception {
         File conf = temp.newFile();
         File out = new File(temp.newFolder(), "testSetProperties.log");
@@ -633,6 +726,28 @@ public class LogFactoryTest {
             }
         } finally {
             LogFactory.envEnabled = true;
+        }
+    }
+
+    @Test
+    public void testSetSizeLimitPropertyGreaterThanRollSize() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "w.file.class=io.questdb.log.LogRollingFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "questdb-rolling.log.${date:yyyyMMdd}\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.rollEvery=hour\n" +
+                "w.file.rollSize=10m\n" +
+                "w.file.lifeDuration=24h\n" +
+                "w.file.sizeLimit=1m"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            factory.init(null);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("sizeLimit must be larger than rollSize", e.getMessage());
         }
     }
 
@@ -753,23 +868,34 @@ public class LogFactoryTest {
     }
 
     private void testAutoDelete(String sizeLimit, String lifeDuration) throws NumericException {
+        final int extraFiles = 2;
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
-        long speed = 24 * 60000L;
+        String extraFilePrefix = "mylog-test";
+        long speed = Timestamps.HOUR_MICROS;
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialTimestamp("2019-12-31"));
+        final MicrosecondClock clock = new TestMicrosecondClock(
+                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                speed,
+                IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
+        );
 
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + fileTemplate;
-        final LogRollingFileWriter[] writer = new LogRollingFileWriter[1];
+        AtomicReference<LogRollingFileWriter> writerRef = new AtomicReference<>();
         try (LogFactory factory = new LogFactory()) {
             LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
-                if (sizeLimit != null) w.setRollSize(sizeLimit);
-                else w.setRollSize("600k");
+                w.setSpinBeforeFlush("10");
                 w.setRollEvery("day");
-                if (sizeLimit != null) w.setSizeLimit(sizeLimit);
-                if (lifeDuration != null) w.setLifeDuration(lifeDuration);
+                w.setRollSize("30k");
+                if (sizeLimit != null) {
+                    w.setSizeLimit(sizeLimit);
+                }
+                if (lifeDuration != null) {
+                    w.setLifeDuration(lifeDuration);
+                }
+                writerRef.set(w);
                 return w;
             });
 
@@ -777,18 +903,44 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
+            if (sizeLimit != null) {
+                // Create files to be deleted based on size.
+                long nSizeLimit = Numbers.parseLongSize(sizeLimit);
+                try (Path path = new Path()) {
+                    for (int i = 0; i < extraFiles; i++) {
+                        path.of(base + extraFilePrefix).put(i).put(".log").$();
+                        int fd = Files.openRW(path);
+                        try {
+                            Files.allocate(fd, nSizeLimit + 1);
+                        } finally {
+                            Files.close(fd);
+                        }
+                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
+                    }
+                }
+            }
+
             if (lifeDuration != null) {
-                Path testPath = new Path();
-                testPath.of(base + "mylog-test.txt").$();
-                Files.touch(testPath);
-                Files.setLastModified(testPath, clock.getTicks() / 1000 - Numbers.parseLongDuration(lifeDuration) / 1000);
-                System.out.println();
+                // Create files to be deleted based on modification date.
+                try (Path path = new Path()) {
+                    for (int i = 0; i < extraFiles; i++) {
+                        path.of(base + extraFilePrefix).put(i).put(".log").$();
+                        Files.touch(path);
+                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
+                    }
+                }
             }
 
             Log logger = factory.create("x");
             for (int i = 0; i < 100000; i++) {
                 logger.xinfo().$("test ").$(' ').$(i).$();
             }
+
+            // Wait until we roll log files at least once.
+            TestUtils.assertEventually(() -> {
+                logger.xinfo().$("test foobar").$();
+                Assert.assertTrue(writerRef.get().getRolledCount() > 0);
+            }, 10);
         }
 
         int fileCount = 0;
@@ -797,27 +949,23 @@ public class LogFactoryTest {
             path.of(base).$();
             long pFind = Files.findFirst(path);
             try {
-                Assert.assertTrue(pFind != 0);
+                Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
                     Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
                     if (Files.isDots(fileNameSink)) {
                         continue;
                     }
+                    // All extra files should be deleted.
+                    Assert.assertFalse(Chars.contains(fileNameSink, extraFilePrefix));
                     fileCount++;
                 } while (Files.findNext(pFind) > 0);
-
             } finally {
                 Files.findClose(pFind);
             }
         }
-        //It usually ends up with 4 files without auto log removal
-        if (sizeLimit != null) {
-            Assert.assertEquals(1, fileCount);
-        }
-        if (lifeDuration != null) {
-            Assert.assertEquals(2, fileCount);
-        }
+
+        Assert.assertTrue(fileCount > 0);
     }
 
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
@@ -849,15 +997,17 @@ public class LogFactoryTest {
             String rollEvery,
             String mustContain
     ) throws NumericException {
-
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialTimestamp("2019-12-31"));
+        final MicrosecondClock clock = new TestMicrosecondClock(
+                TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"),
+                speed,
+                IntervalUtils.parseFloorPartialTimestamp("2019-12-31")
+        );
 
         final long expectedFileCount = Files.getOpenFileCount();
         long expectedMemUsage = Unsafe.getMemUsed();
 
         String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
         String logFile = base + fileTemplate;
-
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -883,7 +1033,7 @@ public class LogFactoryTest {
             path.of(base).$();
             long pFind = Files.findFirst(path);
             try {
-                Assert.assertTrue(pFind != 0);
+                Assert.assertNotEquals(0, pFind);
                 do {
                     fileNameSink.clear();
                     Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
@@ -896,7 +1046,6 @@ public class LogFactoryTest {
                     Assert.assertFalse(Chars.contains(fileNameSink, ".1"));
                     fileCount++;
                 } while (Files.findNext(pFind) > 0);
-
             } finally {
                 Files.findClose(pFind);
             }

@@ -2166,6 +2166,94 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testUuidNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "322a2198-864b-4b14-b97f-a69eb8fec6cc\t\n" +
+                        "980eca62-a219-40f1-a846-d7a3aa5aecce\t\n" +
+                        "c1e63128-5c1a-4288-872b-fc5230158059\t\n" +
+                        "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\t\n" +
+                        "4b0f595f-143e-4d72-af1a-8266e7921e3b\t\n" +
+                        "\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                        "\te8beef38-cd7b-43d8-9b2d-34586f6275fa\n",
+                "create table x as (select rnd_uuid4() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_uuid4() c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testUuidString() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "7f98b0c7-4238-437e-b6ee-542d654d2259\n" +
+                        "7c1b058a-f93c-4808-abaf-c47f4abcd93b\n" +
+                        "63eb3740-c80f-461e-9c8a-fa23e6ca6ca1\n" +
+                        "c2593f82-b430-428d-84a0-9f29df637e38\n" +
+                        "58dfd08e-eb9c-439e-8ec8-2869edec121b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n",
+                "create table x as (select rnd_uuid4() a from long_sequence(5))",
+                "create table y as (select rnd_str() b from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\n" +
+                        "7f98b0c7-4238-437e-b6ee-542d654d2259\n" +
+                        "7c1b058a-f93c-4808-abaf-c47f4abcd93b\n" +
+                        "63eb3740-c80f-461e-9c8a-fa23e6ca6ca1\n" +
+                        "c2593f82-b430-428d-84a0-9f29df637e38\n" +
+                        "58dfd08e-eb9c-439e-8ec8-2869edec121b\n" +
+                        "JWCPSWHYR\n" +
+                        "EHNRX\n" +
+                        "SXUXI\n" +
+                        "TGPGW\n" +
+                        "YUDEYYQEHB\n"
+        );
+
+    }
+
+    @Test
+    public void testUuidUuid() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "b5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                        "e8beef38-cd7b-43d8-9b2d-34586f6275fa\n" +
+                        "322a2198-864b-4b14-b97f-a69eb8fec6cc\n" +
+                        "980eca62-a219-40f1-a846-d7a3aa5aecce\n" +
+                        "c1e63128-5c1a-4288-872b-fc5230158059\n" +
+                        "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
+                        "4b0f595f-143e-4d72-af1a-8266e7921e3b\n",
+                "create table y as (select rnd_uuid4() b from long_sequence(5))",
+                "create table x as (select rnd_uuid4() a from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "b5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                        "e8beef38-cd7b-43d8-9b2d-34586f6275fa\n" +
+                        "322a2198-864b-4b14-b97f-a69eb8fec6cc\n" +
+                        "980eca62-a219-40f1-a846-d7a3aa5aecce\n" +
+                        "c1e63128-5c1a-4288-872b-fc5230158059\n" +
+                        "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
+                        "4b0f595f-143e-4d72-af1a-8266e7921e3b\n"
+        );
+    }
+
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         compile(ddlY);
         engine.releaseAllWriters();
