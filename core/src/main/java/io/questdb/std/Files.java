@@ -215,7 +215,7 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
-    public static boolean isDirOrSoftLinkDir(Path path) {
+    public static boolean isDirOrSoftLinkDir(LPSZ path) {
         long ptr = findFirst(path);
         if (ptr < 1L) {
             return false;

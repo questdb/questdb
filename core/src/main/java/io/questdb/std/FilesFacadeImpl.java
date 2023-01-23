@@ -184,7 +184,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean isDirOrSoftLinkDir(Path path) {
+    public boolean isDirOrSoftLinkDir(LPSZ path) {
         return Files.isDirOrSoftLinkDir(path);
     }
 

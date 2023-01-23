@@ -650,10 +650,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        if (tableNameRegistry.isTableNameAvailable(tableNameStr)) {
-            return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
-        }
-        return null;
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
     public CharSequence lockWriter(CairoSecurityContext securityContext, TableToken tableToken, String lockReason) {

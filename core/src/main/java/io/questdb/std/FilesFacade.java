@@ -82,7 +82,7 @@ public interface FilesFacade {
 
     boolean isCrossDeviceCopyError(int errno);
 
-    boolean isDirOrSoftLinkDir(Path path);
+    boolean isDirOrSoftLinkDir(LPSZ path);
 
     boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type);
 

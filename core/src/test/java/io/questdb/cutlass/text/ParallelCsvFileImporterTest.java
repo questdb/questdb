@@ -784,7 +784,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean isDirOrSoftLinkDir(Path path) {
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
                 return exists(path);
             }
 
@@ -822,7 +822,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean isDirOrSoftLinkDir(Path path) {
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
                 return exists(path);
             }
         };
@@ -918,7 +918,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean isDirOrSoftLinkDir(Path path) {
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
                 return exists(path);
             }
 
