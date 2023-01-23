@@ -58,4 +58,10 @@ class PrometheusFormatUtils {
         sink.put(value);
         sink.put(LF);
     }
+
+    static void appendSampleLineSuffix(CharSink sink, double value) {
+        sink.put(' ');
+        sink.put(value);
+        sink.put(LF);
+    }
 }

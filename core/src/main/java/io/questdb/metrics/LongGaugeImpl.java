@@ -28,11 +28,11 @@ import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
-public class GaugeImpl implements Gauge {
+public class LongGaugeImpl implements LongGauge {
     private final LongAdder counter;
     private final CharSequence name;
 
-    public GaugeImpl(CharSequence name) {
+    public LongGaugeImpl(CharSequence name) {
         this.name = name;
         this.counter = new LongAdder();
     }
@@ -63,6 +63,12 @@ public class GaugeImpl implements Gauge {
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, counter.longValue());
         PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    @Override
+    public void setValue(long value) {
+        counter.reset();
+        counter.add(value);
     }
 
     private void appendMetricName(CharSink sink) {

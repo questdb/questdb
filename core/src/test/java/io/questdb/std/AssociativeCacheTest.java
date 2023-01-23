@@ -24,8 +24,8 @@
 
 package io.questdb.std;
 
-import io.questdb.metrics.Gauge;
-import io.questdb.metrics.GaugeImpl;
+import io.questdb.metrics.LongGauge;
+import io.questdb.metrics.LongGaugeImpl;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Test;
@@ -76,7 +76,7 @@ public class AssociativeCacheTest {
 
     @Test
     public void testGaugeUpdates() {
-        Gauge gauge = new GaugeImpl("foobar");
+        LongGauge gauge = new LongGaugeImpl("foobar");
         AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge);
         Assert.assertEquals(0, gauge.getValue());
         for (int i = 0; i < 10; i++) {

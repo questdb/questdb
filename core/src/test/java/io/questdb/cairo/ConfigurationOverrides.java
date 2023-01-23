@@ -110,6 +110,8 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
+    long getWalPurgeInterval();
+
     long getWalSegmentRolloverRowCount();
 
     int getWalTxnNotificationQueueCapacity();
@@ -225,6 +227,8 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setWalPurgeInterval(long walPurgeInterval);
 
     void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount);
 

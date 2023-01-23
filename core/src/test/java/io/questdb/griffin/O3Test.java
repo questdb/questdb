@@ -42,6 +42,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.number.OrderingComparison;
+import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TestName;
 
@@ -7301,7 +7302,7 @@ public class O3Test extends AbstractO3Test {
                 private boolean toRun = true;
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     if (toRun) {
                         try {
                             toRun = false;
@@ -7324,7 +7325,7 @@ public class O3Test extends AbstractO3Test {
                 private boolean toRun = true;
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     if (toRun) {
                         try {
                             toRun = false;

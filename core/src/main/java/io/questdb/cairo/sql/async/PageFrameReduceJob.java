@@ -38,6 +38,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -141,7 +142,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     }
 
     @Override
-    public boolean run(int workerId) {
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
         // there is job instance per thread, the worker id must never change
         // for this job
         boolean useful = false;

@@ -113,7 +113,7 @@ public class MetricsIODispatcherTest {
         private final CounterWithOneLabel failedQueriesCounter;
         private final MetricsRegistry metricsRegistry;
         private final Counter queriesCounter;
-        private final Gauge runningQueries;
+        private final LongGauge runningQueries;
 
         public TestMetrics(MetricsRegistry metricsRegistry) {
             this.queriesCounter = metricsRegistry.newCounter("test_json_queries");
@@ -122,7 +122,7 @@ public class MetricsIODispatcherTest {
                     "type", QUERY_TYPE_ID_TO_NAME,
                     "reason", REASON_ID_TO_NAME
             );
-            this.runningQueries = metricsRegistry.newGauge("test_json_queries_running");
+            this.runningQueries = metricsRegistry.newLongGauge("test_json_queries_running");
             this.metricsRegistry = metricsRegistry;
         }
 

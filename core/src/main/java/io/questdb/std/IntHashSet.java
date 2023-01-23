@@ -27,8 +27,6 @@ package io.questdb.std;
 import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
-import java.util.NoSuchElementException;
-import java.util.PrimitiveIterator;
 
 
 public class IntHashSet extends AbstractIntHashSet implements Sinkable {
@@ -36,13 +34,10 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final IntList list;
 
-    private IntIteratorImpl it;
-
     public IntHashSet() {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    @SuppressWarnings("CopyConstructorMissesField")
     public IntHashSet(IntHashSet that) {
         this(that.capacity, that.loadFactor, noEntryKey);
         addAll(that);
@@ -138,20 +133,6 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         return hashCode;
     }
 
-    /**
-     * Returns a reset borrowed iterator. It can't be used to iterate the collection in parallel.
-     *
-     * @return iterator
-     */
-    public PrimitiveIterator.OfInt iterator() {
-        if (it == null) {
-            it = new IntIteratorImpl();
-        } else {
-            it.reset();
-        }
-        return it;
-    }
-
     @Override
     public int remove(int key) {
         int keyIndex = keyIndex(key);
@@ -206,33 +187,5 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     protected void move(int from, int to) {
         keys[to] = keys[from];
         erase(from);
-    }
-
-    private class IntIteratorImpl implements PrimitiveIterator.OfInt {
-        private int keysIndex;
-        private int yieldedCount;
-
-        @Override
-        public boolean hasNext() {
-            return yieldedCount < size();
-        }
-
-        @Override
-        public int nextInt() {
-            while (keysIndex < keys.length) {
-                final int entry = keys[keysIndex];
-                ++keysIndex;
-                if (entry != noEntryKeyValue) {
-                    ++yieldedCount;
-                    return entry;
-                }
-            }
-            throw new NoSuchElementException();
-        }
-
-        public void reset() {
-            keysIndex = 0;
-            yieldedCount = 0;
-        }
     }
 }
