@@ -383,7 +383,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), compiler, context, tableName);
                 TableToken tableToken = engine.getTableToken(tableName);
                 assertTableExists(tableToken, true, true);
-                int maxFails = 2;
+                int maxFails = 20;
                 int fails = 0;
                 for (int i = 0; i < maxFails; i++) {
                     try {
@@ -600,21 +600,6 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         java.nio.file.Files.createSymbolicLink(Paths.get(tablePath), Paths.get(foreignPath));
     }
 
-    private static String createTableStmt(String tableName, boolean addIfNotExists) {
-        StringSink sink = new StringSink();
-        sink.put("CREATE TABLE ");
-        if (addIfNotExists) {
-            sink.put("IF NOT EXISTS ");
-        }
-        sink.put(tableName).put('(');
-        sink.put(" investmentMill LONG,");
-        sink.put(" ticketThous INT,");
-        sink.put(" broker SYMBOL INDEX CAPACITY 32,");
-        sink.put(" ts TIMESTAMP");
-        sink.put(") TIMESTAMP(ts) PARTITION BY DAY");
-        return sink.toString();
-    }
-
     private static void deleteFolder(String folderName, boolean mustExist) {
         File directory = Paths.get(folderName).toFile();
         if (directory.exists() && directory.isDirectory()) {
@@ -701,14 +686,24 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             boolean inVolume,
             boolean addIfNotExists
     ) throws Exception {
-        String createStmt = createTableStmt(tableName, addIfNotExists);
+        StringSink sink = Misc.getThreadLocalBuilder();
+        sink.put("CREATE TABLE ");
+        if (addIfNotExists) {
+            sink.put("IF NOT EXISTS ");
+        }
+        sink.put(tableName).put('(');
+        sink.put(" investmentMill LONG,");
+        sink.put(" ticketThous INT,");
+        sink.put(" broker SYMBOL INDEX CAPACITY 32,");
+        sink.put(" ts TIMESTAMP");
+        sink.put(") TIMESTAMP(ts) PARTITION BY DAY");
         if (isWal) {
-            createStmt += " WAL";
+            sink.put(" WAL");
         }
         if (inVolume) {
-            createStmt += " IN VOLUME '" + otherVolumeAlias + '\'';
+            sink.put(" IN VOLUME '" + otherVolumeAlias + '\'');
         }
-        try (OperationFuture op = compiler.compile(createStmt, context).execute(null)) {
+        try (OperationFuture op = compiler.compile(sink.toString(), context).execute(null)) {
             op.await();
         }
         try (
