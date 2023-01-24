@@ -94,6 +94,16 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     close(output);
 
     return len == 0 ? 0 : -1;
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyDataToOffset
+        (JNIEnv *e, jclass cls, jint srcFd, jint destFd, jlong srcOffset, jlong destOffset, jlong length) {
+
+    off_t offset = lseek(destFd, (off_t)destOffset, SEEK_SET);
+    if (offset < 0) {
+        return offset;
+    }
+
+    return Java_io_questdb_std_Files_copyData(e, cls, srcFd, destFd, srcOffset, destOffset, length);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
