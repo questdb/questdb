@@ -1726,12 +1726,6 @@ public class WalWriter implements TableWriterAPI {
             putSym(columnIndex, str);
         }
 
-        @Override
-        public void putUuid(int columnIndex, CharSequence uuidStr) {
-            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
-        }
-
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
             // this method will write column name to the buffer if it has to be utf8 decoded
             // otherwise it will write nothing.
@@ -1753,6 +1747,12 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuidStr) {
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
