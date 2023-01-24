@@ -65,13 +65,12 @@ public class TableUtilsTest {
         path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
         Assert.assertTrue(new File(dbRoot, tableName).mkdir());
         try {
-            TableUtils.createTable(
+            TableUtils.createTableInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
                     509,
                     null,
                     path,
-                    true,
                     tableName,
                     null,
                     0,
@@ -79,7 +78,7 @@ public class TableUtilsTest {
             Assert.fail();
         } catch (CairoException e) {
             path.of(dbRoot.getAbsolutePath()).concat(tableName).$();
-            TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists in volume [path=" + path.toString() + ']');
+            TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists [path=" + path.toString() + ']');
         } finally {
             dbRoot.delete();
             volumeRoot.delete();
@@ -95,13 +94,12 @@ public class TableUtilsTest {
         path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
         Assert.assertTrue(new File(volumeRoot, tableName).mkdir());
         try {
-            TableUtils.createTable(
+            TableUtils.createTableInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
                     509,
                     null,
                     path,
-                    true,
                     tableName,
                     null,
                     0,
@@ -124,20 +122,19 @@ public class TableUtilsTest {
         path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
         Assert.assertTrue(new File(dbRoot, tableName).createNewFile());
         try {
-            TableUtils.createTable(
+            TableUtils.createTableInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
                     509,
                     null,
                     path,
-                    true,
                     tableName,
                     null,
                     0,
                     0);
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "could not create soft link [src=" + path.toString() + ", tableName=" + tableName + ']');
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not create soft link [src=" + path.toString() + ", tableDir=" + tableName + ']');
             Assert.assertFalse(Files.exists(path));
         } finally {
             dbRoot.delete();

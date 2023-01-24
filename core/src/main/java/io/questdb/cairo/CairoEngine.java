@@ -204,12 +204,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (null == lockedReason) {
                 boolean tableCreated = false;
                 try {
-                    int status;
-                    if (!pathIsLoadedWithVolume) {
-                        status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
-                    } else {
-                        status = TableUtils.exists(configuration.getFilesFacade(), path, tableToken.getDirName());
-                    }
+                    int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName(), pathIsLoadedWithVolume);
                     if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
                         throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
                     }
@@ -263,18 +258,31 @@ public class CairoEngine implements Closeable, WriterSource {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        TableUtils.createTable(
-                ff,
-                root,
-                mkDirMode,
-                mem,
-                path,
-                pathIsLoadedWithVolume,
-                tableToken.getDirName(),
-                struct,
-                ColumnType.VERSION,
-                tableId
-        );
+        if (!pathIsLoadedWithVolume) {
+            TableUtils.createTable(
+                    ff,
+                    root,
+                    mkDirMode,
+                    mem,
+                    path,
+                    tableToken.getDirName(),
+                    struct,
+                    ColumnType.VERSION,
+                    tableId
+            );
+        } else {
+            TableUtils.createTableInVolume(
+                    ff,
+                    root,
+                    mkDirMode,
+                    mem,
+                    path,
+                    tableToken.getDirName(),
+                    struct,
+                    ColumnType.VERSION,
+                    tableId
+            );
+        }
         if (struct.isWalEnabled()) {
             tableSequencerAPI.registerTable(tableId, struct, tableToken);
         }

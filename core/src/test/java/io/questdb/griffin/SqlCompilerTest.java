@@ -2298,6 +2298,76 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateAsSelectInVolumeNotAllowedAsItExistsAndCannotSoftLinkAndRemoveDir() throws Exception {
+        Assume.assumeFalse(Os.isWindows()); // soft links not supported in windows
+        File volume = temp.newFolder("other_path");
+        String volumeAlias = "pera";
+        String volumePath = volume.getAbsolutePath();
+        String tableName = "geohash";
+        String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 1, false);
+        String target = volumePath + Files.SEPARATOR + dirName;
+        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                if (Chars.equals(path, target)) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                Assert.assertEquals(target + Files.SEPARATOR, name.toString());
+                return -1;
+            }
+
+            @Override
+            public int softLink(LPSZ src, LPSZ softLink) {
+                Assert.assertEquals(target, src.toString());
+                Assert.assertEquals(root.toString() + Files.SEPARATOR + dirName, softLink.toString());
+                return -1;
+            }
+        };
+        try {
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path);
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from " + tableName,
+                    "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'",
+                    null,
+                    "insert into " + tableName +
+                            " select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                    "geohash\n" +
+                            "q\n" +
+                            "q\n" +
+                            "u\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "e\n" +
+                            "u\n" +
+                            "q\n" +
+                            "u\n",
+                    true,
+                    true,
+                    true);
+            Assert.fail();
+        } catch (SqlException e) {
+            if (Os.isWindows()) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+            } else {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table, could not create soft link [src=" + target + ", tableDir=" + dirName + ']');
+            }
+        } finally {
+            File table = new File(target);
+            Assert.assertTrue(table.exists());
+            Assert.assertTrue(table.isDirectory());
+            Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
+            Assert.assertTrue(volume.delete());
+        }
+    }
+
+    @Test
     public void testCreateAsSelectInVolumeNotAllowedAsItNoLongerExists0() throws Exception {
         File volume = temp.newFolder("other_folder");
         String volumeAlias = "manzana";
@@ -2334,62 +2404,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [alias=" + volumeAlias + ", path=" + volumePath + ']');
             }
         } finally {
-            Assert.assertFalse(volume.delete());
-        }
-    }
-
-    @Test
-    public void testCreateAsSelectInVolumeNotAllowedAsItNoLongerExists1() throws Exception {
-        Assume.assumeFalse(Os.isWindows()); // soft links not supported in windows
-        File volume = temp.newFolder("other_path");
-        String volumeAlias = "pera";
-        String volumePath = volume.getAbsolutePath();
-        String tableName = "geohash";
-        String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 1, false);
-        String target = volumePath + Files.SEPARATOR + dirName;
-        FilesFacade originalFf = AbstractCairoTest.ff;
-        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean isDirOrSoftLinkDir(LPSZ path) {
-                if (Chars.equals(path, target)) {
-                    Assert.assertTrue(volume.delete());
-                    return true;
-                }
-                return super.exists(path);
-            }
-        };
-        try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path);
-            assertQuery(
-                    "geohash\n",
-                    "select geohash from " + tableName,
-                    "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'",
-                    null,
-                    "insert into " + tableName +
-                            " select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
-                    "geohash\n" +
-                            "q\n" +
-                            "q\n" +
-                            "u\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "e\n" +
-                            "u\n" +
-                            "q\n" +
-                            "u\n",
-                    true,
-                    true,
-                    true);
-            Assert.fail();
-        } catch (SqlException e) {
-            if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
-            } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table, name is reserved [table=" + tableName + ']');
-            }
-        } finally {
-            AbstractCairoTest.ff = originalFf;
             Assert.assertFalse(volume.delete());
         }
     }
