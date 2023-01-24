@@ -378,12 +378,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             );
 
                             if (added > -1L) {
-                                insertTimespan += microClock.getTicks() - start;
+                                long timeDelta = microClock.getTicks() - start;
+                                insertTimespan += timeDelta;
                                 rowsAdded += added;
                                 iTransaction++;
                                 long physicallyWrittenRowsSinceLastCommit = writer.getPhysicallyWrittenRowsSinceLastCommit();
                                 physicalRowsAdded += physicallyWrittenRowsSinceLastCommit;
-                                metrics.addApplyRowsWritten(added, physicallyWrittenRowsSinceLastCommit);
+                                metrics.addApplyRowsWritten(added, physicallyWrittenRowsSinceLastCommit, timeDelta);
                             }
                             if (added == -2L || isTerminating) {
                                 // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
