@@ -87,8 +87,8 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
         }
 
         @Override
-        public String getCreateSql() {
-            return "CREATE TABLE IF NOT EXISTS " + TABLE_NAME + " (" +
+        public String getCreateSql(CharSequence tableName) {
+            return "CREATE TABLE IF NOT EXISTS " + tableName + " (" +
                     "created timestamp, " +
                     "event short, " +
                     "tableId int, " +

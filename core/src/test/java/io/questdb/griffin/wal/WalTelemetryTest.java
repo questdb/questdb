@@ -72,14 +72,14 @@ public class WalTelemetryTest extends AbstractGriffinTest {
 
             telemetryJob.runSerially();
             telemetryJob.close();
-
-            assertSql(TelemetryWalTask.TABLE_NAME, "created\tevent\ttableId\twalId\tseqTxn\trowCount\tlatency\n" +
+            CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
+            assertSql( sysPrefix + TelemetryWalTask.TABLE_NAME, "created\tevent\ttableId\twalId\tseqTxn\trowCount\tlatency\n" +
                             "1970-01-01T00:00:00.004000Z\t105\t4\t1\t1\t-1\t2.0000\n" +
                             "1970-01-01T00:00:00.004000Z\t103\t4\t1\t1\t0\t0.0000\n" +
                             "1970-01-01T00:00:00.004000Z\t105\t4\t1\t2\t-1\t1.0000\n" +
                             "1970-01-01T00:00:00.004000Z\t103\t4\t1\t2\t6\t0.0000\n");
 
-            assertSql(TelemetryTask.TABLE_NAME, "created\tevent\torigin\n" +
+            assertSql(sysPrefix + TelemetryTask.TABLE_NAME, "created\tevent\torigin\n" +
                     "1970-01-01T00:00:00.001000Z\t100\t1\n" +
                     "1970-01-01T00:00:00.004000Z\t101\t1\n");
         });

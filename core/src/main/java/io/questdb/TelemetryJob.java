@@ -75,9 +75,13 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     public boolean runSerially() {
         try {
             telemetry.consumeAll();
-            telemetryWal.consumeAll();
         } catch (Throwable th) {
             LOG.error().$("failed to process telemetry event").$(th).$();
+        }
+        try {
+            telemetryWal.consumeAll();
+        } catch (Throwable th) {
+            LOG.error().$("failed to process wal telemetry event").$(th).$();
         }
         return false;
     }

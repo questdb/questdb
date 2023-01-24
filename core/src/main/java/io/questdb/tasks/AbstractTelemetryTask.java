@@ -28,8 +28,6 @@ import io.questdb.cairo.TableWriter;
 
 public abstract class AbstractTelemetryTask {
     long created;
-    short origin;
-
     public void setCreated(long created) {
         this.created = created;
     }

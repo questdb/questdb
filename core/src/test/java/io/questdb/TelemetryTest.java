@@ -35,6 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -43,6 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
+    private final static String TELEMETRY = configuration.getSystemTableNamePrefix() + TelemetryTask.TABLE_NAME;
 
     @Test
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
@@ -66,10 +68,10 @@ public class TelemetryTest extends AbstractCairoTest {
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
                 try {
-                    compiler.compile("drop table telemetry", sqlExecutionContext);
+                    compiler.compile("drop table " + TELEMETRY, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=telemetry]");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table="+TELEMETRY+"]");
                 }
             }
         });
@@ -118,8 +120,8 @@ public class TelemetryTest extends AbstractCairoTest {
                 final TelemetryJob telemetryJob = new TelemetryJob(engine);
 
                 try (Path path = new Path()) {
-                    TableToken telemetry = engine.getTableToken("telemetry");
-                    TableToken telemetry_config = engine.getTableToken("telemetry_config");
+                    TableToken telemetry = engine.getTableToken(TELEMETRY);
+                    TableToken telemetry_config = engine.getTableToken(TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry.getDirName()));
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config.getDirName()));
                 }
@@ -133,8 +135,8 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryDisabledByDefault() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry"));
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, "telemetry_config"));
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TELEMETRY));
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME));
             }
         });
     }
@@ -217,7 +219,7 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     protected void assertColumn(CharSequence expected, int index) {
-        try (TableReader reader = newTableReader(configuration, "telemetry")) {
+        try (TableReader reader = newTableReader(configuration, TELEMETRY)) {
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
