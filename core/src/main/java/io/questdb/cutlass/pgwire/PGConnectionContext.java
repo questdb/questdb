@@ -1726,13 +1726,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
         if (ex.isCritical()) {
             LOG.critical()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+                    .$("error [msg=`").$(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         } else {
             LOG.error()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+                    .$("error [msg=`").$(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         }
     }

@@ -336,12 +336,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             } else {
                 if (ce.isCritical()) {
                     state.critical().$("error [q=`").utf8(state.getQuery())
-                            .$(", msg=`").$(ce.getFlyweightMessage()).$('`')
-                            .$(", errno=`").$(ce.getErrno()).I$();
+                            .$("`, msg=`").$(ce.getFlyweightMessage())
+                            .$("`, errno=").$(ce.getErrno()).I$();
                 } else {
                     state.error().$("error [q=`").utf8(state.getQuery())
-                            .$(", msg=`").$(ce.getFlyweightMessage()).$('`')
-                            .$(", errno=`").$(ce.getErrno()).I$();
+                            .$("`, msg=`").$(ce.getFlyweightMessage())
+                            .$("`, errno=").$(ce.getErrno()).I$();
                 }
             }
         } else if (e instanceof HttpException) {
