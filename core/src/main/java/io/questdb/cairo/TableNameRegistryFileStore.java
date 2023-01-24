@@ -46,8 +46,6 @@ public class TableNameRegistryFileStore implements Closeable {
     private static final int OPERATION_ADD = 0;
     private static final int OPERATION_REMOVE = -1;
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
-    private static final int TABLE_TYPE_NON_WAL = 0;
-    private static final int TABLE_TYPE_WAL = 1;
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
     private final IntHashSet tableIds = new IntHashSet();
@@ -148,7 +146,6 @@ public class TableNameRegistryFileStore implements Closeable {
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             tableNameMemory.jumpTo(currentOffset);
         }
-        tableNameMemory.jumpTo(currentOffset);
     }
 
     private int findLastTablesFileVersion(FilesFacade ff, Path path) {
@@ -187,8 +184,8 @@ public class TableNameRegistryFileStore implements Closeable {
         if (fd < 1) {
             return 0;
         }
-        try {
 
+        try {
             int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);
             if (tableId < 0) {
                 LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
@@ -350,7 +347,7 @@ public class TableNameRegistryFileStore implements Closeable {
             int tableType = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
 
-            TableToken token = new TableToken(tableName, dirName, tableId, tableType == TABLE_TYPE_WAL);
+            TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL);
             if (operation == OPERATION_REMOVE) {
                 // remove from registry
                 TableToken tableToken = nameTableTokenMap.remove(tableName);
@@ -411,7 +408,7 @@ public class TableNameRegistryFileStore implements Closeable {
         tableNameMemory.putStr(tableToken.getTableName());
         tableNameMemory.putStr(tableToken.getDirName());
         tableNameMemory.putInt(tableToken.getTableId());
-        tableNameMemory.putInt(tableToken.isWal() ? TableNameRegistryFileStore.TABLE_TYPE_WAL : TABLE_TYPE_NON_WAL);
+        tableNameMemory.putInt(tableToken.isWal() ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL);
 
         if (operation != OPERATION_REMOVE) {
             for (int i = 0; i < TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {

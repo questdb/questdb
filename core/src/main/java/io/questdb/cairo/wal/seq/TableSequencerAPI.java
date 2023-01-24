@@ -265,7 +265,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void registerTable(int tableId, final TableStructure tableStructure, final TableToken tableToken) {
+    public void registerTable(int tableId, final TableDescriptor tableStructure, final TableToken tableToken) {
         try (
                 TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt1) -> {
                     TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tt1);

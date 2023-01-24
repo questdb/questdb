@@ -85,6 +85,8 @@ public final class TableUtils {
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
+    public static final int TABLE_TYPE_NON_WAL = 0;
+    public static final int TABLE_TYPE_WAL = 1;
     // transaction file structure
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
     public static final long TX_BASE_OFFSET_VERSION_64 = 0;
@@ -1069,7 +1071,6 @@ public final class TableUtils {
                 // fall through
             case ColumnType.UUID:
                 // Long128 and UUID are null when all 2 longs are NaNs
-                //noinspection ConstantConditions
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
                 break;
             default:

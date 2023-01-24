@@ -27,9 +27,6 @@ package io.questdb.cairo;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-import java.util.HashMap;
-import java.util.Map;
-
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;

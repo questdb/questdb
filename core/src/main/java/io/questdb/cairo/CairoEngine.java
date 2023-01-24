@@ -127,10 +127,19 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
+        // Convert tables to WAL/non-WAL, if necessary.
         try {
-            this.tableNameRegistry = configuration.isReadOnlyInstance() ?
+            TableConverter.convertTables(configuration, tableSequencerAPI);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+
+        try {
+            tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            this.tableNameRegistry.reloadTableNameCache();
+            //todo: check if we should force 'load from table dir' for converted tables
+            tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
             throw e;
