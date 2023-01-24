@@ -265,25 +265,24 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             String tableName = "tab" + iteration;
                             TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
                             rw.registerName(tableToken);
-                            TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
                             addedTables.add(iteration);
-                        } else {
-                            if (addedTables.size() > 0) {
-                                // Remove table
-                                int tableId = addedTables.getLast();
-                                String tableName = "tab" + tableId;
-                                TableToken tableToken = rw.getTableToken(tableName);
-                                rw.dropTable(tableToken);
-                                addedTables.remove(tableId);
+                            TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
+                        } else if (addedTables.size() > 0) {
+                            // Remove table
+                            int tableId = addedTables.getLast();
+                            String tableName = "tab" + tableId;
+                            TableToken tableToken = rw.getTableToken(tableName);
+                            rw.dropTable(tableToken);
+                            addedTables.remove(tableId);
 
-                                // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
-                                rmPath.trimTo(rootLen).concat(tableName).$();
-                                for (int i = 0; i < 2000 && ff.rmdir(rmPath) != 0; i++) {
-                                    Os.sleep(1L);
-                                }
-                                Assert.assertFalse(ff.exists(rmPath));
+                            // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
+                            rmPath.trimTo(rootLen).concat(tableName).$();
+                            for (int i = 0; i < 2000 && ff.rmdir(rmPath) != 0; i++) {
+                                Os.sleep(1L);
                             }
+                            Assert.assertFalse(ff.exists(rmPath));
                         }
+
                         if (rnd.nextBoolean()) {
                             // May run compaction
                             rw.reloadTableNameCache();
