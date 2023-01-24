@@ -27,10 +27,9 @@ package io.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.*;
 import io.questdb.log.LogFactory;
 
 import io.questdb.mp.SOCountDownLatch;
@@ -48,6 +47,8 @@ import java.nio.file.Paths;
 import java.sql.*;
 import java.util.Deque;
 import java.util.LinkedList;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertSql;
@@ -298,11 +299,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                SOCountDownLatch startLatch = new SOCountDownLatch();
+                CyclicBarrier startBarrier = new CyclicBarrier(3);
                 SOCountDownLatch haltLatch = new SOCountDownLatch();
-
+                AtomicBoolean isInVolume = new AtomicBoolean();
                 for (int i = 0; i < 4; i++) {
-                    startLatch.setCount(3);
+                    isInVolume.set(false);
+                    startBarrier.reset();
                     haltLatch.setCount(2);
                     concurrentTableCreator(
                             "createTable",
@@ -310,11 +312,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             cairoConfig,
                             compiler0,
                             context0,
-                            startLatch,
+                            startBarrier,
                             haltLatch,
                             tableName,
                             false,
-                            false
+                            false,
+                            isInVolume
                     ).start();
                     concurrentTableCreator(
                             "createTableInVolume",
@@ -322,14 +325,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             cairoConfig,
                             compiler1,
                             context1,
-                            startLatch,
+                            startBarrier,
                             haltLatch,
                             tableName,
                             false,
-                            true
+                            true,
+                            isInVolume
                     ).start();
-                    startLatch.countDown();
+                    startBarrier.await();
                     haltLatch.await();
+                    dropTable(compiler0, context0, engine.getTableToken(tableName), isInVolume.get());
+                    Path.clearThreadLocals();
                 }
             }
         });
@@ -491,11 +497,13 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 qdb.start();
                 CairoEngine engine = qdb.getCairoEngine();
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
-                SOCountDownLatch startLatch = new SOCountDownLatch();
+                CyclicBarrier startBarrier = new CyclicBarrier(3);
                 SOCountDownLatch haltLatch = new SOCountDownLatch();
+                AtomicBoolean isInVolume = new AtomicBoolean();
 
                 for (int i = 0; i < 4; i++) {
-                    startLatch.setCount(3);
+                    isInVolume.set(false);
+                    startBarrier.reset();
                     haltLatch.setCount(2);
                     concurrentTableCreator(
                             "createWalTable",
@@ -503,11 +511,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             cairoConfig,
                             compiler0,
                             context0,
-                            startLatch,
+                            startBarrier,
                             haltLatch,
                             tableName,
                             true,
-                            false
+                            false,
+                            isInVolume
                     ).start();
                     concurrentTableCreator(
                             "createWalTableInVolume",
@@ -515,14 +524,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             cairoConfig,
                             compiler1,
                             context1,
-                            startLatch,
+                            startBarrier,
                             haltLatch,
                             tableName,
                             true,
-                            true
+                            true,
+                            isInVolume
                     ).start();
-                    startLatch.countDown();
+                    startBarrier.await();
                     haltLatch.await();
+                    dropTable(compiler0, context0, engine.getTableToken(tableName), isInVolume.get());
+                    Path.clearThreadLocals();
                 }
             }
         });
@@ -560,8 +572,27 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 }
                 resultSink.clear(resultSink.length() - 1);
             }
+            TestUtils.assertContains(resultSink.toString(), tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName());
         }
-        TestUtils.assertContains(resultSink.toString(), tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName());
+        Assert.assertTrue(Files.exists(path.of(inVolume ? otherVolume : mainVolume).concat(tableToken.getDirName()).$()));
+    }
+
+    private static void assertTableExists(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            TableToken tableToken,
+            boolean inVolume,
+            boolean isWal
+    ) throws Exception {
+        StringSink resultSink = new StringSink();
+        CompiledQuery cc = compiler.compile("tables()", context);
+        try (
+                RecordCursorFactory factory = cc.getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            TestUtils.printCursor(cursor, factory.getMetadata(), true, resultSink, printer);
+            TestUtils.assertContains(resultSink.toString(), tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName());
+        }
         Assert.assertTrue(Files.exists(path.of(inVolume ? otherVolume : mainVolume).concat(tableToken.getDirName()).$()));
     }
 
@@ -627,39 +658,26 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             CairoConfiguration cairoConfig,
             SqlCompiler compiler,
             SqlExecutionContext context,
-            SOCountDownLatch startLatch,
+            CyclicBarrier startBarrier,
             SOCountDownLatch haltLatch,
             String tableName,
             boolean isWal,
-            boolean isInVolume
+            boolean isInVolume,
+            AtomicBoolean winnerIsInVolume
     ) {
         return new Thread(() -> {
             try {
-                startLatch.countDown();
-                startLatch.await();
-                Os.pause();
-                if (isInVolume) {
-                    if (isWal) {
-                        createWalTableInVolume(cairoConfig, compiler, context, tableName);
-                    } else {
-                        createTableInVolume(cairoConfig, compiler, context, tableName);
-                    }
-                } else {
-                    if (isWal) {
-                        createWalTable(cairoConfig, compiler, context, tableName);
-                    } else {
-                        createTable(cairoConfig, compiler, context, tableName);
-                    }
-                }
-                assertTableExists(engine.getTableToken(tableName), isInVolume, isWal);
+                startBarrier.await();
+                createPopulateTable(cairoConfig, compiler, context, tableName, isWal, isInVolume, false);
+                assertTableExists(compiler, context, engine.getTableToken(tableName), isInVolume, isWal);
+                winnerIsInVolume.set(isInVolume);
             } catch (Throwable thr) {
                 TestUtils.assertContains(thr.getMessage(), "[13] table already exists");
                 long startTs = System.currentTimeMillis();
                 boolean tableAsserted = false;
-                TableToken tableToken = engine.getTableToken(tableName);
-                while (System.currentTimeMillis() - startTs < 500L) {
+                while (!tableAsserted && System.currentTimeMillis() - startTs < 500L) {
                     try {
-                        assertTableExists(tableToken, isInVolume, isWal);
+                        assertTableExists(compiler, context, engine.getTableToken(tableName), isInVolume, isWal);
                         tableAsserted = true;
                         break;
                     } catch (Throwable ignore) {
@@ -667,14 +685,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     }
                 }
                 Assert.assertTrue(tableAsserted);
-                try {
-                    dropTable(compiler, context, tableToken, !isInVolume);
-                } catch (Throwable unexpected) {
-                    Assert.fail("unexpected: " + unexpected.getMessage());
-                }
             } finally {
-                haltLatch.countDown();
                 Path.clearThreadLocals();
+                haltLatch.countDown();
             }
         }, threadName);
     }
@@ -739,8 +752,9 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             op.await();
         }
         if (isInVolume) {
-            // drop simply unlinks, the folder remains, it is a feature as the requirements need further refinement
-            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true); // delete the table's folder in the other volume
+            // drop simply unlinks, the folder remains, it is a feature
+            // delete the table's folder in the other volume
+            deleteFolder(otherVolume + Files.SEPARATOR + tableToken.getDirName(), true);
         }
     }
 

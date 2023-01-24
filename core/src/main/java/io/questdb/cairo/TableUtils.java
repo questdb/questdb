@@ -296,14 +296,15 @@ public final class TableUtils {
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
-        if (pathIsLoadedWithVolume && ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
+        path.trimTo(rootLen).$();
+        if (pathIsLoadedWithVolume && ff.softLink(path, normalPath) != 0) {
             if (ff.rmdir(path.slash$()) != 0) {
                 LOG.error().$("cannot remove table directory in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
             }
-            throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path).put(", tableName=").put(tableDir).put(']');
+            throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableName=").put(tableDir).put(']');
         }
 
-        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path, LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);

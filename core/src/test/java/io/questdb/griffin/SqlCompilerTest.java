@@ -35,10 +35,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
@@ -2343,7 +2340,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateAsSelectInVolumeNotAllowedAsItNoLongerExists1() throws Exception {
-        Assert.assertFalse(Os.isWindows()); // soft links not supported in windows
+        Assume.assumeFalse(Os.isWindows()); // soft links not supported in windows
         File volume = temp.newFolder("other_path");
         String volumeAlias = "pera";
         String volumePath = volume.getAbsolutePath();

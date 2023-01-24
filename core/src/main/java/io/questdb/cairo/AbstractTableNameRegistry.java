@@ -34,8 +34,8 @@ import java.util.Map;
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryFileStore nameStore;
-    private ConcurrentHashMap<TableToken> nameTokenMap;
-    private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
+    protected ConcurrentHashMap<TableToken> nameTokenMap;
+    protected ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
 
     public AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.nameStore = new TableNameRegistryFileStore(configuration);
@@ -91,10 +91,10 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         nameStore.resetMemory();
     }
 
-    void setNameMaps(
+    final void setNameMaps(
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap) {
-        this.nameTokenMap = nameTableTokenMap;
-        this.reverseNameTokenMap = reverseTableNameTokenMap;
+        nameTokenMap = nameTableTokenMap;
+        reverseNameTokenMap = reverseTableNameTokenMap;
     }
 }

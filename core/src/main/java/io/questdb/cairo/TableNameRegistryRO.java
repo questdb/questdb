@@ -31,9 +31,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
     private volatile long lastReloadTimestampMs = 0;
-    private ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private ConcurrentHashMap<TableToken> nameTableTokenMap2 = new ConcurrentHashMap<>(false);
-    private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
     private ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap2 = new ConcurrentHashMap<>();
 
     public TableNameRegistryRO(CairoConfiguration configuration) {
@@ -41,7 +39,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         this.clockMs = configuration.getMillisecondClock();
         long timeout = configuration.getTableRegistryAutoReloadFrequency();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;
-        setNameMaps(nameTableTokenMap, reverseTableNameTokenMap);
+        setNameMaps(new ConcurrentHashMap<>(false), new ConcurrentHashMap<>());
     }
 
     @Override
@@ -51,10 +49,10 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
 
     @Override
     public TableToken getTableToken(CharSequence tableName) {
-        TableToken record = nameTableTokenMap.get(tableName);
+        TableToken record = nameTokenMap.get(tableName);
         if (record == null && clockMs.getTicks() - lastReloadTimestampMs > autoReloadTimeout) {
             reloadTableNameCacheThrottled();
-            return nameTableTokenMap.get(tableName);
+            return nameTokenMap.get(tableName);
         }
         return record;
     }
@@ -81,16 +79,11 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         nameStore.reload(nameTableTokenMap2, reverseTableNameTokenMap2);
 
         // Swap the maps
+        ConcurrentHashMap<TableToken> tmpNameTokenMap = nameTokenMap;
+        ConcurrentHashMap<ReverseTableMapItem> tmpReverseNameTokenMap = reverseNameTokenMap;
         setNameMaps(nameTableTokenMap2, reverseTableNameTokenMap2);
-
-        ConcurrentHashMap<TableToken> tmp = nameTableTokenMap2;
-        nameTableTokenMap2 = nameTableTokenMap;
-        nameTableTokenMap = tmp;
-
-        ConcurrentHashMap<ReverseTableMapItem> tmp2 = reverseTableNameTokenMap2;
-        reverseTableNameTokenMap2 = reverseTableNameTokenMap;
-        reverseTableNameTokenMap = tmp2;
-
+        nameTableTokenMap2 = tmpNameTokenMap;
+        reverseTableNameTokenMap2 = tmpReverseNameTokenMap;
         lastReloadTimestampMs = clockMs.getTicks();
     }
 

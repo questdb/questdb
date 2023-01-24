@@ -132,7 +132,7 @@ public class TableNameRegistryFileStore implements Closeable {
             Path path2 = Path.getThreadLocal2(configuration.getRoot())
                     .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
             if (ff.rename(path, path2) == Files.FILES_RENAME_OK) {
-                LOG.info().$("compacted tables file [path=").$(path2).$(']').$();
+                LOG.info().$("compacted tables file [path=").utf8(path2).I$();
                 lastFileVersion++;
                 currentOffset = newAppendOffset;
                 // best effort to remove old files, but we don't care if it fails
@@ -140,15 +140,14 @@ public class TableNameRegistryFileStore implements Closeable {
                 ff.remove(path);
             } else {
                 // Not critical, if rename fails, compaction will be done next time
-                LOG.error().$("could not rename tables file, tables file will not be compacted [from=").$(path)
-                        .$(", to=").$(path2).$(']').$();
+                LOG.error().$("could not rename tables file, tables file will not be compacted [from=").utf8(path)
+                        .$(", to=").utf8(path2).I$();
             }
         } finally {
             path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             tableNameMemory.jumpTo(currentOffset);
         }
-        tableNameMemory.jumpTo(currentOffset);
     }
 
     private int findLastTablesFileVersion(FilesFacade ff, Path path) {
@@ -170,7 +169,8 @@ public class TableNameRegistryFileStore implements Closeable {
                             if (version > lastVersion) {
                                 lastVersion = version;
                             }
-                        } catch (NumericException e) {
+                        } catch (NumericException ignore) {
+                            // no-op
                         }
                     }
                 }
@@ -188,10 +188,9 @@ public class TableNameRegistryFileStore implements Closeable {
             return 0;
         }
         try {
-
             int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);
             if (tableId < 0) {
-                LOG.error().$("cannot read table id from metadata file [path=").$(path).I$();
+                LOG.error().$("cannot read table id from metadata file [path=").utf8(path).I$();
                 return 0;
             }
             byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
@@ -222,7 +221,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 tableNameRoMemory.close();
                 return value;
             } else {
-                LOG.error().$("invalid table name file [path=").$(path).$(", fileLne=").$(fileLen).I$();
+                LOG.error().$("invalid table name file [path=").utf8(path).$(", fileLne=").$(fileLen).I$();
                 return null;
             }
         } finally {
@@ -234,67 +233,70 @@ public class TableNameRegistryFileStore implements Closeable {
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
     ) {
-        Path path = Path.getThreadLocal(configuration.getRoot());
+        Path path = Path.getThreadLocal(configuration.getRoot()).$();
         int plimit = path.length();
         FilesFacade ff = configuration.getFilesFacade();
-        long findPtr = ff.findFirst(path.$());
-        StringSink sink = Misc.getThreadLocalBuilder();
-        do {
-            if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                if (!reverseTableNameTokenMap.containsKey(sink)
-                        && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
+        long findPtr = ff.findFirst(path);
+        try {
+            StringSink sink = Misc.getThreadLocalBuilder();
+            do {
+                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    if (!reverseTableNameTokenMap.containsKey(sink)
+                            && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
-                    String dirName = sink.toString();
-                    int tableId;
-                    boolean isWal;
-                    String tableName;
+                        String dirName = Chars.toString(sink);
+                        int tableId;
+                        boolean isWal;
+                        String tableName;
 
-                    try {
-                        tableId = readTableId(path, dirName, ff);
-                        isWal = tableId < 0;
-                        tableId = Math.abs(tableId);
-                        tableName = readTableName(path, dirName, ff);
-                    } catch (CairoException e) {
-                        if (e.errnoReadPathDoesNotExist()) {
-                            // table is being removed.
-                            continue;
-                        } else {
-                            throw e;
-                        }
-                    }
-
-                    if (tableName == null) {
-                        if (isWal) {
-                            LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();
-                            continue;
-                        } else {
-                            // Non-wal tables may not have _name file.
-                            tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
-                        }
-                    }
-
-                    if (tableId > -1L) {
-                        if (tableIds.contains(tableId)) {
-                            LOG.critical().$("duplicate table id found, table will not be available " +
-                                    "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
-                            continue;
+                        try {
+                            tableId = readTableId(path, dirName, ff);
+                            isWal = tableId < 0;
+                            tableId = Math.abs(tableId);
+                            tableName = readTableName(path, dirName, ff);
+                        } catch (CairoException e) {
+                            if (e.errnoReadPathDoesNotExist()) {
+                                // table is being removed.
+                                continue;
+                            } else {
+                                throw e;
+                            }
                         }
 
-                        if (nameTableTokenMap.containsKey(tableName)) {
-                            LOG.critical().$("duplicate table name found, table will not be available " +
-                                            "[dirName=").utf8(dirName).$(", name=").utf8(tableName)
-                                    .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName()).I$();
-                            continue;
+                        if (tableName == null) {
+                            if (isWal) {
+                                LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();
+                                continue;
+                            } else {
+                                // Non-wal tables may not have _name file.
+                                tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
+                            }
                         }
 
-                        TableToken token = new TableToken(tableName, dirName, tableId, isWal);
-                        nameTableTokenMap.put(tableName, token);
-                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        if (tableId > -1L) {
+                            if (tableIds.contains(tableId)) {
+                                LOG.critical().$("duplicate table id found, table will not be available " +
+                                        "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
+                                continue;
+                            }
+
+                            if (nameTableTokenMap.containsKey(tableName)) {
+                                LOG.critical().$("duplicate table name found, table will not be available " +
+                                                "[dirName=").utf8(dirName).$(", name=").utf8(tableName)
+                                        .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName()).I$();
+                                continue;
+                            }
+
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal);
+                            nameTableTokenMap.put(tableName, token);
+                            reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        }
                     }
                 }
-            }
-        } while (ff.findNext(findPtr) > 0);
-        ff.findClose(findPtr);
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
     }
 
     private void reloadFromTablesFile(
@@ -304,12 +306,12 @@ public class TableNameRegistryFileStore implements Closeable {
         int lastFileVersion;
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot());
-        int pathRootLen = path.length();
+        int plimit = path.length();
 
         MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;
         do {
-            lastFileVersion = findLastTablesFileVersion(ff, path.trimTo(pathRootLen).$());
-            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
+            lastFileVersion = findLastTablesFileVersion(ff, path.trimTo(plimit).$());
+            path.trimTo(plimit).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
             try {
                 memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                 LOG.info().$("reloading tables file [path=").utf8(path).I$();
@@ -360,14 +362,14 @@ public class TableNameRegistryFileStore implements Closeable {
             } else {
                 if (tableIds.contains(tableId)) {
                     LOG.critical().$("duplicate table id found, table will not be accessible " +
-                            "[dirName=").$(dirName).$(", id=").$(tableId).$(']').$();
+                            "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
                     continue;
                 }
 
                 nameTableTokenMap.put(tableName, token);
                 if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                     // This table is renamed, log system to real table name mapping
-                    LOG.advisory().$("renamed WAL table system name [table=").utf8(tableName).$(", dirName=").utf8(dirName).$();
+                    LOG.advisory().$("renamed WAL table system name [table=").utf8(tableName).$(", dirName=").utf8(dirName).I$();
                 }
 
                 reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
@@ -391,8 +393,8 @@ public class TableNameRegistryFileStore implements Closeable {
             }
 
             if (deletedRecordsFound > 0) {
-                LOG.info().$("compacting tables file [path=").$(path).$(']').$();
-                path.trimTo(pathRootLen);
+                LOG.info().$("compacting tables file [path=").utf8(path).I$();
+                path.trimTo(plimit);
                 compactTableNameFile(nameTableTokenMap, lastFileVersion, ff, path, currentOffset);
             } else {
                 tableNameMemory.jumpTo(currentOffset);
