@@ -24,8 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.std.Files;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -34,30 +33,30 @@ public class VolumeDefinitions {
 
     private static final char SEPARATOR = ',';
 
-    private final LowerCaseCharSequenceObjHashMap<CharSequence> map = new LowerCaseCharSequenceObjHashMap<>(4);
+    private final LowerCaseCharSequenceObjHashMap<String> aliasToVolumeRoot = new LowerCaseCharSequenceObjHashMap<>(4);
     private int hi;
     private int limit;
     private int lo;
 
-    public void forEach(LowerCaseCharSequenceObjHashMap.CharSequenceObjConsumer<CharSequence> action) {
-        map.forEach(action);
+    public void forEach(LowerCaseCharSequenceObjHashMap.CharSequenceObjConsumer<String> action) {
+        aliasToVolumeRoot.forEach(action);
     }
 
     public VolumeDefinitions of(@Nullable CharSequence definitions, @NotNull Path path) throws ServerConfigurationException {
         if (definitions != null) {
             // 'any-case-alias' -> 'absolute path to volume' (quotes are optional)
-            map.clear();
+            aliasToVolumeRoot.clear();
             limit = definitions.length();
             lo = 0;
             int separatorCount = 0;
-            CharSequence alias = null;
+            String alias = null;
             for (int i = 0; i < limit; i++) {
                 char c = definitions.charAt(i);
                 if (c == '-' && i + 1 < limit && definitions.charAt(i + 1) == '>') { // found arrow
                     if (alias != null) {
                         throw new ServerConfigurationException("invalid syntax, missing volume path at offset " + lo);
                     }
-                    alias = popToken(definitions, i, false);
+                    alias = Chars.toString(popToken(definitions, i, false));
                     lo = ++i + 1; // move over '>'
                 } else if (SEPARATOR == c) {
                     if (alias == null) {
@@ -75,10 +74,10 @@ public class VolumeDefinitions {
     }
 
     public @Nullable CharSequence resolveAlias(@NotNull CharSequence alias) {
-        return map.get(alias);
+        return aliasToVolumeRoot.get(alias);
     }
 
-    private void addVolumeDefinition(CharSequence alias, CharSequence volumePath, Path path) throws ServerConfigurationException {
+    private void addVolumeDefinition(String alias, CharSequence volumePath, Path path) throws ServerConfigurationException {
         int len = volumePath.length();
         if (len > 0 && volumePath.charAt(len - 1) == Files.SEPARATOR) {
             len--;
@@ -86,12 +85,13 @@ public class VolumeDefinitions {
         if (!Files.isDirOrSoftLinkDir(path.of(volumePath, 0, len).$())) {
             throw new ServerConfigurationException("inaccessible volume [path=" + volumePath + ']');
         }
-        if (!map.put(alias, volumePath.subSequence(0, len))) {
+        String volumeRoot = Chars.toString(path);
+        if (!aliasToVolumeRoot.put(alias, volumeRoot)) {
             throw new ServerConfigurationException("duplicate alias [alias=" + alias + ']');
         }
     }
 
-    private void finishVolumeDefinitions(CharSequence alias, CharSequence volumePath, Path path, int separatorCount) throws ServerConfigurationException {
+    private void finishVolumeDefinitions(String alias, CharSequence volumePath, Path path, int separatorCount) throws ServerConfigurationException {
         if (volumePath != null) {
             if (alias == null) {
                 throw new ServerConfigurationException("invalid syntax, dangling alias [alias=" + volumePath + ", offset=" + lo + ']');

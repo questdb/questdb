@@ -572,7 +572,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 }
                 resultSink.clear(resultSink.length() - 1);
             }
-            TestUtils.assertContains(resultSink.toString(), tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName());
+            String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName();
+            if (inVolume) {
+                expected += " (->)";
+            }
+            TestUtils.assertContains(resultSink.toString(), expected);
         }
         Assert.assertTrue(Files.exists(path.of(inVolume ? otherVolume : mainVolume).concat(tableToken.getDirName()).$()));
     }
@@ -591,7 +595,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 RecordCursor cursor = factory.getCursor(context)
         ) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, resultSink, printer);
-            TestUtils.assertContains(resultSink.toString(), tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName());
+            String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + isWal + '\t' + tableToken.getDirName();
+            if (inVolume) {
+                expected += " (->)";
+            }
+            TestUtils.assertContains(resultSink.toString(), expected);
         }
         Assert.assertTrue(Files.exists(path.of(inVolume ? otherVolume : mainVolume).concat(tableToken.getDirName()).$()));
     }

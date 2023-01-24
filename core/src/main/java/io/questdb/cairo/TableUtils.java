@@ -266,10 +266,14 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
         int rootLen = path.length();
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
+        try {
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
+            }
+            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } finally {
+            path.trimTo(rootLen);
         }
-        createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableInVolume(
@@ -294,16 +298,20 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("table directory already exists in volume [path=").put(path).put(']');
         }
         int rootLen = path.length();
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
-        }
-        if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
-            if (ff.rmdir(path.slash$()) != 0) {
-                LOG.error().$("cannot remove table directory in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
+        try {
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
             }
-            throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
+            if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
+                if (ff.rmdir(path.slash$()) != 0) {
+                    LOG.error().$("cannot remove table directory in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
+                }
+                throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
+            }
+            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } finally {
+            path.trimTo(rootLen);
         }
-        createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
     }
 
     public static long createTransitionIndex(
