@@ -164,7 +164,8 @@ public class InterpolationUtil {
                     mapValue1,
                     mapValue2,
                     boundaryTimestamp,
-                    isEndOfBoundary);
+                    isEndOfBoundary
+            );
         } catch (UnsupportedOperationException e) {
             throw CairoException.nonCritical().put("interpolation is not supported for function: ").put(function.getClass().getName());
         }

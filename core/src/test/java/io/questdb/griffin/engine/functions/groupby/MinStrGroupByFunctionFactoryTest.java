@@ -24,10 +24,10 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -140,8 +140,8 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
             ) {
                 cursor.hasNext();
                 Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertEquals("[-1] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunction", e.getMessage());
+            } catch (SqlException e) {
+                Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MinStrGroupByFunction", e.getMessage());
             }
         });
     }

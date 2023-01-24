@@ -156,6 +156,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
+            final GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
+            if (!function.isInterpolationSupported()) {
+                throw SqlException.position(0).put("interpolation is not supported for function: ").put(function.getClass().getName());
+            }
+        }
+
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
@@ -395,7 +402,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                             }
                                         }
                                     } else {
-
                                         // calculate slope between 'preSample' and 'x2'
                                         // yep, that's right, and go all the way back down
                                         // to 'sample' calculating interpolated values
