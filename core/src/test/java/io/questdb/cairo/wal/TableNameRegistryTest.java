@@ -215,7 +215,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             int threadCount = 2;
             int tableCount = 400;
             AtomicReference<Throwable> ref = new AtomicReference<>();
-            CyclicBarrier barrier = new CyclicBarrier(threadCount + 1);
+            CyclicBarrier startBarrier = new CyclicBarrier(threadCount + 1);
             ObjList<Thread> threads = new ObjList<>(threadCount);
             SOCountDownLatch halted = new SOCountDownLatch(threadCount);
             AtomicBoolean done = new AtomicBoolean(false);
@@ -224,15 +224,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration)) {
-                            barrier.await();
+                            startBarrier.await();
                             while (!done.get()) {
                                 ro.reloadTableNameCache();
                                 Os.pause();
                             }
 
                             ro.reloadTableNameCache();
-                            int size = getNonDroppedSize(ro);
-                            Assert.assertEquals(tableCount, size);
+                            Assert.assertEquals(tableCount, getNonDroppedSize(ro));
                         }
                     } catch (Throwable e) {
                         ref.set(e);
@@ -245,52 +244,53 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
 
             try (
-                TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
-                        .timestamp().col("c", ColumnType.TIMESTAMP);
-                Path rmPath = new Path().of(configuration.getRoot())
+                    TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
+                            .timestamp().col("c", ColumnType.TIMESTAMP);
+                    Path rmPath = new Path().of(configuration.getRoot())
             ) {
-            // Add / remove tables
-            engine.closeNameRegistry();
-            Rnd rnd = TestUtils.generateRandom(LOG);
-            try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
-                rw.reloadTableNameCache();
-                barrier.await();
-                int iteration = 0;
-                IntHashSet addedTables = new IntHashSet();
-                FilesFacade ff = configuration.getFilesFacade();
-                int rootLen = configuration.getRoot().length();
-                while (addedTables.size() < tableCount) {
-                    iteration++;
-                    if (rnd.nextDouble() > 0.2) {
-                        // Add table
-                        String tableName = "tab" + iteration;
-                        TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
-                        rw.registerName(tableToken);
-                        addedTables.add(iteration);
-                        TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
-                    } else if (addedTables.size() > 0) {
-                        // Remove table
-                        int tableId = addedTables.getLast();
-                        String tableName = "tab" + tableId;
-                        TableToken tableToken = rw.getTableToken(tableName);
-                        rw.dropTable(tableToken);
-                        addedTables.remove(tableId);
+                // Add / remove tables
+                engine.closeNameRegistry();
+                Rnd rnd = TestUtils.generateRandom(LOG);
+                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration)) {
+                    rw.reloadTableNameCache();
+                    startBarrier.await();
+                    int iteration = 0;
+                    IntHashSet addedTables = new IntHashSet();
+                    FilesFacade ff = configuration.getFilesFacade();
+                    int rootLen = configuration.getRoot().length();
+                    while (addedTables.size() < tableCount) {
+                        iteration++;
+                        if (rnd.nextDouble() > 0.2) {
+                            // Add table
+                            String tableName = "tab" + iteration;
+                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
+                            rw.registerName(tableToken);
+                            TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
+                            addedTables.add(iteration);
+                        } else {
+                            if (addedTables.size() > 0) {
+                                // Remove table
+                                int tableId = addedTables.getLast();
+                                String tableName = "tab" + tableId;
+                                TableToken tableToken = rw.getTableToken(tableName);
+                                rw.dropTable(tableToken);
+                                addedTables.remove(tableId);
 
-                            // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
-                            rmPath.trimTo(rootLen).concat(tableName).$();
-                            for (int i = 0; i < 100 && ff.rmdir(rmPath) != 0; i++) {
-                                Os.sleep(1L);
+                                // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
+                                rmPath.trimTo(rootLen).concat(tableName).$();
+                                for (int i = 0; i < 2000 && ff.rmdir(rmPath) != 0; i++) {
+                                    Os.sleep(1L);
+                                }
+                                Assert.assertFalse(ff.exists(rmPath));
                             }
                         }
-
                         if (rnd.nextBoolean()) {
                             // May run compaction
                             rw.reloadTableNameCache();
-                            if (addedTables.size() != getNonDroppedSize(rw)) {
-                                Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
-                            }
+                            Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
                         }
                     }
+                    rw.reloadTableNameCache();
                     Assert.assertEquals(addedTables.size(), getNonDroppedSize(rw));
                 } finally {
                     done.set(true);
