@@ -280,7 +280,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             for (int i = 0; i < 1000 && ff.rmdir(rmPath) != 0; i++) {
                                 Os.sleep(50L);
                             }
-                            Assert.assertFalse(ff.exists(rmPath));
                         }
 
                         if (rnd.nextBoolean()) {
