@@ -192,8 +192,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            // WAL writer
-            if (tud.getWriterThreadId() == -1) {
+
+            if (tud.isWal()) {
                 final MillisecondClock millisecondClock = tud.getMillisecondClock();
                 try {
                     long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
@@ -248,8 +248,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         tableUpdateDetailsUtf8.remove(tableNameUtf8);
                         tud.removeReference(readerWorkerId);
 
-                        // WAL writer
-                        if (tud.getWriterThreadId() == -1) {
+                        if (tud.isWal()) {
                             if (listener != null) {
                                 // table going idle
                                 listener.onEvent(tud.getTableToken(), 1);
@@ -305,10 +304,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         WalWriter ww = (WalWriter) tud.getWriter();
         TableRecordMetadata metadata = ww.getMetadata();
 
-        if (ld.getStructureVersion() > ww.getStructureVersion()) {
-            ww.commit();
-        }
-
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -325,7 +320,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 final String columnNameUtf16 = ld.getColNameUtf16();
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {
                     if (metadata.getColumnIndexQuiet(columnNameUtf16) < 0) {
-                        ww.commit();
+                        tud.commit(false);
                         try {
                             ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));
                         } catch (CairoException e) {
@@ -778,15 +773,22 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+        DirectByteCharSequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
-            tud = netIoJob.getLocalTableDetails(parser.getMeasurementName());
-            if (tud == null) {
+            tud = netIoJob.getLocalTableDetails(measurementName);
+            if (tud == null || (tud.isWal() && tud.isWriterInError())) {
+                if (tud != null) {
+                    TableUpdateDetails removed = netIoJob.removeTableUpdateDetails(measurementName);
+                    assert tud == removed;
+                    removed.releaseWriter(true);
+                    removed.close();
+                }
                 tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(parser.getMeasurementName())
+            LOG.info().$("could not get table writer [tableName=").$(measurementName)
                     .$(", ex=`")
                     .$(ex.getFlyweightMessage())
                     .$("`]")
@@ -794,15 +796,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             return true;
         } catch (CairoException ex) {
             // Table could not be created
-            LOG.error().$("could not create table [tableName=").$(parser.getMeasurementName())
+            LOG.error().$("could not create table [tableName=").$(measurementName)
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             // More details will be logged by catching thread
             throw ex;
         }
 
-        if (tud.getWriterThreadId() == -1) {
-            // this is a WAL TUD
+        if (tud.isWal()) {
             try {
                 appendToWal(netIoJob, parser, tud);
             } catch (Throwable ex) {

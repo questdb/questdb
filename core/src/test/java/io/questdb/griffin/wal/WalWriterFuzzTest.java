@@ -27,6 +27,7 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -144,14 +145,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     @Test
     public void testWalWriteRollbackHeavyToFix() throws Exception {
-        Rnd rnd1 = new Rnd(628706008284375L, 1667487965450L);
+        Rnd rnd1 = TestUtils.generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);
     }
 
     @Test
-    public void testWalWriteWithQuickSort() throws Exception {
+    public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
         Rnd rnd = new Rnd();
         int tableCount = Math.max(2, rnd.nextInt(10));
@@ -275,6 +276,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             applyThreads.add(applyThread);
         }
 
+        Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
+        purgeJobThread.start();
+        applyThreads.add(purgeJobThread);
+
         for (int i = 0; i < threads.length; i++) {
             try {
                 threads[i].join();
@@ -397,6 +402,9 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         Thread applyThread = new Thread(() -> runApplyThread(done, errors));
         applyThread.start();
 
+        Thread walPurgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
+        walPurgeJobThread.start();
+
         for (int i = 0; i < threads.length; i++) {
             try {
                 threads[i].join();
@@ -414,7 +422,12 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
         try {
             applyThread.join();
+            walPurgeJobThread.join();
         } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        for (Throwable e : errors) {
             throw new RuntimeException(e);
         }
     }
@@ -577,7 +590,8 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         start,
                         end,
                         fuzzRowCount,
-                        transactionCount, isO3,
+                        transactionCount,
+                        isO3,
                         cancelRowsProb,
                         notSetProb,
                         nullSetProb,
@@ -664,6 +678,22 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
             }
         });
+    }
+
+    private void runWalPurgeJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
+        try {
+            node1.getConfigurationOverrides().setWalPurgeInterval(0L);
+            try (WalPurgeJob job = new WalPurgeJob(engine)) {
+                while (done.get() == 0 && errors.size() == 0) {
+                    job.drain(0);
+                    Os.sleep(1);
+                }
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Path.clearThreadLocals();
+        }
     }
 
     private void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {

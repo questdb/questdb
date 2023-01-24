@@ -24,6 +24,8 @@
 
 package io.questdb.mp;
 
+import org.jetbrains.annotations.NotNull;
+
 public abstract class AbstractQueueConsumerJob<T> implements Job {
     protected final RingQueue<T> queue;
     protected final Sequence subSeq;
@@ -34,10 +36,10 @@ public abstract class AbstractQueueConsumerJob<T> implements Job {
     }
 
     @Override
-    public boolean run(int workerId) {
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
         final long cursor = subSeq.next();
-        return cursor > -1 && doRun(workerId, cursor);
+        return cursor > -1 && doRun(workerId, cursor, runStatus);
     }
 
-    protected abstract boolean doRun(int workerId, long cursor);
+    protected abstract boolean doRun(int workerId, long cursor, RunStatus runStatus);
 }

@@ -83,7 +83,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final TextImportTask task = queue.get(cursor);
         final boolean result = task.run(tlw, indexer, utf8Sink, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
         subSeq.done(cursor);

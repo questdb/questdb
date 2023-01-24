@@ -34,7 +34,7 @@ public interface TransactionLogCursor extends Closeable {
 
     int getSegmentId();
 
-    long getSegmentTxn();
+    int getSegmentTxn();
 
     long getStructureVersion();
 
@@ -43,4 +43,8 @@ public interface TransactionLogCursor extends Closeable {
     int getWalId();
 
     boolean hasNext();
+
+    boolean reset();
+
+    void toTop();
 }
