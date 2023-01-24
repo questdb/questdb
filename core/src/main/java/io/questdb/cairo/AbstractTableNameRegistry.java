@@ -28,9 +28,6 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-import java.util.Iterator;
-import java.util.Map;
-
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryFileStore nameStore;
@@ -65,9 +62,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     @Override
     public void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped) {
         bucket.clear();
-        Iterator<ReverseTableMapItem> iterator = reverseNameTokenMap.values().iterator();
-        while (iterator.hasNext()) {
-            ReverseTableMapItem entry = iterator.next();
+        for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
             if (includeDropped || !entry.isDropped()) {
                 bucket.add(entry.getToken());
             }

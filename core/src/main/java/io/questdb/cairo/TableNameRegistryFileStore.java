@@ -163,7 +163,6 @@ public class TableNameRegistryFileStore implements Closeable {
                     nameSink.clear();
                     Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
                     if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) && nameSink.length() > TABLE_REGISTRY_NAME_FILE.length() + 1) {
-                        //noinspection CatchMayIgnoreException
                         try {
                             int version = Numbers.parseInt(nameSink, TABLE_REGISTRY_NAME_FILE.length() + 1, nameSink.length());
                             if (version > lastVersion) {

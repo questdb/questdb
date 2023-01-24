@@ -68,11 +68,11 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             "2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\n" +
             "2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\n";
     private static final String firstPartitionName = "2023-01-01";
+    private static final String otherVolumeAlias = "SECONDARY VOLUME";
     private static final int partitionCount = 11;
     private static final int pgPort = PG_PORT + 10;
     private static String mainVolume;
     private static String otherVolume;
-    private static String otherVolumeAlias = "SECONDARY VOLUME";
     private static Path path;
 
     @BeforeClass
@@ -615,7 +615,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         return sink.toString();
     }
 
-    private static void deleteFolder(String folderName, boolean mustExist) throws IOException {
+    private static void deleteFolder(String folderName, boolean mustExist) {
         File directory = Paths.get(folderName).toFile();
         if (directory.exists() && directory.isDirectory()) {
             Deque<File> directories = new LinkedList<>();
@@ -675,7 +675,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 TestUtils.assertContains(thr.getMessage(), "[13] table already exists");
                 long startTs = System.currentTimeMillis();
                 boolean tableAsserted = false;
-                while (!tableAsserted && System.currentTimeMillis() - startTs < 500L) {
+                while (System.currentTimeMillis() - startTs < 500L) {
                     try {
                         assertTableExists(compiler, context, engine.getTableToken(tableName), isInVolume, isWal);
                         tableAsserted = true;
