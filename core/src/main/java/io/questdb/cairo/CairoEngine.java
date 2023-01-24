@@ -242,52 +242,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    // caller has to acquire the lock before this method is called and release the lock after the call
-    public void createTableUnsafe(
-            CairoSecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            boolean pathIsLoadedWithVolume,
-            TableStructure struct,
-            TableToken tableToken,
-            int tableId
-    ) {
-        securityContext.checkWritePermission();
-
-        // only create the table after it has been registered
-        final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
-        final int mkDirMode = configuration.getMkDirMode();
-        if (!pathIsLoadedWithVolume) {
-            TableUtils.createTable(
-                    ff,
-                    root,
-                    mkDirMode,
-                    mem,
-                    path,
-                    tableToken.getDirName(),
-                    struct,
-                    ColumnType.VERSION,
-                    tableId
-            );
-        } else {
-            TableUtils.createTableInVolume(
-                    ff,
-                    root,
-                    mkDirMode,
-                    mem,
-                    path,
-                    tableToken.getDirName(),
-                    struct,
-                    ColumnType.VERSION,
-                    tableId
-            );
-        }
-        if (struct.isWalEnabled()) {
-            tableSequencerAPI.registerTable(tableId, struct, tableToken);
-        }
-    }
-
     public void drop(
             CairoSecurityContext securityContext,
             Path path,
@@ -820,6 +774,52 @@ public class CairoEngine implements Closeable, WriterSource {
         securityContext.checkWritePermission();
         verifyTableToken(tableToken);
         writerPool.unlock(tableToken);
+    }
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
+    private void createTableUnsafe(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean pathIsLoadedWithVolume,
+            TableStructure struct,
+            TableToken tableToken,
+            int tableId
+    ) {
+        securityContext.checkWritePermission();
+
+        // only create the table after it has been registered
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final int mkDirMode = configuration.getMkDirMode();
+        if (!pathIsLoadedWithVolume) {
+            TableUtils.createTable(
+                    ff,
+                    root,
+                    mkDirMode,
+                    mem,
+                    path,
+                    tableToken.getDirName(),
+                    struct,
+                    ColumnType.VERSION,
+                    tableId
+            );
+        } else {
+            TableUtils.createTableInVolume(
+                    ff,
+                    root,
+                    mkDirMode,
+                    mem,
+                    path,
+                    tableToken.getDirName(),
+                    struct,
+                    ColumnType.VERSION,
+                    tableId
+            );
+        }
+        if (struct.isWalEnabled()) {
+            tableSequencerAPI.registerTable(tableId, struct, tableToken);
+        }
     }
 
     private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to) {
