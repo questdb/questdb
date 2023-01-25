@@ -3324,7 +3324,7 @@ public class JoinTest extends AbstractGriffinTest {
             compile("create table t1 (i int, s1 string)");
             compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+            compile("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
@@ -3425,6 +3425,24 @@ public class JoinTest extends AbstractGriffinTest {
                             "2\tb\t1970-01-01T00:00:00.000002Z\tNaN\t\t\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition18() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 symbol)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 symbol)");
+            compile("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
         });
     }
 

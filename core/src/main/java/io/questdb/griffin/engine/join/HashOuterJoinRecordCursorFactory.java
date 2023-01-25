@@ -68,13 +68,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         this.slaveKeySink = slaveKeySink;
 
         Map joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
-        this.cursor = new HashOuterJoinRecordCursor(
+        cursor = new HashOuterJoinRecordCursor(
                 columnSplit,
                 joinKeyMap,
                 slaveChain,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
-
         this.joinContext = joinContext;
     }
 
