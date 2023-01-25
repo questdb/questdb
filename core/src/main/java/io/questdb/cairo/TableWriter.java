@@ -1509,7 +1509,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void processWalData(
+    public long processWalData(
             @Transient Path walPath,
             boolean inOrder,
             long rowLo,
@@ -1555,10 +1555,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
+            return rowsAdded;
         } else {
             // Keep in memory last committed seq txn, but do not write it to _txn file.
             txWriter.setSeqTxn(seqTxn);
         }
+        return 0L;
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {

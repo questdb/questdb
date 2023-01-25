@@ -24,7 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.TelemetryJob;
+import io.questdb.TelemetryConfigLogger;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -36,8 +37,8 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
 
         assertMemoryLeak(() -> {
             compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.configTableName + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryTask.TABLE_NAME + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)", sqlExecutionContext);
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
@@ -54,8 +55,8 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
 
         assertMemoryLeak(() -> {
             compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.configTableName + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryTask.TABLE_NAME + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)", sqlExecutionContext);
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
