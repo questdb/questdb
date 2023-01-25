@@ -213,19 +213,19 @@ public class TableNameRegistryFileStore implements Closeable {
             if (fileLen > 4) {
                 int charLen = ff.readNonNegativeInt(fd, 0);
                 if (charLen * 2L + 4 != fileLen - 1) {
-                    LOG.error().$("invalid table name file [path=").$(path).$(", headerLen=").$(charLen).$(", fileLne=").$(fileLen).I$();
+                    LOG.error().$("invalid table name file [path=").$(path).$(", headerLen=").$(charLen).$(", fileLen=").$(fileLen).I$();
                     return null;
                 }
 
                 tableNameRoMemory.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
                 String value = Chars.toString(tableNameRoMemory.getStr(0));
-                tableNameRoMemory.close();
                 return value;
             } else {
                 LOG.error().$("invalid table name file [path=").$(path).$(", fileLne=").$(fileLen).I$();
                 return null;
             }
         } finally {
+            tableNameRoMemory.close();
             ff.close(fd);
         }
     }
@@ -392,8 +392,8 @@ public class TableNameRegistryFileStore implements Closeable {
             }
 
             if (deletedRecordsFound > 0) {
-                LOG.info().$("compacting tables file [path=").$(path).$(']').$();
                 path.trimTo(pathRootLen);
+                LOG.info().$("compacting tables file").$();
                 compactTableNameFile(nameTableTokenMap, lastFileVersion, ff, path, currentOffset);
             } else {
                 tableNameMemory.jumpTo(currentOffset);
