@@ -91,7 +91,6 @@ public class VolumeDefinitionsTest {
     public void testNotValidDefinitions2() {
         withVolume("neptune", volume0 ->
                 withVolume("mars", volume1 -> {
-                            String volumePath = volume0.getAbsolutePath();
                             String rootPath = volume1.getAbsolutePath();
                             String expected = "standard volume cannot have an alias [alias=main, root=" + rootPath + ']';
                             assertFail("volume 1 -> " + volume0.getAbsolutePath() + ", main -> " + rootPath + ", ", expected, rootPath);
