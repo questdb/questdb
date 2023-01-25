@@ -40,8 +40,8 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     private final Function filter;
     private final int symbolKey;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private boolean found;
     private boolean hasNext;
+    private boolean isFindPending;
     private boolean isRecordFound;
 
     public LatestByValueFilteredRecordCursor(
@@ -63,10 +63,10 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!isRecordFound) {
+        if (!isFindPending) {
             findRecord();
-            hasNext = found;
-            isRecordFound = true;
+            hasNext = isRecordFound;
+            isFindPending = true;
         }
         if (hasNext) {
             hasNext = false;
@@ -82,8 +82,8 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
         recordB.of(dataFrameCursor.getTableReader());
         circuitBreaker = executionContext.getCircuitBreaker();
         filter.init(this, executionContext);
-        found = false;
         isRecordFound = false;
+        isFindPending = false;
     }
 
     @Override
@@ -100,7 +100,7 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toTop() {
-        hasNext = found;
+        hasNext = isRecordFound;
         filter.toTop();
     }
 
@@ -118,7 +118,7 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
                 if (filter.getBool(recordA)) {
                     int key = recordA.getInt(columnIndex);
                     if (key == symbolKey) {
-                        found = true;
+                        isRecordFound = true;
                         break OUT;
                     }
                 }
