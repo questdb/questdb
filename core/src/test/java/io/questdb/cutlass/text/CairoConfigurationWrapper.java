@@ -770,7 +770,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     @Override
     public VolumeDefinitions getVolumeDefinitions() {
-        return null;
+        return conf.getVolumeDefinitions();
     }
 
     @Override
