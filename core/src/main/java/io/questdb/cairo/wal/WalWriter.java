@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -71,6 +72,7 @@ public class WalWriter implements TableWriterAPI {
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
+    private final Metrics metrics;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
@@ -103,7 +105,12 @@ public class WalWriter implements TableWriterAPI {
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
 
-    public WalWriter(CairoConfiguration configuration, TableToken tableToken, TableSequencerAPI tableSequencerAPI) {
+    public WalWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            TableSequencerAPI tableSequencerAPI,
+            Metrics metrics
+    ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
@@ -115,6 +122,7 @@ public class WalWriter implements TableWriterAPI {
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
         this.rootLen = path.length();
+        this.metrics = metrics;
         this.open = true;
 
         try {
@@ -238,10 +246,12 @@ public class WalWriter implements TableWriterAPI {
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
+                final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
+                metrics.getWalMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {
@@ -1726,12 +1736,6 @@ public class WalWriter implements TableWriterAPI {
             putSym(columnIndex, str);
         }
 
-        @Override
-        public void putUuid(int columnIndex, CharSequence uuidStr) {
-            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
-        }
-
         public void putSymUtf8(int columnIndex, DirectByteCharSequence value, boolean hasNonAsciiChars) {
             // this method will write column name to the buffer if it has to be utf8 decoded
             // otherwise it will write nothing.
@@ -1753,6 +1757,12 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw new UnsupportedOperationException();
             }
+        }
+
+        @Override
+        public void putUuid(int columnIndex, CharSequence uuidStr) {
+            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
+            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
