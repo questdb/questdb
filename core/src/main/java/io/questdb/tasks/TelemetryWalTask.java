@@ -42,12 +42,13 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private int walId;
     private long seqTxn;
     private long rowCount;
+    private long physicalRowCount;
     private float latency; // millis
 
     private TelemetryWalTask() {
     }
 
-    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long latencyUs) {
+    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
         final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
@@ -55,6 +56,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             task.walId = walId;
             task.seqTxn = seqTxn;
             task.rowCount = rowCount;
+            task.physicalRowCount = physicalRowCount;
             task.latency = latencyUs / 1000.0f; // millis
             telemetry.store();
         }
@@ -69,7 +71,8 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
             row.putInt(3, walId);
             row.putLong(4, seqTxn);
             row.putLong(5, rowCount);
-            row.putFloat(6, latency);
+            row.putLong(6, physicalRowCount);
+            row.putFloat(7, latency);
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
@@ -93,6 +96,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                     "walId int, " +
                     "seqTxn long, " +
                     "rowCount long," +
+                    "physicalRowCount long," +
                     "latency float" +
                     ") timestamp(created) partition by MONTH BYPASS WAL";
         }
