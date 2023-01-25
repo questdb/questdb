@@ -934,14 +934,13 @@ public final class TableUtils {
                 }
 
                 mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
-                String value = Chars.toString(mem.getStr(0));
-                mem.close();
-                return value;
+                return Chars.toString(mem.getStr(0));
             } else {
                 LOG.error().$("invalid table name file [path=").$(path).$(", fileLen=").$(fileLen).I$();
                 return null;
             }
         } finally {
+            mem.close();
             ff.close(fd);
         }
     }
