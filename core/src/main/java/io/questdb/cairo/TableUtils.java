@@ -940,7 +940,6 @@ public final class TableUtils {
                 return null;
             }
         } finally {
-            mem.close();
             ff.close(fd);
         }
     }
