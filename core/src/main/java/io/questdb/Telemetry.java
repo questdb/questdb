@@ -24,17 +24,131 @@
 
 package io.questdb;
 
-public final class Telemetry {
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.QueueConsumer;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.tasks.AbstractTelemetryTask;
+import org.jetbrains.annotations.NotNull;
 
-    // These event types are in addition to those declared in
-    // io.questdb.griffin.CompiledQuery. We use them to identify start/stop events of the server
+import java.io.Closeable;
 
-    public static final short ORIGIN_HTTP_JSON = 2;
-    public static final short ORIGIN_HTTP_TEXT = 4;
-    public static final short ORIGIN_ILP_TCP = 5;
-    public static final short ORIGIN_INTERNAL = 1;
-    public static final short ORIGIN_POSTGRES = 3;
-    public static final short SYSTEM_EVENT_DOWN = 101;
-    public static final short SYSTEM_EVENT_UP = 100;
-    public static final short SYSTEM_ILP_RESERVE_WRITER = 102;
+public final class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
+    private static final Log LOG = LogFactory.getLog(Telemetry.class);
+
+    private final boolean enabled;
+    private MicrosecondClock clock;
+    private MPSequence telemetryPubSeq;
+    private RingQueue<T> telemetryQueue;
+    private SCSequence telemetrySubSeq;
+    private TelemetryType<T> telemetryType;
+    private TableWriter writer;
+
+    private final QueueConsumer<T> taskConsumer = this::consume;
+
+    public Telemetry(TelemetryType<T> type, CairoConfiguration configuration) {
+        final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);
+        enabled = telemetryConfiguration.getEnabled();
+        if (enabled) {
+            clock = configuration.getMicrosecondClock();
+            telemetryType = type;
+            telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
+            telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
+            telemetrySubSeq = new SCSequence();
+            telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (writer == null) {
+            return;
+        }
+
+        consumeAll();
+        Misc.free(telemetryQueue);
+
+        telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
+        writer = Misc.free(writer);
+    }
+
+    public void consume(T task) {
+        task.writeTo(writer, clock.getTicks());
+    }
+
+    public void consumeAll() {
+        if (enabled && telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {
+            writer.commit();
+        }
+    }
+
+    public void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (!enabled) {
+            return;
+        }
+        CharSequence sysPrefix = engine.getConfiguration().getSystemTableNamePrefix();
+        String tableName = sysPrefix + telemetryType.getTableName();
+
+        compiler.compile(telemetryType.getCreateSql(sysPrefix), sqlExecutionContext);
+        final TableToken tableToken = engine.getTableToken(tableName);
+        try {
+            writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetry");
+        } catch (CairoException ex) {
+            LOG.error()
+                    .$("could not open [table=`").utf8(tableToken.getTableName())
+                    .$("`, ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .$(']').$();
+        }
+
+        telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public T nextTask() {
+        if (!enabled) {
+            return null;
+        }
+
+        long cursor = telemetryPubSeq.next();
+        if (cursor < 0) {
+            return null;
+        }
+
+        return telemetryQueue.get(cursor);
+    }
+
+    public void store() {
+        telemetryPubSeq.done(telemetryPubSeq.current());
+    }
+
+    public interface TelemetryType<T extends AbstractTelemetryTask> {
+        String getCreateSql(CharSequence prefix);
+
+        String getTableName();
+
+        ObjectFactory<T> getTaskFactory();
+
+        //todo: we could tailor the config for each telemetry type
+        //we could set different queue sizes or disable telemetry per type, for example
+        default TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
+            return configuration.getTelemetryConfiguration();
+        }
+
+        default void logStatus(TableWriter writer, short systemStatus, long micros) {
+        }
+    }
 }

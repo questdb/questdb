@@ -25,29 +25,39 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
-import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
-public class TelemetryTask implements AbstractTelemetryTask {
-    public static final String TABLE_NAME = "telemetry";
+public class TelemetryWalTask implements AbstractTelemetryTask {
+    public static final String TABLE_NAME = "telemetry_wal";
 
-    private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
+    private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
 
-    private short origin;
     private short event;
+    private int tableId;
+    private int walId;
+    private long seqTxn;
+    private long rowCount;
+    private long physicalRowCount;
+    private float latency; // millis
 
-    private TelemetryTask() {
+    private TelemetryWalTask() {
     }
 
-    public static void store(Telemetry<TelemetryTask> telemetry, short origin, short event) {
-        final TelemetryTask task = telemetry.nextTask();
+    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+        final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
-            task.origin = origin;
             task.event = event;
+            task.tableId = tableId;
+            task.walId = walId;
+            task.seqTxn = seqTxn;
+            task.rowCount = rowCount;
+            task.physicalRowCount = physicalRowCount;
+            task.latency = latencyUs / 1000.0f; // millis
             telemetry.store();
         }
     }
@@ -57,7 +67,12 @@ public class TelemetryTask implements AbstractTelemetryTask {
         try {
             final TableWriter.Row row = writer.newRow(timestamp);
             row.putShort(1, event);
-            row.putShort(2, origin);
+            row.putInt(2, tableId);
+            row.putInt(3, walId);
+            row.putLong(4, seqTxn);
+            row.putLong(5, rowCount);
+            row.putLong(6, physicalRowCount);
+            row.putFloat(7, latency);
             row.append();
         } catch (CairoException e) {
             LOG.error().$("Could not insert a new ").$(TABLE_NAME).$(" row [errno=").$(e.getErrno())
@@ -66,9 +81,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
         }
     }
 
-    public static final Telemetry.TelemetryType<TelemetryTask> TYPE = new Telemetry.TelemetryType<TelemetryTask>() {
-        private final TelemetryTask systemStatusTask = new TelemetryTask();
-
+    public static final Telemetry.TelemetryType<TelemetryWalTask> TYPE = new Telemetry.TelemetryType<TelemetryWalTask>() {
         @Override
         public String getTableName() {
             return TABLE_NAME;
@@ -79,21 +92,18 @@ public class TelemetryTask implements AbstractTelemetryTask {
             return "CREATE TABLE IF NOT EXISTS " + prefix + TABLE_NAME + " (" +
                     "created timestamp, " +
                     "event short, " +
-                    "origin short" +
-                    ") timestamp(created)";
+                    "tableId int, " +
+                    "walId int, " +
+                    "seqTxn long, " +
+                    "rowCount long," +
+                    "physicalRowCount long," +
+                    "latency float" +
+                    ") timestamp(created) partition by MONTH BYPASS WAL";
         }
 
         @Override
-        public ObjectFactory<TelemetryTask> getTaskFactory() {
-            return TelemetryTask::new;
-        }
-
-        @Override
-        public void logStatus(TableWriter writer, short systemStatus, long micros) {
-            systemStatusTask.origin = TelemetryOrigin.INTERNAL;
-            systemStatusTask.event = systemStatus;
-            systemStatusTask.writeTo(writer, micros);
-            writer.commit();
+        public ObjectFactory<TelemetryWalTask> getTaskFactory() {
+            return TelemetryWalTask::new;
         }
     };
 }

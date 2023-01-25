@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.Record;
@@ -56,6 +57,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.ServiceLoader;
 
+import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -1086,6 +1088,7 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn, executionContext.getCairoSecurityContext());
+            executionContext.storeTelemetry(TelemetryOrigin.WAL_APPLY, WAL_APPLY_RESUME);
             return compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)

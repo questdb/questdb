@@ -25,6 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
+import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -77,6 +79,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
+    private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
 
@@ -88,6 +91,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             WorkerPool writerWorkerPool
     ) {
         this.engine = engine;
+        this.telemetry = engine.getTelemetry();
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
@@ -683,7 +687,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
                     }
                 } else {
-                    TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
+                    TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
                     // check if table on disk is WAL
                     path.of(engine.getConfiguration().getRoot());
                     if (engine.isWalTable(tableToken)) {

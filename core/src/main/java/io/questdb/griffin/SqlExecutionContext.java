@@ -156,5 +156,6 @@ public interface SqlExecutionContext extends Closeable {
 
     void setRandom(Rnd rnd);
 
-    void storeTelemetry(short event, short origin);
+    default void storeTelemetry(short event, short origin) {
+    }
 }

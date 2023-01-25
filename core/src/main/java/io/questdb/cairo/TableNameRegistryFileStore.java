@@ -361,8 +361,8 @@ public class TableNameRegistryFileStore implements Closeable {
             }
 
             if (deletedRecordsFound > 0) {
-                LOG.info().$("compacting tables file [path=").$(path).$(']').$();
                 path.trimTo(pathRootLen);
+                LOG.info().$("compacting tables file").$();
                 compactTableNameFile(nameTableTokenMap, lastFileVersion, ff, path, currentOffset);
             } else {
                 tableNameMemory.jumpTo(currentOffset);
