@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.TelemetryJob;
+import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -38,6 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TelemetryTask;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
@@ -242,9 +243,8 @@ public class TableListFunctionFactory implements FunctionFactory {
                 }
 
                 public boolean open(TableToken tableToken) {
-
-                    if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryJob.tableName)
-                            || Chars.equals(tableToken.getTableName(), TelemetryJob.configTableName)
+                    if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
+                            || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME)
                             || Chars.startsWith(tableToken.getTableName(), sysTablePrefix))) {
                         return false;
                     }

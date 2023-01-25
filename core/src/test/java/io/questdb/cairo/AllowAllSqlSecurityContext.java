@@ -164,10 +164,6 @@ public final class AllowAllSqlSecurityContext {
             @Override
             public void setRandom(Rnd rnd) {
             }
-
-            @Override
-            public void storeTelemetry(short event, short origin) {
-            }
         };
     }
 }

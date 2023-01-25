@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
+import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -46,6 +47,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -68,11 +70,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
-    private final MPSequence telemetryPubSeq;
-    private final RingQueue<TelemetryTask> telemetryQueue;
-    private final SCSequence telemetrySubSeq;
+    private final Telemetry<TelemetryTask> telemetry;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TextImportExecutionContext textImportExecutionContext;
-    // initial value of unpublishedWalTxnCount is 1 because we want to scan for unapplied WAL transactions on startup
+    // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
@@ -95,16 +96,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-        if (configuration.getTelemetryConfiguration().getEnabled()) {
-            this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
-            this.telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
-            this.telemetrySubSeq = new SCSequence();
-            telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
-        } else {
-            this.telemetryQueue = null;
-            this.telemetryPubSeq = null;
-            this.telemetrySubSeq = null;
-        }
+        this.telemetry = new Telemetry<>(TelemetryTask.TYPE, configuration);
+        this.telemetryWal = new Telemetry<>(TelemetryWalTask.TYPE, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
             this.tableIdGenerator.open();
@@ -157,7 +150,8 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
-        Misc.free(telemetryQueue);
+        Misc.free(telemetry);
+        Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
     }
 
@@ -489,16 +483,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
-    public Sequence getTelemetryPubSequence() {
-        return telemetryPubSeq;
+    public Telemetry<TelemetryTask> getTelemetry() {
+        return telemetry;
     }
 
-    public RingQueue<TelemetryTask> getTelemetryQueue() {
-        return telemetryQueue;
-    }
-
-    public SCSequence getTelemetrySubSequence() {
-        return telemetrySubSeq;
+    public Telemetry<TelemetryWalTask> getTelemetryWal() {
+        return telemetryWal;
     }
 
     public TextImportExecutionContext getTextImportExecutionContext() {
