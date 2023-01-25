@@ -132,6 +132,7 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select * from x order by i limit 3");
 
         // CachedAnalyticRecordCursorFactory
+        addTestCase("select i, row_number() over (partition by sym) from x");
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
 
         // InSymbolCursorFunctionFactory
@@ -207,7 +208,8 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         addTestCase("select * from x where i != 42 latest on ts partition by s");
 
         // LatestByLightRecordCursorFactory
-        addTestCase("select * from ((x union all y) order by ts) latest on ts partition by s");
+        addTestCase("select * from ((x union all y) order by ts asc) latest on ts partition by s");
+        addTestCase("select * from ((x union all y) order by ts desc) latest on ts partition by s");
 
         // LatestByRecordCursorFactory
         addTestCase("with yy as (select ts, max(s) s from y sample by 1h) select * from yy latest on ts partition by s");
