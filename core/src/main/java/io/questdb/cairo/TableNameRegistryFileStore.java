@@ -219,7 +219,7 @@ public class TableNameRegistryFileStore implements Closeable {
                 String value = Chars.toString(tableNameRoMemory.getStr(0));
                 return value;
             } else {
-                LOG.error().$("invalid table name file [path=").utf8(path).$(", fileLne=").$(fileLen).I$();
+                LOG.error().$("invalid table name file [path=").utf8(path).$(", fileLen=").$(fileLen).I$();
                 return null;
             }
         } finally {
