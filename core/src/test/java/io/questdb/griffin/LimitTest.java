@@ -247,6 +247,24 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNegativeLimitEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table y (sym symbol, ts timestamp) timestamp(ts) partition by day",
+                    sqlExecutionContext
+            );
+
+            assertQuery(
+                    "sym\tts\n",
+                    "y where sym = 'googl' limit -3",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testNegativeLimitMultiplePageFramesNonPartitioned() throws Exception {
         // Here we verify that the implicit timestamp descending order is preserved
         // by negative limit clause even if it spans multiple page frames.

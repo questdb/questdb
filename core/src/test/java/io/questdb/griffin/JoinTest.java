@@ -3985,6 +3985,23 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinWithoutCondition2() throws Exception {
+        // Here we test case when all slave records have newer timestamps than what's in the master table.
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            compile("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
+
+            assertSql("select * from t1 lt join t2",
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n");
+        });
+    }
+
+    @Test
     public void testSelectAliasTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table contact_events as (" +

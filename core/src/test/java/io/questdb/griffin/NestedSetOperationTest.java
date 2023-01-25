@@ -388,7 +388,7 @@ public class NestedSetOperationTest extends AbstractGriffinTest {
                         "group by id ", null, null, true, false, true);
     }
 
-    //latest by pushdown test - start
+    // latest by pushdown test - start
     @Test
     public void testLatestByPushdownWithUnionQueryOnTableReturnsLatestRow() throws Exception {
         assertQuery("ts\tstatus\tamount\n" +

@@ -165,18 +165,14 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             final long nextIndex = rowIndexes.get(rowIndexesPos);
-            while (true) {
-                boolean hasNext = baseCursor.hasNext();
-                if (!hasNext) {
-                    rowIndexesPos++;
-                    return false;
-                }
+            while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 if (index++ == nextIndex) {
                     rowIndexesPos++;
                     return true;
                 }
             }
+            return false;
         }
 
         @Override
@@ -243,7 +239,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
                 index++;
             }
 
-            // Copy the row indexes into the long list.
+            // Copy row indexes into the long list.
             try (final RecordCursor mapCursor = latestByMap.getCursor()) {
                 final MapRecord mapRecord = (MapRecord) mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
@@ -256,7 +252,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // Sort the indexes, so that we can use them when iterating the base cursor.
             rowIndexes.sortAsUnsigned();
-            // Map is no longer needed, so deallocate native memory.
+            // Map is no longer needed, deallocate native memory.
             latestByMap.close();
         }
     }
