@@ -36,8 +36,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.Nullable;
@@ -384,7 +384,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 iTransaction++;
                                 long physicallyWrittenRowsSinceLastCommit = writer.getPhysicallyWrittenRowsSinceLastCommit();
                                 physicalRowsAdded += physicallyWrittenRowsSinceLastCommit;
-                                metrics.addRowsWritten(added, physicallyWrittenRowsSinceLastCommit, timeDelta);
+                                metrics.addApplyRowsWritten(added, physicallyWrittenRowsSinceLastCommit, timeDelta);
                             }
                             if (added == -2L || isTerminating) {
                                 // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
