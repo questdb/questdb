@@ -88,8 +88,21 @@ public class VolumeDefinitionsTest {
     }
 
     @Test
+    public void testNotValidDefinitions2() {
+        withVolume("neptune", volume0 ->
+                withVolume("mars", volume1 -> {
+                            String volumePath = volume0.getAbsolutePath();
+                            String rootPath = volume1.getAbsolutePath();
+                            String expected = "standard volume cannot have an alias [alias=main, root=" + rootPath + ']';
+                            assertFail("volume 1 -> " + volume0.getAbsolutePath() + ", main -> " + rootPath + ", ", expected, rootPath);
+                        }
+                )
+        );
+    }
+
+    @Test
     public void testValidEmptyDefinition() throws Exception {
-        volumeDefinitions.of("       ", path);
+        volumeDefinitions.of("       ", path, "");
         Assert.assertNull(volumeDefinitions.resolveAlias(""));
         Assert.assertNull(volumeDefinitions.resolveAlias("       "));
         volumeDefinitions.forEach((alias, volumePath) -> Assert.fail());
@@ -141,8 +154,12 @@ public class VolumeDefinitionsTest {
     }
 
     private void assertFail(String text, String expectedErrorMsg) {
+        assertFail(text, expectedErrorMsg, "");
+    }
+
+    private void assertFail(String text, String expectedErrorMsg, String root) {
         try {
-            volumeDefinitions.of(text, path);
+            volumeDefinitions.of(text, path, root);
             Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), expectedErrorMsg);
@@ -151,7 +168,7 @@ public class VolumeDefinitionsTest {
 
     private void parseVolumeDefinitions() {
         try {
-            volumeDefinitions.of(sink.toString(), path);
+            volumeDefinitions.of(sink.toString(), path, "");
         } catch (ServerConfigurationException unexpected) {
             Assert.fail(unexpected.getMessage());
         }

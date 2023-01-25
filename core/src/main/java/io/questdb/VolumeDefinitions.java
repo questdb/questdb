@@ -42,7 +42,7 @@ public class VolumeDefinitions {
         aliasToVolumeRoot.forEach(action);
     }
 
-    public VolumeDefinitions of(@Nullable CharSequence definitions, @NotNull Path path) throws ServerConfigurationException {
+    public VolumeDefinitions of(@Nullable CharSequence definitions, @NotNull Path path, @NotNull String root) throws ServerConfigurationException {
         if (definitions != null) {
             // 'any-case-alias' -> 'absolute path to volume' (quotes are optional)
             aliasToVolumeRoot.clear();
@@ -62,13 +62,13 @@ public class VolumeDefinitions {
                     if (alias == null) {
                         throw new ServerConfigurationException("invalid syntax, missing alias at offset " + lo);
                     }
-                    addVolumeDefinition(alias, popToken(definitions, i, false), path);
+                    addVolumeDefinition(alias, popToken(definitions, i, false), path, root);
                     alias = null;
                     lo = i + 1;
                     separatorCount++;
                 }
             }
-            finishVolumeDefinitions(alias, popToken(definitions, limit, true), path, separatorCount);
+            finishVolumeDefinitions(alias, popToken(definitions, limit, true), path, root, separatorCount);
         }
         return this;
     }
@@ -77,7 +77,7 @@ public class VolumeDefinitions {
         return aliasToVolumeRoot.get(alias);
     }
 
-    private void addVolumeDefinition(String alias, CharSequence volumePath, Path path) throws ServerConfigurationException {
+    private void addVolumeDefinition(String alias, CharSequence volumePath, Path path, String root) throws ServerConfigurationException {
         int len = volumePath.length();
         if (len > 0 && volumePath.charAt(len - 1) == Files.SEPARATOR) {
             len--;
@@ -86,17 +86,20 @@ public class VolumeDefinitions {
             throw new ServerConfigurationException("inaccessible volume [path=" + volumePath + ']');
         }
         String volumeRoot = Chars.toString(path);
+        if (volumeRoot.equals(root)) {
+            throw new ServerConfigurationException("standard volume cannot have an alias [alias=" + alias + ", root=" + root + ']');
+        }
         if (!aliasToVolumeRoot.put(alias, volumeRoot)) {
             throw new ServerConfigurationException("duplicate alias [alias=" + alias + ']');
         }
     }
 
-    private void finishVolumeDefinitions(String alias, CharSequence volumePath, Path path, int separatorCount) throws ServerConfigurationException {
+    private void finishVolumeDefinitions(String alias, CharSequence volumePath, Path path, String root, int separatorCount) throws ServerConfigurationException {
         if (volumePath != null) {
             if (alias == null) {
                 throw new ServerConfigurationException("invalid syntax, dangling alias [alias=" + volumePath + ", offset=" + lo + ']');
             }
-            addVolumeDefinition(alias, volumePath, path);
+            addVolumeDefinition(alias, volumePath, path, root);
         } else if (alias != null) {
             throw new ServerConfigurationException("invalid syntax, missing volume path at offset " + hi);
         } else if (separatorCount > 0) {

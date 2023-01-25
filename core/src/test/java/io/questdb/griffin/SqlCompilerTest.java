@@ -2329,7 +2329,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
         };
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path);
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
             assertQuery(
                     "geohash\n",
                     "select geohash from " + tableName,
@@ -2373,7 +2373,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         String volumeAlias = "manzana";
         String volumePath = volume.getAbsolutePath();
         try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path);
+            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root.toString());
             Assert.assertTrue(volume.delete());
             assertQuery(
                     "geohash\n",
