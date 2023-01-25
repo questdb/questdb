@@ -128,9 +128,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
             return null;
         }
 
-        final T task = telemetryQueue.get(cursor);
-        task.setCreated(clock.getTicks());
-        return task;
+        return telemetryQueue.get(cursor);
     }
 
     public void store() {

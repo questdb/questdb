@@ -336,10 +336,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             }
 
                             if (hasNext) {
-                                final long referenceTimestamp = walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, commitTimestamp);
+                                final long start = microClock.getTicks();
+                                walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, start - commitTimestamp);
                                 structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
-                                walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, referenceTimestamp);
+                                walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, microClock.getTicks() - start);
                             } else {
                                 // Something messed up in sequencer.
                                 // There is a transaction in WAL but no structure change record.
@@ -428,8 +429,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryTask.store(telemetry, origin, event);
     }
 
-    private long doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
-        return TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, referenceTimestamp);
+    private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long latencyUs) {
+        TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, latencyUs);
     }
 
     private long processWalCommit(
@@ -470,7 +471,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 rowsSinceLastCommit = 0;
                             }
                         }
-                        referenceTimestamp = walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, commitTimestamp);
+                        final long start = microClock.getTicks();
+                        walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, start - commitTimestamp);
                         final long rowsAdded = writer.processWalData(
                                 walPath,
                                 !dataInfo.isOutOfOrder(),
@@ -482,7 +484,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 seqTxn,
                                 commitToTimestamp
                         );
-                        walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, referenceTimestamp);
+                        walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, microClock.getTicks() - start);
                         return rowCount;
                     } else {
                         return -2L;
@@ -490,9 +492,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 case SQL:
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    referenceTimestamp = walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, commitTimestamp);
+                    final long start = microClock.getTicks();
+                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, start - commitTimestamp);
                     processWalSql(writer, sqlInfo, operationCompiler, seqTxn);
-                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, referenceTimestamp);
+                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, microClock.getTicks() - start);
                     return -1L;
                 case TRUNCATE:
                     long txn = writer.getTxn();
@@ -636,8 +639,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void storeTelemetryNoop(short event, short origin) {
     }
 
-    private long storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp) {
-        return -1L;
+    private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long latencyUs) {
     }
 
     @Override
@@ -680,6 +682,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     @FunctionalInterface
     private interface WalTelemetryFacade {
-        long store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long referenceTimestamp);
+        void store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long latencyUs);
     }
 }

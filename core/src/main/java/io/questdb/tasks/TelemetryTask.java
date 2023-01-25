@@ -32,7 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 
-public class TelemetryTask extends AbstractTelemetryTask {
+public class TelemetryTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry";
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
@@ -90,7 +90,6 @@ public class TelemetryTask extends AbstractTelemetryTask {
 
         @Override
         public void logStatus(TableWriter writer, short systemStatus, long micros) {
-            systemStatusTask.created = micros;
             systemStatusTask.origin = TelemetryOrigin.INTERNAL;
             systemStatusTask.event = systemStatus;
             systemStatusTask.writeTo(writer, micros);

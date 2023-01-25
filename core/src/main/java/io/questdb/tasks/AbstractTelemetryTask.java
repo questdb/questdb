@@ -26,11 +26,6 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.TableWriter;
 
-public abstract class AbstractTelemetryTask {
-    long created;
-    public void setCreated(long created) {
-        this.created = created;
-    }
-
-    public abstract void writeTo(TableWriter writer, long timestamp);
+public interface AbstractTelemetryTask {
+    void writeTo(TableWriter writer, long timestamp);
 }

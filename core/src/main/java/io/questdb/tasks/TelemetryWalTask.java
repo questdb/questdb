@@ -32,7 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
-public class TelemetryWalTask extends AbstractTelemetryTask {
+public class TelemetryWalTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry_wal";
 
     private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
@@ -47,7 +47,7 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
     private TelemetryWalTask() {
     }
 
-    public static long store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long start) {
+    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long latencyUs) {
         final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
@@ -55,11 +55,9 @@ public class TelemetryWalTask extends AbstractTelemetryTask {
             task.walId = walId;
             task.seqTxn = seqTxn;
             task.rowCount = rowCount;
-            task.latency = (task.created - start) / 1000.0f;
+            task.latency = latencyUs / 1000.0f; // millis
             telemetry.store();
-            return task.created;
         }
-        return -1L;
     }
 
     @Override
