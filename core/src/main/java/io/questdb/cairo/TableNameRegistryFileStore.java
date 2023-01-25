@@ -198,35 +198,6 @@ public class TableNameRegistryFileStore implements Closeable {
         }
     }
 
-    private String readTableName(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
-        int fd = ff.openRO(path);
-        if (fd < 1) {
-            return null;
-        }
-
-        try {
-            long fileLen = ff.length(fd);
-            if (fileLen > 4) {
-                int charLen = ff.readNonNegativeInt(fd, 0);
-                if (charLen * 2L + 4 != fileLen - 1) {
-                    LOG.error().$("invalid table name file [path=").$(path).$(", headerLen=").$(charLen).$(", fileLne=").$(fileLen).I$();
-                    return null;
-                }
-
-                tableNameRoMemory.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
-                String value = Chars.toString(tableNameRoMemory.getStr(0));
-                tableNameRoMemory.close();
-                return value;
-            } else {
-                LOG.error().$("invalid table name file [path=").$(path).$(", fileLne=").$(fileLen).I$();
-                return null;
-            }
-        } finally {
-            ff.close(fd);
-        }
-    }
-
     private void reloadFromRootDirectory(
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap
@@ -250,7 +221,8 @@ public class TableNameRegistryFileStore implements Closeable {
                         tableId = readTableId(path, dirName, ff);
                         isWal = tableId < 0;
                         tableId = Math.abs(tableId);
-                        tableName = readTableName(path, dirName, ff);
+                        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
+                        tableName = TableUtils.readTableName(path, tableNameRoMemory, ff);
                     } catch (CairoException e) {
                         if (e.errnoReadPathDoesNotExist()) {
                             // table is being removed.

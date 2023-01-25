@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -62,11 +63,13 @@ class TableConverter {
                     if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
                         LOG.info().$("Skipping conversion, table already has the expected type [dirName=").$(dirName).$(", walEnabled=").$(walEnabled).$(']').$();
                     } else {
-                        //todo: load from _name file
-                        //if there is no _name file then assume it is the same as dirName?
-                        final String tableName = dirName;
-
                         if (walEnabled) {
+                            final String tableName;
+                            try (final MemoryCMR mem = Vm.getCMRInstance()) {
+                                final String name = TableUtils.readTableName(path, mem, ff);
+                                tableName = name != null ? name : dirName;
+                            }
+
                             final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             final TableToken token = new TableToken(tableName, dirName, tableId, true);
                             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
@@ -74,7 +77,6 @@ class TableConverter {
                                 tableSequencerAPI.registerTable(tableId, new TableDescriptorImpl(metadata), token);
                             }
                         }
-
                         metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                     }
 

@@ -138,7 +138,6 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            //todo: check if we should force 'load from table dir' for converted tables
             tableNameRegistry.reloadTableNameCache();
         } catch (Throwable e) {
             close();
@@ -481,10 +480,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken getTableTokenByDirName(String dirName, int tableId) {
         return tableNameRegistry.getTableToken(dirName, tableId);
-    }
-
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
-        return tableNameRegistry.getTokenByDirName(dirName);
     }
 
     public TableToken getTableTokenIfExists(CharSequence tableName) {

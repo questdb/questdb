@@ -832,6 +832,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Unsafe.getUnsafe().putByte(addr, (byte) walFlag);
             ff.append(fd, addr, Byte.BYTES);
         } finally {
+            path.trimTo(rootLen);
             if (addr > 0) {
                 Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
             }

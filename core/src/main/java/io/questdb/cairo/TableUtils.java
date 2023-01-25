@@ -82,11 +82,11 @@ public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_NON_WAL = 0;
+    public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
-    public static final int TABLE_TYPE_NON_WAL = 0;
-    public static final int TABLE_TYPE_WAL = 1;
     // transaction file structure
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
     public static final long TX_BASE_OFFSET_VERSION_64 = 0;
@@ -916,6 +916,34 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
         }
         return Unsafe.getUnsafe().getLong(tempMem8b);
+    }
+
+    public static String readTableName(Path path, MemoryCMR mem, FilesFacade ff) {
+        int fd = ff.openRO(path);
+        if (fd < 1) {
+            return null;
+        }
+
+        try {
+            long fileLen = ff.length(fd);
+            if (fileLen > Integer.BYTES) {
+                int charLen = ff.readNonNegativeInt(fd, 0);
+                if (charLen * 2L + Integer.BYTES != fileLen - 1) {
+                    LOG.error().$("invalid table name file [path=").$(path).$(", headerLen=").$(charLen).$(", fileLen=").$(fileLen).I$();
+                    return null;
+                }
+
+                mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
+                String value = Chars.toString(mem.getStr(0));
+                mem.close();
+                return value;
+            } else {
+                LOG.error().$("invalid table name file [path=").$(path).$(", fileLen=").$(fileLen).I$();
+                return null;
+            }
+        } finally {
+            ff.close(fd);
+        }
     }
 
     public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {

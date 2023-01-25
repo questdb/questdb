@@ -1078,6 +1078,43 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            try {
+                compile("alter table " + tableToken.getTableName() + " set");
+                Assert.fail("expected SQLException is not thrown");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[52] 'param' or 'type' expected");
+            }
+            try {
+                compile("alter table " + tableToken.getTableName() + " set type");
+                Assert.fail("expected SQLException is not thrown");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[57] 'bypass' or 'wal' expected");
+            }
+            try {
+                compile("alter table " + tableToken.getTableName() + " set type bypass");
+                Assert.fail("expected SQLException is not thrown");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[64] 'wal' expected");
+            }
+            try {
+                compile("alter table " + tableToken.getTableName() + " set type wall");
+                Assert.fail("expected SQLException is not thrown");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[58] 'bypass' or 'wal' expected");
+            }
+            try {
+                compile("alter table " + tableToken.getTableName() + " set type bypass wa");
+                Assert.fail("expected SQLException is not thrown");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getMessage(), "[65] 'wal' expected");
+            }
+        });
+    }
+
+    @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
@@ -1339,7 +1376,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n" +
                     "3\tab\t2022-02-25T00:00:00.000000Z\tabcd\n");
-
         });
     }
 }
