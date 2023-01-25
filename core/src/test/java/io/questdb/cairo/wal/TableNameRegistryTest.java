@@ -275,13 +275,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             rw.dropTable(tableToken);
                             addedTables.remove(tableId);
 
+                            // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                             // Remove _txn file first
                             rmPath.trimTo(rootLen).concat(tableName);
                             int len = rmPath.length();
                             rmPath.concat(TableUtils.TXN_FILE_NAME).$();
                             ff.remove(rmPath);
 
-                            // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
+                            // Remove table directory
                             rmPath.trimTo(len).$();
                             for (int i = 0; i < 1000 && ff.rmdir(rmPath) != 0; i++) {
                                 Os.sleep(50L);
