@@ -68,7 +68,7 @@ public class JoinTest extends AbstractGriffinTest {
             compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
         });
 
-        //query "2"
+        // query "2"
         assertQuery("name\tage\tmember\taddress\tts\n" +
                         "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
                         "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
@@ -78,7 +78,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "left join table_2 as b \n" +
                         "   on a.ts = b.ts ", null, "ts", false, true, false);
 
-        //query "3"
+        // query "3"
         assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
                         "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
                         "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
@@ -88,7 +88,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "left join table_2 as b \n" +
                         "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, true, false);
 
-        //query "4" - same as "3" but between is replaced with >= and <=
+        // query "4" - same as "3" but between is replaced with >= and <=
         assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
                         "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
                         "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +

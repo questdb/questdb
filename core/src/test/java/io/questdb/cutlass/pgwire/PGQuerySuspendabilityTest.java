@@ -267,6 +267,9 @@ public class PGQuerySuspendabilityTest extends BasePGTest {
         // HashOuterJoinFilteredLightRecordCursorFactory
         addTestCase("select * from x left join y on x.sym = y.sym and x.sym ~ 'a'");
 
+        // NestedLoopLeftJoinRecordCursorFactory
+        addTestCase("select * from x left join y on x.i + 42 = y.i");
+
         // CrossJoinRecordCursorFactory
         addTestCase("select * from x cross join y");
 
