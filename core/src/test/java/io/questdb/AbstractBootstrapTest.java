@@ -24,6 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -41,7 +44,6 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
-
 
 public abstract class AbstractBootstrapTest {
 
@@ -164,6 +166,15 @@ public abstract class AbstractBootstrapTest {
 
     protected static void createDummyConfiguration(String... extra) throws Exception {
         createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
+    }
+
+    protected static void drainWalQueue(CairoEngine engine) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.drain(0);
+            new CheckWalTransactionsJob(engine).run(0);
+            // run once again as there might be notifications to handle now
+            walApplyJob.drain(0);
+        }
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {
