@@ -99,6 +99,11 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         LOG.info().$("created table: ").utf8(tableName).$();
     }
 
+    static void createNonPartitionedTable(String tableName) throws SQLException {
+        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
+        LOG.info().$("created table: ").utf8(tableName).$();
+    }
+
     static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
         final Path path = Path.PATH.get().of(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         MatcherAssert.assertThat(Chars.toString(path), Files.exists(path.$()), Matchers.is(doesExist));

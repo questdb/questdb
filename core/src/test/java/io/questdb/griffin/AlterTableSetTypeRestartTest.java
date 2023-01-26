@@ -35,6 +35,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
 
 import static io.questdb.griffin.AlterTableSetTypeTest.NON_WAL;
 import static io.questdb.griffin.AlterTableSetTypeTest.WAL;
@@ -50,6 +51,34 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Test
+    public void testNonPartitionedToWal() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                questdb.start();
+                final String tableName = "nonpartitionedtable";
+                createNonPartitionedTable(tableName);
+                insertInto(tableName);
+
+                final CairoEngine engine = questdb.getCairoEngine();
+                final TableToken token = engine.getTableToken(tableName);
+
+                // non-WAL table
+                assertFalse(engine.isWalTable(token));
+                assertNumOfRows(engine, tableName, 1);
+                assertConvertFileDoesNotExist(engine, token);
+
+                // table conversion to WAL is not allowed
+                try {
+                    setType(tableName, "WAL");
+                    fail("Expected exception is missing");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Cannot convert non-partitioned table");
+                }
+            }
+        });
     }
 
     @Test

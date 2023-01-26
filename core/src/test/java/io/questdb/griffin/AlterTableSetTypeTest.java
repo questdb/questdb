@@ -24,11 +24,13 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
 import org.junit.Test;
@@ -36,10 +38,25 @@ import org.junit.Test;
 import java.io.IOException;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class AlterTableSetTypeTest extends AbstractGriffinTest {
     static final byte NON_WAL = (byte) 0;
     static final byte WAL = (byte) 1;
+
+    @Test
+    public void testConvertNonPartitionedToWal() throws Exception {
+        final String tableName = "table_non_partitioned";
+        assertMemoryLeak(() -> {
+            createNonPartitionedTable(tableName);
+            try {
+                executeOperation("alter table " + tableName + " set type wal", CompiledQuery.ALTER);
+                fail("Expected exception is not thrown");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot convert non-partitioned table");
+            }
+        });
+    }
 
     @Test
     public void testConvertRandom() throws Exception {
@@ -89,6 +106,10 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         final Path path = Path.PATH.get().of(configuration.getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         MatcherAssert.assertThat(Chars.toString(path), Files.exists(path.$()), Matchers.is(true));
         return path;
+    }
+
+    private void createNonPartitionedTable(String tableName) throws SqlException {
+        compile("create table " + tableName + " (ts TIMESTAMP, x long)");
     }
 
     private void createTable(String tableName, String walMode) throws SqlException {

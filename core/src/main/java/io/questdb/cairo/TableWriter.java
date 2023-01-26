@@ -818,6 +818,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void convertTable(int walFlag) {
+        if (partitionBy == PartitionBy.NONE) {
+            throw CairoException.critical(ff.errno()).put("Cannot convert non-partitioned table [path=").put(path).put(", wal=").put(walFlag == 1).put(']');
+        }
+
         long addr = 0;
         int fd = -1;
         try {
