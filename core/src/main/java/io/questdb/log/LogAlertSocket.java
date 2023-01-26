@@ -148,10 +148,6 @@ public class LogAlertSocket implements Closeable {
         return outBufferSize;
     }
 
-    public boolean isConnected() {
-        return socketFd != -1 && addressInfoAddr != -1;
-    }
-
     public boolean send(int len) {
         return send(len, onReconnectRef);
     }
