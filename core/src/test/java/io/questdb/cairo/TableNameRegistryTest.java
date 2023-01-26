@@ -22,13 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -413,6 +415,66 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             Assert.assertNull(engine.getTableTokenIfExists("tab1"));
             Assert.assertEquals(tt2, engine.getTableToken("tab2"));
+        });
+    }
+
+    @Test
+    public void testConvertedTableListPassedToRegistryOnLoad() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1;
+            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            TableToken tt2;
+            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt2));
+
+            TableToken tt3;
+            try (TableModel model = new TableModel(configuration, "tab3", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .noWal()
+                    .timestamp()) {
+                tt3 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertFalse(engine.isWalTable(tt3));
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt2, "alterTableType")) {
+                writer.convertTable(TableUtils.TABLE_TYPE_NON_WAL);
+            }
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt3, "alterTableType")) {
+                writer.convertTable(TableUtils.TABLE_TYPE_WAL);
+            }
+            engine.releaseInactive();
+
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            engine.reloadTableNames(convertedTables);
+
+            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
+
+            Assert.assertEquals(tt2.getTableId(), engine.getTableToken("tab2").getTableId());
+            Assert.assertEquals(tt2.getTableName(), engine.getTableToken("tab2").getTableName());
+            Assert.assertEquals(tt2.getDirName(), engine.getTableToken("tab2").getDirName());
+            Assert.assertTrue(tt2.isWal());
+            Assert.assertFalse(engine.getTableToken("tab2").isWal());
+
+            Assert.assertEquals(tt3.getTableId(), engine.getTableToken("tab3").getTableId());
+            Assert.assertEquals(tt3.getTableName(), engine.getTableToken("tab3").getTableName());
+            Assert.assertEquals(tt3.getDirName(), engine.getTableToken("tab3").getDirName());
+            Assert.assertFalse(tt3.isWal());
+            Assert.assertTrue(engine.getTableToken("tab3").isWal());
         });
     }
 

@@ -918,13 +918,15 @@ public final class TableUtils {
         return Unsafe.getUnsafe().getLong(tempMem8b);
     }
 
-    public static String readTableName(Path path, MemoryCMR mem, FilesFacade ff) {
-        int fd = ff.openRO(path);
-        if (fd < 1) {
-            return null;
-        }
-
+    public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
+        int fd = -1;
         try {
+            path.concat(TableUtils.TABLE_NAME_FILE).$();
+            fd = ff.openRO(path);
+            if (fd < 1) {
+                return null;
+            }
+
             long fileLen = ff.length(fd);
             if (fileLen > Integer.BYTES) {
                 int charLen = ff.readNonNegativeInt(fd, 0);
@@ -940,6 +942,7 @@ public final class TableUtils {
                 return null;
             }
         } finally {
+            path.trimTo(rootLen);
             ff.close(fd);
         }
     }

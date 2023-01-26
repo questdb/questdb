@@ -121,8 +121,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables;
         try {
-            TableConverter.convertTables(configuration, tableSequencerAPI);
+            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
         } catch (Throwable e) {
             close();
             throw e;
@@ -131,7 +132,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             tableNameRegistry = configuration.isReadOnlyInstance() ?
                     new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            tableNameRegistry.reloadTableNameCache();
+            tableNameRegistry.reloadTableNameCache(convertedTables);
         } catch (Throwable e) {
             close();
             throw e;
@@ -694,7 +695,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void reloadTableNames() {
-        tableNameRegistry.reloadTableNameCache();
+        reloadTableNames(null);
+    }
+
+    @TestOnly
+    public void reloadTableNames(ObjList<TableToken> convertedTables) {
+        tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {

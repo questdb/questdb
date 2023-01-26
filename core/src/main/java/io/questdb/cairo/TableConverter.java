@@ -42,10 +42,15 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
-    static void convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+        final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
             LOG.info().$("Table type conversion is disabled").$();
-            return;
+            return null;
+        }
+        if (configuration.isReadOnlyInstance()) {
+            LOG.info().$("Read only instance is not allowed to perform table type conversion").$();
+            return null;
         }
 
         final Path path = Path.getThreadLocal(configuration.getRoot());
@@ -70,21 +75,23 @@ class TableConverter {
                             if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
                                 LOG.info().$("Skipping conversion, table already has the expected type [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
                             } else {
-                                if (walEnabled) {
-                                    final String tableName;
-                                    try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                        final String name = TableUtils.readTableName(path, mem, ff);
-                                        tableName = name != null ? name : dirName;
-                                    }
+                                final String tableName;
+                                try (final MemoryCMR mem = Vm.getCMRInstance()) {
+                                    final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirName), rootLen, mem, ff);
+                                    tableName = name != null ? name : dirName;
+                                }
 
-                                    final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                    final TableToken token = new TableToken(tableName, dirName, tableId, true);
+                                final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled);
+
+                                if (walEnabled) {
                                     try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
                                         metadata.load();
                                         tableSequencerAPI.registerTable(tableId, new TableDescriptorImpl(metadata), token);
                                     }
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
+                                convertedTables.add(token);
                             }
 
                             path.trimTo(rootLen).concat(dirName).concat(CONVERT_FILE_NAME);
@@ -100,6 +107,7 @@ class TableConverter {
         } finally {
             ff.findClose(findPtr);
         }
+        return convertedTables;
     }
 
     private static boolean readWalEnabled(Path path, FilesFacade ff) {
